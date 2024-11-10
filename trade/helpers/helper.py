@@ -1,3 +1,4 @@
+
 import inspect
 import time
 import os
@@ -25,11 +26,10 @@ from py_vollib.black_scholes.greeks.numerical import delta, vega, theta, rho
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from scipy.stats import norm
 import yfinance as yf
-
+from openbb import obb
 import pandas as pd
 import numpy as np
 import inspect
-from openbb import obb
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger('trade.helpers.helper')
@@ -38,11 +38,6 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 
-def load_openBB():
-    openbb_key = os.environ.get('OPENBB_KEY')
-    obb.account.login(pat=openbb_key, remember_me= True)
-    obb.account.refresh()
-    obb.account.save()
 
 
 def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance', **kwargs):
@@ -531,34 +526,41 @@ def is_USholiday(date):
     Returns True if the date is a US holiday, False otherwise
     """
 
-    import holidays
-    date = pd.to_datetime(date)
-    us_holidays = holidays.US(years = date.year)
-    if us_holidays.get(date) is not None:
-        return True
-    else:
-        return False
+    # import holidays
+    import pandas_market_calendars as mcal
+    nyse = mcal.get_calendar('NYSE')
+    date = pd.to_datetime(date).strftime('%Y-%m-%d')
+    return not bool(len(nyse.valid_days(start_date=date, end_date=date)))
+
 
 def change_to_last_busday(end):
+    from pandas.tseries.offsets import BDay
+    
+    #Enfore time is passed
+
+
     if not isinstance(end, str):
         end = end.strftime('%Y-%m-%d %H:%M:%S')
+
+    if pd.to_datetime(end).time() == pd.Timestamp('00:00:00').time():
+        end = end + ' 16:00:00' 
     
     ## Make End Comparison Busday
     isBiz = is_busday(end)
     while not isBiz:
 
         end_dt = pd.to_datetime(end)
-        end = (end_dt - relativedelta(days = 1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay( 1)).strftime('%Y-%m-%d %H:%M:%S')
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
-        end = pd.to_datetime(end)-relativedelta(days = 1)
+        end = pd.to_datetime(end)-BDay(1)
 
-    ## Make End Comparison prev day if holiday
+    # Make End Comparison prev day if holiday
     while is_USholiday(end):
         end_dt = pd.to_datetime(end)
-        end = (end_dt - relativedelta(days = 1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay(1)).strftime('%Y-%m-%d %H:%M:%S')
 
     return pd.to_datetime(end)
 

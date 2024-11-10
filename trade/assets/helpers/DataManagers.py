@@ -186,11 +186,11 @@ class OptionDataManager:
 
         if (pd.to_datetime(query_date).date() == datetime.now().date()):
             if (datetime.now().time() < pd.Timestamp('9:30').time()):
-                query_date = change_to_last_busday(query_date).strftime('%Y-%m-%d')
+                query_date = change_to_last_busday(query_date).strftime('%Y-%m-%d %H:%M:%S')
             else:
                 query_date = datetime.now().strftime('%Y-%m-%d')
 
-        end_date = change_to_last_busday(datetime.today().strftime('%Y-%m-%d'))
+        end_date = change_to_last_busday(datetime.today().strftime('%Y-%m-%d %H:%M:%S'))
         
         if type_ == 'close':
             if len(kwargs) > 0:
@@ -266,9 +266,9 @@ class OptionDataManager:
 
         if (pd.to_datetime(query_date).date() == datetime.now().date()):
             if (pd.to_datetime(query_date).time() < pd.Timestamp('9:30').time()):
-                query_date = change_to_last_busday(query_date).strftime('%Y-%m-%d')
+                query_date = change_to_last_busday(query_date).strftime('%Y-%m-%d %H:%M:%S')
             else:
-                query_date = datetime.now().strftime('%Y-%m-%d')
+                query_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         if type_ == 'close':
 
@@ -319,7 +319,7 @@ class OptionDataManager:
                                                 price = x[p],
                                                 S = s0,
                                                 K = self.strike,
-                                                t = time_distance_helper(exp = self.exp, strt = datetime.today().strftime('%Y-%m-%d')),
+                                                t = time_distance_helper(exp = self.exp, strt = query_date),
                                                 r = r,
                                                 q = y,
                                                 flag = self.right.lower()), axis = 1)

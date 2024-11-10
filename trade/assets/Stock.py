@@ -6,7 +6,7 @@
 ## Fix yearly div yield to stop at end date
 
 
-
+from openbb import obb
 import sys
 import os
 from trade.helpers.Configuration import Configuration
@@ -21,13 +21,15 @@ from datetime import datetime
 import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
+from trade.helpers.openbb_helper import *
+load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
 from dbase.DataAPI.ThetaData import resample, list_contracts
 from pandas.tseries.offsets import BDay
-load_openBB()
 
-from openbb import obb
+
+
 from trade.helpers.helper import change_to_last_busday
 class Stock:
     rf_rate = None  # Initializing risk free rate
@@ -293,7 +295,7 @@ class Stock:
             date = self.end_date
         contracts = list_contracts(self.ticker, date)
         contracts.expiration = pd.to_datetime(contracts.expiration, format='%Y%m%d')
-        contracts['DTE'] = (contracts['expiration'] - pd.to_datetime('today')).dt.days
+        contracts['DTE'] = (contracts['expiration'] - pd.to_datetime(date)).dt.days
         contracts_v2 = contracts.pivot_table(index=['expiration', 'DTE','strike'], columns='right',values = 'root', aggfunc='count')
         contracts_v2.fillna(0, inplace = True)
         contracts_v2.where(contracts_v2 == 1, False, inplace = True)

@@ -15,14 +15,20 @@ warnings.filterwarnings("ignore")
 
 # de-annualize yearly interest rates
 
+_rates_cache = None
 
+def _fetch_rates():
+    global _rates_cache
+    if _rates_cache is None:
+        _rates_cache = get_risk_free_rate_helper()
+    return _rates_cache
 
 
 def deannualize(annual_rate, periods=365):
     return (1 + annual_rate) ** (1/periods) - 1
 
 
-def get_risk_free_rate_helper(interval = '1d', use = 'yf'):
+def get_risk_free_rate_helper(interval = '1d', use = 'db'):
     # download 3-month us treasury bills rates
     """
     Return timeseries of 3-month US treasury bills rates

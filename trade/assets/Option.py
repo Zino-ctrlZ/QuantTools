@@ -78,9 +78,9 @@ class Option:
         else:
             raise Exception("Invalid type for exp_date. Valid types are 'str' and 'datetime'")
 
-        if put_call in ['p', 'c']:
+        if put_call.lower() in ['p', 'c']:
             p_c = put_call[0].upper()
-            self.put_call = p_c
+            self.put_call = p_c.lower()
         else:
             raise Exception(f"Invalid option type. Please choose either 'p' or 'c'. Recieved {put_call}")
         
@@ -215,7 +215,6 @@ class Option:
         if ts:
             data = self.__dataManager.get_timeseries(ts_start, ts_end, interval, type_ = 'spot', model = model)
         else:
-
             data = self.__dataManager.get_spot(spot_type, query_date = ts_end)
 
         return data
