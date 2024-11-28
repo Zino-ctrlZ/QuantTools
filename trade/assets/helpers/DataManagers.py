@@ -170,7 +170,7 @@ class OptionDataManager:
     
     def __save_intra_to_update(self, start, end):
         data = pd.DataFrame({'symbol': [self.symbol], 'optiontick': [self.opttick], 'exp': [self.exp], 'right': [self.right],'default_fill': [self.default_fill], 'strike': [self.strike], 'start': [start], 'end': [end]})
-        path  = f'{os.environ["WORK_DIR"]}/InputFiles/IntraSaveLog.xlsx'
+        path  = f'{os.environ["JOURNAL_PATH"]}/Algo/InputFiles/IntraSaveLog.xlsx'
         write_to_excel(path, datetime.today().strftime('%Y-%m-%d'), data)
 
 
@@ -230,6 +230,7 @@ class OptionDataManager:
 
                 ## If query_date is today, we can get real time data
                 if pd.to_datetime(query_date).date() == datetime.now().date():
+
                     data = retrieve_quote_rt(symbol = self.symbol, end_date = query_date, 
                                         exp = self.exp, right = self.right, start_date = query_date, 
                                         strike = self.strike)

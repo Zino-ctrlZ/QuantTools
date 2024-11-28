@@ -24,6 +24,7 @@ import yfinance as yf
 from py_vollib.black_scholes import black_scholes as bs
 from py_vollib.black_scholes.greeks.numerical import delta, vega, theta, rho
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
+from py_vollib.black_scholes_merton import black_scholes_merton
 from scipy.stats import norm
 import yfinance as yf
 from openbb import obb
@@ -315,6 +316,7 @@ def optionPV_helper(
     exp_date: Options expiration date
     risk_free_rate: Prevailing discount rate, annualized and expressed as 0.01 for 1%
     volatility: Underlying Volatility
+    settlement_date_str: pricing date
     model: Preferred pricing method. 
         Available options:
         'bsm': Black Scholes Model
@@ -329,72 +331,80 @@ def optionPV_helper(
     """
     assert model in ['mcs', 'bsm', 'bt'], f"Recieved '{model}' for model. Expected {['mcs', 'bsm', 'bt']}"
 
-    # Option Parameters
-    spot_price = spot_price # Current stock price
-    strike_price = strike_price  # Option strike price
-    maturity_date_str = exp_date  # Option maturity date as a string
-    risk_free_rate = risk_free_rate  # Risk-free interest rate
-    volatility = volatility  # Volatility of the underlying asset
-    dividend_yield = dividend_yield # Continuous dividend yield
 
-    # Convert string date to QuantLib Date
-    maturity_date = ql.Date(pd.to_datetime(maturity_date_str).day,
-                            pd.to_datetime(maturity_date_str).month,
-                            pd.to_datetime(maturity_date_str).year)
+    try:
+        # Option Parameters
+        spot_price = spot_price # Current stock price
+        strike_price = strike_price  # Option strike price
+        maturity_date_str = exp_date  # Option maturity date as a string
+        risk_free_rate = risk_free_rate  # Risk-free interest rate
+        volatility = volatility  # Volatility of the underlying asset
+        dividend_yield = dividend_yield # Continuous dividend yield
 
-    # QuantLib Settings
-    calendar = ql.UnitedStates(ql.UnitedStates.NYSE)  # U.S. market calendar (NYSE)
-    day_count = ql.Actual365Fixed()
-    settlement_date = ql.Date(pd.to_datetime(settlement_date_str).day,
-                            pd.to_datetime(settlement_date_str).month,
-                            pd.to_datetime(settlement_date_str).year)
+        # Convert string date to QuantLib Date
+        maturity_date = ql.Date(pd.to_datetime(maturity_date_str).day,
+                                pd.to_datetime(maturity_date_str).month,
+                                pd.to_datetime(maturity_date_str).year)
 
-    ql.Settings.instance().evaluationDate = settlement_date
+        # QuantLib Settings
+        calendar = ql.UnitedStates(ql.UnitedStates.NYSE)  # U.S. market calendar (NYSE)
+        day_count = ql.Actual365Fixed()
+        settlement_date = ql.Date(pd.to_datetime(settlement_date_str).day,
+                                pd.to_datetime(settlement_date_str).month,
+                                pd.to_datetime(settlement_date_str).year)
 
-    # Construct the payoff and the exercise objects
-    if putcall.upper() == 'P':
-        right = ql.Option.Put
-    elif putcall.upper() == 'C':
-        right = ql.Option.Call
-    else:
-        raise ValueError(f"Recieved '{putcall}' for putcall. Expected 'P' or 'C'")
-    payoff = ql.PlainVanillaPayoff(right, strike_price)
-    exercise = ql.AmericanExercise(settlement_date, maturity_date)
+        ql.Settings.instance().evaluationDate = settlement_date
 
-    # Market data
-    spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot_price))
-    dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividend_yield, day_count))
-    risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
-    volatility_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatility, day_count))
+        # Construct the payoff and the exercise objects
+        if putcall.upper() == 'P':
+            right = ql.Option.Put
+        elif putcall.upper() == 'C':
+            right = ql.Option.Call
+        else:
+            raise ValueError(f"Recieved '{putcall}' for putcall. Expected 'P' or 'C'")
+        payoff = ql.PlainVanillaPayoff(right, strike_price)
+        exercise = ql.AmericanExercise(settlement_date, maturity_date)
 
-    # Black-Scholes-Merton Process (with dividend yield)
-    bsm_process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, risk_free_ts, volatility_ts)
+        # Market data
+        spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot_price))
+        dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividend_yield, day_count))
+        risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
+        volatility_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatility, day_count))
 
-    if model == 'bt':
+        # Black-Scholes-Merton Process (with dividend yield)
+        bsm_process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, risk_free_ts, volatility_ts)
 
-        # Binomial Pricing (Jarrow-Rudd)
-        binomial_engine = ql.BinomialVanillaEngine(bsm_process, "JarrowRudd", 1000)
-        american_option = ql.VanillaOption(payoff, exercise)
-        american_option.setPricingEngine(binomial_engine)
-        binomial_price = american_option.NPV()
-        return binomial_price
-    
-    elif model == 'mcs':
-        # Monte Carlo Pricing (Longstaff-Schwartz)
-        monte_carlo_engine = ql.MCAmericanEngine(bsm_process, "PseudoRandom", timeSteps=250, requiredSamples=10000)
-        american_option = ql.VanillaOption(payoff, exercise)
-        american_option.setPricingEngine(monte_carlo_engine)
-        monte_carlo_price = american_option.NPV()
-        return monte_carlo_price
-    
-    elif model == 'bsm':
-        # Black-Scholes Pricing (Treated as European for comparison)
-        european_exercise = ql.EuropeanExercise(maturity_date)
-        european_option = ql.VanillaOption(payoff, european_exercise)
-        black_scholes_engine = ql.AnalyticEuropeanEngine(bsm_process)
-        european_option.setPricingEngine(black_scholes_engine)
-        black_scholes_price = european_option.NPV()
-        return black_scholes_price
+        if model == 'bt':
+
+            # Binomial Pricing (Jarrow-Rudd)
+            binomial_engine = ql.BinomialVanillaEngine(bsm_process, "JarrowRudd", 1000)
+            american_option = ql.VanillaOption(payoff, exercise)
+            american_option.setPricingEngine(binomial_engine)
+            binomial_price = american_option.NPV()
+            return binomial_price
+        
+        elif model == 'mcs':
+            # Monte Carlo Pricing (Longstaff-Schwartz)
+            monte_carlo_engine = ql.MCAmericanEngine(bsm_process, "PseudoRandom", timeSteps=250, requiredSamples=10000)
+            american_option = ql.VanillaOption(payoff, exercise)
+            american_option.setPricingEngine(monte_carlo_engine)
+            monte_carlo_price = american_option.NPV()
+            return monte_carlo_price
+        
+        elif model == 'bsm':
+            # Black-Scholes Pricing (Treated as European for comparison)
+            european_exercise = ql.EuropeanExercise(maturity_date)
+            european_option = ql.VanillaOption(payoff, european_exercise)
+            black_scholes_engine = ql.AnalyticEuropeanEngine(bsm_process)
+            european_option.setPricingEngine(black_scholes_engine)
+            black_scholes_price = european_option.NPV()
+            return black_scholes_price
+    except Exception as e:
+        logger.warning('')
+        logger.warning('"optionPV_helper" raised the below error')
+        logger.warning(e)
+        logger.warning(f'Kwargs: {locals()}')
+        return 0.0
 
 
 
@@ -410,6 +420,45 @@ def pad_string(input_value):
 
 
 def IV_handler(**kwargs):
+    """
+    Calculate the Black-Scholes-Merton implied volatility.
+
+    :param S: underlying asset price
+    :type S: float
+    :param K: strike price
+    :type K: float
+    :param sigma: annualized standard deviation, or volatility
+    :type sigma: float
+    :param t: time to expiration in years
+    :type t: float
+    :param r: risk-free interest rate
+    :type r: float
+    :param q: annualized continuous dividend rate
+    :type q: float 
+    :param flag: 'c' or 'p' for call or put.
+    :type flag: str
+
+    >>> S = 100
+    >>> K = 100
+    >>> sigma = .2
+    >>> r = .01
+    >>> flag = 'c'
+    >>> t = .5
+    >>> q = 0
+
+    >>> price = black_scholes_merton(flag, S, K, t, r, sigma, q)
+    >>> iv = implied_volatility(price, S, K, t, r, q, flag)
+
+    >>> expected_price = 5.87602423383
+    >>> expected_iv = 0.2
+
+    >>> abs(expected_price - price) < 0.00001
+    True
+    >>> abs(expected_iv - iv) < 0.00001
+    
+    """
+
+
     try:
         iv = implied_volatility(**kwargs)
         if np.isinf(iv):

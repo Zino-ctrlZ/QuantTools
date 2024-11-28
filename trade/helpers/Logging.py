@@ -55,7 +55,7 @@ def setup_logger(filename,stream_log_level=logging.ERROR, file_log_level=logging
 
     # Optional: Create a file handler (logs to a file)
     if log_file:
-        file_handler = TimedRotatingFileHandler(log_file, when = 'midnight', interval = 1, backupCount= 10)
+        file_handler = TimedRotatingFileHandler(log_file, when = 'midnight', interval = 1, backupCount= 3)
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_log_level)
         logger.addHandler(file_handler)
