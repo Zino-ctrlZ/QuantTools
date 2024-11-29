@@ -1,19 +1,27 @@
 # This file contains the Stock class which is used to handle operations related to stock data querying, manipulation and data provision. 
 
-## To- Do
+## To-Do:
 ## Find a news source that can provide news as at a date
 ## Same as for next earnings
 ## Fix yearly div yield to stop at end date
-
+## Add unadjusted prices to the stock class
 
 from openbb import obb
 import sys
 import os
-from trade.helpers.Configuration import Configuration
-import re
-from dateutil.relativedelta import relativedelta
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.extend(
     [os.environ.get('WORK_DIR'), os.environ.get('DBASE_DIR')])
+from dbase.DataAPI.ThetaData import (retrieve_quote_rt, 
+                                     retrieve_eod_ohlc,
+                                     retrieve_quote, 
+                                     list_contracts)
+
+from trade.helpers.Configuration import Configuration
+from trade.helpers.Context import Context
+import re
+from dateutil.relativedelta import relativedelta
 import numpy as np
 import requests
 import pandas as pd
@@ -22,19 +30,215 @@ import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
+from trade.models.VolSurface import SurfaceLab
 load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
 from dbase.DataAPI.ThetaData import resample, list_contracts
 from pandas.tseries.offsets import BDay
-
-
-
+from dbase.database.SQLHelpers import DatabaseAdapter
+from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
+from trade.assets.OptionChain import OptionChain
+from threading import Thread, Lock
+
+
+
+
+# shutdown_event = False
+
+
+# def shutdown(pool):
+#     global shutdown_event
+#     shutdown_event = True
+#     print('shutdown_event set')
+#     pool.terminate()
+
+
+# def get_set(
+#         ticker,
+#         date,
+#         exp, 
+#         right,
+#         strike,
+#         spot,
+#         r,
+#         q
+# ) -> dict:
+#     try:
+#         price = retrieve_quote(ticker, date, exp, right, date, strike, start_time = '9:00')['Midpoint'][-1] #To-do: Handle None values
+#         vol = IV_handler(S = spot, K = strike, t = time_distance_helper(exp = exp, strt = date), r = r, flag = right.lower(), price = price, q = q)
+#     except Exception as e:
+#         logger.error(f'Error in get_set: {e}', exc_info=True)
+#         raise e
+#     return {'price': price, 'vol': vol}
+
+# def get_df_set(split_df, id):
+#     if len(split_df) == 0:
+#         return pd.DataFrame()
+#     split_df[['expiration', 'build_date']] = split_df[['expiration', 'build_date']].astype(str)
+#     # print(f'Size in ID {id} is {split_df.shape}')
+#     split_df[['price', 'vol']] = split_df.apply(lambda x: get_set(x['ticker'], x['build_date'], x['expiration'], x['right'], x['strike'], x['Spot'], x['r'], x['q']), axis = 1, result_type = 'expand')
+#     return split_df
+
+# def produce_chain_values(chain, date, ticker, stock):
+#     results = []
+#     global shutdown_event # To-do: Why after shut down event set in some situations, it is not being reset?
+#     shudown_event = False
+#     # with Context(end_date = date):
+#     # stk = Stock(ticker)
+#     stk = stock
+#     spot = list(stk.spot().values())[0]
+#     q = stk.div_yield()
+#     rf_rate = stk.rf_rate
+#     chain['Spot'] = spot
+#     chain['r'] = rf_rate
+#     chain['q'] = q
+#     chain['build_date'] = date
+#     chain['ticker'] = ticker
+    
+#     workers = 25
+#     split_data = np.array_split(chain.reset_index(), workers)
+
+
+#     #Multiprocessing to speed up chain retrieval
+#     pool = Pool(nodes = workers)
+#     pool.restart()
+#     try:
+#         for result in pool.imap(get_df_set, split_data, [i for i in range(workers)]):
+#             results.append(result)
+#             if shutdown_event:
+#                 break
+            
+        
+#     except KeyboardInterrupt:
+#         print('Interrupted by Keyboard')
+#         shutdown(pool)
+        
+
+#     except Exception as e:
+#         print('Exception:', e)
+#         shutdown(pool)
+        
+
+#     finally:
+#         pool.close()
+#         pool.join()
+    
+#     if len(results) == 0:
+#         return None
+
+#     return pd.concat(results)
+
+
+
+# class OptionChain:
+#     """
+#     Class responsible for creating option chains for a given stock. 
+#     Expected behavior is to return the chain, corresponding vol, price and in select instances, Volatility surface
+#     """
+
+#     def __init__(self, ticker, build_date, stock, dumas_width = 0.75) -> None:
+#         self.ticker = ticker.upper()
+#         self.build_date = build_date
+#         self.chain = None
+#         self.lab = None
+#         self.dbAdapter = DatabaseAdapter()
+#         self.dumas_width = dumas_width
+#         self.simple_chain = None
+#         self.stock = stock
+#         self.__initiate_chain()
+
+
+#     def __repr__(self) -> str:
+#         return f"OptionChain({self.ticker}, {self.build_date})"
+    
+#     def __str__(self) -> str:
+#         return f"OptionChain({self.ticker}, {self.build_date})"
+
+#     def __initiate_chain(self):
+#         query = f"""
+#         SELECT * FROM vol_surface.option_chain 
+#         WHERE ticker = '{self.ticker}' 
+#         AND build_date = '{self.build_date}'"""
+
+#         chain = self.dbAdapter.query_database('vol_surface', 'option_chain',query)
+#         if not chain.empty:
+#             print('Creating Chain from Database')
+#             self.chain = chain
+#             self.__option_chain_bool()
+#             return 
+        
+
+#         chain =  self.__option_chain_bool()
+#         chain_new = produce_chain_values(chain, self.build_date, self.ticker, self.stock)
+#         self.chain = chain_new
+#         self.save_thread = None
+#         self.save_thread = Thread(target = self._save_chain)
+#         self.save_thread.start()
+#         return chain_new
+
+        
+#     def get_chain(self, return_values = False):
+#         if return_values:
+#             return self.chain
+        
+#         else:
+#             return self.simple_chain
+
+
+#     def __option_chain_bool(self):
+
+#         # Set build date
+#         date = self.build_date
+
+#         contracts = list_contracts(self.ticker, date)
+#         contracts.expiration = pd.to_datetime(contracts.expiration, format='%Y%m%d')
+
+#         ## Producing the DTE for the contracts
+#         contracts['DTE'] = (contracts['expiration'] - pd.to_datetime(date)).dt.days
+#         contracts_v2 = contracts.pivot_table(index=['expiration', 'DTE','strike','right'],values = 'root', aggfunc='count')
+        
+#         ## Formatting the pivot table
+#         contracts_v2.fillna(0, inplace = True)
+#         contracts_v2.where(contracts_v2 == 1, False, inplace = True)
+#         contracts_v2.where(contracts_v2 == 0, True, inplace = True)
+#         self.simple_chain = contracts_v2
+#         return contracts_v2
+    
+
+#     def initiate_lab(self):
+#         if self.chain is None:
+#             self.chain = self.get_chain(True)
+#         self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width)
+
+    
+
+#     def _save_chain(self):
+#         if self.chain is None:
+#             self.get_chain(True)
+#         chain = self.chain.copy()
+#         chain.drop(columns = ['root'], inplace = True)
+#         chain['moneyness'] = chain['strike'] / chain['Spot']
+#         chain['option_tick'] = chain.apply(lambda x: generate_option_tick(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
+#         chain['build_date'] = self.build_date
+#         self.dbAdapter.save_to_database(chain, 'vol_surface', 'option_chain')
+
+
+
+
+
+
 class Stock:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
     init_date = None
+    dumas_width = 0.75
+    _instances = {}
+    _lock = Lock()
+
+    
+    ## Testing Singleton Pattern
 
 
     def __repr__(self):
@@ -63,29 +267,19 @@ class Stock:
         self.prev_close()
         self.__y = None
         self.div_yield()
+        self.__OptChain = None
+        self.__chain = None
+        # self.chain_thread = Thread(target = self.__init_option_chain)
+        # self.chain_thread.start()
         
-
-        # """ Initializing Risk Free Rate as a variable across every Stock Intance, while Re-initializing after day has changed """
-        # if Stock.rf_ts is None:
-        #     self.init_rfrate_ts()
-        #     self.init_date_method()
-        #     if Stock.init_date < today:
-        #         print("Re-initializing Risk Rate")
-        #         self.init_rfrate_ts()
-        #         self.init_date_method()
-        #         self.close = self.prev_close().close
-        # if Stock.rf_rate is None:
-        #     print("Stock Initializing Risk Free Rate")
-        #     self.init_risk_free_rate()
-        #     if Stock.init_date < today:
-        #         print("Re-initializing Risk Rate")
-        #         self.init_risk_free_rate()
-        #         self.init_date_method()
-        #         self.close = self.prev_close().close
         
         """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
         self.init_rfrate_ts()
         self.init_risk_free_rate()
+        # self.__init_option_chain() 
+        self.chain_init_thread = Thread(target = self.__init_option_chain)
+        self.chain_init_thread.start()
+        self.is_chain_ready = not self.chain_init_thread.is_alive()
 
 
     @property
@@ -112,6 +306,19 @@ class Stock:
     def y(self):
         return self.__y
 
+    @property
+    def OptChain(self):
+        if self.__OptChain is not None:
+            return self.__OptChain
+        else:
+            logger.info(f'Chain not ready for {self.ticker} on {self.end_date}')
+            print('Chain is not ready')
+            return None
+    
+    @property
+    def chain(self):
+        return self.__chain
+    
     
     def __set_close(self, value):
         self.__close = value
@@ -119,6 +326,13 @@ class Stock:
 
     def __set_y(self, value):
         self.__y = value
+
+
+    def __init_option_chain(self):
+        chain = OptionChain(self.ticker, self.end_date, self, self.dumas_width)
+        self.__OptChain = chain
+        self.__chain = self.__OptChain.get_chain(True)
+        self.OptChain.initiate_lab()
 
 
 
@@ -140,25 +354,68 @@ class Stock:
         self.rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
 
+    def vol(self, exp, strike_type, strike, right):
+        """
+        Calculates implied volatility based on VolSurface modelling
+
+        params:
+        exp: Expressed in terms of intervals. Eg: 1D, 1W, 1M, 1Y
+        strike_type: 'p' for percent of spot, 'k' for absolute strike
+        strike: Corresponding strike value. Can be either a list, ndarray or float
+        right: 'C' for call, 'P' for put
+
+        returns:
+        dict: {'k': strike, 'dumas': dumas vol, 'svi': svi vol}
+        """
+        exp = identify_length(*extract_numeric_value(exp))
+        spot = list(self.spot().values())[0]
+
+        ## Check if strike is a list, ndarray or float
+        if isinstance(strike, list):
+            strike = np.array(strike)
+        elif isinstance(strike, float):
+            strike = np.array([strike])
+
+        elif isinstance(strike, np.ndarray):
+            pass
+        else:
+            raise ValueError('Strike must be either a list, ndarray or float')
+        
+
+        ## Check if strike_type is either 'p' or 'k'. P is percent of spot, K is absolute strike
+        if strike_type == 'p':
+            strike_k = strike * spot
+        else:
+            strike_k = strike
+
+        ## Check if Option Chain is ready, this is because the OptionChain initiation is done in a thread
+        if self.OptChain is None or self.OptChain.lab is None:
+            raise ValueError('Option Chain not ready, please wait for it to be ready')
+            return None
+
+        vol = self.OptChain.lab.predict(exp, strike_k, right)
+        
+        try:
+            if strike_type == 'p':
+                vol['k'] = strike
+            return vol
+        except Exception as e:
+            logger.error(f"Error calculating vol for exp={exp}, strike={strike}: {e}")
+            return None
+
+
     def prev_close(self):
         """
         The prev_close returns the Previous days close, regardless of start time, end time, or configuration time
         """
+
+        ## To-do: Ensure this is previous day close RELATIVE to the end date
         close = float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['prev_close'].values[0])
         self.__set_close(close)
         return close
 
 
     def div_yield(self, div_type = 'yield'):
-        # try:
-        #     div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider='yfinance').to_df()
-        #     date_12 = date.today() - relativedelta(months = 12)
-        #     y = div_history[div_history['ex_dividend_date'] >= date_12].amount.sum()/self.prev_close()
-        #     self.y = y
-        #     return y
-        # except:
-        #     y = 0
-        #     self.y = 0
         div_history = self.div_yield_history(div_type = div_type)
         if not isinstance(div_history, pd.Series):
             if div_type == 'yield':

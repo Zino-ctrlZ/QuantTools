@@ -179,7 +179,23 @@ class DumasRollingModel:
     """
     ## to-do: Avoid errors when there are no values in the chain. This is coming from DumasModelBuilder when there are no values in the chain
     def __init__(self, chain, window, date,  right, period, dumas_width = .30,):
+        """
+        Initializes the VolSurface object with the given parameters.
 
+        Parameters:
+        chain (DataFrame): The option chain data.
+        window (int): The window size for the volatility surface.
+        date (datetime): The date for which the volatility surface is being created.
+        right (str): The option type, either 'C' for call or 'P' for put.
+        period (str): The period for the volatility surface, must be one of ['weekly', 'short', 'medium', 'long'].
+        dumas_width (float, optional): The width parameter for the Dumas model, default is 0.30.
+
+        Raises:
+        AssertionError: If the period is not one of ['weekly', 'short', 'medium', 'long'].
+        AssertionError: If the right is not one of ['C', 'P'].
+        AssertionError: If the window is greater than the maximum window size for the given period.
+
+        """
         terms = {
         'weekly': (0, 14, 5),
         'short': (14, 90, 30),
@@ -249,6 +265,26 @@ class DumasRollingModel:
         self.dumas_chain = dumas_chain 
 
     def fit_dumas_model_rolling(self):
+        """
+        Fits a rolling linear regression model to the implied volatility (IV) data using the Dumas model.
+
+        The method fits the model over different rolling windows of the data, depending on the specified period.
+        If the period is 'long' or 'medium', a single model is fitted over the entire data range.
+        Otherwise, models are fitted over rolling windows of a specified size.
+
+        Attributes:
+            dumas_chain (DataFrame): The data containing the DTE (days to expiration), IV (implied volatility), 
+                         and other relevant columns for the Dumas model.
+            window (int): The size of the rolling window.
+            period (str): The period type, which can be 'long', 'medium', or other values.
+            min_window (int): The minimum window size for the rolling model.
+            max_window (int): The maximum window size for the rolling model.
+            models (list): A list to store the fitted linear regression models.
+            window_ranges (list): A list to store the ranges of the rolling windows used for each model.
+
+        Returns:
+            None
+        """
         chain = self.dumas_chain
         window_size = self.window
         T_values = chain.DTE.unique()
@@ -277,6 +313,24 @@ class DumasRollingModel:
 
     ## To-do: Predict IV for multiple T & K values, currently works for single T multiple K
     def predict_average(self, dte_target, k_range = None):
+        def predict_average(self, dte_target, k_range=None):
+            """
+            Predicts the average volatility surface for a given target days to expiration (DTE).
+            Parameters:
+            -----------
+            dte_target : int
+                The target days to expiration (DTE) for which the prediction is to be made. Must be between self.min_window and self.max_window.
+            k_range : int, float, or array-like, optional
+                The range of strike prices (k) for which the prediction is to be made. If None, a default range is used. If a single int or float is provided, it is converted to an array.
+            Returns:
+            --------
+            DumasModelResults
+                An object containing the predictions and the mean prediction for the given DTE and strike price range.
+            Raises:
+            -------
+            AssertionError
+                If dte_target is not between self.min_window and self.max_window.
+            """
         assert self.min_window <= dte_target <= self.max_window, f'DTE must be between {self.min_window} and {self.max_window}'
         if isinstance(k_range, (int, float)):
             k_range = np.array([k_range])
@@ -358,6 +412,15 @@ class DumasModelBuilder(ModelBuilder):
 
 
     def build_model(self):
+        """
+        Builds and fits the Dumas models.
+
+        Iterates over the `dumas_models` dictionary, fits each model using the 
+        `fit_dumas_model_rolling` method, and updates the dictionary with the fitted models.
+
+        Returns:
+            None
+        """
         for key, value in self.dumas_models.items():
             value.fit_dumas_model_rolling()
             self.dumas_models[key] = value
@@ -380,6 +443,31 @@ class DumasModelBuilder(ModelBuilder):
 
     
     def plot(self, dte):
+        """
+        Plots the implied volatility surface for a given days to expiration (DTE).
+
+        Parameters:
+        dte (int): The days to expiration for which the volatility surface is to be plotted.
+
+        Raises:
+        BaseException: If the provided DTE is larger than the maximum permitted DTE.
+
+        The method performs the following steps:
+        1. Iterates through the dumas models to find the appropriate model for the given DTE.
+        2. Filters the dumas chain for the given DTE.
+        3. Checks if the provided DTE is within the permissible range.
+        4. If the dumas chain is empty, generates a default X range.
+        5. Predicts the average implied volatility using the dumas model.
+        6. Plots the market implied volatility and the predicted implied volatility using Plotly.
+
+        The plot includes:
+        - Market Implied Volatility vs Strike Price (if dumas chain is not empty)
+        - Dumas Implied Volatility vs Strike Price
+        - Title indicating the right name and DTE
+        - X-axis labeled as 'Strike Price'
+        - Y-axis labeled as 'Implied Volatility'
+        - Plot dimensions set to 800x800
+        """
         dumas_chain = self.dumas_chain
         for item, value in self.dumas_models.items():
             if value.between(dte):
@@ -425,6 +513,62 @@ class DumasModelBuilder(ModelBuilder):
 
 
 class SVIModelBuilder(ModelBuilder):
+    """
+    SVIModelBuilder is a class that builds a Stochastic Volatility Inspired (SVI) model for a given options chain.
+
+    Attributes:
+        cons (tuple): Constraints for the optimization process.
+        chain (DataFrame): The options chain data.
+        K (ndarray): Array of strike prices.
+        spot (float): Spot price of the underlying asset.
+        r (float): Risk-free interest rate.
+        q (float): Dividend yield.
+        T (ndarray): Array of times to expiration in years.
+        t (float): Time to expiration in years for the first option in the chain.
+        IV (ndarray): Array of implied volatilities.
+        right (str): Type of option ('C' for call, 'P' for put).
+        S0 (float): Spot price of the underlying asset.
+        DTE (int): Days to expiration.
+        date (datetime): Date of the options chain.
+        chain_price (ndarray): Array of option prices.
+        bsm_price (list): List of Black-Scholes-Merton prices for the options.
+        Price (list): List of model prices for the options.
+        right_name (str): Name of the option type ('Call' or 'Put').
+        svi_params1 (list): Initial SVI parameters (unscaled wings).
+        svi_params2 (list): Initial SVI parameters (scaled wings).
+        new_svi_params1 (ndarray): Optimized SVI parameters (unscaled wings).
+        svi_mse1 (float): Mean squared error for the unscaled wings model.
+        new_svi_params2 (ndarray): Optimized SVI parameters (scaled wings).
+        svi_mse2 (float): Mean squared error for the scaled wings model.
+        preferred_svi_params (ndarray): Preferred SVI parameters based on MSE.
+        preferred_mse (float): Mean squared error for the preferred model.
+        preferred_text (str): Description of the preferred model.
+        preferred_svi_variables (dict): SVI variables for the preferred model.
+        unpreferred_svi_params (ndarray): Unpreferred SVI parameters.
+        unpreferred_mse (float): Mean squared error for the unpreferred model.
+        unpreferred_text (str): Description of the unpreferred model.
+        unpreferred_svi_variables (dict): SVI variables for the unpreferred model.
+        all_guesses1 (list): List of all guesses during optimization (unscaled wings).
+        all_guesses2 (list): List of all guesses during optimization (scaled wings).
+
+    Methods:
+        __init__(self, chain, date, DTE): Initializes the SVIModelBuilder with the given options chain, date, and days to expiration.
+        __str__(self): Returns a string representation of the SVIModelBuilder.
+        __repr__(self): Returns a string representation of the SVIModelBuilder.
+        __eq__(self, value): Checks if the DTE is equal to the given value.
+        __lt__(self, value): Checks if the DTE is less than the given value.
+        __gt__(self, value): Checks if the DTE is greater than the given value.
+        __le__(self, value): Checks if the DTE is less than or equal to the given value.
+        __ge__(self, value): Checks if the DTE is greater than or equal to the given value.
+        __filter_chain(self): Filters the options chain based on implied volatility and days to expiration.
+        __init_svijw_params(self): Initializes the SVI parameters.
+        build_model(self): Builds the SVI model by optimizing the SVI parameters.
+        plot(self): Plots the implied volatility surface.
+        predict(self, t, k): Predicts the implied volatility for given time to expiration and strike prices.
+        save_guesses1(self, x): Saves the guesses during optimization (unscaled wings).
+        save_guesses2(self, x): Saves the guesses during optimization (scaled wings).
+        save_to_databse(self): Placeholder method for saving the model to a database.
+    """
 
 
     cons=(
@@ -442,6 +586,36 @@ class SVIModelBuilder(ModelBuilder):
                  date, 
                  DTE,
                  ):
+        """
+        Initializes the VolSurface object.
+
+        Parameters:
+        chain (pd.DataFrame): The option chain data.
+        date (datetime): The date of the option chain.
+        DTE (int): Days to expiration.
+
+        Raises:
+        ValueError: If the chain is empty.
+
+        Attributes:
+        chain (pd.DataFrame): Filtered option chain data.
+        K (np.ndarray): Array of strike prices.
+        spot (float): Spot price of the underlying asset.
+        r (float): Risk-free interest rate.
+        q (float): Dividend yield.
+        T (np.ndarray): Array of times to expiration in years.
+        t (float): Time to expiration in years for the first option.
+        IV (np.ndarray): Array of implied volatilities.
+        right (str): Option type ('C' for Call, 'P' for Put).
+        S0 (float): Spot price of the underlying asset.
+        DTE (int): Days to expiration for the first option.
+        date (datetime): The date of the option chain.
+        chain_price (np.ndarray): Array of option prices from the chain.
+        bsm_price (list): List of Black-Scholes-Merton prices.
+        Price (list): List of model prices (Call or Put).
+        right_name (str): Name of the option type ('Call' or 'Put').
+
+        """
         if chain.empty:
             raise ValueError('Chain is empty!')
 
@@ -605,7 +779,23 @@ class SVIModelBuilder(ModelBuilder):
 
 
     def build_model(self):
-        
+        """
+        Builds the volatility surface model using the SVI-JW (Stochastic Volatility Inspired - Jim Gatheral and Antoine Jacquier) method.
+
+        The method minimizes the mean squared error (MSE) between the implied volatility (IV) and the SVI-JW model using the specified optimization method.
+        It produces results for both scaled and unscaled wings and selects the preferred parameters based on the MSE.
+
+        Steps:
+        1. Initializes the optimization method and function.
+        2. Minimizes the MSE for unscaled wings, stores the results, and checks for NaN values.
+        3. Minimizes the MSE for scaled wings, stores the results, and checks for NaN values.
+        4. Selects the preferred parameters based on the MSE values and ensures no NaN values are present.
+        5. Stores both the preferred and unpreferred parameters and their corresponding MSE values and SVI variables.
+
+        Note:
+            - The method assumes that self.svi_params1, self.svi_params2, self.cons, self.T, self.S0, self.K, and self.IV are already defined.
+            - If the MSE for both sets of parameters is NaN, the preferred parameters will be set to NaN.
+        """
         min_func = ModelLibrary.MSE_IV_SVIJW
         method = 'SLSQP'
         # method = 'L-BFGS-B' 
@@ -712,6 +902,26 @@ class SVIModelBuilder(ModelBuilder):
 
     
     def plot(self):
+        """
+        Plots the implied volatility (IV) against the strike price for the given volatility surface.
+
+        This method generates a plot that includes:
+        - Market implied volatility (IV) as markers.
+        - Preferred SVI model implied volatility as a line.
+        - Unpreferred SVI model implied volatility as a line.
+
+        The plot is displayed using Plotly and includes the following features:
+        - Title indicating the right name and days to expiration (DTE).
+        - X-axis labeled as 'Strike Price'.
+        - Y-axis labeled as 'Implied Volatility'.
+        - Customizable height and width of the plot.
+
+        Parameters:
+        None
+
+        Returns:
+        None
+        """
         range_ = np.linspace(min(self.K), max(self.K), 100)
         unpre_params = self.unpreferred_svi_params
         unpre_text = self.unpreferred_text
@@ -862,8 +1072,8 @@ class SurfaceBuilder(ABC):
 
             ## Adding range filter for DTE
             ## Max Strike & Min Strike should be within 5% of spot price
-            if chain_subset.strike.max() < spot*1.03 or chain_subset.strike.min() > spot*0.97:
-                print(dte)
+            ## To-do: Refactor this to be more dynamic. it's hard coded for now
+            if chain_subset.strike.max() < spot*1.01 or chain_subset.strike.min() > spot*0.99:
                 continue
 
             ## No Empty Chains
@@ -1027,7 +1237,7 @@ class SurfaceManagerModelBuild(SurfaceManager):
 
 
 
-    def predict(self, dte, k, right, interpolate_variables = True):
+    def predict(self, dte, k, right, interpolate_variables = False):
         """
         Predicts the implied volatility for given days to expiration (DTE) and strike price(s).
         

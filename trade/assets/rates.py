@@ -148,6 +148,11 @@ def _fetch_rates():
     if _rates_cache is not None:
         
         ## If db data is not up to date, update it db data AND update the cache using yf to save time. DB will be updated with a Thread
+
+        if not isinstance(_rates_cache.index, pd.DatetimeIndex):
+            _rates_cache.index = pd.to_datetime(_rates_cache.index)
+        
+
         if change_to_last_busday(datetime.datetime.now()).date() > _rates_cache.index[-1].date():
             logger.info('Updating cache')
             logger.info('Updating db rates data')
