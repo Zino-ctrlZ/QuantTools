@@ -53,6 +53,24 @@ class Stock:
     rf_ts = None
     init_date = None
     dumas_width = 0.75
+    _instances = {}
+
+
+    def __new__(cls, ticker: str, **kwargs):
+        # Use (ticker, end_date) as the unique key for singleton behavior
+        today = datetime.today()
+        _end_date = datetime.strftime(today, format='%Y-%m-%d')
+        ## I don't need an instance per minute. I need an instance per day.
+        ## I can update the end_date in __init__ if I need to
+
+        end_date = Configuration.end_date or _end_date
+        key = (ticker.upper(), end_date)
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[key] = instance
+        return cls._instances[key]
+
+
 
     def __repr__(self):
         return f'Stock(Ticker: {self.ticker})'
@@ -65,31 +83,38 @@ class Stock:
         
         ticker: Stock Tick
         """
+
+        ## Attr to be initalized every time
         today = datetime.today()
-        start_date_date = today - relativedelta(months=12)
-        start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
         end_date = datetime.strftime(today, format='%Y-%m-%d %H:%M:%S')
-        self.__security_obj = yf.Ticker(ticker.upper())
-        self.__ticker = ticker.upper()
-        self.timewidth = Configuration.timewidth or '1'
-        self.timeframe = Configuration.timeframe or 'day'
-        self.__start_date = Configuration.start_date or start_date
         self.__end_date = Configuration.end_date or end_date
-        self.__close = None
-        self.prev_close()
-        self.__y = None
-        self.div_yield()
-        self.__OptChain = None
-        self.__chain = None
-        self.asset_type = self.__security_obj.info['quoteType']
-        self.kwargs = kwargs
-        
-        """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
-        self.init_rfrate_ts()
-        self.init_risk_free_rate()
-        # self.__init_option_chain() 
-        self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
-        self.chain_init_thread.start()
+
+        if not hasattr(self, '_intialized'):
+            
+            ## Attr to be initalized once
+            self._intialized = True
+            start_date_date = today - relativedelta(months=12)
+            start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
+            self.__security_obj = yf.Ticker(ticker.upper())
+            self.__ticker = ticker.upper()
+            self.timewidth = Configuration.timewidth or '1'
+            self.timeframe = Configuration.timeframe or 'day'
+            self.__start_date = Configuration.start_date or start_date
+            self.__close = None
+            self.prev_close()
+            self.__y = None
+            self.div_yield()
+            self.__OptChain = None
+            self.__chain = None
+            self.asset_type = self.__security_obj.info['quoteType']
+            self.kwargs = kwargs
+            
+            """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
+            self.init_rfrate_ts()
+            self.init_risk_free_rate()
+            # self.__init_option_chain() 
+            self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
+            self.chain_init_thread.start()
 
 
     @property
@@ -132,6 +157,19 @@ class Stock:
     def chain(self):
         return self.__chain
     
+    @classmethod
+    def clear_instances(cls, pop_all = True):
+        if pop_all:
+            cls._instances = {}
+        else:
+            if cls._instances:
+                return cls._instances.popitem()
+            
+            return None
+    
+    @classmethod
+    def list_instances(cls):
+        return cls._instances
     
     def __set_close(self, value):
         self.__close = value
