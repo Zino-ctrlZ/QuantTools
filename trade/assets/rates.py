@@ -17,7 +17,9 @@ warnings.filterwarnings("ignore")
 logger = setup_logger('rates')
 rates_thread_logger = setup_logger('rates_thread', stream_log_level = logging.INFO)
 
+## To-do: Check why rates data doesn't start from far back
 
+## FYI: A thread saves _rates_cache. This is necessary to avoid blocking the main thread and makes sure the data is ready when needed. 
 
 ## Rates cache variable
 _rates_cache = None
@@ -95,9 +97,13 @@ def fetch_rates_save_cache(interval = '1h', use = 'yf', return_data = False):
             return e
 
 
+
 ## Start a thread to update the rates data in the db
-rates_cache_thread = Thread(target = fetch_rates_save_cache, name = 'rates_cache_thread')
+rates_cache_thread = Thread(target = fetch_rates_save_cache, name = 'rates_cache_thread', args = ('1h', 'db'))
 rates_cache_thread.start()
+
+
+
 
 def is_rates_thread_still_running():
     return rates_cache_thread.is_alive()
@@ -126,7 +132,7 @@ def _fetch_rates():
     timer = 0
     while is_rates_thread_still_running():
         time.sleep(5)
-        rates_thread_logger.info('Waiting for rates data to be ready')
+        rates_thread_logger.info(f'Waiting for rates data to be ready. {timer} seconds elasped')
         timer += 5
         if timer > 60:
             rates_thread_logger.error('Rates data not ready after 60 seconds. Exiting')
@@ -139,7 +145,6 @@ def _fetch_rates():
     global _rates_cache
     if _rates_cache is None:
         logger.info('Saving to cache')
-
         ## In saving to cache, I want to use db data
         print('Saving to cache from db')
         fetch_rates_save_cache(use = 'db')

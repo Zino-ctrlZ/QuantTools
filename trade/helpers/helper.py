@@ -47,7 +47,15 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
 
     Utilizes OpenBB historical api. Default provider is yfinance.
     """
-    return obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+    data = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+    data.split_ratio.replace(0, 1, inplace = True)
+    data['cum_split'] = data.split_ratio.cumprod()
+    data['max_cum_split'] = data.cum_split.max()
+    data['unadjusted_close'] = data.close * data.max_cum_split
+    data['split_factor'] = data.max_cum_split / data.cum_split
+    data['chain_price'] = data.close * data.split_factor
+    data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+    return data
 
 def identify_interval(timewidth, timeframe, provider = 'default'):
     if provider == 'yfinance':

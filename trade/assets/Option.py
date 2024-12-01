@@ -16,11 +16,11 @@ from trade.assets.helpers.DataManagers import OptionDataManager
 
 class Option:
     def __repr__(self):
-        return f'Option(Strike: {self.K}, Expiration: {self.exp}, Underlier: {self.ticker}, Model: {self.model})'
+        return f'Option(Strike: {self.K}, Expiration: {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model})'
 
 
     def __str__(self):
-        return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Model: {self.model})'
+        return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model})'
 
 
     def __init__(self, 

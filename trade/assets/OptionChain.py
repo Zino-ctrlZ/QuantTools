@@ -23,10 +23,12 @@ from dbase.DataAPI.ThetaData import (retrieve_quote_rt,
                                      list_contracts)
 
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore
+from pathos.multiprocessing import ProcessingPool as Pool
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, root_mean_squared_error
 from pprint import pprint
 import numpy as np
 import matplotlib.pyplot as plt
+from threading import Thread
 import pandas as pd
 logger = setup_logger('OptionChain')
 
@@ -129,7 +131,7 @@ class OptionChain:
     Expected behavior is to return the chain, corresponding vol, price and in select instances, Volatility surface
     """
 
-    def __init__(self, ticker, build_date, stock, dumas_width = 0.75) -> None:
+    def __init__(self, ticker, build_date, stock, dumas_width = 0.75, **kwargs) -> None:
         self.ticker = ticker.upper()
         self.build_date = build_date
         self.chain = None
@@ -138,6 +140,7 @@ class OptionChain:
         self.dumas_width = dumas_width
         self.simple_chain = None
         self.stock = stock
+        self.kwargs = kwargs
         self.__initiate_chain()
 
 
@@ -155,7 +158,6 @@ class OptionChain:
 
         chain = self.dbAdapter.query_database('vol_surface', 'option_chain',query)
         if not chain.empty:
-            print('Creating Chain from Database')
             self.chain = chain
             self.__option_chain_bool()
             return 
@@ -199,9 +201,10 @@ class OptionChain:
     
 
     def initiate_lab(self):
+        force_build = self.kwargs.get('force_build', False)
         if self.chain is None:
             self.chain = self.get_chain(True)
-        self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width)
+        self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width, force_build = force_build)
 
     
 
