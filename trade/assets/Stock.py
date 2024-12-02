@@ -3,10 +3,8 @@
 ## To-Do:
 ## Find a news source that can provide news as at a date
 ## Same as for next earnings
-## Fix yearly div yield to stop at end date
 ## Add unadjusted prices to the stock class - Chain price
 ## Add timer to each and log it
-## Implement a singleton pattern for the Stock class based on (ticker, end_date)
 
 from openbb import obb
 import sys
@@ -73,7 +71,11 @@ class Stock:
 
 
     def __repr__(self):
-        return f'Stock(Ticker: {self.ticker})'
+        return f'Stock(Ticker: {self.ticker}, Build Date: {self.end_date})'
+
+    def __str__(self):
+        return f'Stock(Ticker: {self.ticker}, Build Date: {self.end_date})'
+
 
     def __init__(self, ticker: str, **kwargs):
         """
@@ -86,13 +88,17 @@ class Stock:
 
         ## Attr to be initalized every time
         today = datetime.today()
-        end_date = datetime.strftime(today, format='%Y-%m-%d %H:%M:%S')
+        ## Chaning to last business day, so far, there's no need to create Stock for. 
+        ## Temp: Changing to last business day ensures that the data is available, +  avoids the missing error
+        ## Note: Monitor if this is the best approach
+        end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
 
         if not hasattr(self, '_intialized'):
             
             ## Attr to be initalized once
             self._intialized = True
+            run_chain = kwargs.get('run_chain', True)
             start_date_date = today - relativedelta(months=12)
             start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
             self.__security_obj = yf.Ticker(ticker.upper())
@@ -113,8 +119,9 @@ class Stock:
             self.init_rfrate_ts()
             self.init_risk_free_rate()
             # self.__init_option_chain() 
-            self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
-            self.chain_init_thread.start()
+            if run_chain:
+                self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
+                self.chain_init_thread.start()
 
 
     @property
@@ -182,6 +189,7 @@ class Stock:
     def __init_option_chain(self):
         try:
             force_build = self.kwargs.get('force_build', False)
+            logger.info(f'Initializing Option Chain for {self.ticker} on {self.end_date}')
             chain = OptionChain(self.ticker, self.end_date, self, self.dumas_width, force_build = force_build)
             self.__OptChain = chain
             self.__chain = self.__OptChain.get_chain(True)

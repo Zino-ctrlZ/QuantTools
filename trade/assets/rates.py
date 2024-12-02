@@ -10,7 +10,7 @@ import datetime
 import yfinance as yf
 import pandas as pd
 import warnings
-from trade.helpers.helper import change_to_last_busday, setup_logger
+from trade.helpers.helper import change_to_last_busday, setup_logger, retrieve_timeseries
 from threading import Thread
 import logging
 warnings.filterwarnings("ignore")
@@ -44,9 +44,11 @@ def fetch_rates_save_cache(interval = '1h', use = 'yf', return_data = False):
     """
     logger.info('Saving rates timeseries to cache with fetch_rates_save_cache function')
     global _rates_cache
-    annualized = yf.download("^IRX", progress=False, interval=interval)["Adj Close"]
+    annualized = retrieve_timeseries('^IRX',  '1960-01-01', end = datetime.datetime.today().strftime('%Y-%m-%d'), interval = interval)['close']
     rates = yf.Ticker("^IRX")
-    
+    annualized.index = pd.to_datetime(annualized.index)
+    annualized.index = [x.replace(minute = 30) for x in annualized.index]
+    annualized.index.name = 'Datetime'
 
    
     if use == 'yf':
@@ -57,15 +59,6 @@ def fetch_rates_save_cache(interval = '1h', use = 'yf', return_data = False):
             data['name'] = "^IRX"
             data['description']=rates.info['longName']
 
-            try:
-                data.index = data.index.tz_convert('America/New_York')
-                data.index = data.index.tz_localize(None)
-                data = data.reset_index()
-                data.drop_duplicates(inplace = True)
-                data.set_index('Datetime',inplace = True)
-            except:
-                pass
-
             if data.index.name.lower() != 'datetime':
                 data.index.name = 'Datetime'
             return data
@@ -75,7 +68,9 @@ def fetch_rates_save_cache(interval = '1h', use = 'yf', return_data = False):
 
 
     elif use == 'db':
-        data = query_database('securities_master','rates_timeseries' ,"SELECT * FROM rates_timeseries WHERE yf_tick = '^IRX'")
+        ## Added Datetime min Filter to reduce time taken to query
+
+        data = query_database('securities_master','rates_timeseries' ,"SELECT * FROM rates_timeseries WHERE yf_tick = '^IRX' AND DATETIME >= '2010-01-01'")
         data['datetime'] = pd.to_datetime(data['datetime'])
         data.set_index('datetime',inplace = True)
         data.rename(columns = {'daily_rate':'daily', 'annualized_rate':'annualized', 'yf_tick': 'name'}, inplace = True)
@@ -108,13 +103,14 @@ rates_cache_thread.start()
 def is_rates_thread_still_running():
     return rates_cache_thread.is_alive()
 
+## Save the rates data to the db
 def run_routine_rates_save():
-
     h1_rates = fetch_rates_save_cache('1h', 'yf', return_data=True)
     
     if isinstance(h1_rates, Exception) or isinstance(h1_rates, TypeError):
         return 
 
+    
     h1_rates.reset_index(inplace = True)
     h1_rates.rename(columns = {'Datetime': 'datetime', 'daily': 'daily_rate',
                             'name':'yf_tick', 'annualized':'annualized_rate'}, inplace = True)
@@ -124,7 +120,9 @@ def run_routine_rates_save():
 
 
 
-## Handles all the rates query related functions, and conditions
+## Handles all the workflow. It doesn't fetch the rates data, it just checks if the rates cache is ready and updates it if necessary
+## Checks if the rates cache is ready, if not, it waits for the rates thread to finish
+## Updates the cache if the last date is not today
 def _fetch_rates():
 
     ## Check if the rates cache is ready
@@ -176,6 +174,7 @@ def deannualize(annual_rate, periods=365):
     return (1 + annual_rate) ** (1/periods) - 1
 
 
+## User facing function
 def get_risk_free_rate_helper(interval = '1d', use = 'db'):
     # download 3-month us treasury bills rates
     """

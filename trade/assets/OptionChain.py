@@ -29,6 +29,7 @@ from pprint import pprint
 import numpy as np
 import matplotlib.pyplot as plt
 from threading import Thread
+from trade.helpers.decorators import log_time, log_error
 import pandas as pd
 logger = setup_logger('OptionChain')
 
@@ -133,6 +134,7 @@ class OptionChain:
 
     def __init__(self, ticker, build_date, stock, dumas_width = 0.75, **kwargs) -> None:
         self.ticker = ticker.upper()
+        logger.info(f'Creating OptionChain for {self.ticker}, on {build_date}')
         self.build_date = build_date
         self.chain = None
         self.lab = None
@@ -150,6 +152,7 @@ class OptionChain:
     def __str__(self) -> str:
         return f"OptionChain({self.ticker}, {self.build_date})"
 
+    @log_error(logger)
     def __initiate_chain(self):
         query = f"""
         SELECT * FROM vol_surface.option_chain 
@@ -171,7 +174,7 @@ class OptionChain:
         self.save_thread.start()
         return chain_new
 
-        
+    @log_error(logger)
     def get_chain(self, return_values = False):
         if return_values:
             return self.chain
@@ -179,7 +182,8 @@ class OptionChain:
         else:
             return self.simple_chain
 
-
+    
+    @log_error(logger)
     def __option_chain_bool(self):
 
         # Set build date
@@ -199,7 +203,8 @@ class OptionChain:
         self.simple_chain = contracts_v2
         return contracts_v2
     
-
+   
+    @log_error(logger)
     def initiate_lab(self):
         force_build = self.kwargs.get('force_build', False)
         if self.chain is None:
@@ -207,7 +212,7 @@ class OptionChain:
         self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width, force_build = force_build)
 
     
-
+    @log_error(logger)
     def _save_chain(self):
         if self.chain is None:
             self.get_chain(True)

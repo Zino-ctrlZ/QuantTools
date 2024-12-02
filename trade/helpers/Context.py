@@ -3,9 +3,12 @@ import datetime
 from datetime import datetime
 import pandas as pd
 from contextlib import contextmanager
+from trade.helpers.helper import change_to_last_busday
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
-from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import Configuration, initialize_configuration
+
+## Change to Class ContextManager
 
 
 @contextmanager
@@ -35,6 +38,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
     print_context: Print the context settings. Default is False.
 
     """
+    initialize_configuration()
     
     try:
         if timeframe is not None:
@@ -64,14 +68,17 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
                     today, format='%Y-%m-%d %H:%M:%S')
 
         if end_date is not None:
-            end_date = pd.to_datetime(end_date)
-
+            ## TEMP (MAYBE): Enforcing np Non-business day for now
+            end_date = change_to_last_busday(pd.to_datetime(end_date)
+)
             ## If no time is passed and date is today set to current time if btwn 9:30 & 4pm
             if datetime.today().date() == end_date.date() and end_date.time() == pd.Timestamp('00:00').time():
                 end_date = datetime.now()
             
-            ## If no time is passed, set default to build_time and not today
+            ## If no time is passed and not today, set default to build_time 
             if end_date.time() == pd.Timestamp('00:00').time() and end_date.date() != datetime.today().date():
+                ##TEMP: For now, all passed dates will be set to EOD
+                build_time = '16:00'
                 end_date = end_date.replace(hour=pd.Timestamp(build_time).time().hour, minute=pd.Timestamp(build_time).time().minute, second=pd.Timestamp(build_time).time().second, microsecond=0)
 
             Configuration.end_date = datetime.strftime(
@@ -79,6 +86,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
         else:
 
             ## Setting the end date to EOD today if current time is later than 4pm
+            build_time = '16:00'
             if datetime.today().time() > pd.Timestamp(build_time).time():
                 today = datetime.today().replace(hour=pd.Timestamp(build_time).time().hour, minute=pd.Timestamp(build_time).time().minute, second=pd.Timestamp(build_time).time().second, microsecond=0)
             
@@ -112,3 +120,11 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
         Configuration.timeframe = None
         Configuration.start_date = None
         Configuration.end_date = None
+
+
+def clear_context():
+    Configuration.timewidth = None
+    Configuration.timeframe = None
+    Configuration.start_date = None
+    Configuration.end_date = None
+    return 'Context Cleared'

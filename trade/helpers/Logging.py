@@ -1,13 +1,27 @@
 import logging
 import sys
 import os
+from dotenv import load_dotenv
+load_dotenv()
+print("""
+Console Logging & File Logging Can be configured using STREAM_LOG_LEVEL and FILE_LOG_LEVEL in environment variables.
+Propagate to root logger can be set using PROPAGATE_TO_ROOT_LOGGER in environment variables.
+Example:
+STREAM_LOG_LEVEL = 'DEBUG'
+FILE_LOG_LEVEL = 'INFO'
+PROPAGATE_TO_ROOT_LOGGER = 'False'
+""")
 # FILENAME = 'Logging.ipynb'
 from logging.handlers import TimedRotatingFileHandler
 
 
 
-def setup_logger(filename,stream_log_level=logging.ERROR, file_log_level=logging.INFO, log_file=None, remove_root = True, custom_logger_name = None):
+def setup_logger(filename,stream_log_level, file_log_level, log_file=None, remove_root = True, custom_logger_name = None):
     # If custom logger name is None, use filename:
+    stream_log_level = getattr(logging, os.getenv('STREAM_LOG_LEVEL', 'ERROR'))
+    file_log_level = getattr(logging, os.getenv('FILE_LOG_LEVEL', 'INFO'))
+    propagate_to_root_logger = bool(os.getenv('PROPAGATE_TO_ROOT_LOGGER', 'False'))
+
     if custom_logger_name == None:
         custom_logger_name = filename
     # Remove all Root Handlers
@@ -61,6 +75,6 @@ def setup_logger(filename,stream_log_level=logging.ERROR, file_log_level=logging
         logger.addHandler(file_handler)
 
     # Ensure the logger does not propagate messages to avoid duplicate logs
-    logger.propagate = False
+    logger.propagate = propagate_to_root_logger
 
     return logger

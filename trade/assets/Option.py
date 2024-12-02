@@ -1,5 +1,9 @@
 # This file contains the Option class which is used to handle operations related to Option data querying, manipulation and data provision.
 
+## To-Do: Add more details to the docstrings
+## TO-DO: Apply Singleton pattern to OptionDataManager & Option
+## To-Do: Create a structure class for Option with basic structures as key to picking it automaticall
+
 from trade.helpers.helper import  change_to_last_busday
 from trade.helpers.Configuration import Configuration
 from trade.assets.Stock import Stock
@@ -15,12 +19,27 @@ from trade.assets.helpers.DataManagers import OptionDataManager
 
 
 class Option:
+    _instances = {}
+
+    def __new__(cls, ticker, strike, exp_date, put_call, *args, **kwargs):
+        today = datetime.today()
+        end_date = datetime.strftime(today, format='%Y-%m-%d')
+        _end_date = Configuration.end_date or end_date
+        
+        key = (ticker, strike, _end_date, exp_date, put_call)
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[key] = instance
+        return cls._instances[key]
+
+
+
     def __repr__(self):
-        return f'Option(Strike: {self.K}, Expiration: {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model})'
+        return f'Option(Strike: {self.K}, Expiration: {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model}, Build On: {self.end_date})'
 
 
     def __str__(self):
-        return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model})'
+        return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model}, Build On: {self.end_date})'
 
 
     def __init__(self, 
@@ -29,7 +48,8 @@ class Option:
     exp_date: str | datetime,
     put_call: str,
     model: str = 'bt',
-    default_fill = 'midpoint'):
+    default_fill = 'midpoint',
+    *args, **kwargs):
         """
         The Option Class handles operations related to Option data querying, manipulation and data provision. 
         Type: Class
@@ -40,27 +60,14 @@ class Option:
         put_call = either a put or call
         model = prefered pricing model. 'bt' = Binomial Tree, 'bsm' = Black Scholes Model, 'mcs' = Monte Carlo Simulation
         """
-        assert default_fill is not None, f"default_fill cannot be None"
-        assert isinstance(strike, float), f'Strike should be a float, recieved {type(strike)}'
+
+        ## Attr to be initalized every time
         today = datetime.today()
-        start_date_date = today - relativedelta(years = 4)
-        start_date = datetime.strftime(start_date_date, format='%Y-%m-%d')
-        end_date = datetime.strftime(today, format='%Y-%m-%d')
-        
-        asset_obj = Stock(ticker)
-        self.__asset = asset_obj
-        self.__ticker = ticker.upper()
-        self.timewidth = Configuration.timewidth or '1'
-        self.timeframe = Configuration.timeframe or 'day'
-        self.__start_date = Configuration.start_date or start_date
+        ## Chaning to last business day, so far, there's no need to create Stock for. 
+        ## Temp: Changing to last business day ensures that the data is available, +  avoids the missing error
+        ## Note: Monitor if this is the best approach
+        end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
-        self.__security = yf.Ticker(ticker.upper())
-        self.__S0 = self.__set__S0() # This should be current market spot for the underlier, should always be realtime.
-        self.__OptTick = generate_option_tick(ticker, put_call, exp_date, strike)
-        self.__prev_close = None # This should be previous DAY close of the OPTION
-        self.__y = self.asset.y
-        self.rf_rate = self.asset.rf_rate
-        self.rf_ts = self.asset.rf_ts
         self.__default_fill = default_fill
         self.__dataManager = OptionDataManager(ticker, exp_date, put_call, strike, self.default_fill)
 
@@ -68,26 +75,50 @@ class Option:
             self.model = model
         else:
             raise ValueError(f"Available models are 'bsm', 'bt', 'mcs'. Recieved {model} ")
-
-    
-        self.K = strike
-        if isinstance(exp_date, str):
-            self.exp = exp_date
-        elif isinstance(exp_date, (datetime, date)):
-            self.exp = exp_date.strftime("%Y-%m-%d")
-        else:
-            raise Exception("Invalid type for exp_date. Valid types are 'str' and 'datetime'")
-
-        if put_call.lower() in ['p', 'c']:
-            p_c = put_call[0].upper()
-            self.put_call = p_c.lower()
-        else:
-            raise Exception(f"Invalid option type. Please choose either 'p' or 'c'. Recieved {put_call}")
         
-        self.__sigma = None
-        Thread(target = self.__set_pv).start()
-        self.__pv = None
-        Thread(target = self.__set_pv).start()
+
+        if not hasattr(self, '_initalized'):
+            assert default_fill is not None, f"default_fill cannot be None"
+            assert isinstance(strike, float), f'Strike should be a float, recieved {type(strike)}'
+            today = datetime.today()
+            start_date_date = today - relativedelta(years = 4)
+            start_date = datetime.strftime(start_date_date, format='%Y-%m-%d')
+            end_date = datetime.strftime(today, format='%Y-%m-%d')
+            self._initalized = False
+            asset_obj = Stock(ticker)
+            self.__asset = asset_obj
+            self.__ticker = ticker.upper()
+            self.timewidth = Configuration.timewidth or '1'
+            self.timeframe = Configuration.timeframe or 'day'
+            self.__start_date = Configuration.start_date or start_date
+            self.__security = yf.Ticker(ticker.upper())
+            self.__S0 = self.__set__S0() # This should be current market spot for the underlier, should always be realtime.
+            self.__OptTick = generate_option_tick(ticker, put_call, exp_date, strike)
+            self.__prev_close = None # This should be previous DAY close of the OPTION
+            self.__y = self.asset.y
+            self.rf_rate = self.asset.rf_rate
+            self.rf_ts = self.asset.rf_ts
+            self.K = strike
+
+            if isinstance(exp_date, str):
+                self.exp = exp_date
+            elif isinstance(exp_date, (datetime, date)):
+                self.exp = exp_date.strftime("%Y-%m-%d")
+            else:
+                raise Exception("Invalid type for exp_date. Valid types are 'str' and 'datetime'")
+
+
+            if put_call.lower() in ['p', 'c']:
+                p_c = put_call[0].upper()
+                self.put_call = p_c.lower()
+            else:
+                raise Exception(f"Invalid option type. Please choose either 'p' or 'c'. Recieved {put_call}")
+
+
+            self.__sigma = None
+            Thread(target = self.__set_pv).start()
+            self.__pv = None
+            Thread(target = self.__set_pv).start()
 
     @property
     def asset(self):
@@ -165,6 +196,22 @@ class Option:
         self.__set_pv()
         return self.__pv
 
+
+    
+    @classmethod
+    def clear_instances(cls, pop_all = True):
+        if pop_all:
+            cls._instances = {}
+        else:
+            if cls._instances:
+                return cls._instances.popitem()
+            
+            return None
+    
+    @classmethod
+    def list_instances(cls):
+        return cls._instances
+
     
     def __set_pv(self):
         self.__pv= self.spot()[f'{self.default_fill.capitalize()}'].values[0]
@@ -192,7 +239,7 @@ class Option:
         
         RETURNS
         _________
-        pd.DataFrame or dict
+        pd.DataFrame
         """
 
         if ts_timeframe is None:

@@ -1,3 +1,5 @@
+
+from threading import Thread
 from datetime import datetime
 import datetime as dt
 from trade.assets.Stock import Stock
@@ -11,12 +13,81 @@ from dateutil.relativedelta import relativedelta
 import numpy as np
 from trade.helpers.Logging import setup_logger
 import logging
+from typing import Callable
 
 logger = setup_logger('Calculate.py', stream_log_level=logging.CRITICAL)
 
 
 ## To-Do, recalculate the pv with the new vol values
-## To do, add replace option. Either to fill close with midpoint, use only close or use only midpoint
+## Todo, add replace option. Either to fill close with midpoint, use only close or use only midpoint
+## To-Do: Add volga, vanna, dividend attribution to GB
+## To-Do: Streamline GB attribution columns with RV
+## To-Do: Find a way to return data fill for GB
+## To-Do: Speed up RV PnL calc with Processing
+## To-Do: Add logs for attribution returning zero values
+
+
+
+def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_all = False, *args, **kwargs):
+    """
+    
+    """
+    from trade.assets.Option import Option
+    alllowable_func = ['pct_spot_slides', 'attribution', 'pct_vol_slides' ]
+    assert hasattr(Calculate, func.__name__), f"Function {func.__name__} not a member of {Calculate}"
+    assert func.__name__ in alllowable_func, f"Function {func.__name__} not allowed for this operation"
+    structure_dict = {'long': [], 'short': []}
+
+    def get_func_values(leg, leg_name, *args, **kwargs):
+        values = []
+        
+        for l in leg: 
+            assert isinstance(l, Option), "Leg must be an Option object"
+            if leg_name == 'long':
+                values.append(func(l, *args, **kwargs))
+            else:
+                values.append(-func(l, *args, **kwargs))
+        
+        structure_dict[leg_name] = values
+    
+    long_leg_thread = Thread(target=get_func_values, args=(long_leg, 'long', *args), kwargs=kwargs, name = f'{func.__name__}_long')
+    short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func.__name__}_long')
+    long_leg_thread.start()
+    short_leg_thread.start()
+    long_leg_thread.join()
+    short_leg_thread.join()
+
+    ## Quick fix for pct_spot_slides, Need underlier_spot_slides column to NOT be summed
+    
+    if func.__name__ == 'pct_spot_slides':
+        try:
+            columns_to_sum = [x for x in structure_dict['long'][0].columns if x != 'underlier_spot_slides']
+            key = 'long'
+        except:
+            columns_to_sum = [x for x in structure_dict['short'][0].columns if x != 'underlier_spot_slides']
+            key = 'short'
+
+        if key == 'long':
+            underlier_series = structure_dict[key][0]['underlier_spot_slides'] 
+        else:
+            underlier_series = -structure_dict[key][0]['underlier_spot_slides']
+        structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
+        structure_dict['total']['underlier_spot_slides'] = underlier_series
+
+    else:
+        structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
+
+
+
+    if return_all:
+        return structure_dict
+    else:
+        return structure_dict['total']
+
+
+
+
+
 class Calculate:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
@@ -29,7 +100,6 @@ class Calculate:
         Static Class for handling calculations in Stock & Option Classes
         """
         
-        from trade.assets.Option import Option
         today = datetime.today()
         start_date_date = today - relativedelta(months=6)
         start_date = datetime.strftime(start_date_date, format='%Y-%m-%d')
@@ -97,7 +167,7 @@ class Calculate:
             else:
                 return optionPV_helper(S0, K, exp_date, r, y, sigma, put_call, start)
         else:
-            if isinstance(asset, Stock):
+            if asset.__class__.__name__ == 'Stock':
                 raise Exception("Stock can't be priced with options model. This method isn't utilized for a Stock Instance")
             #elif isinstance(self.asset, Option):
                 ###pass variables from here to the variables to be used
@@ -137,6 +207,7 @@ class Calculate:
                 For asset_type == 'stock' kwargs is S0
         """
         from trade.assets.Option import Option
+        from trade.assets.OptionStructure import OptionStructure
         if asset is None:
             assert asset_type is not None, f'asset_type needed'
             assert asset_type.lower() in ['stock', 'option'], f'Invalid asset_type, expected "stock" or "option", recieved "{asset_type}"'
@@ -160,18 +231,19 @@ class Calculate:
                     modelType = 'option'
                     return Calculate.scenario_helper('spot', pct_spot, K = k,
                                 S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
-                                r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc)
+                                r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc).set_index('shocks')
                 else:
                     raise TypeError('Expected kwargs for Calculate.PV. None was recieved.')
 
         
-        elif isinstance(asset, Stock):
+        elif asset.__class__.__name__ == 'Stock':
             s0 = list(asset.spot().values())[-1]
-            slides = Calculate.scenario_helper('spot', pct_spot,S0 =  s0, modelType = 'stock')
+            slides = Calculate.scenario_helper('spot', pct_spot,S0 =  s0, modelType = 'stock').set_index('shocks')
             modelType = 'stock'
             return slides
         
-        elif isinstance(asset, Option):
+        elif asset.__class__.__name__ == 'Option':
+
             k = asset.K
             exp_date = asset.exp
             sigma = asset.sigma
@@ -183,7 +255,17 @@ class Calculate:
             modelType = 'option'
             return Calculate.scenario_helper('spot', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
-                            r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc)
+                            r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc).set_index('shocks')
+        
+        elif asset.__class__.__name__ == 'OptionStructure':
+            from trade.assets.Option import Option
+            return_all = kwargs.get('return_all', False)
+            return PatchedCalculateFunc(Calculate.pct_spot_slides, 
+                                        long_leg = asset.long, 
+                                        short_leg = asset.short, 
+                                        return_all = return_all, 
+                                        pct_spot = pct_spot, 
+                                        greeks_to_calc = greeks_to_calc)
             
             
     @staticmethod
@@ -200,6 +282,10 @@ class Calculate:
         **kwargs = Keyword arguments as seen in Calculate.PV()
                 For asset_type == 'stock' kwargs is S0
         """
+        from trade.assets.Option import Option
+        from trade.assets.OptionStructure import OptionStructure
+
+
         if asset is None:
             assert asset_type is not None, f'asset_type needed'
             assert asset_type.lower() in ['stock', 'option'], f'Invalid asset_type, expected "stock" or "option", recieved "{asset_type}"'
@@ -218,7 +304,7 @@ class Calculate:
                     modelType = 'option'
                     return Calculate.scenario_helper('vol', pct_spot, K = k,
                                 S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
-                                r = r, start = start, modelType = modelType, greeks_to_calc= greeks_to_calc)
+                                r = r, start = start, modelType = modelType, greeks_to_calc= greeks_to_calc).set_index('shocks')
                 else:
                     raise TypeError('Expected kwargs for Calculate.PV. None was recieved.')
                     
@@ -236,7 +322,16 @@ class Calculate:
             modelType = 'option'
             return Calculate.scenario_helper('vol', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
-                            r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc)
+                            r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc).set_index('shocks')
+
+        elif isinstance(asset, OptionStructure):
+            return_all = kwargs.get('return_all', False)
+            return PatchedCalculateFunc(Calculate.pct_vol_slides, 
+                                        long_leg = asset.long, 
+                                        short_leg = asset.short, 
+                                        return_all = return_all, 
+                                        pct_spot = pct_spot, 
+                                        greeks_to_calc = greeks_to_calc)
             
                                 
             
@@ -266,8 +361,9 @@ class Calculate:
             scen = pd.DataFrame(index = [x for x in range(len(pct_spot))], data = {'shocks':pct_spot})
             
             if modelType =='option':
+                scen['underlier_spot_slides'] = scen.apply(lambda x:(x['shocks'] - 1)*s0, axis = 1)
                 scen['shocked_pv'] = scen.apply(lambda x:Calculate.pv(K = k, exp_date = exp_date, sigma = sigma, S0 = x['shocks']*s0,
-                put_call = put_call, r =r, y = y, start = start),axis = 1)
+                                                                        put_call = put_call, r =r, y = y, start = start),axis = 1)
                 scen['pv'] = scen.apply(lambda x:Calculate.pv(K = k, exp_date = exp_date, sigma = sigma, S0 = s0,
                 put_call = put_call, r =r, y = y, start = start),axis = 1)
                 scen['pnl'] = scen['shocked_pv'] - scen['pv']
@@ -291,7 +387,7 @@ class Calculate:
             
             if modelType =='option':
                 scen['shocked_pv'] = scen.apply(lambda x:Calculate.pv(K = k, exp_date = exp_date, sigma = sigma + x['shocks'], S0 = s0,
-                put_call = put_call, r =r, y = y, start = start),axis = 1)
+                                                                    put_call = put_call, r =r, y = y, start = start),axis = 1)
                 scen['pv'] = scen.apply(lambda x:Calculate.pv(K = k, exp_date = exp_date, sigma = sigma, S0 = s0,
                 put_call = put_call, r =r, y = y, start = start),axis = 1)
                 scen['pnl'] = scen['shocked_pv'] - scen['pv']
@@ -560,7 +656,9 @@ class Calculate:
                     ts_timeframe = 'day',
                     ts_timewidth = '1',
                      method = "GB",
-                     replace = 'partial'):
+                     replace = 'partial',
+                     return_both = False,
+                     **kwargs):
         
         ## To do, add replace option. Either to fill close with midpoint, use only close or use only midpoint
         """
@@ -573,16 +671,20 @@ class Calculate:
         ts_timewidth (int): Examples 1,2,3,4. The span over the timeframe
         ts_timeframe (str): The timeframe for aggregation, eg: Minute, Hour, Day, Month, Week, Year
         method (str): Available methods are 'GB' for Greek Based and 'RV' for Revaluation
-        replace (str): Available options are 'partial', 'close', 'default_fill'. Partial replaces only the missing data, Close uses close data to fill, default_fill uses the default fill to fill missing data
+        replace (str): Available options are 'partial', 'close', 'default_fill'. Partial replaces only the missing data, Close uses close data to fill, default_fill uses the default fill for all data
         
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        from trade.assets.OptionStructure import OptionStructure
 
-            #GET OPTION TIMESERIES
-            today = datetime.today()
-            start = ts_start if ts_start is not None else today - relativedelta(months=6)
-            end = ts_end if ts_end is not None else today
+        #GET OPTION TIMESERIES
+        today = datetime.today()
+        start = ts_start if ts_start is not None else today - relativedelta(months=6)
+        end = ts_end if ts_end is not None else today
+        if asset.__class__.__name__ == 'Option':
+
+
+
 
             ## Designate the columns to be used
             vol_col = ['Bs_iv' if asset.model == 'bsm' else 'Binomial_iv']
@@ -697,6 +799,8 @@ class Calculate:
                 PnL_Data['Unexplained'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total']
                 PnL_Data['DATA_FILL'] = full_data['DATA_FILL']
                 PnL_Data.set_index('Datetime', inplace = True)
+                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark', ]]
+                PnL_Data.rename(columns= {'Option_Close_Change_Mark': 'Actual_PnL'}, inplace = True)
 
             elif method == "RV":
                 # full_data.reset_index(inplace = True)
@@ -717,10 +821,24 @@ class Calculate:
                                                                      'y' : asset.y, 'price' : x['Option_Close']})
                     , axis = 1, result_type = 'expand')
                 PnL_Data.set_index('Datetime', inplace = True)
+        
+        elif asset.__class__.__name__ == 'OptionStructure':
+            return_all = kwargs.get('return_all', False)
+            return PatchedCalculateFunc(Calculate.attribution,long_leg = asset.long, short_leg = asset.short, 
+                                        return_all = return_all, ts_start = ts_start, 
+                                        ts_end = ts_end, ts_timeframe = ts_timeframe, 
+                                        ts_timewidth = ts_timewidth, method = method, 
+                                        replace = replace, return_both = return_both)
+
+
+
         else:
             raise Exception(f"Asset type {type(asset)} not supported")
         
-        return full_data, PnL_Data
+        if return_both:
+            return full_data, PnL_Data
+        else:
+            return PnL_Data
 
 def fullRevalPnL(
         start_dict,
@@ -775,7 +893,7 @@ def fullRevalPnL(
 
     ## Vega PnL
     ## Similar to the Delta PnL, Vega PnL starts by applying a very minute bump to vols, then we calculate the new option price
-    ## Experimenting with Vanna
+    
     bump = 0.0000001
     sigma_bump = sigma0 + bump
     sigma0_pv_bump = Calculate.pv(S0 = S0_bump, K = K, r = r0, sigma = sigma_bump, start = start, put_call = put_call, exp_date = exp, y = y0)
@@ -821,4 +939,15 @@ def fullRevalPnL(
     # print(f'Actual PnL: {pv1-pv0}')
     # print(f'Unexplained PnL: {(pv1-pv0) - total_pnl}')
 
-    return {'Delta_PnL': delta_pnl*100, 'Gamma_PnL': gamma_pnl* 100, 'Vega_PnL': vega_pnl*100, 'Volga_PnL': volga_pnl*100, 'Theta_PnL': theta_pnl*100, 'Rho_PnL': rho_pnl*100, 'Vanna_PnL': vanna_pnl*100, 'Dividend_PnL': div_pnl*100, 'Total_PnL': total_pnl*100, 'Unexplained_PnL': ((pv1-pv0)*100) - total_pnl*100, 'Actual_PnL': ((pv0-pv1)*100), 'Datetime': end}
+    return {'Delta_PnL': delta_pnl*100, 
+            'Gamma_PnL': gamma_pnl* 100, 
+            'Vega_PnL': vega_pnl*100, 
+            'Volga_PnL': volga_pnl*100, 
+            'Theta_PnL': theta_pnl*100,
+            'Rho_PnL': rho_pnl*100, 
+            'Vanna_PnL': vanna_pnl*100, 
+            'Dividend_PnL': div_pnl*100, 
+            'Total_PnL': total_pnl*100, 
+            'Unexplained_PnL': ((pv1-pv0)*100) - total_pnl*100, 
+            'Actual_PnL': ((pv1-pv0)*100), 
+            'Datetime': end}
