@@ -9,7 +9,9 @@ sys.path.append(
     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
 from typing import Union
-from trade.helpers.Configuration import Configuration
+# from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import ConfigProxy
+Configuration = ConfigProxy()
 import re
 from datetime import datetime
 import QuantLib as ql
@@ -408,10 +410,10 @@ def optionPV_helper(
             black_scholes_price = european_option.NPV()
             return black_scholes_price
     except Exception as e:
-        logger.warning('')
-        logger.warning('"optionPV_helper" raised the below error')
-        logger.warning(e)
-        logger.warning(f'Kwargs: {locals()}')
+        logger.info('')
+        logger.info('"optionPV_helper" raised the below error')
+        logger.info(e)
+        logger.info(f'Kwargs: {locals()}')
         return 0.0
 
 

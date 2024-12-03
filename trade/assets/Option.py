@@ -5,7 +5,9 @@
 ## To-Do: Create a structure class for Option with basic structures as key to picking it automaticall
 
 from trade.helpers.helper import  change_to_last_busday
-from trade.helpers.Configuration import Configuration
+# from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import ConfigProxy
+Configuration = ConfigProxy()
 from trade.assets.Stock import Stock
 from trade.helpers.helper import generate_option_tick, identify_interval
 from threading import Thread

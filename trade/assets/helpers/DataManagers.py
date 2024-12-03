@@ -128,8 +128,9 @@ class OptionDataManager:
                 # print('In concat process')
                 unProcessedData = pd.concat([data,unProcessedData ])
             else:
-                unProcessedData = data
                 OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query. It is not a dataframe, type: {type(unProcessedData)}")
+                unProcessedData = data
+                
 
         else:
             unProcessedData = data

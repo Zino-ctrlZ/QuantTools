@@ -16,11 +16,11 @@ from logging.handlers import TimedRotatingFileHandler
 
 
 
-def setup_logger(filename,stream_log_level, file_log_level, log_file=None, remove_root = True, custom_logger_name = None):
+def setup_logger(filename,stream_log_level = None, file_log_level = None, log_file=None, remove_root = True, custom_logger_name = None):
     # If custom logger name is None, use filename:
     stream_log_level = getattr(logging, os.getenv('STREAM_LOG_LEVEL', 'ERROR'))
     file_log_level = getattr(logging, os.getenv('FILE_LOG_LEVEL', 'INFO'))
-    propagate_to_root_logger = bool(os.getenv('PROPAGATE_TO_ROOT_LOGGER', 'False'))
+    propagate_to_root_logger = (os.getenv('PROPAGATE_TO_ROOT_LOGGER', 'False')).strip().lower() == 'true'
 
     if custom_logger_name == None:
         custom_logger_name = filename

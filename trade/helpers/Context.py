@@ -6,7 +6,9 @@ from contextlib import contextmanager
 from trade.helpers.helper import change_to_last_busday
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
-from trade.helpers.Configuration import Configuration, initialize_configuration
+# from trade.helpers.Configuration import Configuration, initialize_configuration
+from trade.helpers.Configuration import ConfigProxy, initialize_configuration
+Configuration = ConfigProxy()
 
 ## Change to Class ContextManager
 

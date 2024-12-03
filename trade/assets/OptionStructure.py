@@ -5,7 +5,9 @@ from trade.assets.Option import Option
 import pandas as pd
 from datetime import datetime
 import numpy as np
-from trade.helpers.Configuration import Configuration
+# from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import ConfigProxy
+Configuration = ConfigProxy()
 from trade.helpers.Context import Context
 from trade.assets.Option import Option
 from dateutil.relativedelta import relativedelta

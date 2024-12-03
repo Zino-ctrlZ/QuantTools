@@ -18,7 +18,9 @@ from dbase.DataAPI.ThetaData import (retrieve_quote_rt,
                                      retrieve_quote, 
                                      list_contracts)
 
-from trade.helpers.Configuration import Configuration
+# from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import ConfigProxy
+Configuration = ConfigProxy()
 from trade.helpers.Context import Context
 import re
 from dateutil.relativedelta import relativedelta

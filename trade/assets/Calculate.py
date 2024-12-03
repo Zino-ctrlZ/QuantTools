@@ -4,6 +4,7 @@ from datetime import datetime
 import datetime as dt
 from trade.assets.Stock import Stock
 from trade.helpers.helper import time_distance_helper, vanna, volga, identify_interval, optionPV_helper
+from trade.helpers.Context import Context
 from trade.assets.rates import get_risk_free_rate_helper
 from typing import Union
 import pandas as pd
@@ -40,15 +41,15 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
 
     def get_func_values(leg, leg_name, *args, **kwargs):
         values = []
-        
-        for l in leg: 
-            assert isinstance(l, Option), "Leg must be an Option object"
-            if leg_name == 'long':
-                values.append(func(l, *args, **kwargs))
-            else:
-                values.append(-func(l, *args, **kwargs))
-        
-        structure_dict[leg_name] = values
+        with Context():
+            for l in leg: 
+                assert isinstance(l, Option), "Leg must be an Option object"
+                if leg_name == 'long':
+                    values.append(func(l, *args, **kwargs))
+                else:
+                    values.append(-func(l, *args, **kwargs))
+            
+            structure_dict[leg_name] = values
     
     long_leg_thread = Thread(target=get_func_values, args=(long_leg, 'long', *args), kwargs=kwargs, name = f'{func.__name__}_long')
     short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func.__name__}_long')
@@ -640,10 +641,10 @@ class Calculate:
                 }
                 return greeks
             except Exception as e:
-                logger.error('')
-                logger.error('Calculate.greeks raised this error')
-                logger.error(e,exc_info=True)
-                logger.error(f'Kwargs:{kwargs}')
+                logger.info('')
+                logger.info('Calculate.greeks raised this error')
+                logger.info(e,exc_info=True)
+                logger.info(f'Kwargs:{kwargs}')
                 return {'Delta': 0, 'Gamma': 0, 'Vega': 0, 'Theta': 0, 'Rho': 0, 'Vanna': 0, 'Volga':0}
         else:
             raise Exception(

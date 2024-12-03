@@ -195,3 +195,13 @@ def get_risk_free_rate_helper(interval = '1d', use = 'db'):
     return resample(data, interval, {'daily':'last', 'annualized': 'last', 'name': 'last', 'description': 'last'})
 
 
+def save_previous_rates_date():
+    import yfinance as yf
+    rtes = yf.download('^IRX', progress=False)
+    rtes['annualized'] = rtes['Adj Close']/100
+    rtes['daily'] = (1 + rtes['annualized']) ** (1/365) - 1
+    rtes['yf_tick'] = '^IRX'
+    rtes['description'] = '13 week treasury bill'
+    rtes = rtes[rtes.index< get_risk_free_rate_helper().index.min()][['yf_tick', 'description', 'annualized', 'daily']].reset_index()
+    rtes.rename(columns = {'annualized': 'annualized_rate', 'daily': 'daily_rate', 'Date': 'datetime'}, inplace = True)
+    store_SQL_data_Insert_Ignore('securities_master', 'rates_timeseries', rtes)
