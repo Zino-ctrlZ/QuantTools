@@ -658,7 +658,7 @@ class Calculate:
                     ts_timewidth = '1',
                      method = "GB",
                      replace = 'partial',
-                     return_both = False,
+                     return_both_data = False,
                      **kwargs):
         
         ## To do, add replace option. Either to fill close with midpoint, use only close or use only midpoint
@@ -673,6 +673,8 @@ class Calculate:
         ts_timeframe (str): The timeframe for aggregation, eg: Minute, Hour, Day, Month, Week, Year
         method (str): Available methods are 'GB' for Greek Based and 'RV' for Revaluation
         replace (str): Available options are 'partial', 'close', 'default_fill'. Partial replaces only the missing data, Close uses close data to fill, default_fill uses the default fill for all data
+        return_both_data (bool): If True. Will return both the PnL Data and Full Data
+        return_all: specific to OptionStructure. If True, will return all the data for the long and short leg
         
         """
         from trade.assets.Option import Option
@@ -798,9 +800,10 @@ class Calculate:
                 PnL_Data['Option_Close_Change_Mark'] = full_data['Option_Close_Change_Mark']*100
                 PnL_Data['Vol_Change_Diff'] = full_data['Vol_Change_Mark']   
                 PnL_Data['Unexplained'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total']
+                PnL_Data['Price'] = full_data['Option_Close']*100
                 PnL_Data['DATA_FILL'] = full_data['DATA_FILL']
                 PnL_Data.set_index('Datetime', inplace = True)
-                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark', ]]
+                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark','Price' ]]
                 PnL_Data.rename(columns= {'Option_Close_Change_Mark': 'Actual_PnL'}, inplace = True)
 
             elif method == "RV":
@@ -829,14 +832,14 @@ class Calculate:
                                         return_all = return_all, ts_start = ts_start, 
                                         ts_end = ts_end, ts_timeframe = ts_timeframe, 
                                         ts_timewidth = ts_timewidth, method = method, 
-                                        replace = replace, return_both = return_both)
+                                        replace = replace, return_both_data = return_both_data)
 
 
 
         else:
             raise Exception(f"Asset type {type(asset)} not supported")
         
-        if return_both:
+        if return_both_data:
             return full_data, PnL_Data
         else:
             return PnL_Data
@@ -951,4 +954,5 @@ def fullRevalPnL(
             'Total_PnL': total_pnl*100, 
             'Unexplained_PnL': ((pv1-pv0)*100) - total_pnl*100, 
             'Actual_PnL': ((pv1-pv0)*100), 
-            'Datetime': end}
+            'Datetime': end,
+            'Price': pv0*100}

@@ -120,6 +120,9 @@ class HistoricDataFrameDataHandler(DataHandler):
             try: 
                 bar_generator = self._get_new_bar(s)
                 #Get next bar from the generator
+
+                ## Question: This is solely curiousity, but why is the next function called on the generator object?
+                ## Like why not just return a row. It doesnt seem like there's another next call and generator looks to always return one row at a time? I may be wrong
                 bar = next(bar_generator)
             except StopIteration:
                 print(f"No more data available for symbol: {s}")

@@ -360,7 +360,8 @@ class Stock:
         ts_end = None, 
         ts_timewidth = None, 
         ts_timeframe = None, 
-        model_override = None):
+        model_override = None,
+        spot_type ='close'):
         """
         The spot method returns a dictionary holding the latest available close price for the ticker. It begins with the given or default end and start dates
 
@@ -372,12 +373,16 @@ class Stock:
         ts_end (str|datetime): End Date
         ts_timewidth (str|int): Steps in timeframe
         ts_timeframe (str): Target timeframe for series 
-        
+        spot_type (str): Type of spot to return. Default is 'close'. Others are 'chain_price', 'unadjusted_close'
 
         RETURNS
         _________
         pd.DataFrame or dict
         """
+
+        if spot_type not in ['close', 'chain_price', 'unadjusted_close']:
+            raise ValueError("spot_type must be either 'close', 'chain_price', 'unadjusted_close'")
+        
         if ts_timeframe is None:
             ts_timeframe = 'day'
         
@@ -398,7 +403,13 @@ class Stock:
         
         interval = identify_interval(ts_timewidth, ts_timeframe, provider)
         ts_start, ts_end = pd.to_datetime(ts_start).strftime('%Y-%m-%d'), pd.to_datetime(ts_end).strftime('%Y-%m-%d')
-        df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
+        
+        if spot_type == 'chain_price':
+                df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
+                                         start = '1960-01-01', interval= '1d', provider = provider)
+        else:
+            # print(ts_start, ts_end, interval, provider)
+            df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
 
         if ts:
             df.index = pd.to_datetime(df.index)
@@ -408,9 +419,10 @@ class Stock:
 
                 spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
             else:
-                end  = change_to_last_busday(self.end_date)
+                end  = change_to_last_busday(ts_end)
                 df.index = pd.to_datetime(df.index)
-                spot = {end: df[df.index.date == end.date()].close.values[-1]}
+                df = df[df.index.date == pd.to_datetime(end).date()]
+                spot = {end: df[spot_type].values[-1]}
             return spot
     
     def option_chain(self, date = None):

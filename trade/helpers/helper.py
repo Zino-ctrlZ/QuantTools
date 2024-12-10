@@ -41,7 +41,13 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 
+def filter_inf(data):
+    data = data.replace([np.inf, -np.inf], np.nan)
+    return data.ffill()
 
+def filter_zeros(data):
+    data = data.replace(0, np.nan)
+    return data.ffill()
 
 def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance', **kwargs):
     """
@@ -57,6 +63,8 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     data['split_factor'] = data.max_cum_split / data.cum_split
     data['chain_price'] = data.close * data.split_factor
     data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+    ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
+    ## In the function, add a logger to log the anomalies
     return data
 
 def identify_interval(timewidth, timeframe, provider = 'default'):

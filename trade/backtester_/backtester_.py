@@ -37,6 +37,11 @@ class PTDataset:
         self.name = name
         self.data = data
     
+    def __repr__(self):
+        return f"PTDataset({self.name})"
+    
+    def __str__(self):
+        return f"PTDataset({self.name})"
     
     @property
     def param_settings(self):
@@ -51,12 +56,29 @@ class PTDataset:
 
 
 class PTBacktester(AggregatorParent):
+    """ Responsible for running backtests on multiple datasets. It is a wrapper class for the backtesting.py library.
+        It is done iteratively for each dataset in the list. It also allows for optimization of parameters for each dataset.
+    """
+
     def __init__(self, 
                 datalist: list , 
                 strategy,
                 cash,
                 strategy_settings: dict = None, 
                 **kwargs) -> None:
+        """
+        Initializes the PTBacktester class with the following parameters:
+        datalist (list): List of PTDataset objects containing the ticker name and timeseries data
+        strategy (class): Strategy class to be used for backtesting
+        cash (Union[int, float, dict]): Initial cash to be used for backtesting. If dict, must contain all tickers in the datalist
+        strategy_settings (dict): Dictionary containing the tick as key and settings as value. Eg: {AAPL: {"entry_ma":10}}
+        **kwargs: Additional keyword arguments to be passed to the backtesting.py library
+
+        Returns:
+        None
+            
+        """
+        
         self.datasets = []
         self.strategy = strategy
         self.__port_stats = None

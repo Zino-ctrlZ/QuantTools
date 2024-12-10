@@ -34,7 +34,7 @@ import pandas as pd
 logger = setup_logger('OptionChain')
 
 
-
+## To-Do: LQD is not being retrieved. Throwing error on 2024-12-06
 
 
 shutdown_event = False
@@ -80,7 +80,7 @@ def produce_chain_values(chain, date, ticker, stock):
     # with Context(end_date = date):
     # stk = Stock(ticker)
     stk = stock
-    spot = list(stk.spot().values())[0]
+    spot = list(stk.spot(spot_type = 'chain_price').values())[0]
     q = stk.div_yield()
     rf_rate = stk.rf_rate
     chain['Spot'] = spot

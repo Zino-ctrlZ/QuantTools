@@ -32,6 +32,7 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 from trade.models.ModelLibrary import ModelLibrary
 from dbase.database.SQLHelpers import DatabaseAdapter
+from trade.helpers.decorators import log_error
 import copy
 from copy import deepcopy
 import plotly.graph_objects as go
@@ -43,7 +44,7 @@ import math
 warnings.filterwarnings('ignore')
 
 
-logger = setup_logger('VolSurface.py')
+logger = setup_logger('trade.models.VolSurface')
 shutdown_event = False
 
 
@@ -214,24 +215,28 @@ class DumasRollingModel:
         assert right in ['C', 'P'], f'Period must be one of {terms.keys()}'
         assert window <= terms[period][2], f'Period ({period}) Window must be less than {terms[period][2]}'
 
-
-        # # Chain filtering
-        chain['IV_filtered'] = chain['vol']
-        lower_quantile = chain['vol'].quantile(0.01)
-        upper_quantile = chain['vol'].quantile(0.99)
-        chain = chain[(chain['vol'] > lower_quantile) & (chain['vol'] < upper_quantile)]
-        self.spot = chain['Spot'].values[0]
-        self.period = period
-        self.min_window = terms[period][0]
-        self.max_window = terms[period][1]
-        self.chain = chain_terms[period]
-        self.window = terms[period][2]
-        self.date = date
-        self.right = right
-        self.dumas_width = dumas_width
-        self.models = []
-        self.window_ranges = []
-        self.__initiate_dumas_params()
+        try:
+            # # Chain filtering
+            chain['IV_filtered'] = chain['vol']
+            lower_quantile = chain['vol'].quantile(0.01)
+            upper_quantile = chain['vol'].quantile(0.99)
+            chain = chain[(chain['vol'] > lower_quantile) & (chain['vol'] < upper_quantile)]
+            self.period = period
+            self.min_window = terms[period][0]
+            self.max_window = terms[period][1]
+            self.chain = chain_terms[period]
+            self.window = terms[period][2]
+            self.date = date
+            self.right = right
+            self.dumas_width = dumas_width
+            self.models = []
+            self.window_ranges = []
+            self.spot = chain['Spot'].values[0]
+            self.__initiate_dumas_params()
+        except Exception as e:
+            logger.error(f'Error in DumasRollingModel: {e}', exc_info = True)
+            logger.error(f'Key Variables: {locals()}')
+            raise e
 
 
     def __str__(self):

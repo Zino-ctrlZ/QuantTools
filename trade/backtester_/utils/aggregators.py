@@ -1,8 +1,11 @@
+## To-Do: This was written with Long in mind. Need to add Short functionality
+## To-do: Add Thorp Expectancy (from building a winning system book)
+
 import sys
 import os
 sys.path.append(
     os.environ.get('WORK_DIR'))
-from trade.helpers.helper import copy_doc_from
+from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
 import plotly.io as pio
@@ -57,6 +60,11 @@ def pf_value_ts(port_stats: dict, cash: Union[dict, int, float]) -> pd.DataFrame
     port_equity_data['Total'] = port_equity_data.sum(axis=1)
     port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
     return port_equity_data
+
+
+def short_returns(t0, t1):
+    return 1 - (t1/t0)
+
 
 
 def dates_(port_stats: dict, start: bool = True) -> pd.Timestamp:
@@ -117,7 +125,7 @@ def final_value_func(equity_timeseries: pd.DataFrame) -> float:
     return final_val
 
 
-def rtrn(equity_timeseries: pd.DataFrame) -> float:
+def rtrn(equity_timeseries: pd.DataFrame, use_col = 'Total', long = True) -> float:
     """
     Parameters:
 
@@ -127,7 +135,7 @@ def rtrn(equity_timeseries: pd.DataFrame) -> float:
     float: Returns returns of portfolio from initial date to final date
     """
     ts = equity_timeseries
-    rtrn = (ts['Total'][-1]/ts['Total'][0])-1
+    rtrn = (ts[use_col][-1]/ts[use_col][0])-1 if long else 1 - (ts[use_col][-1]/ts[use_col][0])
     return rtrn*100
 
 
@@ -173,7 +181,7 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
     ts = equity_timeseries.fillna(0)
 
     if not downside:
-        return round(np.std(ts['Total'].pct_change(), ddof=1) * np.sqrt(252) * 100, 6)
+        return round(np.std(filter_zeros(ts['Total']).pct_change(), ddof=1) * np.sqrt(252) * 100, 6)
     else:
         if not MAR:
             MAR = 0
@@ -183,7 +191,7 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
         return round(np.std(ts_d, ddof=1) * np.sqrt(252) * 100, 6)
 
 
-def daily_rtrns(equity_timeseries: pd.DataFrame) -> pd.Series:
+def daily_rtrns(equity_timeseries: pd.DataFrame, long = True) -> pd.Series:
     """
     Parameters:
     equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
@@ -191,11 +199,11 @@ def daily_rtrns(equity_timeseries: pd.DataFrame) -> pd.Series:
     Returns:
     pd.Series: Utility method. Returns timeseries of daily portfolio returns
     """
-    ts = equity_timeseries
-    return ts['Total'].pct_change()
+    ts = filter_zeros(equity_timeseries['Total']).pct_change()
+    return ts if long else -ts
 
 
-def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055) -> float:
+def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long = True) -> float:
     """
     Returns the Sharpe ratio of the portfolio
     Parameters: 
@@ -207,9 +215,10 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055) -> fl
     """
 
     # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
+    equity_timeseries = filter_zeros(equity_timeseries)
     daily_rfrate = (1+risk_free_rate)**(1/252) - 1
     annualized_vol = vol_annualized(equity_timeseries)/100
-    excess_retrns = np.mean(daily_rtrns(equity_timeseries) - daily_rfrate)*252
+    excess_retrns = np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate)*252
     return excess_retrns/annualized_vol
 
 
@@ -420,7 +429,7 @@ def Expectancy(trades_df: pd.DataFrame) -> float:
     """
     tr = trades_df
 
-    return (avgPnL(tr, 'W', False) * winRate(tr)) + (avgPnL(tr, 'L', False) * lossRate(tr))
+    return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
 
 
 def SQN(trades_df: pd.DataFrame) -> float:
@@ -805,6 +814,7 @@ class AggregatorParent(ABC):
         """
         return streak(self._trades, Type_)
 
+## FIXME: This is ridiculously slow.
     def aggregate(self,
                   risk_free_rate: float = 0.055,
                   MAR: float = 0) -> pd.Series:

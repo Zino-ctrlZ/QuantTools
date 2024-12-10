@@ -28,7 +28,7 @@ _rates_cache = None
 
 
 ## Does the actual fetching of the rates
-def fetch_rates_save_cache(interval = '1h', use = 'yf', return_data = False):
+def fetch_rates_save_cache(interval = '1d', use = 'yf', return_data = False):
     # download 3-month us treasury bills rates
     """
     Return timeseries of 3-month US treasury bills rates

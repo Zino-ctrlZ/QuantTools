@@ -523,6 +523,7 @@ class OptionStructure:
 
         return PatchedOptionFunc(
                 'spot',
+                ts = ts,
                 long_leg = self.long,
                 short_leg = self.short,
                 return_all = return_all,
@@ -561,6 +562,7 @@ class OptionStructure:
 
             return PatchedOptionFunc(
                     'vol',
+                    ts = ts,
                     long_leg = self.long,
                     short_leg = self.short,
                     return_all = return_all,
