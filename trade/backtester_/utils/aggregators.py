@@ -179,9 +179,10 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
     float: Annualized Volatility
     """
     ts = equity_timeseries.fillna(0)
-
+    annual_trading_days = 365
+    ts_date_width = (ts.index.to_series().diff()).dt.days.mean()
     if not downside:
-        return round(np.std(filter_zeros(ts['Total']).pct_change(), ddof=1) * np.sqrt(252) * 100, 6)
+        return round(np.std(filter_zeros(ts['Total']).pct_change(), ddof=1) * np.sqrt(annual_trading_days/ts_date_width) * 100, 6)
     else:
         if not MAR:
             MAR = 0
@@ -215,10 +216,13 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long 
     """
 
     # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
+    annual_trading_days = 365
+    ts_date_width = (equity_timeseries.index.to_series().diff()).dt.days.mean()
+    annual_period = annual_trading_days/ts_date_width
     equity_timeseries = filter_zeros(equity_timeseries)
     daily_rfrate = (1+risk_free_rate)**(1/252) - 1
     annualized_vol = vol_annualized(equity_timeseries)/100
-    excess_retrns = np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate)*252
+    excess_retrns = np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate)*annual_period
     return excess_retrns/annualized_vol
 
 

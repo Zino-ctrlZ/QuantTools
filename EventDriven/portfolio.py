@@ -15,8 +15,8 @@ from trade.assets.Stock import Stock
 
 from abc import ABCMeta, abstractmethod
 
-from event import  FillEvent, OrderEvent, SignalEvent
-from data import HistoricTradeDataHandler
+from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
+from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.Logging import setup_logger
 
 

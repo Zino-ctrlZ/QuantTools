@@ -2,6 +2,7 @@ from typing import Union, Dict, Optional, List, Callable
 import yfinance as yf
 from typing import Union, Dict, Optional, List, Callable
 import numpy as np
+from copy import deepcopy
 from backtesting import Backtest
 import pandas as pd
 import sys
@@ -85,8 +86,9 @@ class PTBacktester(AggregatorParent):
         self._trades = None
         self._equity = None
         self.strategy_settings = strategy_settings
-        self.default_settings = None
+        self.default_settings = {}
         self._names = [d.name for d in datalist]
+        datalist = deepcopy(datalist) ## To avoid changing the original datalist
         self.update_settings(datalist) if self.strategy_settings else None
 
         assert isinstance(cash, dict) or isinstance(cash, int) or isinstance(cash, float), "Cash must be of type float, int, dict"
@@ -100,8 +102,8 @@ class PTBacktester(AggregatorParent):
                 cash_ = cash
             elif isinstance(cash, float):
                 cash_ = cash
-            
-            d.backtest = Backtest(d.data, strategy = self.strategy, cash = cash_, **kwargs)
+            d = deepcopy(d)
+            d.backtest = Backtest(d.data, strategy = deepcopy(self.strategy), cash = cash_, **kwargs)
             self.datasets.append(d)
         self.cash = cash
 
@@ -152,7 +154,6 @@ class PTBacktester(AggregatorParent):
                 if d.param_settings:
                     for setting, value in d.param_settings.items():                    
                         setattr(self.strategy, setting, value)
-                        # print('Pre Run', setting, getattr(self.strategy, setting))
             stats = d.backtest.run()
             self.reset_settings() if d.param_settings else None
             try:
@@ -230,12 +231,10 @@ class PTBacktester(AggregatorParent):
 
         
         stock = Stock(benchmark)
-        data = stock.spot(ts = True, ts_start = '2018-01-01')
+        data = stock.spot(ts = True, ts_start = self._equity.index[0], ts_end = self._equity.index[-1])
         data.rename(columns = {x:x.capitalize() for x in data.columns}, inplace= True)
-        data['Timestamp'] = pd.to_datetime(data['Timestamp'], format = '%Y-%m-%d')
-        data2 = data.set_index('Timestamp')
-        data2 = data2.asfreq('B', method = 'ffill')
-        _bnch = data2.fillna(0)
+        data = data.asfreq('B', method = 'ffill')
+        _bnch = data.fillna(0)
         return plot_portfolio(self._trades, self._equity, self.dd(True), _bnch,plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
 
 

@@ -13,7 +13,7 @@ from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
 
-from BACKTEST.event_driven.event import MarketEvent
+from EventDriven.event import MarketEvent
 
 
 

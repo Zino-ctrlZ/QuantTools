@@ -1,3 +1,4 @@
+from copy import deepcopy
 import pandas as pd
 import numpy as np
 import warnings
@@ -46,7 +47,8 @@ def atr_trailing_stop(df: pd.DataFrame,
     """
 
     assert atr_factor > 0, "'atr factor' must be positive: " + str(atr_factor)
-    df = df.sort_values(by='timestamp', ascending=True, ignore_index=True)
+    df = deepcopy(df)
+    df.columns = list(map(str.lower, df.columns))
     hi_lo = np.minimum(df['high'] - df['low'], 1.5 *
                        df['high'].sub(df['low']).rolling(atr_period).mean())
 
