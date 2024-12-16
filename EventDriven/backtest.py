@@ -48,7 +48,7 @@ class OptionSignalBacktest():
         self.risk_free_rate = 0.055
         
     def run(self):
-       while True:
+       while True: ## loops bars
         if self.bars.continue_backtest == True: 
             self.bars.update_bars()
             print(self.bars.get_latest_bars(''))
@@ -57,7 +57,7 @@ class OptionSignalBacktest():
             self.logger.info('no more data to feed backtest')
             print('no more data to feed backtest')
             break
-        while True: 
+         while True: ## Loops Events in a bar
             try: 
                 event = self.events.get(False)
             except Exception as e:

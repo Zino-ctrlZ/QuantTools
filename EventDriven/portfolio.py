@@ -103,7 +103,7 @@ class OptionSignalPortfolio(Portfolio):
     def _generate_underlier_data(self):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
-            self.underlier_list_data[underlier] = Stock(underlier)
+            self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
     
     def generate_naive_option_order(self, signal : SignalEvent):
         """
