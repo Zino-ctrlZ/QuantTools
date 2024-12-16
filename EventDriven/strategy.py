@@ -9,7 +9,7 @@ from abc import ABCMeta, abstractmethod
 
 from trade.assets import Stock
 
-from event import SignalEvent
+from EventDriven.event import SignalEvent
 from trade.helpers.Logging import setup_logger
 
 class Strategy(object):

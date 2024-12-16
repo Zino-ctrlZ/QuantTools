@@ -3,7 +3,7 @@ import datetime
 
 from abc import ABCMeta, abstractmethod
 
-from event import FillEvent, OrderEvent
+from EventDriven.event import FillEvent, OrderEvent
 
 # execution.py
 

@@ -10,11 +10,11 @@ sys.path.append(
 from dbase.DataAPI.ThetaData import * #type: ignore
 from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd
-from data import  
-from event import *
-from strategy import OptionSignalStrategy
-from portfolio import OptionSignalPortfolio
-from execution import SimulatedExecutionHandler
+from EventDriven.data import  HistoricTradeDataHandler
+from EventDriven.event import *
+from EventDriven.strategy import OptionSignalStrategy
+from EventDriven.portfolio import OptionSignalPortfolio
+from EventDriven.execution import SimulatedExecutionHandler
 from queue import Queue
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
