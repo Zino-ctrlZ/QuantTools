@@ -50,7 +50,7 @@ class OptionSignalBacktest():
     def run(self):
        while True: ## loops bars
         if self.bars.continue_backtest == True: 
-            self.bars.update_bars()
+            self.bars.update_bars() ## 
             print(self.bars.get_latest_bars(''))
         else:
             self.trades  = self.portfolio.get_trades()

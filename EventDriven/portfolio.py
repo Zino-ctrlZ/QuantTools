@@ -7,7 +7,7 @@ sys.path.append(
     os.environ.get('WORK_DIR')) #type: ignore
 sys.path.append(
     os.environ.get('DBASE_DIR')) #type: ignore
-
+from trade.helpers.helper import generate_option_tick
 import pandas as pd
 
 from dbase.DataAPI.ThetaData import list_contracts, retrieve_option_ohlc, is_theta_data_retrieval_successful #type: ignore
