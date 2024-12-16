@@ -10,6 +10,7 @@ Portfolio File:
 Data File:
     ☐ update_latest_bars doesn't need arguments.
     ☐ Create a class for price data/any other other trade
+    ☐ Data must drip feed data with ohlc fields
 
 
 Strategy File:
