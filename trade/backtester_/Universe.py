@@ -1,3 +1,5 @@
+import numpy as np
+
 universe = {'top_10_snP': ['AAPL', 'MSFT', 'AMZN', 'NVDA', 'GOOGL', 'TSLA', 'BRK.B', 'UNH', 'XOM', 'LLY'],
 'blue_chip_largest_vol': ['AAPL', 'MSFT', 'SOFI', 'GOOGL', 'F', 'AMD','BAC', 'PFE', 'INTC', 'PLTR'],
 'most_traded_etf': ['SPY', 'XLF', 'TLT', 'QQQ', 'FXI', 'HYG', 'SLV', 'IWM', 'EEM', 'GDX'] ,# NO INVERSES, NO CRYPTO, NO DAILY DIRECTION,
@@ -6,7 +8,7 @@ universe = {'top_10_snP': ['AAPL', 'MSFT', 'AMZN', 'NVDA', 'GOOGL', 'TSLA', 'BRK
 'top_as_at_2019': ['AAPL', 'MSFT', 'AMZN', 'BRK.B', 'FB', 'META', 'GOOGL', 'JNJ', 'XOM','JPM','V', 'PG', 'DIS', 'BAC' ]
 }
 
-sp500 = [
+spy = [
     "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "GOOG", "BRK.B", "META", "TSLA", "XOM",
     "UNH", "JNJ", "JPM", "V", "PG", "MA", "CVX", "HD", "LLY", "PFE",
     "KO", "BAC", "PEP", "AVGO", "COST", "ABBV", "CSCO", "MRK", "DIS", "TMO",
@@ -85,3 +87,12 @@ basic_test_universe = {
     'US RATES': ['TLT', 'IEF', 'SHY', 'LQD', 'HYG', 'AGG', 'SHY', 'SHV', 'JNK'],
     'US COMMODITIES': ['GLD', 'SLV', 'USO', 'DBA',  'DBC', 'UNG', 'GDX','XLE', 'CORN', 'WEAT'],
 }
+
+
+US_EQ_WHOLE = []
+US_EQ_WHOLE.extend(spy)
+US_EQ_WHOLE.extend(qqq)
+US_EQ_WHOLE.extend(iwm)
+US_EQ_WHOLE.extend(iwm2)
+
+US_EQ_WHOLE = np.unique(np.array(US_EQ_WHOLE))

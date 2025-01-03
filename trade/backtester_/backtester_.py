@@ -14,10 +14,13 @@ import plotly.io as pio
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from trade.backtester_.utils.utils import plot_portfolio, optimize
+from trade.backtester_.utils.utils  import plot_portfolio, optimize
 import plotly
 from trade.backtester_.utils.aggregators import *
 
+## TODO: Include Benchmark DD in Portfolio Plot
+## FIX: After optimization, reset strategy settings to default. Currently, it is not resetting
+## FIX: backtester._equity drops some dates, but the AGG function doesn't.
 
 def get_class_attributes(cls):
     return [attr for attr in dir(cls) if not callable(getattr(cls, attr)) and not attr.startswith("__")]
@@ -65,7 +68,8 @@ class PTBacktester(AggregatorParent):
                 datalist: list , 
                 strategy,
                 cash,
-                strategy_settings: dict = None, 
+                strategy_settings: dict = None,
+                start_overwrite: Optional[str] = None, 
                 **kwargs) -> None:
         """
         Initializes the PTBacktester class with the following parameters:
@@ -81,10 +85,11 @@ class PTBacktester(AggregatorParent):
         """
         
         self.datasets = []
-        self.strategy = strategy
+        self.strategy = deepcopy(strategy)
         self.__port_stats = None
         self._trades = None
         self._equity = None
+        self.start_overwrite = start_overwrite
         self.strategy_settings = strategy_settings
         self.default_settings = {}
         self._names = [d.name for d in datalist]
@@ -183,6 +188,8 @@ class PTBacktester(AggregatorParent):
         Returns Timeseries of periodic portfolio value
         """
         PortStats = self.__port_stats
+        if self.start_overwrite:
+            start = pd.to_datetime(self.start_overwrite).date()
         date_range = pd.date_range(start= self.dates_(True), end = self.dates_(False), freq = 'B')
         start = self.dates_(True)
         end = self.dates_(False)
@@ -196,7 +203,7 @@ class PTBacktester(AggregatorParent):
             
             equity_curve.name = tick
             tick_start = min(equity_curve.index)
-            if tick_start > start:
+            if tick_start > pd.Timestamp(start):
                 temp = pd.DataFrame(index = pd.date_range(start = start, end =equity_curve.index.min(), freq = 'B' ))
                 temp[tick] = cash
                 equity_curve = pd.concat([equity_curve, temp], axis = 0)
@@ -207,6 +214,9 @@ class PTBacktester(AggregatorParent):
         port_equity_data = port_equity_data.fillna(method = 'ffill')
         port_equity_data['Total'] = port_equity_data.sum(axis = 1)
         port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
+        if self.start_overwrite:
+            port_equity_data = port_equity_data[port_equity_data.index.date >= pd.to_datetime(self.start_overwrite).date()]
+        port_equity_data = port_equity_data[~port_equity_data.index.duplicated(keep = 'first')]
         return port_equity_data
 
 
@@ -214,6 +224,7 @@ class PTBacktester(AggregatorParent):
                     benchmark: Optional[str] = 'SPY',
                     plot_bnchmk: Optional[bool] = True,
                     return_plot: Optional[bool] = False,
+                    start_plot: Optional[str] = None,
                     **kwargs) -> Optional[plotly.graph_objects.Figure]:
         """
         Plots a graph of current porfolio metrics. These graphs are Equity Curve, Portfolio Drawdown, Trades, Periodic returns
@@ -229,13 +240,28 @@ class PTBacktester(AggregatorParent):
         Plot: For further editing by the user
         """
 
+        if start_plot is None and self.start_overwrite:
+            start_plot = self.start_overwrite
         
-        stock = Stock(benchmark)
+        stock = Stock(benchmark, run_chain = False)
         data = stock.spot(ts = True, ts_start = self._equity.index[0], ts_end = self._equity.index[-1])
-        data.rename(columns = {x:x.capitalize() for x in data.columns}, inplace= True)
-        data = data.asfreq('B', method = 'ffill')
-        _bnch = data.fillna(0)
-        return plot_portfolio(self._trades, self._equity, self.dd(True), _bnch,plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
+        if start_plot:
+            data = data[data.index.date >= pd.to_datetime(start_plot).date()]
+            data.rename(columns = {x:x.capitalize() for x in data.columns}, inplace= True)
+            data = data.asfreq('B', method = 'ffill')
+            _bnch = data.fillna(0)
+            eq = self._equity[self._equity.index.date >= pd.to_datetime(start_plot).date()]
+            dd = self.dd(True)
+            dd = dd[dd.index.date >= pd.to_datetime(start_plot).date()]
+
+        else:
+            data.rename(columns = {x:x.capitalize() for x in data.columns}, inplace= True)
+            data = data.asfreq('B', method = 'ffill')
+            _bnch = data.fillna(0)
+            eq = self._equity
+            dd = self.dd(True)
+
+        return plot_portfolio(self._trades, eq, dd, _bnch,plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
 
 
     def plot_position(self,
@@ -257,11 +283,7 @@ class PTBacktester(AggregatorParent):
             optimize_var: dict,
             maximize: Union[List[Callable], str],
             max_tries: Union[int, float] = None,
-            constraint: Callable = None
-
-            
-
-        
+            constraint: Callable = None,
         ):
         
         """

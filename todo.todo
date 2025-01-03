@@ -26,3 +26,8 @@ General:
     ☐ Implement buy on Open.
     ☐ Add days lag and `trade_on`
     ☐ Secondary queue/list to repopulate next bar
+
+
+
+Setup Logger:
+    ☐ Instead of creating a logs folder in every root, it should be created in the root of the project.

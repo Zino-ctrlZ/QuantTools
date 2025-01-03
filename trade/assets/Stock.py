@@ -43,7 +43,6 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
-
 logger = setup_logger('Stock')
 
 
@@ -100,7 +99,6 @@ class Stock:
             
             ## Attr to be initalized once
             self._intialized = True
-            run_chain = kwargs.get('run_chain', True)
             start_date_date = today - relativedelta(months=12)
             start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
             self.__security_obj = yf.Ticker(ticker.upper())
@@ -121,7 +119,11 @@ class Stock:
             self.init_rfrate_ts()
             self.init_risk_free_rate()
             # self.__init_option_chain() 
-            if run_chain:
+
+        ## Logic to run chain, compatible with singleton behavior
+        run_chain = kwargs.get('run_chain', True)
+        if run_chain:
+            if self.__OptChain is None:
                 self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
                 self.chain_init_thread.start()
 
@@ -645,7 +647,8 @@ class Stock:
             return []
 
     def get_typical_price(self, start, end):
-        data = self.security.history(interval='1d', start=start, end=end)
+        data = self.spot(ts= True, ts_start=start, ts_end=end)
+        data.columns = [x.capitalize() for x in data.columns]
         data['typical_money_flow'] = (
             data['High'] + data['Low'] + data['Close'])/3
         return data

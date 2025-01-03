@@ -1,5 +1,7 @@
 ## To-Do: This was written with Long in mind. Need to add Short functionality
 ## To-do: Add Thorp Expectancy (from building a winning system book)
+## To-do: Add skew
+## To-do: Is sharpe annualized?
 
 import sys
 import os
@@ -460,10 +462,12 @@ def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> fl
     time_in['position'] = 0
     tr = trades_df
     for index, row in tr.iterrows():
-        entry = row['EntryTime']
-        exit_ = row['ExitTime']
-        time_in['position'].loc[(time_in.index >= entry)
-                                & (time_in.index <= exit_)] = 1
+        entry = pd.to_datetime(row['EntryTime']).date()
+        exit_ = pd.to_datetime(row['ExitTime']).date()
+        time_in['position'].loc[(time_in.index.date >= entry)
+                                & (time_in.index.date <= exit_)] = 1
+
+
     return round((time_in['position'] == 1).sum()/len(time_in)*100, 2)
 
 
@@ -478,6 +482,7 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
 
     ts = equity_timeseries
     ts['Year'] = ts.index.year
+    ts.drop_duplicates(inplace=True)
     unq_year = ts.Year.unique()
     rtrn_d = {}
     for year in unq_year:
@@ -485,7 +490,6 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
         ret = ((data.loc[data.index.max(), 'Total'] /
                data.loc[data.index.min(), 'Total'])-1)*100
         rtrn_d[year] = ret
-
     return rtrn_d
 
 
@@ -555,7 +559,15 @@ class AggregatorParent(ABC):
 
     @copy_doc_from(dates_)
     def dates_(self, start: bool):
-        return dates_(self.get_port_stats(), start) if start else dates_(self.get_port_stats(), start)
+        try:
+            overwrite = pd.to_datetime(getattr(self, 'start_overwrite')).date()
+        except AttributeError:
+            overwrite = None
+
+        if overwrite:
+            return overwrite if start else dates_(self.get_port_stats(), start).date()
+        else:
+            return dates_(self.get_port_stats(), start).date() if start else dates_(self.get_port_stats(), start).date()
 
 
     @abstractmethod
@@ -820,7 +832,7 @@ class AggregatorParent(ABC):
 
 ## FIXME: This is ridiculously slow.
     def aggregate(self,
-                  risk_free_rate: float = 0.055,
+                  risk_free_rate: float = 0.0,
                   MAR: float = 0) -> pd.Series:
         """ 
 
@@ -840,7 +852,7 @@ class AggregatorParent(ABC):
             MAR, float), f"Recieved MAR of type {type(MAR)} instead of Type float"
         rtrn_ = self.rtrn()
         series1 = pd.Series({
-            'Start': self.dates_(True),
+            'Start': self.start_overwrite if self.start_overwrite else self.dates_(True),
             'End': self.dates_(False),
             'Duration': self.dates_(False) - self.dates_(True),
             'Exposure Time [%]': self.ExposureDays(),
@@ -852,6 +864,7 @@ class AggregatorParent(ABC):
             'Volatility Ann. [%]': self.vol_annualized(),
             'Sharpe Ratio': self.sharpe(risk_free_rate),
             'Sortino Ratio': self.sortino(risk_free_rate, MAR),
+            'Skew': self._equity.Total.pct_change().skew(),
             'Calmar Ratio': self.calmar(),
             'Max. Drawdown [%]': self.mdd(),
             'Max. Drawdown Value [$]': self.mdd_value(),
