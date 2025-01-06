@@ -4,6 +4,7 @@
 # Clean up code
 # Write documentation
 # Write tests
+# Create Abstract Base Class for OptionDataManager - DataManager
 
 from dotenv import load_dotenv
 import os
@@ -30,6 +31,7 @@ from trade.helpers.Context import Context
 from dbase.DataAPI.ThetaData import retrieve_ohlc, retrieve_quote_rt, retrieve_eod_ohlc, resample, retrieve_quote
 from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
+from trade.helpers.decorators import log_error
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
 logger = setup_logger('OptionDataManager.py', stream_log_level=logging.CRITICAL)
@@ -86,8 +88,9 @@ class OptionDataManager:
         self.strike = strike
         self.default_fill = default_fill
         self.opttick = generate_option_tick(symbol, right, exp, strike)
-        self.Stock = Stock(symbol)
+        self.Stock = Stock(symbol, run_chain = False)
 
+    @log_error(OptDataManagerLogger)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
 
         """
@@ -98,6 +101,8 @@ class OptionDataManager:
         assert type_ in ['spot', 'vol', 'vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek'], f'expected "spot", "vol", "vega", "vanna", "volga", "delta", "gamma", "theta", "rho", "greeks", "greek" for type_, got {type_}'
         range_filters, flag, data = self.__verify_data_completeness(interval, start, end)
         self.data = data
+
+
         UseTable = self.tables[flag]
         gen_dataBool = False
         if range_filters != []:
@@ -105,10 +110,10 @@ class OptionDataManager:
         
         elif range_filters == [] and len(data) == 0:
             gen_dataBool = True
-
+    
         if gen_dataBool:   
             unProcessedData = self.__generate_optionData_to_save(range_filters, end, start, flag, **kwargs)
-            if isinstance(unProcessedData, pd.DataFrame):
+            if unProcessedData.__class__.__name__ == 'DataFrame':
                 thread_data = unProcessedData.copy()
                 processing_thread = threading.Thread(target = self.__process_data, args = (thread_data, flag, start, end,), name = 'SaveDataProcess')
                 processing_thread.start()
@@ -122,9 +127,13 @@ class OptionDataManager:
                 data.columns = [x.lower() for x in data.columns]
                 # print('In concat process')
                 unProcessedData = pd.concat([data,unProcessedData ])
-
             else:
+                OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query. It is not a dataframe, type: {type(unProcessedData)}")
                 unProcessedData = data
+                
+
+        else:
+            unProcessedData = data
         
         if type_ == 'spot':
             if self.default_fill is None:
@@ -167,10 +176,10 @@ class OptionDataManager:
         
         return resampled[(resampled.index >= start) & (resampled.index <= end)]
         
-    
+    @log_error(OptDataManagerLogger)
     def __save_intra_to_update(self, start, end):
         data = pd.DataFrame({'symbol': [self.symbol], 'optiontick': [self.opttick], 'exp': [self.exp], 'right': [self.right],'default_fill': [self.default_fill], 'strike': [self.strike], 'start': [start], 'end': [end]})
-        path  = f'{os.environ["WORK_DIR"]}/InputFiles/IntraSaveLog.xlsx'
+        path  = f'{os.environ["JOURNAL_PATH"]}/Algo/InputFiles/IntraSaveLog.xlsx'
         write_to_excel(path, datetime.today().strftime('%Y-%m-%d'), data)
 
 
@@ -230,6 +239,7 @@ class OptionDataManager:
 
                 ## If query_date is today, we can get real time data
                 if pd.to_datetime(query_date).date() == datetime.now().date():
+
                     data = retrieve_quote_rt(symbol = self.symbol, end_date = query_date, 
                                         exp = self.exp, right = self.right, start_date = query_date, 
                                         strike = self.strike)
@@ -249,7 +259,6 @@ class OptionDataManager:
 
                 return data[['Bid', 'Ask', 'Midpoint', 'Weighted_midpoint']]
             except Exception as e:
-                print(e)
                 return {datetime.now().strftime('%Y-%m-%d %H:%M:%S'): "DATA UNAVAILABLE"}
         else:
             raise ValueError(f"Expected 'close' or 'quote' for type_, got {type_}")
@@ -307,7 +316,7 @@ class OptionDataManager:
         
  
         with Context(end_date = query_date, start_date = query_date, timeframe = 'day', timewidth = '1'):
-            stk = Stock(self.symbol)
+            stk = Stock(self.symbol, run_chain = False)
             y = stk.div_yield()
             r = stk.rf_rate
             s0 = list(stk.spot().values())[0]
@@ -413,21 +422,25 @@ class OptionDataManager:
         OptDataManagerLogger.info(f"Successfully processed data for {self.opttick}")
         self.__save_data(processed_data, timeAggType)
 
-    
+
+    @log_error(OptDataManagerLogger)
     def __save_data(self, data, timeAggType) -> None:
         OptDataManagerLogger.info(f"OptionDataManager saving data for {self.opttick}")
         UseTable = self.tables[timeAggType]
+        data.drop_duplicates(inplace = True)
         store_SQL_data_Insert_Ignore('SECURITIES_MASTER',UseTable, data)
-        print(f"Successfully saved {self.opttick} \n")
+        print(f"Successfully saved {self.opttick}", end = '\r')
         self.__update_last_saved_column(UseTable)
         
     
     
     def __update_last_saved_column(self, UseTable):
         dynamic_batch_update('SECURITIES_MASTER', UseTable, {'last_updated': datetime.now()}, {'OPTIONTICK': self.opttick})
-        print('Successfully updated column')
+        print('Successfully updated column', end = '\r')
 
-    
+
+
+    @log_error(OptDataManagerLogger)
     def __verify_return_data_integrity(self, data, timeAggType):
 
         ## Check for missing dates
@@ -522,7 +535,7 @@ class OptionDataManager:
 
             ## If no response, calculate vol
             if isThreadRunning:
-                print("OptionDataManager calculating vol. Database unavailable")
+                print("OptionDataManager calculating vol. Database unavailable", end = '\r')
                 OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query, proceeding to calculate vol")
                 if metric == 'bs_iv':
                     NaData[colName] = self.__bs_vol(NaData, price = price)
@@ -558,7 +571,7 @@ class OptionDataManager:
 
         else:
             logger.info(f'OptionDataManager Using available data for {self.opttick}')
-            print("OptionDataManager Using available data")
+            print("OptionDataManager Using available data", end = '\r')
             data = data[useCols]
 
 
@@ -665,7 +678,7 @@ class OptionDataManager:
                 
             else:
                 ## If we query database, we do not need to concat. The database has everything
-                print('Good to query database')
+                print('Good to query database', end = '\r')
                 if timeAgg == 'INTRA':
                     table = 'temp_options_intra'
                 elif timeAgg == 'EOD':
@@ -676,7 +689,7 @@ class OptionDataManager:
                 final_data.columns = [x.lower() for x in final_data.columns]
                 final_data = final_data[returnColumns]
         else:
-            print("Using available data")
+            print("Using available data", end = '\r')
             final_data = data[returnColumns]
 
 

@@ -7,7 +7,7 @@ sys.path.append(
     os.environ.get('WORK_DIR')) #type: ignore
 sys.path.append(
     os.environ.get('DBASE_DIR')) #type: ignore
-
+from trade.helpers.helper import generate_option_tick
 import pandas as pd
 
 from dbase.DataAPI.ThetaData import list_contracts, retrieve_option_ohlc, is_theta_data_retrieval_successful #type: ignore
@@ -15,8 +15,8 @@ from trade.assets.Stock import Stock
 
 from abc import ABCMeta, abstractmethod
 
-from event import  FillEvent, OrderEvent, SignalEvent
-from data import HistoricTradeDataHandler
+from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
+from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.Logging import setup_logger
 
 
@@ -103,7 +103,7 @@ class OptionSignalPortfolio(Portfolio):
     def _generate_underlier_data(self):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
-            self.underlier_list_data[underlier] = Stock(underlier)
+            self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
     
     def generate_naive_option_order(self, signal : SignalEvent):
         """

@@ -1,19 +1,29 @@
 # This file contains the Stock class which is used to handle operations related to stock data querying, manipulation and data provision. 
 
-## To- Do
+## To-Do:
 ## Find a news source that can provide news as at a date
 ## Same as for next earnings
-## Fix yearly div yield to stop at end date
-
+## Add unadjusted prices to the stock class - Chain price
+## Add timer to each and log it
 
 from openbb import obb
 import sys
 import os
-from trade.helpers.Configuration import Configuration
-import re
-from dateutil.relativedelta import relativedelta
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.extend(
     [os.environ.get('WORK_DIR'), os.environ.get('DBASE_DIR')])
+from dbase.DataAPI.ThetaData import (retrieve_quote_rt, 
+                                     retrieve_eod_ohlc,
+                                     retrieve_quote, 
+                                     list_contracts)
+
+# from trade.helpers.Configuration import Configuration
+from trade.helpers.Configuration import ConfigProxy
+Configuration = ConfigProxy()
+from trade.helpers.Context import Context
+import re
+from dateutil.relativedelta import relativedelta
 import numpy as np
 import requests
 import pandas as pd
@@ -22,25 +32,53 @@ import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
+from trade.models.VolSurface import SurfaceLab
 load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
 from dbase.DataAPI.ThetaData import resample, list_contracts
 from pandas.tseries.offsets import BDay
-
-
-
+from dbase.database.SQLHelpers import DatabaseAdapter
+from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
+from trade.assets.OptionChain import OptionChain
+from threading import Thread, Lock
+logger = setup_logger('Stock')
+
+
+
 class Stock:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
     init_date = None
+    dumas_width = 0.75
+    _instances = {}
+
+
+    def __new__(cls, ticker: str, **kwargs):
+        # Use (ticker, end_date) as the unique key for singleton behavior
+        today = datetime.today()
+        _end_date = datetime.strftime(today, format='%Y-%m-%d')
+        ## I don't need an instance per minute. I need an instance per day.
+        ## I can update the end_date in __init__ if I need to
+
+        end_date = Configuration.end_date or _end_date
+        key = (ticker.upper(), end_date)
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[key] = instance
+        return cls._instances[key]
+
 
 
     def __repr__(self):
-        return f'Stock(Ticker: {self.ticker})'
+        return f'Stock(Ticker: {self.ticker}, Build Date: {self.end_date})'
 
-    def __init__(self, ticker: str):
+    def __str__(self):
+        return f'Stock(Ticker: {self.ticker}, Build Date: {self.end_date})'
+
+
+    def __init__(self, ticker: str, **kwargs):
         """
         The Stock Class handles operations related to stock data querying, manipulation and data provision. 
         Type: Class
@@ -48,46 +86,51 @@ class Stock:
         
         ticker: Stock Tick
         """
-        
+
+        ## Attr to be initalized every time
         today = datetime.today()
-        start_date_date = today - relativedelta(months=12)
-        start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
-        end_date = datetime.strftime(today, format='%Y-%m-%d %H:%M:%S')
-        self.__security_obj = yf.Ticker(ticker.upper())
-        self.__ticker = ticker.upper()
-        self.timewidth = Configuration.timewidth or '1'
-        self.timeframe = Configuration.timeframe or 'day'
-        self.__start_date = Configuration.start_date or start_date
+        ## Chaning to last business day, so far, there's no need to create Stock for. 
+        ## Temp: Changing to last business day ensures that the data is available, +  avoids the missing error
+        ## Note: Monitor if this is the best approach
+        end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
-        self.__close = None
-        self.prev_close()
-        self.__y = None
-        self.div_yield()
-        
 
-        # """ Initializing Risk Free Rate as a variable across every Stock Intance, while Re-initializing after day has changed """
-        # if Stock.rf_ts is None:
-        #     self.init_rfrate_ts()
-        #     self.init_date_method()
-        #     if Stock.init_date < today:
-        #         print("Re-initializing Risk Rate")
-        #         self.init_rfrate_ts()
-        #         self.init_date_method()
-        #         self.close = self.prev_close().close
-        # if Stock.rf_rate is None:
-        #     print("Stock Initializing Risk Free Rate")
-        #     self.init_risk_free_rate()
-        #     if Stock.init_date < today:
-        #         print("Re-initializing Risk Rate")
-        #         self.init_risk_free_rate()
-        #         self.init_date_method()
-        #         self.close = self.prev_close().close
-        
-        """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
-        self.init_rfrate_ts()
-        self.init_risk_free_rate()
+        if not hasattr(self, '_intialized'):
+            
+            ## Attr to be initalized once
+            self._intialized = True
+            start_date_date = today - relativedelta(months=12)
+            start_date = datetime.strftime(start_date_date, format='%Y-%m-%d %H:%M:%S')
+            self.__security_obj = yf.Ticker(ticker.upper())
+            self.__ticker = ticker.upper()
+            self.timewidth = Configuration.timewidth or '1'
+            self.timeframe = Configuration.timeframe or 'day'
+            self.__start_date = Configuration.start_date or start_date
+            self.__close = None
+            self.prev_close()
+            self.__y = None
+            self.div_yield()
+            self.__OptChain = None
+            self.__chain = None
+            self.asset_type = self.__security_obj.info['quoteType']
+            self.kwargs = kwargs
+            
+            """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
+            self.init_rfrate_ts()
+            self.init_risk_free_rate()
+            # self.__init_option_chain() 
+
+        ## Logic to run chain, compatible with singleton behavior
+        run_chain = kwargs.get('run_chain', True)
+        if run_chain:
+            if self.__OptChain is None:
+                self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
+                self.chain_init_thread.start()
 
 
+    @property
+    def is_chain_ready(self):
+        return  not self.chain_init_thread.is_alive()
     @property
     def ticker(self):
         return self.__ticker
@@ -112,6 +155,32 @@ class Stock:
     def y(self):
         return self.__y
 
+    @property
+    def OptChain(self):
+        if self.__OptChain is not None:
+            return self.__OptChain
+        else:
+            logger.info(f'Chain not ready for {self.ticker} on {self.end_date}')
+            print('Chain is not ready')
+            return None
+    
+    @property
+    def chain(self):
+        return self.__chain
+    
+    @classmethod
+    def clear_instances(cls, pop_all = True):
+        if pop_all:
+            cls._instances = {}
+        else:
+            if cls._instances:
+                return cls._instances.popitem()
+            
+            return None
+    
+    @classmethod
+    def list_instances(cls):
+        return cls._instances
     
     def __set_close(self, value):
         self.__close = value
@@ -119,6 +188,21 @@ class Stock:
 
     def __set_y(self, value):
         self.__y = value
+
+
+    def __init_option_chain(self):
+        try:
+            force_build = self.kwargs.get('force_build', False)
+            logger.info(f'Initializing Option Chain for {self.ticker} on {self.end_date}')
+            chain = OptionChain(self.ticker, self.end_date, self, self.dumas_width, force_build = force_build)
+            self.__OptChain = chain
+            self.__chain = self.__OptChain.get_chain(True)
+            self.OptChain.initiate_lab()
+        except Exception as e:
+            logger.error(f"Error initializing Option Chain for {self.ticker} on {self.end_date}: {e}")
+            self.__OptChain = None
+            self.__chain = None
+            return None
 
 
 
@@ -140,25 +224,68 @@ class Stock:
         self.rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
 
+    def vol(self, exp, strike_type, strike, right):
+        """
+        Calculates implied volatility based on VolSurface modelling
+
+        params:
+        exp: Expressed in terms of intervals. Eg: 1D, 1W, 1M, 1Y
+        strike_type: 'p' for percent of spot, 'k' for absolute strike
+        strike: Corresponding strike value. Can be either a list, ndarray or float
+        right: 'C' for call, 'P' for put
+
+        returns:
+        dict: {'k': strike, 'dumas': dumas vol, 'svi': svi vol}
+        """
+        exp = identify_length(*extract_numeric_value(exp))
+        spot = list(self.spot().values())[0]
+
+        ## Check if strike is a list, ndarray or float
+        if isinstance(strike, list):
+            strike = np.array(strike)
+        elif isinstance(strike, float):
+            strike = np.array([strike])
+
+        elif isinstance(strike, np.ndarray):
+            pass
+        else:
+            raise ValueError('Strike must be either a list, ndarray or float')
+        
+
+        ## Check if strike_type is either 'p' or 'k'. P is percent of spot, K is absolute strike
+        if strike_type == 'p':
+            strike_k = strike * spot
+        else:
+            strike_k = strike
+
+        ## Check if Option Chain is ready, this is because the OptionChain initiation is done in a thread
+        if self.OptChain is None or self.OptChain.lab is None:
+            raise ValueError('Option Chain not ready, please wait for it to be ready')
+            return None
+
+        vol = self.OptChain.lab.predict(exp, strike_k, right)
+        
+        try:
+            if strike_type == 'p':
+                vol['k'] = strike
+            return vol
+        except Exception as e:
+            logger.error(f"Error calculating vol for exp={exp}, strike={strike}: {e}")
+            return None
+
+
     def prev_close(self):
         """
         The prev_close returns the Previous days close, regardless of start time, end time, or configuration time
         """
+
+        ## To-do: Ensure this is previous day close RELATIVE to the end date
         close = float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['prev_close'].values[0])
         self.__set_close(close)
         return close
 
 
     def div_yield(self, div_type = 'yield'):
-        # try:
-        #     div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider='yfinance').to_df()
-        #     date_12 = date.today() - relativedelta(months = 12)
-        #     y = div_history[div_history['ex_dividend_date'] >= date_12].amount.sum()/self.prev_close()
-        #     self.y = y
-        #     return y
-        # except:
-        #     y = 0
-        #     self.y = 0
         div_history = self.div_yield_history(div_type = div_type)
         if not isinstance(div_history, pd.Series):
             if div_type == 'yield':
@@ -228,14 +355,15 @@ class Stock:
 
 
     def spot(self,
-    provider = 'yfinance', 
-    spot = None, 
-    ts: bool = False , 
-    ts_start = None, 
-    ts_end = None, 
-    ts_timewidth = None, 
-    ts_timeframe = None, 
-    model_override = None):
+        provider = 'yfinance', 
+        spot = None, 
+        ts: bool = False , 
+        ts_start = None, 
+        ts_end = None, 
+        ts_timewidth = None, 
+        ts_timeframe = None, 
+        model_override = None,
+        spot_type ='close'):
         """
         The spot method returns a dictionary holding the latest available close price for the ticker. It begins with the given or default end and start dates
 
@@ -247,14 +375,16 @@ class Stock:
         ts_end (str|datetime): End Date
         ts_timewidth (str|int): Steps in timeframe
         ts_timeframe (str): Target timeframe for series 
-        
+        spot_type (str): Type of spot to return. Default is 'close'. Others are 'chain_price', 'unadjusted_close'
 
         RETURNS
         _________
         pd.DataFrame or dict
         """
-        print('')
 
+        if spot_type not in ['close', 'chain_price', 'unadjusted_close']:
+            raise ValueError("spot_type must be either 'close', 'chain_price', 'unadjusted_close'")
+        
         if ts_timeframe is None:
             ts_timeframe = 'day'
         
@@ -275,19 +405,26 @@ class Stock:
         
         interval = identify_interval(ts_timewidth, ts_timeframe, provider)
         ts_start, ts_end = pd.to_datetime(ts_start).strftime('%Y-%m-%d'), pd.to_datetime(ts_end).strftime('%Y-%m-%d')
-        df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
+        
+        if spot_type == 'chain_price':
+                df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
+                                         start = '1960-01-01', interval= '1d', provider = provider)
+        else:
+            # print(ts_start, ts_end, interval, provider)
+            df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
 
         if ts:
             df.index = pd.to_datetime(df.index)
             return df
         else:
-            if pd.to_datetime(self.end_date).date() >= datetime.today().date():
+            if pd.to_datetime(self.end_date).date() >= datetime.today().date() and self.asset_type not in ['ETF', 'MUTUALFUND', 'INDEX']:
 
                 spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
             else:
-                end  = change_to_last_busday(self.end_date)
+                end  = change_to_last_busday(ts_end)
                 df.index = pd.to_datetime(df.index)
-                spot = {end: df[df.index.date == end.date()].close.values[-1]}
+                df = df[df.index.date == pd.to_datetime(end).date()]
+                spot = {end: df[spot_type].values[-1]}
             return spot
     
     def option_chain(self, date = None):
@@ -510,7 +647,8 @@ class Stock:
             return []
 
     def get_typical_price(self, start, end):
-        data = self.security.history(interval='1d', start=start, end=end)
+        data = self.spot(ts= True, ts_start=start, ts_end=end)
+        data.columns = [x.capitalize() for x in data.columns]
         data['typical_money_flow'] = (
             data['High'] + data['Low'] + data['Close'])/3
         return data

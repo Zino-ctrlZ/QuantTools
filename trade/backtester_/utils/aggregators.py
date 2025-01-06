@@ -1,8 +1,13 @@
+## To-Do: This was written with Long in mind. Need to add Short functionality
+## To-do: Add Thorp Expectancy (from building a winning system book)
+## To-do: Add skew
+## To-do: Is sharpe annualized?
+
 import sys
 import os
 sys.path.append(
     os.environ.get('WORK_DIR'))
-from trade.helpers.helper import copy_doc_from
+from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
 import plotly.io as pio
@@ -57,6 +62,11 @@ def pf_value_ts(port_stats: dict, cash: Union[dict, int, float]) -> pd.DataFrame
     port_equity_data['Total'] = port_equity_data.sum(axis=1)
     port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
     return port_equity_data
+
+
+def short_returns(t0, t1):
+    return 1 - (t1/t0)
+
 
 
 def dates_(port_stats: dict, start: bool = True) -> pd.Timestamp:
@@ -117,7 +127,7 @@ def final_value_func(equity_timeseries: pd.DataFrame) -> float:
     return final_val
 
 
-def rtrn(equity_timeseries: pd.DataFrame) -> float:
+def rtrn(equity_timeseries: pd.DataFrame, use_col = 'Total', long = True) -> float:
     """
     Parameters:
 
@@ -127,7 +137,7 @@ def rtrn(equity_timeseries: pd.DataFrame) -> float:
     float: Returns returns of portfolio from initial date to final date
     """
     ts = equity_timeseries
-    rtrn = (ts['Total'][-1]/ts['Total'][0])-1
+    rtrn = (ts[use_col][-1]/ts[use_col][0])-1 if long else 1 - (ts[use_col][-1]/ts[use_col][0])
     return rtrn*100
 
 
@@ -171,9 +181,10 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
     float: Annualized Volatility
     """
     ts = equity_timeseries.fillna(0)
-
+    annual_trading_days = 365
+    ts_date_width = (ts.index.to_series().diff()).dt.days.mean()
     if not downside:
-        return round(np.std(ts['Total'].pct_change(), ddof=1) * np.sqrt(252) * 100, 6)
+        return round(np.std(filter_zeros(ts['Total']).pct_change(), ddof=1) * np.sqrt(annual_trading_days/ts_date_width) * 100, 6)
     else:
         if not MAR:
             MAR = 0
@@ -183,7 +194,7 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
         return round(np.std(ts_d, ddof=1) * np.sqrt(252) * 100, 6)
 
 
-def daily_rtrns(equity_timeseries: pd.DataFrame) -> pd.Series:
+def daily_rtrns(equity_timeseries: pd.DataFrame, long = True) -> pd.Series:
     """
     Parameters:
     equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
@@ -191,11 +202,11 @@ def daily_rtrns(equity_timeseries: pd.DataFrame) -> pd.Series:
     Returns:
     pd.Series: Utility method. Returns timeseries of daily portfolio returns
     """
-    ts = equity_timeseries
-    return ts['Total'].pct_change()
+    ts = filter_zeros(equity_timeseries['Total']).pct_change()
+    return ts if long else -ts
 
 
-def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055) -> float:
+def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long = True) -> float:
     """
     Returns the Sharpe ratio of the portfolio
     Parameters: 
@@ -207,9 +218,13 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055) -> fl
     """
 
     # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
+    annual_trading_days = 365
+    ts_date_width = (equity_timeseries.index.to_series().diff()).dt.days.mean()
+    annual_period = annual_trading_days/ts_date_width
+    equity_timeseries = filter_zeros(equity_timeseries)
     daily_rfrate = (1+risk_free_rate)**(1/252) - 1
     annualized_vol = vol_annualized(equity_timeseries)/100
-    excess_retrns = np.mean(daily_rtrns(equity_timeseries) - daily_rfrate)*252
+    excess_retrns = np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate)*annual_period
     return excess_retrns/annualized_vol
 
 
@@ -420,7 +435,7 @@ def Expectancy(trades_df: pd.DataFrame) -> float:
     """
     tr = trades_df
 
-    return (avgPnL(tr, 'W', False) * winRate(tr)) + (avgPnL(tr, 'L', False) * lossRate(tr))
+    return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
 
 
 def SQN(trades_df: pd.DataFrame) -> float:
@@ -447,10 +462,12 @@ def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> fl
     time_in['position'] = 0
     tr = trades_df
     for index, row in tr.iterrows():
-        entry = row['EntryTime']
-        exit_ = row['ExitTime']
-        time_in['position'].loc[(time_in.index >= entry)
-                                & (time_in.index <= exit_)] = 1
+        entry = pd.to_datetime(row['EntryTime']).date()
+        exit_ = pd.to_datetime(row['ExitTime']).date()
+        time_in['position'].loc[(time_in.index.date >= entry)
+                                & (time_in.index.date <= exit_)] = 1
+
+
     return round((time_in['position'] == 1).sum()/len(time_in)*100, 2)
 
 
@@ -465,6 +482,7 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
 
     ts = equity_timeseries
     ts['Year'] = ts.index.year
+    ts.drop_duplicates(inplace=True)
     unq_year = ts.Year.unique()
     rtrn_d = {}
     for year in unq_year:
@@ -472,7 +490,6 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
         ret = ((data.loc[data.index.max(), 'Total'] /
                data.loc[data.index.min(), 'Total'])-1)*100
         rtrn_d[year] = ret
-
     return rtrn_d
 
 
@@ -542,7 +559,15 @@ class AggregatorParent(ABC):
 
     @copy_doc_from(dates_)
     def dates_(self, start: bool):
-        return dates_(self.get_port_stats(), start) if start else dates_(self.get_port_stats(), start)
+        try:
+            overwrite = pd.to_datetime(getattr(self, 'start_overwrite')).date()
+        except AttributeError:
+            overwrite = None
+
+        if overwrite:
+            return overwrite if start else dates_(self.get_port_stats(), start).date()
+        else:
+            return dates_(self.get_port_stats(), start).date() if start else dates_(self.get_port_stats(), start).date()
 
 
     @abstractmethod
@@ -805,8 +830,9 @@ class AggregatorParent(ABC):
         """
         return streak(self._trades, Type_)
 
+## FIXME: This is ridiculously slow.
     def aggregate(self,
-                  risk_free_rate: float = 0.055,
+                  risk_free_rate: float = 0.0,
                   MAR: float = 0) -> pd.Series:
         """ 
 
@@ -826,7 +852,7 @@ class AggregatorParent(ABC):
             MAR, float), f"Recieved MAR of type {type(MAR)} instead of Type float"
         rtrn_ = self.rtrn()
         series1 = pd.Series({
-            'Start': self.dates_(True),
+            'Start': self.start_overwrite if self.start_overwrite else self.dates_(True),
             'End': self.dates_(False),
             'Duration': self.dates_(False) - self.dates_(True),
             'Exposure Time [%]': self.ExposureDays(),
@@ -838,6 +864,7 @@ class AggregatorParent(ABC):
             'Volatility Ann. [%]': self.vol_annualized(),
             'Sharpe Ratio': self.sharpe(risk_free_rate),
             'Sortino Ratio': self.sortino(risk_free_rate, MAR),
+            'Skew': self._equity.Total.pct_change().skew(),
             'Calmar Ratio': self.calmar(),
             'Max. Drawdown [%]': self.mdd(),
             'Max. Drawdown Value [$]': self.mdd_value(),

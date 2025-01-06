@@ -10,15 +10,28 @@ sys.path.append(
 from dbase.DataAPI.ThetaData import * #type: ignore
 from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd
-from data import HistoricTradeDataHandler
-from event import *
-from strategy import OptionSignalStrategy
-from portfolio import OptionSignalPortfolio
-from execution import SimulatedExecutionHandler
+from EventDriven.data import  HistoricTradeDataHandler
+from EventDriven.event import *
+from EventDriven.strategy import OptionSignalStrategy
+from EventDriven.portfolio import OptionSignalPortfolio
+from EventDriven.execution import SimulatedExecutionHandler
 from queue import Queue
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
 
+##NOTE:
+## - Create an `Assistant Portfolio Manager` that allows custom functionality
+## - Create a `Risk Manager` that allows custom functionality
+## - Include an option to trade on next days open/close or current days close
+## - 
+    ## - Eg: Picking the best option to trade/Structure/Cash position
+
+## - Strategy Abstract class should have self.open.buy, self.open.sell, self.close.buy, self.close.sell
+    ## - This will be to simplify SignalEvent generation
+## - Strategy class currently only checks for signal True/False to generate SignalEvent. There needs to be a functionality to check if there is no active position as well
+##   This is to avoid generating a SignalEvent when there is already an active position.
+
+## - For Backtest, we can find a way to flip btwn a signal backtest and a backtest that uses the current price to generate a signal.
 
 class OptionSignalBacktest():
     """
@@ -35,16 +48,16 @@ class OptionSignalBacktest():
         self.risk_free_rate = 0.055
         
     def run(self):
-       while True:
+       while True: ## loops bars
         if self.bars.continue_backtest == True: 
-            self.bars.update_bars()
+            self.bars.update_bars() ## 
             print(self.bars.get_latest_bars(''))
         else:
             self.trades  = self.portfolio.get_trades()
             self.logger.info('no more data to feed backtest')
             print('no more data to feed backtest')
             break
-        while True: 
+         while True: ## Loops Events in a bar
             try: 
                 event = self.events.get(False)
             except Exception as e:

@@ -9,7 +9,7 @@ from abc import ABCMeta, abstractmethod
 
 from trade.assets import Stock
 
-from event import SignalEvent
+from EventDriven.event import SignalEvent
 from trade.helpers.Logging import setup_logger
 
 class Strategy(object):
@@ -109,7 +109,7 @@ class OptionSignalStrategy(Strategy):
     def _generate_underlier_data(self):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
-            self.underlier_list_data[underlier] = Stock.Stock(underlier)
+            self.underlier_list_data[underlier] = Stock.Stock(underlier, run_chain = False)
 
     def calculate_signals(self): 
         """
