@@ -57,7 +57,7 @@ class OptionSignalBacktest():
             self.logger.info('no more data to feed backtest')
             print('no more data to feed backtest')
             break
-         while True: ## Loops Events in a bar
+        while True: ## Loops Events in a bar
             try: 
                 event = self.events.get(False)
             except Exception as e:
