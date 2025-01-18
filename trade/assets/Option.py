@@ -88,7 +88,8 @@ class Option:
             start_date = datetime.strftime(start_date_date, format='%Y-%m-%d')
             end_date = datetime.strftime(today, format='%Y-%m-%d')
             self._initalized = False
-            asset_obj = Stock(ticker)
+            run_chain = kwargs.get('run_chain', True)
+            asset_obj = Stock(ticker, run_chain = run_chain)
             self.__asset = asset_obj
             self.__ticker = ticker.upper()
             self.timewidth = Configuration.timewidth or '1'

@@ -162,9 +162,12 @@ def cagr(equity_timeseries: pd.DataFrame) -> float:
     float: Returns average annualize retruns for the portfolio. Cumulative Annual Growth Rate
     """
     ts = equity_timeseries
-    begin_val = ts['Total'][0]
-    end_val = ts['Total'][-1]
-    days = (ts.index.max() - ts.index.min()).days
+    begin_val = ts['Total'].iloc[0]
+    end_val = ts['Total'].iloc[-1]
+    if isinstance(ts.index, pd.DatetimeIndex):
+        days = (ts.index.max() - ts.index.min()).days
+    elif isinstance(ts.index, pd.RangeIndex):
+        days = (ts.index.max() - ts.index.min())
     return ((end_val/begin_val)**(365/days) - 1)*100
 
 

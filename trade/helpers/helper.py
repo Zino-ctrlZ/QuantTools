@@ -41,6 +41,27 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 
+option_keys = {}
+def import_option_keys():
+    global option_keys
+    import json
+    with open('/Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/option_key.json', 'r') as f:
+        option_keys = json.load(f)
+
+import_option_keys()
+
+def save_option_keys(key, info):
+    import json
+    global option_keys
+    import_option_keys()
+    if key not in option_keys.keys():
+        option_keys[key] = info    
+        with open('/Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/option_key.json', 'w') as f:
+            json.dump(option_keys, f)
+    # else:
+    #     print(f"{key} already exists in option_keys")
+
+
 def filter_inf(data):
     data = data.replace([np.inf, -np.inf], np.nan)
     return data.ffill()
@@ -569,7 +590,10 @@ def generate_option_tick(symbol, right, exp, strike):
         strike = int(strike)
     else:
         strike = float(strike)
-    return symbol.upper() + tick_date + pad_string(strike) +right.upper()
+    
+    key = symbol.upper() + tick_date + pad_string(strike) +right.upper()
+    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': strike})
+    return key
 
 
 def wait_for_response(wait_time, condition_func, interval):
