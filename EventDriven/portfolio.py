@@ -121,7 +121,7 @@ class OptionSignalPortfolio(Portfolio):
         self._order_settings = _setting
     
 
-            
+    
     def construct_current_positions(self):
         d = dict((k, v) for k, v in [(s, {'quantity': 0.0, 'option': None}) for s in self.symbol_list])
         return d
@@ -138,6 +138,7 @@ class OptionSignalPortfolio(Portfolio):
         d['total'] = self.initial_capital
         return [d]
     
+    ## Change
     def construct_all_positions(self): 
         d = dict((k, v) for k, v in [(s, {'quantity' : 0.0, 'option': None}) for s in self.symbol_list]) #key is underlier, value is list of option contracts
         d['datetime'] = self.bars.start_date
@@ -155,6 +156,7 @@ class OptionSignalPortfolio(Portfolio):
         for underlier in self.symbol_list:
             self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
     
+    ## Change
     def generate_naive_option_order(self, signal : SignalEvent):
         """
         Takes a signal event and creates an order object
@@ -201,7 +203,7 @@ class OptionSignalPortfolio(Portfolio):
             if order_event is not None:
                 self.events.put(order_event)
               
-            
+    ## Change
     def generate_option_to_buy(self, underlier: Stock, contract_fetch_attempts = 0, invalid_contracts = []) -> pd.Series | None:
             """
             Buy an option based on the underlier.
