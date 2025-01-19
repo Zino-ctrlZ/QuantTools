@@ -33,6 +33,7 @@ from openbb import obb
 import pandas as pd
 import numpy as np
 import inspect
+from copy import deepcopy
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger('trade.helpers.helper')
@@ -45,7 +46,7 @@ option_keys = {}
 def import_option_keys():
     global option_keys
     import json
-    with open('/Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/option_key.json', 'r') as f:
+    with open(f'{os.environ['WORK_DIR']}/trade/assets/option_key.json', 'r') as f:
         option_keys = json.load(f)
 
 import_option_keys()
@@ -56,14 +57,19 @@ def save_option_keys(key, info):
     import_option_keys()
     if key not in option_keys.keys():
         option_keys[key] = info    
-        with open('/Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/option_key.json', 'w') as f:
+        with open(f'{os.environ['WORK_DIR']}/trade/assets/option_key.json', 'w') as f:
             json.dump(option_keys, f)
     # else:
     #     print(f"{key} already exists in option_keys")
 
+def save_block_option_keys(block_option_keys):
+    option_keys.update(block_option_keys)
+    save_option_keys()
+
+
 def get_option_specifics_from_key(key):
     if key in option_keys.keys():
-        return option_keys[key]
+        return deepcopy(option_keys[key])
     else:
         return None
 
