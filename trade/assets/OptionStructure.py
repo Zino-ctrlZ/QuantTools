@@ -324,6 +324,15 @@ class OptionStructure:
     ## Will not be implementing singleton
 
     def __init__(self, structure, **kwargs):
+
+        """
+        Sample Strucutre:
+            sample = {
+                'long': [{'strike': 175.0, 'expiration': '2025-03-21', 'underlier': 'AAPL', 'right': 'c'},],
+                'short': [{'strike': 200.0, 'expiration': '2025-03-21', 'underlier': 'AAPL', 'right': 'p'},],
+            }
+        
+        """
         assert isinstance(structure, dict), "Structure must be a dictionary"
         assert only_one_underlier(structure), "Only one underlier is allowed"
         self.base_structure = structure

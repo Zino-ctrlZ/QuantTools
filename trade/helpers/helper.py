@@ -46,7 +46,7 @@ option_keys = {}
 def import_option_keys():
     global option_keys
     import json
-    with open(f'{os.environ['WORK_DIR']}/trade/assets/option_key.json', 'r') as f:
+    with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'r') as f:
         option_keys = json.load(f)
 
 import_option_keys()
@@ -57,7 +57,7 @@ def save_option_keys(key, info):
     import_option_keys()
     if key not in option_keys.keys():
         option_keys[key] = info    
-        with open(f'{os.environ['WORK_DIR']}/trade/assets/option_key.json', 'w') as f:
+        with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'w') as f:
             json.dump(option_keys, f)
     # else:
     #     print(f"{key} already exists in option_keys")
@@ -604,7 +604,7 @@ def generate_option_tick(symbol, right, exp, strike):
         strike = float(strike)
     
     key = symbol.upper() + tick_date + pad_string(strike) +right.upper()
-    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': strike})
+    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
 
