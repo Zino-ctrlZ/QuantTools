@@ -1,3 +1,12 @@
+## Portfolio Expected Responsiblities:
+# - Portfolio Construction
+# - Trade Creation: Execution, handled by broker class.
+# - Performance Monitoring: PnL, Reports, Sharpe Ratio
+# - Position Management: Rolling Options, Hedging, Position sizing
+# - 
+
+
+
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -71,6 +80,47 @@ class OptionSignalPortfolio(Portfolio):
         self.max_option_budget = 0.1 * self.initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.options_data = {}
+        self._order_settings = {
+            'type': 'spread',
+            'specifics': [
+                {'direction': 'long', 'rel_strike': 1.0, 'dte': 365, 'moneyness_width': 0.1},
+                {'direction': 'short', 'rel_strike': 0.85, 'dte': 365, 'moneyness_width': 0.1}
+            ],
+            'name': 'vertical_spread'
+        }
+
+    @property
+    def order_settings(self):
+        return self._order_settings
+    
+    
+    def __enfore_order_settings(self, settings):
+        self.logger.warn('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
+        available_types = ['spread', 'naked', 'stock']
+        assert 'type' in settings.keys() and 'specifics' in settings.keys() and 'name' in settings.keys(), f'Expected both of `type`, `name` and `specifics` in settings keys'
+        assert settings['type'] in available_types, f'`type` must be one of {available_types}'
+        assert isinstance(settings['specifics'], list), f'Order Specifics should be a list'
+
+        if settings['type'] == 'spread' and len(settings['specific']) < 2:
+                raise ValueError(f'Expected 2 legs for spreads')
+    
+    
+    @order_settings.setter
+    def order_settings(self, settings, *args, **kwargs):
+
+        if isinstance(settings, dict):
+            _setting = settings
+            self.__enfore_order_settings(_setting)
+            
+        elif isinstance(settings, callable):
+            _settings = settings(*args, **kwargs)
+            self.__enfore_order_settings(_settings)
+
+        else:
+            raise ValueError('Order Settings can either be a callable or a dicitonary')
+        self._order_settings = _setting
+    
+
             
     def construct_current_positions(self):
         d = dict((k, v) for k, v in [(s, {'quantity': 0.0, 'option': None}) for s in self.symbol_list])
@@ -156,6 +206,34 @@ class OptionSignalPortfolio(Portfolio):
             """
             Buy an option based on the underlier.
             """
+
+            ## Generate should by risk manager
+            ## Thoughts when generating order:
+            """
+            - How to trade the position.
+                - Trade statically: Just defining what to buy and sell at all times
+                - Trade Dynamically: Allowing for strategies to pick order type.
+
+                Order Settings:
+                    Keys:
+                        Type: Naked, Vertical Spread
+                        Option Specifics:
+                            Single Legs: Relative Strike, DTE
+                            Spreads: 
+                                Both Legs Legs: Relative Strike, DTE
+
+                {
+                    'Type': Spread
+                    'Specifics': {
+                            [{'direction': 'short', 'details': {'rel_strike': 0.95, 'dte': 365}}, 
+                            {'direction': 'long', 'details': {'rel_strike': 1.00, 'dte': 365}}]
+                    }
+                }
+
+                Dynamically: Function that creates that.
+            """
+
+
             time = self.__latest_signals['Date']
             next_day_time = time + pd.DateOffset(days=1)
             option_spot = underlier.spot(ts=True, ts_start = time, ts_end = next_day_time)

@@ -61,6 +61,12 @@ def save_option_keys(key, info):
     # else:
     #     print(f"{key} already exists in option_keys")
 
+def get_option_specifics_from_key(key):
+    if key in option_keys.keys():
+        return option_keys[key]
+    else:
+        return None
+
 
 def filter_inf(data):
     data = data.replace([np.inf, -np.inf], np.nan)

@@ -20,11 +20,18 @@ from datetime import datetime
 import yfinance as yf
 from trade.assets.helpers.DataManagers import OptionDataManager
 
-
+##TO-DO: Extend option to take option_id or othervariables
 class Option:
     _instances = {}
 
-    def __new__(cls, ticker, strike, exp_date, put_call, *args, **kwargs):
+    def __new__(cls, 
+                ticker = None, 
+                strike = None, 
+                exp_date = None, 
+                put_call = None, 
+                option_id = None,
+                *args, **kwargs):
+        
         today = datetime.today()
         end_date = datetime.strftime(today, format='%Y-%m-%d')
         _end_date = Configuration.end_date or end_date
