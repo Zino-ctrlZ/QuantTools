@@ -119,16 +119,23 @@ class OptionSignalStrategy(Strategy):
             0: Do nothing
         """
         self.__latest_signals = self.bars.get_latest_bars('') #this returns a dataframe with the latest signals for each underlier
+        latest_signals_row = self.__latest_signals.iloc[0]
+        date = latest_signals_row['Date']
+        
         for underlier in self.symbol_list:
-            if self.__latest_signals.iloc[0][underlier] == 1:
-                signal = SignalEvent(underlier, self.__latest_signals.iloc[0]['Date'], 'LONG')
-                self.logger.info(f"BUY Signal for {underlier} at {self.__latest_signals.iloc[0]['Date']}")
+            signal_value = latest_signals_row[underlier]
+            if signal_value == 1:
+                signal = SignalEvent(underlier, date, 'LONG')
+                self.logger.info(f"LONG Signal for {underlier} at {date}")
                 self.events.put(signal)
-            elif self.__latest_signals.iloc[0][underlier] == -1:
-                signal = SignalEvent(underlier, self.__latest_signals.iloc[0]['Date'], 'SHORT') #TODO: atm short means to sell the option but this should be reimplemented to mean to buy a put option
-                self.logger.info(f"SELL Signal for {underlier} at {self.__latest_signals.iloc[0]['Date']}")
+            elif signal_value == -1:
+                signal = SignalEvent(underlier, date, 'CLOSE')
+                self.logger.info(f"CLOSE Signal for {underlier} at {date}")
+                self.events.put(signal)
+            elif signal_value == 2:
+                signal = SignalEvent(underlier, date, 'SHORT') 
+                self.logger.info(f"SHORT Signal for {underlier} at {date}")
                 self.events.put(signal)
             else:
-                self.logger.info(f"No signal for {underlier} at {self.__latest_signals.iloc[0]['Date']}")
+                self.logger.info(f"No signal for {underlier} at {date}")
                 pass
-            

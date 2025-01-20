@@ -47,47 +47,53 @@ class OptionSignalBacktest():
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         
+    #TODO: improve the exception handling by checking for specific exceptions
     def run(self):
-       while True: ## loops bars
-        if self.bars.continue_backtest == True: 
-            self.bars.update_bars() ## 
-            print(self.bars.get_latest_bars(''))
-        else:
-            self.trades  = self.portfolio.get_trades()
-            self.logger.info('no more data to feed backtest')
-            print('no more data to feed backtest')
-            break
-        while True: ## Loops Events in a bar
-            try: 
-                event = self.events.get(False)
-            except Exception as e:
-                self.logger.error(f'exception occured: {e}')
-                print('exception occured: ', e)
+        while True:  # Loop over bars
+            if not self.bars.continue_backtest:
+                self.trades = self.portfolio.get_trades()
+                self.logger.info("No more data to feed backtest")
+                print("No more data to feed backtest")
                 break
-            else: 
-                try: 
-                    self.logger.info(f'event: {event.type}')
-                    print('event ', event.type)
-                    if event is not None: 
-                        if event.type == 'MARKET':
+
+            # Update bars and log progress
+            self.bars.update_bars()
+            latest_bars = self.bars.get_latest_bars("")
+            self.logger.debug(f"Latest bars: {latest_bars}")  # Optional logging level
+            print(latest_bars)
+
+            # Process events for the current bar
+            while not self.events.empty():  # Avoid blocking
+                try:
+                    event = self.events.get_nowait()
+                except Exception as e:
+                    self.logger.error(f"Error fetching event: {e}")
+                    print(f"Error fetching event: {e}")
+                    continue
+
+                if event:
+                    try:
+                        self.logger.info(f"Processing event: {event.type}")
+                        print(f"Processing event: {event.type}")
+
+                        if event.type == "MARKET":
                             self.strategy.calculate_signals()
-                        elif event.type == 'SIGNAL':
-                            self.portfolio.generate_naive_option_order(event)
-                        elif event.type == 'ORDER':
-                            self.logger.info(f'order: {event.option}')
+                        elif event.type == "SIGNAL":
+                            self.portfolio.update_signal(event)
+                        elif event.type == "ORDER":
+                            self.logger.info(f"Order event: {event.option}")
                             self.executor.execute_order(event)
-                        elif event.type == 'FILL':
-                            self.logger.info(f'fill: {event.option}')
+                        elif event.type == "FILL":
+                            self.logger.info(f"Fill event: {event.option}")
                             self.portfolio.update_fill(event)
                         else:
-                            self.logger.error('event type not recognized')
+                            self.logger.warning(f"Unrecognized event type: {event.type}")
+                    except Exception as e:
+                        self.logger.error(f"Error processing event: {e}")
+                        print(f"Error processing event: {e}")
+                # Update portfolio time index after processing all events
+                self.portfolio.update_timeindex()
 
-                except Exception as e:  
-                    self.logger.error(f'exception occured: {e}')
-                    print('exception occured: ', e)
-                    break                    
-        
-        self.portfolio.update_timeindex()
         
     
     def get_all_holdings(self) -> pd.DataFrame:

@@ -280,9 +280,11 @@ class HistoricTradeDataHandler(DataHandler):
             entry_time = row['EntryTime']
             exit_time = row['ExitTime']
             ticker = row['Ticker']
-            
-            self.signal_df.loc[self.signal_df['Date'] == entry_time, ticker] = 1; 
-            self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1; 
+            size = row['Size']
+            #size in positive is for long positions whilenegative size is for short positions
+            self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size > 0), ticker] = 1 
+            self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size < 0), ticker] = 2
+            self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1 
         
         signal_columns = ['Date'].append(unique_tickers)
         self.latest_signal_df = pd.DataFrame(columns=signal_columns)

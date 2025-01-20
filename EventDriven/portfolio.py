@@ -27,7 +27,7 @@ from abc import ABCMeta, abstractmethod
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.Logging import setup_logger
-
+from trade.helpers.helper import pad_string
 
 class Portfolio(object):
     """
@@ -155,12 +155,12 @@ class OptionSignalPortfolio(Portfolio):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
             self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
-    
-    ## Change
-    def generate_naive_option_order(self, signal : SignalEvent):
-        """
-        Takes a signal event and creates an order object
-        The order has a default quantity of contracts at 1
+             
+    def generate_order(self, signal : SignalEvent):
+        """ 
+        Takes a signal event and creates an order event based on the signal parameters
+        
+        This interacts with RiskManager to determine what positions to open
         """
         self.__latest_signals = self.bars.get_latest_bars().iloc[0]
         order = None 
@@ -172,39 +172,48 @@ class OptionSignalPortfolio(Portfolio):
         
         if direction == 'LONG':
             underlier_stock = self.underlier_list_data[symbol]
-            contract = self.generate_option_to_buy(underlier_stock)
+            
+            contract = self.generate_option_to_buy(underlier_stock,  'C')
             if contract is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
                 return None
-            self.logger.info(f'Buying contract for {symbol} at {signal.datetime}')
+            self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
             
-            order = OrderEvent(symbol, signal.datetime ,order_type, quantity, 'BUY', option = self.get_option_id(contract)) #pass id instead of the option dataframe here
-            self.events.put(order)
-        if direction == 'SHORT':
+            order = OrderEvent(symbol, signal.datetime ,order_type, quantity, 'BUY', option = self.get_option_id(contract))
+        elif direction == 'SHORT':
+            underlier_stock = self.underlier_list_data[symbol]
+            
+            contract = self.generate_option_to_buy(underlier_stock, 'P')
+            if contract is None:  
+                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
+                return None
+            self.logger.info(f'Buying SHORT contract for {symbol} at {signal.datetime}')
+            
+            order = OrderEvent(symbol, signal.datetime ,order_type, quantity, 'BUY', option = self.get_option_id(contract))
+        elif direction == 'CLOSE':
             sell_contract_id = self.current_positions[symbol]['option']
             if sell_contract_id is None: 
                 self.logger.warning(f'No contracts held for {symbol} to sell')
                 return None
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
             
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity, 'SELL', option = sell_contract_id) #pass id instead of the option dataframe here
-            self.events.put(order)
-        #TODO: atm short means sell, but this should mean to buy a put option in other implementations 
+            order = OrderEvent(symbol, signal.datetime, order_type, quantity, 'SELL', option = sell_contract_id)
         return order
+        
             
-            
-    def update_signal(self, event):
+    def update_signal(self, event : SignalEvent):
         """
         Acts on a SignalEvent to generate new orders 
         based on the portfolio logic.
+        throws: AssertionError if event type is not 'SIGNAL'
         """
-        if event.type == 'SIGNAL':
-            order_event = self.generate_naive_option_order(event)
-            if order_event is not None:
-                self.events.put(order_event)
+        assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
+        order_event = self.generate_order(event)
+        if order_event is not None:
+            self.events.put(order_event)
               
     ## Change
-    def generate_option_to_buy(self, underlier: Stock, contract_fetch_attempts = 0, invalid_contracts = []) -> pd.Series | None:
+    def generate_option_to_buy(self, underlier: Stock, right: str,  contract_fetch_attempts = 0, invalid_contracts = [] ) -> pd.Series | None:
             """
             Buy an option based on the underlier.
             """
@@ -251,7 +260,7 @@ class OptionSignalPortfolio(Portfolio):
             if (contracts is None) or (len(contracts.columns) == 1):
                 self.logger.info(f'No contracts found for {underlier.ticker} at {time_str}')
                 return None
-            contracts = contracts[contracts['right'] == 'C'] #filter out puts        
+            contracts = contracts[contracts['right'] == right] #filter out right type 'C' or 'P'        
     
             #Filter out contracts that are out of the money
             contracts = contracts[(contracts['strike'] >= oom_price_lower) & (contracts['strike'] <= oom_price_upper)]
@@ -275,14 +284,14 @@ class OptionSignalPortfolio(Portfolio):
                 else:
                     invalid_contracts.append(self.get_option_id(contract))
                     # self.logger.warning(f'Contract {contract} is not valid')
-                    return self.generate_option_to_buy(underlier, contract_fetch_attempts + 1, invalid_contracts)
+                    return self.generate_option_to_buy(underlier, right, contract_fetch_attempts + 1, invalid_contracts)
             else: 
-                print('Failed to fetch contract for {underlier.ticker} at {time_str}')
+                print(f'Failed to fetch contract for {underlier.ticker} at {time_str}')
                 # self.logger.warning(f'Failed to fetch contract for {underlier.ticker} {contract["strike"]}{contract["strike"]}  at {time_str}')
                 return None
                 
                 
-                
+    #TODO: this needs to be modified to match the new order settings, change fill event types as well 
     def update_positions_from_fill(self, fill_event: FillEvent):
         """
         Takes a FilltEvent object and updates the position matrix
@@ -374,7 +383,8 @@ class OptionSignalPortfolio(Portfolio):
                         'EntryTime': entry_time,
                         'ExitTime': exit_time,
                         'Duration': duration,
-                        'Ticker': ticker
+                        'Ticker': ticker,
+                        'Option': data['option']
                         }) 
 
         trades = pd.DataFrame(trades_data)
@@ -500,6 +510,29 @@ class OptionSignalPortfolio(Portfolio):
             returns a string format of underlier-expiration-strike-type from the dataframe of the columns root, expiration, strike, right
         """
         return f"{contract['root']}-{contract['expiration']}-{contract['strike']}-{contract['right']}"
+    
+    
+    def generate_option_id(self, contract: pd.Series) -> str:
+        """
+            returns a string format of underlier-expiration-strike-type from the dataframe of the columns root, expiration, strike, right
+        """
+        right = contract['right']
+        exp = contract['expiration']
+        strike = contract['strike']
+        symbol = contract['root']
+        
+        assert right.upper() in ['P', 'C'], f"Recieved '{right}' for right. Expected 'P' or 'C'"
+        assert isinstance(exp, str), f"Recieved '{type(exp)}' for exp. Expected 'str'" 
+        assert isinstance(strike, ( float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"
+        
+        tick_date = pd.to_datetime(exp).strftime('%Y%m%d')
+        if str(strike)[-1] == '0':
+            strike = int(strike)
+        else:
+            strike = float(strike)
+        
+        key = symbol.upper() + tick_date + pad_string(strike) +right.upper()
+        return key
         
         
     def __is_valid_dataframe(self, df: pd.DataFrame) -> bool:
