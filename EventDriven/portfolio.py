@@ -27,6 +27,7 @@ from abc import ABCMeta, abstractmethod
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.Logging import setup_logger
+from functools import partial
 
 
 class Portfolio(object):
@@ -88,6 +89,7 @@ class OptionSignalPortfolio(Portfolio):
             ],
             'name': 'vertical_spread'
         }
+
 
     @property
     def order_settings(self):
