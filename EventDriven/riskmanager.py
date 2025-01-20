@@ -1,8 +1,4 @@
 import os, sys
-os.environ['STREAM_LOG_LEVEL'] = 'ERROR'
-os.environ['FILE_LOG_LEVEL'] = 'DEBUG'
-os.environ['PROPAGATE_TO_ROOT_LOGGER'] = 'False'
-os.environ['PROPAGATE_TO_ROOT_LOGGER'], os.environ['STREAM_LOG_LEVEL']
 from trade.assets.Stock import Stock
 from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
@@ -188,7 +184,7 @@ def produce_order_candidates(settings, tick, date, right = 'P'):
     return order_candidates
 
 
-def liquidity_check(id, date, pass_threshold = 250):
+def liquidity_check(id, date, pass_threshold = 250, lookback = 10):
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
     transfer_dict = {}
@@ -200,7 +196,7 @@ def liquidity_check(id, date, pass_threshold = 250):
             else:
                 transfer_dict[new_dict_keys[k]] = sample_id[k]
 
-    start = (pd.to_datetime(date) - BDay(10)).strftime('%Y-%m-%d')
+    start = (pd.to_datetime(date) - BDay(lookback)).strftime('%Y-%m-%d')
     oi_data = retrieve_openInterest(**transfer_dict, end_date=date, start_date=start)
     # print(f'Open Interest > {pass_threshold} for {id}:', oi_data.Open_interest.mean() )
     return oi_data.Open_interest.mean() > pass_threshold
@@ -289,12 +285,12 @@ class OrderPicker:
         ## Check Liquidity and Close Availability, Filter out those that don't meet the criteria
         for direction in order_candidates:
             for i,data in enumerate(order_candidates[direction]):
-                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date))
+                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, self.liquidity_threshold, self.lookback))
                 order_candidates[direction][i] = data[data.liquidity_check == True]
 
         for direction in order_candidates:
             for i,data in enumerate(order_candidates[direction]):
-                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date))
+                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, self.data_availability_threshold))
                 order_candidates[direction][i] = data[data.available_close_check == True] 
 
         ## Filter Unique Combinations per leg.
@@ -343,7 +339,7 @@ class RiskManager:
         self.events = events
         self.initial_capital = initial_capital
         # self.symbol_list = self.bars.symbol_list
-        self.OrderSelector = OrderPicker()
+        self.OrderPicker = OrderPicker()
 
 
     def get_order(self, symbol, date, order_settings):
