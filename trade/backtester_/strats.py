@@ -150,9 +150,20 @@ class MAStrat(Strategy):
         if  crossover(self.data.Close,self.ma_entry ) and not self.position and entry >= shifted and price >= close_shifted:
             self.buy(sl=self.data.Close[-1] * (1 - self.stop_loss))
 
-        
-        elif (self.position and price < self.exit_ma)  :
+
+        elif (self.position and price < self.exit_ma) :
             self.position.close()
+
+        if  self.ma_entry > self.data.Close and not self.position:
+            self.sell()
+
+        elif (self.position and price > self.exit_ma) :
+            self.position.close()
+
+        
+
+
+        
         
         # elif price < trend:
 

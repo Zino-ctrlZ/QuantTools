@@ -355,6 +355,7 @@ class OptionStructure:
         self.default_fill = kwargs.get('default_fill', 'midpoint')
         self.__sigma = None
         self.__pv = None
+        self.run_chain = kwargs.get('run_chain', False)
         self._init_structure()
         self.pv_set_thread = Thread(target=self.__set_pv, name = f'{self.ticker}_PV_Setter')
         self.sigma_set_thread = Thread(target=self.__set_sigma, name = f'{self.ticker}_Sigma_Setter')
@@ -421,7 +422,7 @@ class OptionStructure:
             legs_positions = self.base_structure[direction]
             for pos in legs_positions:
                 # with Context(end_date = self.end_date):
-                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right']))
+                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right'], run_chain = self.run_chain))
                 self.asset = legs_list[0].asset
             setattr(self, direction, legs_list)
             self.Structure[direction] = legs_list
