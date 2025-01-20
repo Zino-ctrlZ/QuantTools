@@ -94,8 +94,8 @@ def fetch_rates_save_cache(interval = '1d', use = 'yf', return_data = False):
 
 
 ## Start a thread to update the rates data in the db
-rates_cache_thread = Thread(target = fetch_rates_save_cache, name = 'rates_cache_thread', args = ('1h', 'db'))
-rates_cache_thread.start()
+# rates_cache_thread = Thread(target = fetch_rates_save_cache, name = 'rates_cache_thread', args = ('1h', 'db'))
+# rates_cache_thread.start()
 
 
 
@@ -125,19 +125,19 @@ def run_routine_rates_save():
 ## Updates the cache if the last date is not today
 def _fetch_rates():
 
-    ## Check if the rates cache is ready
-    import time
-    timer = 0
-    while is_rates_thread_still_running():
-        time.sleep(5)
-        rates_thread_logger.info(f'Waiting for rates data to be ready. {timer} seconds elasped')
-        timer += 5
-        if timer > 60:
-            rates_thread_logger.error('Rates data not ready after 60 seconds. Exiting')
-            return None
+    # ## Check if the rates cache is ready
+    # import time
+    # timer = 0
+    # while is_rates_thread_still_running():
+    #     time.sleep(5)
+    #     rates_thread_logger.info(f'Waiting for rates data to be ready. {timer} seconds elasped')
+    #     timer += 5
+    #     if timer > 60:
+    #         rates_thread_logger.error('Rates data not ready after 60 seconds. Exiting')
+    #         return None
         
-        if not is_rates_thread_still_running():
-            break
+    #     if not is_rates_thread_still_running():
+    #         break
 
 
     global _rates_cache
