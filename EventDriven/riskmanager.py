@@ -264,11 +264,11 @@ class OrderPicker:
         self.lookback = 30
 
     def get_order(self, 
-                  tick, 
-                  date,
-                  right, 
-                  max_close,
-                  order_settings):
+                  tick: str, 
+                  date: str,
+                  right: str, 
+                  max_close: float|int,
+                  order_settings: dict):
         
         ## Create necessary data structures
         direction_index = {}
@@ -340,6 +340,7 @@ class RiskManager:
         self.initial_capital = initial_capital
         # self.symbol_list = self.bars.symbol_list
         self.OrderPicker = OrderPicker()
+
 
 
     def get_order(self, symbol, date, order_settings):

@@ -5,6 +5,8 @@ Portfolio File:
     ☐ Write a logic to generate spreads based on criteria
         ☐ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders.
 
+    ☐ Quantity: Names Available Cash/Close of trade
+
 
 
 Data File:
