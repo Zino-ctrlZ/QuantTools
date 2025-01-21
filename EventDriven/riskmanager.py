@@ -245,6 +245,7 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
                             transfer_dict[new_dict_keys[k]] = sample_id[k]
                 start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
                 close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
+                close_data_sample = close_data_sample[~close_data_sample.index.duplicated(keep = 'first')]
                 close = close_data_sample['Midpoint'][date]
                 spot_cache[cache_key] = close
             else:
@@ -322,7 +323,7 @@ class OrderPicker:
                 option_id = return_dataframe[key].values[0]
                 id += f'&S:{option_id}'
                 return_order['long'].append(option_id)
-        
+        return_order['close'] = return_dataframe.close.values[0]
         return_order['trade_id'] = id
         return return_order
     
