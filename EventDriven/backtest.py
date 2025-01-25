@@ -15,9 +15,12 @@ from EventDriven.event import *
 from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
+from EventDriven.riskmanager import RiskManager
 from queue import Queue
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
+import traceback
+
 
 ##NOTE:
 ## - Create an `Assistant Portfolio Manager` that allows custom functionality
@@ -42,7 +45,8 @@ class OptionSignalBacktest():
         self.events = Queue(maxsize=0)  
         self.bars = HistoricTradeDataHandler(self.events, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.events)
-        self.portfolio = OptionSignalPortfolio(self.bars, self.events, initial_capital)
+        self.risk_manager = RiskManager(self.bars, self.events, initial_capital)
+        self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= initial_capital)
         self.executor =  SimulatedExecutionHandler(self.events)
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
@@ -51,7 +55,7 @@ class OptionSignalBacktest():
     def run(self):
         while True:  # Loop over bars
             if not self.bars.continue_backtest:
-                self.trades = self.portfolio.get_trades()
+                self.trades = self.portfolio.get_trades_new()
                 self.logger.info("No more data to feed backtest")
                 print("No more data to feed backtest")
                 break
@@ -82,17 +86,17 @@ class OptionSignalBacktest():
                             self.portfolio.update_signal(event)
                         elif event.type == "ORDER":
                             self.logger.info(f"Order event: {event.option}")
-                            self.executor.execute_order(event)
+                            self.executor.execute_order_randomized_slippage(event)
                         elif event.type == "FILL":
                             self.logger.info(f"Fill event: {event.option}")
                             self.portfolio.update_fill(event)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
-                        self.logger.error(f"Error processing event: {e}")
+                        self.logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
                         print(f"Error processing event: {e}")
                 # Update portfolio time index after processing all events
-                self.portfolio.update_timeindex()
+                self.portfolio.update_timeindex_new()
 
         
     

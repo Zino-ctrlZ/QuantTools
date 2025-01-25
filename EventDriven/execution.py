@@ -1,6 +1,5 @@
 
-import datetime
-
+import random
 from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import FillEvent, OrderEvent
@@ -23,7 +22,7 @@ class ExecutionHandler(object):
     __metaclass__ = ABCMeta
 
     @abstractmethod
-    def execute_order(self, event):
+    def execute_order_naively(self, event):
         """
         Takes an Order event and executes it, producing
         a Fill event that gets placed onto the Events queue.
@@ -46,17 +45,21 @@ class SimulatedExecutionHandler(ExecutionHandler):
     handler.
     """
     
-    def __init__(self, events):
+    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.00279):
         """
         Initialises the handler, setting the event queues
         up internally.
 
         Parameters:
         events - The Queue of Event objects.
+        max_slippage_pct - The slippage range for the market default is 0.002
+        commission_rate - The commission rate for the market default is 0.00279 per contract: https://robinhood.com/us/en/support/articles/trading-fees-on-robinhood/#Tradingactivityfee
         """
         self.events = events
-
-    def execute_order(self, event):
+        self.max_slippage_pct = max_slippage_pct
+        self.commission_rate = commission_rate
+        
+    def execute_order_naively(self, event: OrderEvent):
         """
         Simply converts Order objects into Fill objects naively,
         i.e. without any latency, slippage or fill ratio problems.
@@ -68,3 +71,16 @@ class SimulatedExecutionHandler(ExecutionHandler):
             fill_event = FillEvent(event.datetime, event.symbol,
                                    'ARCA', event.quantity, event.direction, fill_cost=0, commission=None, option=event.option)
             self.events.put(fill_event)
+            
+    def execute_order_randomized_slippage(self, event: OrderEvent):
+        """
+        This method will execute an order with a random slippage
+        based on the max_slippage_pct attribute of the class.
+        """
+        assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
+        commission = self.commission_rate * event.quantity
+        slippage = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)    
+        price = event.position['close'] * (1 + slippage)
+        fill_cost = price * event.quantity + commission
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost, commission=commission, position=event.position)
+        self.events.put(fill_event)

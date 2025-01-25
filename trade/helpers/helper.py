@@ -35,6 +35,7 @@ import numpy as np
 import inspect
 from copy import deepcopy
 from trade.helpers.Logging import setup_logger
+from trade.helpers.types import OptionTickMetaData
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -607,6 +608,50 @@ def generate_option_tick(symbol, right, exp, strike):
     save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
+
+def parse_option_tick(tick : str):
+    """
+    Parse the option tick into its components.
+    """
+    # Regex pattern to extract components
+    pattern = r"([A-Za-z]+)(\d{8})([CP])(\d+(\.\d+)?)"
+    match = re.match(pattern, tick)
+    
+    if not match:
+        raise ValueError(f"Invalid option string format, got: {tick}")
+    
+    # Extract components from the regex groups
+    ticker = match.group(1)
+    exp_date_raw = match.group(2)
+    put_call = match.group(3)
+    strike = float(match.group(4))
+    
+    # Convert the expiration date to the desired format
+    exp_date = datetime.strptime(exp_date_raw, "%Y%m%d").strftime("%Y-%m-%d")
+    
+    # Construct and return the dictionary
+    return {
+        "ticker": ticker,
+        "put_call": put_call,
+        "exp_date": exp_date,
+        "strike": strike
+    }
+
+
+def generate_option_tick_new(symbol, right, exp, strike) -> str:
+    assert right.upper() in ['P', 'C'], f"Recieved '{right}' for right. Expected 'P' or 'C'"
+    assert isinstance(exp, str), f"Recieved '{type(exp)}' for exp. Expected 'str'" 
+    assert isinstance(strike, ( float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"
+    
+    tick_date = pd.to_datetime(exp).strftime('%Y%m%d')
+    if str(strike)[-1] == '0':
+        strike = int(strike)
+    else:
+        strike = float(strike)
+    
+    key = symbol.upper() + tick_date + right.upper() + f'{strike}' 
+    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
+    return key
 
 def wait_for_response(wait_time, condition_func, interval):
 
