@@ -52,7 +52,7 @@ class OrderEvent(Event):
     quantity and a direction.
     """
 
-    def __init__(self, symbol, datetime, order_type, quantity, direction, option = None):
+    def __init__(self, symbol, datetime, order_type, quantity, direction, option = None, position = None):
         """
         Initialises the order type, setting whether it is
         a Market order ('MKT') or Limit order ('LMT'), has
@@ -73,7 +73,8 @@ class OrderEvent(Event):
         self.order_type = order_type
         self.quantity = quantity
         self.direction = direction
-        self.option = option
+        self.option = option #TODO: remove old implementation, new one is position
+        self.position = position #a dict with 'long' and 'short' keys
 
     def print_order(self):
         """
@@ -92,7 +93,7 @@ class FillEvent(Event):
     """
 
     def __init__(self, datetime, symbol, exchange, quantity, 
-                 direction, fill_cost, commission=None, option = None):
+                 direction, fill_cost, commission=None, option = None, position = None):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -119,7 +120,8 @@ class FillEvent(Event):
         self.quantity = quantity
         self.direction = direction
         self.fill_cost = fill_cost
-        self.option = option
+        self.option = option #TODO: remove old implementation, new one is position
+        self.position = position
 
         # Calculate commission
         if commission is None:

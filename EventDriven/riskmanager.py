@@ -8,6 +8,7 @@ from trade.helpers.helper import (change_to_last_busday,
                                   is_busday, 
                                   setup_logger, 
                                   generate_option_tick, 
+                                  generate_option_tick_new,
                                   get_option_specifics_from_key,
                                   identify_length,
                                   extract_numeric_value)
@@ -169,8 +170,8 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right = 'P', moneyness_w
                 option_details.reset_index(inplace = True)
                 option_details.set_index('build_date', inplace = True)
                 option_details['right'] = right
-                option_details.drop(columns = ['C','P'], inplace = True)
-                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick(symbol = x['ticker'], 
+                option_details.drop(columns = ['C','P'], inplace = True)# ['GOOGL20240621001475C']
+                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick_new(symbol = x['ticker'], 
                                                                     exp = x['expiration'].strftime('%Y-%m-%d'), strike = float(x['strike']), right = x['right']), axis = 1)
                 return_dataframe = pd.concat([return_dataframe, option_details])
             clear_context()
