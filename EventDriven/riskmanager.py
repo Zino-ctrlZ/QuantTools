@@ -68,6 +68,7 @@ def populate_cache(order_candidates, date = '2024-03-12',):
 
     ## Save to Dictionary Cache
     for tick, eod, oi in zip(tick_results, eod_results, oi_results):
+
         cache_key = f"{tick}_{date}"
         close_cache[cache_key] = eod
         oi_cache[cache_key] = oi
@@ -170,8 +171,8 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right = 'P', moneyness_w
                 option_details.reset_index(inplace = True)
                 option_details.set_index('build_date', inplace = True)
                 option_details['right'] = right
-                option_details.drop(columns = ['C','P'], inplace = True)# ['GOOGL20240621001475C']
-                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick_new(symbol = x['ticker'], 
+                option_details.drop(columns = ['C','P'], inplace = True)
+                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick(symbol = x['ticker'], 
                                                                     exp = x['expiration'].strftime('%Y-%m-%d'), strike = float(x['strike']), right = x['right']), axis = 1)
                 return_dataframe = pd.concat([return_dataframe, option_details])
             clear_context()

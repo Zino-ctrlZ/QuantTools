@@ -36,6 +36,7 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
     except Exception as e:
         print('Error occured: ', e)
         shutdown(pool)
+        raise
 
 
     finally:
