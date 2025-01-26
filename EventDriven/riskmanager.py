@@ -19,11 +19,102 @@ import pandas as pd
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathos.multiprocessing import ProcessingPool as Pool
+from trade.helpers.pools import runProcesses
 import numpy as np
 import time
 chain_cache = {}
 close_cache = {}
+oi_cache = {}
 spot_cache = {}
+
+
+
+def populate_cache(order_candidates, date = '2024-03-12',):
+
+    global close_cache, oi_cache, spot_cache
+
+    tempholder1 = {}
+    tempholder2 = {}
+
+    ## Create necessary data structures
+    ## Looping through the order candidates to get the necessary data, and organize into a list of lists that will be passed to runProcesses function
+    for j, direction in enumerate(order_candidates):
+        for i,data in enumerate(order_candidates[direction]):
+            data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
+            start = (pd.to_datetime(date) - BDay(20)).strftime('%Y-%m-%d')
+            data[['end_date', 'start_date']] = date, start
+            data['exp'] = data['exp'].dt.strftime('%Y-%m-%d')
+            tempholder1[i+j] = (data[['symbol', 'end_date', 'exp', 'right', 'start_date', 'strike']].T.values.tolist())
+            tempholder2[i+j] = data[['symbol', 'right', 'exp','strike']].T.values.tolist()
+
+    ## Extending lists, to ensure only one runProcesses call is made, instead of run per side
+    for i, data in tempholder1.items():
+        if i == 0:
+            OrderedList = data
+            tickOrderedList = tempholder2[i]
+        else:
+            for position, vars in enumerate(data):
+                OrderedList[position].extend(vars)
+            for position, vars in enumerate(tempholder2[i]):
+                tickOrderedList[position].extend(vars)
+
+    
+    eod_results = (runProcesses(retrieve_eod_ohlc, OrderedList, 'imap'))
+    oi_results = (runProcesses(retrieve_openInterest, OrderedList, 'imap'))
+    tick_results = (runProcesses(generate_option_tick, tickOrderedList, 'imap'))
+    tick_results = list(set(tick_results))
+
+
+    ## Save to Dictionary Cache
+    for tick, eod, oi in zip(tick_results, eod_results, oi_results):
+        cache_key = f"{tick}_{date}"
+        close_cache[cache_key] = eod
+        oi_cache[cache_key] = oi
+
+
+    ## Test1: Run spot_cache process after close_cache has been populate.
+    
+    spot_results = list(runProcesses(return_closePrice, [tick_results, [date]*len(tick_results)], 'imap'))   
+    for tick, spot in zip(tick_results, spot_results):
+        cache_key = f"{tick}_{date}"
+        spot_cache[cache_key] = spot
+
+
+    ## Test2: We will edit the populate spot_cache populate function to make an api call instead of using the cache.
+
+
+
+def return_closePrice(id, date):
+    global close_cache, spot_cache
+    cache_key = f"{id}_{date}"
+    close_data = close_cache[cache_key]
+    close_data = close_data[~close_data.index.duplicated(keep = 'first')]
+    close = close_data['Midpoint'][date]
+    return close
+
+
+def load_chain(date, ticker,  print_stderr = False):
+        print(date, ticker) if print_stderr else None
+        ## Get both calls and puts per moneyness. For 1 Moneyness, both will most be available. If not, if one is False, other True. 
+        ## We will need to get two rows. 
+        chain_key = f"{date}_{ticker}"
+        with Context(end_date = date):
+            if chain_key in chain_cache:
+                Option_Chain = chain_cache[chain_key]
+            else:
+                start_time = time.time()
+                Stock_obj = Stock(ticker, run_chain = False)
+                end_time = time.time()
+                print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
+                Option_Chain = Stock_obj.option_chain()
+                Spot = Stock_obj.spot(ts = False)
+                Spot = list(Spot.values())[0]
+                Option_Chain['Spot'] = Spot
+                Option_Chain['q'] = Stock_obj.div_yield()
+                Option_Chain['r'] = Stock_obj.rf_rate
+                chain_cache[chain_key] = Option_Chain
+
+
 
 
 
@@ -265,68 +356,81 @@ class OrderPicker:
         self.lookback = 30
 
     def get_order(self, 
-                  tick: str, 
-                  date: str,
-                  right: str, 
-                  max_close: float|int,
-                  order_settings: dict):
+                  tick, 
+                  date,
+                  right, 
+                  max_close,
+                  order_settings):
         
         ## Create necessary data structures
         direction_index = {}
+        str_direction_index = {}
         for indx, v in enumerate(order_settings['specifics']):
             if v['direction'] == 'long':
+                str_direction_index[indx] = 'L'
                 direction_index[indx] = 1
             elif v['direction'] == 'short':
+                str_direction_index[indx] = 'S'
                 direction_index[indx] = -1
 
-        ## Produce Order Candidates
-        start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
+
+        load_chain(date, 'TSLA')
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
 
-        ## Check Liquidity and Close Availability, Filter out those that don't meet the criteria
-        for direction in order_candidates:
-            for i,data in enumerate(order_candidates[direction]):
-                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, self.liquidity_threshold, self.lookback))
-                order_candidates[direction][i] = data[data.liquidity_check == True]
+
+        populate_cache(order_candidates, date=date)
+
 
         for direction in order_candidates:
             for i,data in enumerate(order_candidates[direction]):
-                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, self.data_availability_threshold))
+                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date))
+                data = data[data.liquidity_check == True]
+                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date))
                 order_candidates[direction][i] = data[data.available_close_check == True] 
+
+
 
         ## Filter Unique Combinations per leg.
         unique_ids = {'long': [], 'short': []}
         for direction in order_candidates:
             for i,data in enumerate(order_candidates[direction]):
                 unique_ids[direction].append(data[(data.liquidity_check == True) & (data.available_close_check == True)].option_id.unique().tolist())
-        
+
         ## Produce Tradeable Combinations
         tradeable_ids = list(product(*unique_ids['long'], *unique_ids['short']))
         tradeable_ids, unique_ids 
-        
+
         ## Keep only unique combinations. Not repeating a contract.
         filtered = [t for t in tradeable_ids if len(set(t)) == len(t)]
 
         ## Get the price of the structure
-        prices = get_structure_price(filtered, direction_index, date, 'AAPL')
+        ## Using List Comprehension to sum the prices of the structure per index
+        results = [
+            (*items, sum([direction_index[i] * spot_cache[f'{item}_{date}'] for i, item in enumerate(items)])) for items in filtered
+        ]
 
-        ## Return the structure with the best price
-        return_dataframe = prices[(prices.close<= max_close)].sort_values('close', ascending = False).head(1)
-        return_order = {'long': [], 'short': []}
+        ## Convert to DataFrame, and sort by the price of the structure.
+        return_dataframe = pd.DataFrame(results)
+        cols = return_dataframe.columns.tolist()
+        cols[-1] = 'close'
+        return_dataframe.columns= cols
+        return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1)
+
+        ## Rename the columns to the direction names
+        return_dataframe.columns = list(str_direction_index.values()) + ['close']
+        return_order = return_dataframe[list(str_direction_index.values())].to_dict(orient = 'list')
+        return_order
+
+        ## Create the trade_id with the direction and the id of the contract.
         id = ''
-        for key, v in direction_index.items():
-            if v < 0:
-                option_id = return_dataframe[key].values[0]
-                id += f'&L:{option_id}'
-                return_order['short'].append(option_id)
-            elif v > 0:
-                option_id = return_dataframe[key].values[0]
-                id += f'&S:{option_id}'
-                return_order['long'].append(option_id)
-        return_order['close'] = return_dataframe.close.values[0]
+        for k, v in return_order.items():
+            id += f"&{k}:{v[0]}"
+
         return_order['trade_id'] = id
+        return_order['close'] = return_dataframe.close.values[0]
+
         return return_order
-    
+
 
     
 
