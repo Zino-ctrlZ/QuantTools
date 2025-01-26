@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 shutdown_event = False
 
 def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List:
+    global shutdown_event
     try:
 
         pool = Pool(20)
