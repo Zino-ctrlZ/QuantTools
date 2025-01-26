@@ -20,8 +20,9 @@ Strategy File:
 
 
 Risk Manager:
-    ☐ Create a dummy risk manager. (Compute risk exposure)
+    ✔ Create a dummy risk manager. (Compute risk exposure) @done(25-01-21 07:33)
     ☐ Enforce scenario limits
+    ☐ Extend risk manager to enforce moneyness spread btwn contracts
 
 
 General:
