@@ -237,7 +237,8 @@ class OptionSignalPortfolio(Portfolio):
         cash_at_hand = self.current_holdings['cash']
         
         if signal_type == 'LONG': #buy calls
-            position = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
+            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
+            position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
                 return None
@@ -246,7 +247,8 @@ class OptionSignalPortfolio(Portfolio):
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
             return order
         elif signal_type == 'SHORT': #buy puts
-            position = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
+            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
+            position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
                 return None
