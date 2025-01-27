@@ -164,6 +164,10 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right = 'P', moneyness_w
                 else:
                     option_details = Option_Chain_Filtered[(Option_Chain_Filtered['relative_moneyness'] >= tgt_moneyness-moneyness_width) & 
                                                         (Option_Chain_Filtered['relative_moneyness'] <= tgt_moneyness+moneyness_width)]
+                    
+                
+                if option_details.empty:
+                    return None
                 option_details['build_date'] = date
                 option_details['ticker'] = ticker
                 option_details['moneyness'] = tgt_moneyness
@@ -350,7 +354,6 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
         pack_dataframe.at[pack_i, 'close'] = pack_close
     return pack_dataframe
 
-
 class OrderPicker:
     def __init__(self):
         self.liquidity_threshold = 250
@@ -376,7 +379,14 @@ class OrderPicker:
                 direction_index[indx] = -1
 
 
+        load_chain(date, 'TSLA')
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
+
+        if any([x2 is None for x in order_candidates.values() for x2 in x]):
+            return {
+                'result': "MONEYNESS_TOO_TIGHT",
+                'data': None
+            } 
 
 
         populate_cache(order_candidates, date=date)
@@ -388,6 +398,7 @@ class OrderPicker:
                 data = data[data.liquidity_check == True]
                 data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date))
                 order_candidates[direction][i] = data[data.available_close_check == True] 
+
 
 
 
@@ -417,6 +428,13 @@ class OrderPicker:
         return_dataframe.columns= cols
         return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1)
 
+
+        if return_dataframe.empty:
+            return {
+                'result': "MONEYNESS_TOO_TIGHT",
+                'data': None
+            } 
+            
         ## Rename the columns to the direction names
         return_dataframe.columns = list(str_direction_index.values()) + ['close']
         return_order = return_dataframe[list(str_direction_index.values())].to_dict(orient = 'list')
@@ -429,11 +447,13 @@ class OrderPicker:
 
         return_order['trade_id'] = id
         return_order['close'] = return_dataframe.close.values[0]
+        return_dict = {
+            'result': 'SUCCESSFUL',
+            'data': return_order
+        }
 
-        return return_order
 
-
-    
+        return return_dict
 
 class RiskManager:
     def __init__(self,
