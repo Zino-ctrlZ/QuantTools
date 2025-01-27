@@ -1,4 +1,5 @@
 from typing import TypedDict
+from enum import Enum
 
 class OptionTickMetaData(TypedDict):
     ticker: str
@@ -9,4 +10,11 @@ class OptionTickMetaData(TypedDict):
 class PositionData(TypedDict): 
     long: list[str]
     short: list[str]
+
+
+class ResultsEnum(Enum):
+    SUCCESSFUL = 'SUCCESSFUL'
+    MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
+    NO_ORDERS = 'NO_ORDERS'
+    UNSUCCESSFUL = 'UNSUCCESSFUL'
     

@@ -21,6 +21,7 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.pools import runProcesses
+from trade.helpers.types import ResultsEnum
 import numpy as np
 import time
 chain_cache = {}
@@ -354,6 +355,7 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
         pack_dataframe.at[pack_i, 'close'] = pack_close
     return pack_dataframe
 
+
 class OrderPicker:
     def __init__(self):
         self.liquidity_threshold = 250
@@ -431,7 +433,7 @@ class OrderPicker:
 
         if return_dataframe.empty:
             return {
-                'result': "MONEYNESS_TOO_TIGHT",
+                'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
                 'data': None
             } 
             
@@ -448,7 +450,7 @@ class OrderPicker:
         return_order['trade_id'] = id
         return_order['close'] = return_dataframe.close.values[0]
         return_dict = {
-            'result': 'SUCCESSFUL',
+            'result': ResultsEnum.SUCCESSFUL.value,
             'data': return_order
         }
 
