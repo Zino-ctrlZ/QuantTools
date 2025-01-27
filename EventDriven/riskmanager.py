@@ -376,7 +376,6 @@ class OrderPicker:
                 direction_index[indx] = -1
 
 
-        load_chain(date, 'TSLA')
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
 
 
