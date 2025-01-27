@@ -92,8 +92,8 @@ class FillEvent(Event):
     the commission of the trade from the brokerage.
     """
 
-    def __init__(self, datetime, symbol, exchange, quantity, 
-                 direction, fill_cost, commission=None, option = None, position = None):
+    def __init__(self, datetime, symbol, exchange, quantity,
+                 direction, fill_cost, market_value, commission=None, option = None, position = None,  ):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -122,6 +122,7 @@ class FillEvent(Event):
         self.fill_cost = fill_cost
         self.option = option #TODO: remove old implementation, new one is position
         self.position = position
+        self.market_value = market_value
 
         # Calculate commission
         if commission is None:

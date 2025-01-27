@@ -1,6 +1,7 @@
 from typing import List, Dict
 from abc import ABC, abstractmethod
 from pathos.multiprocessing import ProcessingPool as Pool
+from multiprocessing import cpu_count
 from pathos.multiprocessing import cpu_count
 from pathos.pools import _ProcessPool
 from threading import Thread
@@ -13,7 +14,7 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
     global shutdown_event
     try:
 
-        pool = Pool(20)
+        pool = Pool(cpu_count())
         pool.restart()
         if run_type == 'map':
             results = pool.map(func, *OrderedInputs)

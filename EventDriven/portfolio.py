@@ -19,7 +19,7 @@ sys.path.append(
 from trade.helpers.helper import parse_option_tick
 import pandas as pd
 
-from dbase.DataAPI.ThetaData import list_contracts, retrieve_option_ohlc, is_theta_data_retrieval_successful #type: ignore
+from dbase.DataAPI.ThetaData import list_contracts, retrieve_option_ohlc, is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 from trade.assets.Stock import Stock
 
 from abc import ABCMeta, abstractmethod
@@ -87,8 +87,8 @@ class OptionSignalPortfolio(Portfolio):
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
-                {'direction': 'long', 'rel_strike': 1.0, 'dte': 365, 'moneyness_width': 0.01},
-                {'direction': 'short', 'rel_strike': 0.85, 'dte': 365, 'moneyness_width': 0.01} 
+                {'direction': 'long', 'rel_strike': 1.0, 'dte': 365, 'moneyness_width': 0.1},
+                {'direction': 'short', 'rel_strike': 0.85, 'dte': 365, 'moneyness_width': 0.1} 
             ],
             'name': 'vertical_spread'
         }
@@ -238,9 +238,10 @@ class OptionSignalPortfolio(Portfolio):
         
         if signal_type == 'LONG': #buy calls
             position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
+            
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
-                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
+                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
                 return None
             self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
             order_quantity = (cash_at_hand * self.weight_map[symbol] )/ (position['close'] * 100)
@@ -250,7 +251,7 @@ class OptionSignalPortfolio(Portfolio):
             position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
-                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}')
+                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
                 return None
             self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
             order_quantity = (cash_at_hand * self.weight_map[symbol] )/ (position['close'] * 100)
@@ -259,7 +260,7 @@ class OptionSignalPortfolio(Portfolio):
         elif signal_type == 'CLOSE':
             current_position = self.current_positions[symbol]
             if 'position' not in current_position:
-                self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}')
+                self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
                 return None
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'])
@@ -406,14 +407,15 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = fill_event.quantity
                 new_position_data['entry_price'] = fill_event.fill_cost * 100
-                new_position_data['market_value'] = fill_event.fill_cost * 100
+                new_position_data['market_value'] = fill_event.market_value * 100
+                
                 
                 #update trade data on successful buy
                 trade_id = fill_event.position['trade_id']
                 self.trades[trade_id] = {}
                 self.trades[trade_id]['entry_price'] = fill_event.fill_cost * 100
                 self.trades[trade_id]['entry_date'] = fill_event.datetime
-                self.trades[trade_id]['quantity'] = fill_event.position
+                self.trades[trade_id]['quantity'] = fill_event.quantity
                 self.trades[trade_id]['symbol'] = fill_event.symbol
                 
                 #TODO: the get_options_data_on_contract_new function can be called more efficiently, possible bottleneck case here makin many calls to the API
@@ -455,13 +457,14 @@ class OptionSignalPortfolio(Portfolio):
             for option_id in position['long']: 
                 option_data = self.__get_latest_option_data(option_id)
                 if option_data is not None: 
-                    long_legs_cost += option_data['close']
+                    long_legs_cost += option_data['Midpoint'] ## Find a way to make this dynamic
+
         if 'short'in position:
             for option_id in position['short']: 
                 option_data = self.__get_latest_option_data(option_id)
                 if option_data is not None: 
-                    short_legs_cost += option_data['close']
-                
+                    short_legs_cost += option_data['Midpoint']
+
         return long_legs_cost - short_legs_cost
     
     def update_holdings_from_fill_new(self, fill_event: FillEvent):
@@ -522,7 +525,7 @@ class OptionSignalPortfolio(Portfolio):
                     #update trade data on successful sell
                     self.trades[self.current_positions[sym]['position']['trade_id']]['exit_price'] = self.current_positions[sym]['exit_price']
                     self.trades[self.current_positions[sym]['position']['trade_id']]['exit_date'] = current_date
-                    
+
                     self.current_positions[sym] = {}
                     new_positions_entry[sym] = {}
                 else: 
@@ -588,9 +591,10 @@ class OptionSignalPortfolio(Portfolio):
             trades_data.append({
                 'Ticker': data['symbol'],
                 'PnL': pnl,
-                'EntryPrice': data['entry_price'],
-                'ExitPrice': data['exit_price'],
+                'EntryPrice': data['entry_price']/data['quantity'],
+                'ExitPrice': data['exit_price']/data['quantity'],
                 'ReturnPct': return_pct,
+                'Quantity': data['quantity'],
                 'EntryTime': data['entry_date'],
                 'ExitTime': data['exit_date'],
                 'Duration': (data['exit_date'] - data['entry_date']).days,
@@ -738,10 +742,9 @@ class OptionSignalPortfolio(Portfolio):
                 end_date = self.bars.end_date.strftime('%Y%m%d')
                 exp = f'{contract["expiration"]}'
                 strike = contract['strike']
-                options = retrieve_option_ohlc(symbol = contract['root'], exp = exp, strike= strike, right=contract["right"], start_date=start_date, end_date=end_date)
-                
+                # options = retrieve_option_ohlc(symbol = contract['root'], exp = exp, strike= strike, right=contract["right"], start_date=start_date, end_date=end_date)
+                options = retrieve_eod_ohlc(symbol = contract['root'], exp = exp, strike= float(strike), right=contract["right"], start_date=start_date, end_date=end_date)
                 if isinstance(options, pd.DataFrame) and is_theta_data_retrieval_successful(options):
-                    options.set_index('date', inplace=True)
                     return options
                     # self.options_data[option_id] = options # a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
                 else: 
@@ -755,9 +758,9 @@ class OptionSignalPortfolio(Portfolio):
         start_date = self.bars.start_date.strftime('%Y%m%d')
         end_date = self.bars.end_date.strftime('%Y%m%d')
         exp = pd.to_datetime(exp).strftime('%Y%m%d')
-        options = retrieve_option_ohlc(symbol = symbol, exp = exp, strike= strike, right=right, start_date=start_date, end_date=end_date)
+        # options = retrieve_option_ohlc(symbol = symbol, exp = exp, strike= strike, right=right, start_date=start_date, end_date=end_date)
+        options = retrieve_eod_ohlc(symbol = symbol, exp = exp, strike= float(strike), right=right, start_date=start_date, end_date=end_date)
         if isinstance(options, pd.DataFrame) and is_theta_data_retrieval_successful(options):
-            options.set_index('date', inplace=True)
             return options # a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
         else: 
             return None

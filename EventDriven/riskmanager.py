@@ -7,8 +7,7 @@ from trade.helpers.helper import (change_to_last_busday,
                                   is_USholiday, 
                                   is_busday, 
                                   setup_logger, 
-                                  generate_option_tick, 
-                                  generate_option_tick_new,
+                                  generate_option_tick_new, 
                                   get_option_specifics_from_key,
                                   identify_length,
                                   extract_numeric_value)
@@ -60,17 +59,18 @@ def populate_cache(order_candidates, date = '2024-03-12',):
             for position, vars in enumerate(tempholder2[i]):
                 tickOrderedList[position].extend(vars)
 
-    
+
     eod_results = (runProcesses(retrieve_eod_ohlc, OrderedList, 'imap'))
     oi_results = (runProcesses(retrieve_openInterest, OrderedList, 'imap'))
-    tick_results = (runProcesses(generate_option_tick, tickOrderedList, 'imap'))
-    tick_results = list(set(tick_results))
-
-
+    tick_results = (runProcesses(generate_option_tick_new, tickOrderedList, 'imap'))
+    tick_results = list(tick_results)
+    oi_results = list(oi_results)
+    eod_results = list(eod_results)
     ## Save to Dictionary Cache
     for tick, eod, oi in zip(tick_results, eod_results, oi_results):
 
         cache_key = f"{tick}_{date}"
+
         close_cache[cache_key] = eod
         oi_cache[cache_key] = oi
 
@@ -177,7 +177,7 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right = 'P', moneyness_w
                 option_details.set_index('build_date', inplace = True)
                 option_details['right'] = right
                 option_details.drop(columns = ['C','P'], inplace = True)
-                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick(symbol = x['ticker'], 
+                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick_new(symbol = x['ticker'], 
                                                                     exp = x['expiration'].strftime('%Y-%m-%d'), strike = float(x['strike']), right = x['right']), axis = 1)
                 return_dataframe = pd.concat([return_dataframe, option_details])
             clear_context()
@@ -374,10 +374,10 @@ class OrderPicker:
         str_direction_index = {}
         for indx, v in enumerate(order_settings['specifics']):
             if v['direction'] == 'long':
-                str_direction_index[indx] = 'L'
+                str_direction_index[indx] = 'long'
                 direction_index[indx] = 1
             elif v['direction'] == 'short':
-                str_direction_index[indx] = 'S'
+                str_direction_index[indx] = 'short'
                 direction_index[indx] = -1
 
 
@@ -445,10 +445,11 @@ class OrderPicker:
         ## Create the trade_id with the direction and the id of the contract.
         id = ''
         for k, v in return_order.items():
-            id += f"&{k}:{v[0]}"
+            id += f"&{k[0].upper()}:{v[0]}"
 
         return_order['trade_id'] = id
         return_order['close'] = return_dataframe.close.values[0]
+        print(return_dataframe)
         return_dict = {
             'result': ResultsEnum.SUCCESSFUL.value,
             'data': return_order

@@ -67,6 +67,8 @@ class SimulatedExecutionHandler(ExecutionHandler):
         Parameters:
         event - Contains an Event object with order information.
         """
+
+        ## Need to add market_value here
         if event.type == 'ORDER':
             fill_event = FillEvent(event.datetime, event.symbol,
                                    'ARCA', event.quantity, event.direction, fill_cost=0, commission=None, option=event.option)
@@ -81,6 +83,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         commission = self.commission_rate * event.quantity
         slippage = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)    
         price = event.position['close'] * (1 + slippage)
-        fill_cost = price * event.quantity + commission
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost, commission=commission, position=event.position)
+        fill_cost = price * event.quantity + (commission/100) ## Commission is meant to increase buy price and reduce sell price.
+        market_value = price * event.quantity
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost, market_value=market_value, commission=commission, position=event.position)
         self.events.put(fill_event)
