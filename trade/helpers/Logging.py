@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 print("""
@@ -14,9 +15,24 @@ PROPAGATE_TO_ROOT_LOGGER = 'False'
 # FILENAME = 'Logging.ipynb'
 from logging.handlers import TimedRotatingFileHandler
 
-
+def find_project_root(current_path: Path, marker=".git"):
+    """
+    Find the current project root by looking for a marker file in the parent directories.
+    """
+    if isinstance(current_path, str):
+        current_path = Path(current_path)
+        
+    for parent in current_path.parents:
+        if (parent / marker).exists():
+            # return parent
+            pass
+    return os.environ['WORK_DIR']  # Default to current path if no marker is found
 
 def setup_logger(filename,stream_log_level = None, file_log_level = None, log_file=None, remove_root = True, custom_logger_name = None):
+
+
+    project_root_log_dir = Path(find_project_root(os.getcwd()))/"logs"
+
     # If custom logger name is None, use filename:
 
     stream_log_level = getattr(logging, os.getenv('STREAM_LOG_LEVEL', 'ERROR')) if stream_log_level is None else stream_log_level
@@ -44,9 +60,8 @@ def setup_logger(filename,stream_log_level = None, file_log_level = None, log_fi
 
 
     # Define the log file path
-    log_dir = 'logs'
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f'{notebook_name}.log')
+    os.makedirs(project_root_log_dir, exist_ok=True)
+    log_file = os.path.join(project_root_log_dir, f'{notebook_name}.log')
 
 
     # Remove all existing handlers (in case the logger was already configured)
@@ -79,3 +94,7 @@ def setup_logger(filename,stream_log_level = None, file_log_level = None, log_fi
     logger.propagate = propagate_to_root_logger
 
     return logger
+
+
+logger = setup_logger('trade.helpers.Logging', stream_log_level = logging.INFO)
+logger.info(f'Logging Root Directory: {Path(find_project_root(os.getcwd()))/"logs"}')
