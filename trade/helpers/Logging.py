@@ -24,8 +24,7 @@ def find_project_root(current_path: Path, marker=".git"):
         
     for parent in current_path.parents:
         if (parent / marker).exists():
-            # return parent
-            pass
+            return parent
     return os.environ['WORK_DIR']  # Default to current path if no marker is found
 
 def setup_logger(filename,stream_log_level = None, file_log_level = None, log_file=None, remove_root = True, custom_logger_name = None):
