@@ -1,12 +1,12 @@
 Portfolio File:
-    ☐ Extend OptionSignalClass
-    ☐ Use gen_option_trade trade/helpers/helper.py
-    ☐ Change option id structure to dict of long and short in the generate order place.
-    ☐ Write a logic to generate spreads based on criteria
-        ☐ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders.
+    ✔ Extend OptionSignalClass @done(25-01-27 00:25)
+    ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14)
+    ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14)
+    ✘ Write a logic to generate spreads based on criteria @cancelled(25-01-27 22:14)
+        ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14)
 
-    ☐ Quantity: Names Available Cash/Close of trade
-
+    ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25)
+    ☐ Make a module for demo
 
 
 Data File:
@@ -23,12 +23,15 @@ Risk Manager:
     ✔ Create a dummy risk manager. (Compute risk exposure) @done(25-01-21 07:33)
     ☐ Enforce scenario limits
     ☐ Extend risk manager to enforce moneyness spread btwn contracts
+    ☐ Return none if no order found 
 
 
 General:
     ☐ Implement buy on Open.
     ☐ Add days lag and `trade_on`
     ☐ Secondary queue/list to repopulate next bar
+    ☐ Getting divYield to have a max retries to factor in sporadic errors 
+    ☐ Enforce typedDicts for functions 
 
 
 
