@@ -26,7 +26,7 @@ from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
-from EventDriven.riskmanager import RiskManager
+from EventDriven.riskmanager_async import RiskManager
 
 from trade.helpers.Logging import setup_logger
 
@@ -222,7 +222,7 @@ class OptionSignalPortfolio(Portfolio):
             order = OrderEvent(symbol, signal.datetime, order_type, quantity, 'SELL', option = sell_contract_id)
         return order
 
-    def generate_order_new(self, signal : SignalEvent):
+    async def generate_order_new(self, signal : SignalEvent):
         """
         Takes a signal event and creates an order event based on the signal parameters
         Interacts with RiskManager to get order based on settings and signal
@@ -237,7 +237,7 @@ class OptionSignalPortfolio(Portfolio):
         cash_at_hand = self.current_holdings['cash']
         
         if signal_type == 'LONG': #buy calls
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
+            position_result = await self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
             
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
@@ -248,7 +248,7 @@ class OptionSignalPortfolio(Portfolio):
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
             return order
         elif signal_type == 'SHORT': #buy puts
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
+            position_result = await self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
@@ -268,7 +268,7 @@ class OptionSignalPortfolio(Portfolio):
         return None
         
             
-    def update_signal(self, event : SignalEvent):
+    async def update_signal(self, event : SignalEvent):
         """
         Acts on a SignalEvent to generate new orders 
         based on the portfolio logic.
@@ -276,7 +276,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
         # order_event = self.generate_order(event)
-        order_event = self.generate_order_new(event)
+        order_event = await self.generate_order_new(event)
         if order_event is not None:
             self.events.put(order_event)
               

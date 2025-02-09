@@ -1,3 +1,7 @@
+"""
+This is used to test the proxy server works to fetch thetadata 
+"""
+
 import http.client
 import json
 
