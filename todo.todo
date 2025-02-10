@@ -36,7 +36,7 @@ General:
 
 
 Setup Logger:
-    ☐ Instead of creating a logs folder in every root, it should be created in the root of the project.
+    ✔ Instead of creating a logs folder in every root, it should be created in the root of the project. @done(25-02-05 06:24)
 
 
 
