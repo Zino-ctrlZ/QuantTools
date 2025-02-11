@@ -12,6 +12,7 @@ at the end of both runs, you will be able to compare performance by looking at r
 
 import os
 from trade.helpers.pools import runProcesses
+from trade.helpers.threads import runThreads
 import asyncio 
 import cProfile
 import pstats
@@ -41,6 +42,14 @@ def test_runProcesses():
     return (tick_results, oi_results, eod_results)
   
 
+def test_runThreads():
+  #simulate the retrieve_eod_ohlc action in  riskmanager.py
+  eod_results = runThreads(retrieve_eod_ohlc, orderedList, 'map')
+  oi_results = runThreads(retrieve_openInterest, orderedList, 'map')
+  tick_results = runThreads(generate_option_tick_new, tickOrderedList, 'map')
+  
+  if (tick_results and oi_results and eod_results):
+    return (tick_results, oi_results, eod_results)
   
 async def test_async():
     # Transpose orderedList to generate tuples of arguments
@@ -103,7 +112,7 @@ if __name__ == '__main__' :
     except Exception as e:
       print('error occured: ', e)
     
-  run_processes()
+  # run_processes()
   
   # test the run_async function, log the results to a file
   def run_async():
@@ -142,3 +151,39 @@ if __name__ == '__main__' :
       
   
   # run_async()
+  
+  def run_threads():
+    try:
+      profiler.enable()
+      (tick_result, oi_result, eod_result) = test_runThreads()
+      profiler.disable()
+        # Save profiling data to a file
+      ioStringStream = io.StringIO()
+      fstats = pstats.Stats(profiler, stream=ioStringStream).sort_stats('cumulative')
+      fstats.print_stats()
+      ioStringStream.seek(0)
+      data = ioStringStream.read()
+      with open(os.path.join(os.path.dirname(__file__), 'data', 'runThreads.txt'), 'w') as stream:
+        print('writing to file')
+        stream.write(data)
+        stream.flush()
+      
+      with open(os.path.join(os.path.dirname(__file__), 'data','runThreads_eod_results.csv'), 'w') as f:
+        for df in eod_result:
+          df.to_csv(f, index=False)
+          f.write('\n\n')  # Add spaces between each dataframe
+          
+      with open(os.path.join(os.path.dirname(__file__), 'data','runThreads_oi_results.csv'), 'w') as f:
+        for df in oi_result:
+          df.to_csv(f, index=False)
+          f.write('\n\n')  # Add spaces between each dataframe
+          
+      with open(os.path.join(os.path.dirname(__file__), 'data','runThreads_tick_results.txt'), 'w') as f:
+        for tick in tick_result:
+          f.write(str(tick))
+          f.write('\n\n')
+          
+    except Exception as e:
+      print('error occured: ', e)
+      
+  run_threads()
