@@ -14,6 +14,7 @@ from trade.helpers.helper import (change_to_last_busday,
 from scipy.stats import percentileofscore
 from dbase.DataAPI.ThetaData import (list_contracts, retrieve_openInterest, retrieve_eod_ohlc, retrieve_quote)
 from pandas.tseries.offsets import BDay
+from pandas.tseries.holiday import USFederalHolidayCalendar
 from itertools import product
 import pandas as pd
 from copy import deepcopy
@@ -23,6 +24,28 @@ from trade.helpers.threads import runThreads
 from trade.helpers.types import ResultsEnum
 import numpy as np
 import time
+
+# Caching holidays to avoid redundant function calls
+HOLIDAY_SET = set(USFederalHolidayCalendar().holidays(start='2000-01-01', end='2030-12-31').strftime('%Y-%m-%d'))
+
+# Precompute BDay lookbacks to eliminate redundant calculations
+def precompute_lookbacks(start_date, end_date):
+    trading_days = pd.date_range(start=start_date, end=end_date, freq=BDay())
+    lookback_cache = {}
+    for date in trading_days:
+        lookback_cache[date.strftime('%Y-%m-%d')] = {
+            10: (date - BDay(10)).strftime('%Y-%m-%d'),
+            20: (date - BDay(20)).strftime('%Y-%m-%d'),
+            30: (date - BDay(30)).strftime('%Y-%m-%d'),
+        }
+    return lookback_cache
+
+LOOKBACKS = precompute_lookbacks('2000-01-01', '2030-12-31')
+
+# Function to check if a date is a holiday
+def is_holiday(date):
+    return date in HOLIDAY_SET
+
 chain_cache = {}
 close_cache = {}
 oi_cache = {}
@@ -42,7 +65,7 @@ def populate_cache(order_candidates, date = '2024-03-12',):
     for j, direction in enumerate(order_candidates):
         for i,data in enumerate(order_candidates[direction]):
             data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
-            start = (pd.to_datetime(date) - BDay(20)).strftime('%Y-%m-%d')
+            start = LOOKBACKS[date][20]  # Used precomputed BDay(20) instead of recalculating
             data[['end_date', 'start_date']] = date, start
             data['exp'] = data['exp'].dt.strftime('%Y-%m-%d')
             tempholder1[i+j] = (data[['symbol', 'end_date', 'exp', 'right', 'start_date', 'strike']].T.values.tolist())
@@ -119,78 +142,74 @@ def load_chain(date, ticker,  print_stderr = False):
 
 
 
-def chain_details(date, ticker, tgt_dte, tgt_moneyness, right = 'P', moneyness_width = 0.15, print_stderr = False):
+def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_width=0.15, print_stderr=False):
     return_dataframe = pd.DataFrame()
     errors = {}
-    if not (is_USholiday(date) and not is_busday(date)):
-        try:
-            print(date, ticker) if print_stderr else None
-            ## Get both calls and puts per moneyness. For 1 Moneyness, both will most be available. If not, if one is False, other True. 
-            ## We will need to get two rows. 
-            chain_key = f"{date}_{ticker}"
-            with Context(end_date = date):
-                if chain_key in chain_cache:
-                    Option_Chain = chain_cache[chain_key]
-                else:
-                    start_time = time.time()
-                    Stock_obj = Stock(ticker, run_chain = False)
-                    end_time = time.time()
-                    print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
-                    Option_Chain = Stock_obj.option_chain()
-                    Spot = Stock_obj.spot(ts = False)
-                    Spot = list(Spot.values())[0]
-                    Option_Chain['Spot'] = Spot
-                    Option_Chain['q'] = Stock_obj.div_yield()
-                    Option_Chain['r'] = Stock_obj.rf_rate
-                    chain_cache[chain_key] = Option_Chain
-
-                
-                Option_Chain_Filtered = Option_Chain[Option_Chain[right.upper()] == True]
-                
-                
-                if right == 'P':
-                    Option_Chain_Filtered['relative_moneyness']  = Option_Chain_Filtered.index.get_level_values('strike')/Option_Chain_Filtered.Spot
-                elif right == 'C':
-                    Option_Chain_Filtered['relative_moneyness']  = Option_Chain_Filtered.Spot/Option_Chain_Filtered.index.get_level_values('strike')
-                else:
-                    raise ValueError(f'Right dne. recieved {right}')
-                Option_Chain_Filtered['moneyness_spread'] = (tgt_moneyness-Option_Chain_Filtered['relative_moneyness'])**2
-                Option_Chain_Filtered['dte_spread'] = (Option_Chain_Filtered.index.get_level_values('DTE')-tgt_dte)**2
-                Option_Chain_Filtered.sort_values(by=['dte_spread','moneyness_spread'], inplace = True)
-                Option_Chain_Filtered = Option_Chain_Filtered.loc[Option_Chain_Filtered['dte_spread'] == Option_Chain_Filtered['dte_spread'].min()]
-                if float(moneyness_width) == 0.0:
-                    option_details = Option_Chain_Filtered.sort_values('moneyness_spread', ascending=False).head(1)
-                else:
-                    option_details = Option_Chain_Filtered[(Option_Chain_Filtered['relative_moneyness'] >= tgt_moneyness-moneyness_width) & 
-                                                        (Option_Chain_Filtered['relative_moneyness'] <= tgt_moneyness+moneyness_width)]
-                    
-                
-                if option_details.empty:
-                    return None
-                option_details['build_date'] = date
-                option_details['ticker'] = ticker
-                option_details['moneyness'] = tgt_moneyness
-                option_details['TGT_DTE'] = tgt_dte
-                option_details.reset_index(inplace = True)
-                option_details.set_index('build_date', inplace = True)
-                option_details['right'] = right
-                option_details.drop(columns = ['C','P'], inplace = True)
-                option_details['option_id'] = option_details.apply(lambda x: generate_option_tick_new(symbol = x['ticker'], 
-                                                                    exp = x['expiration'].strftime('%Y-%m-%d'), strike = float(x['strike']), right = x['right']), axis = 1)
-                return_dataframe = pd.concat([return_dataframe, option_details])
-            clear_context()
-            return_dataframe.drop_duplicates(inplace = True)
-
-        except Exception as e:
-            raise
-            errors[date] = e
-            return errors
-        return return_dataframe.sort_values('relative_moneyness', ascending=False)
-    else:
+    if is_holiday(date):  # Replaced is_USholiday() with the optimized function
         return None, errors
+
+    try:
+        print(date, ticker) if print_stderr else None
+        chain_key = f"{date}_{ticker}"
+        with Context(end_date=date):
+            if chain_key in chain_cache:
+                Option_Chain = chain_cache[chain_key]
+            else:
+                start_time = time.time()
+                Stock_obj = Stock(ticker, run_chain=False)
+                end_time = time.time()
+                print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
+                Option_Chain = Stock_obj.option_chain()
+                Spot = Stock_obj.spot(ts=False)
+                Spot = list(Spot.values())[0]
+                Option_Chain['Spot'] = Spot
+                Option_Chain['q'] = Stock_obj.div_yield()
+                Option_Chain['r'] = Stock_obj.rf_rate
+                chain_cache[chain_key] = Option_Chain
     
+            Option_Chain_Filtered = Option_Chain[Option_Chain[right.upper()] == True]
+        
+            if right == 'P':
+                Option_Chain_Filtered['relative_moneyness'] = Option_Chain_Filtered.index.get_level_values('strike') / Option_Chain_Filtered.Spot
+            elif right == 'C':
+                Option_Chain_Filtered['relative_moneyness'] = Option_Chain_Filtered.Spot / Option_Chain_Filtered.index.get_level_values('strike')
+            else:
+                raise ValueError(f'Right dne. received {right}')
+            
+            Option_Chain_Filtered['moneyness_spread'] = (tgt_moneyness - Option_Chain_Filtered['relative_moneyness'])**2
+            Option_Chain_Filtered['dte_spread'] = (Option_Chain_Filtered.index.get_level_values('DTE') - tgt_dte)**2
+            Option_Chain_Filtered.sort_values(by=['dte_spread', 'moneyness_spread'], inplace=True)
+            Option_Chain_Filtered = Option_Chain_Filtered.loc[Option_Chain_Filtered['dte_spread'] == Option_Chain_Filtered['dte_spread'].min()]
+            
+            if float(moneyness_width) == 0.0:
+                option_details = Option_Chain_Filtered.sort_values('moneyness_spread', ascending=False).head(1)
+            else:
+                option_details = Option_Chain_Filtered[(Option_Chain_Filtered['relative_moneyness'] >= tgt_moneyness - moneyness_width) & 
+                                                    (Option_Chain_Filtered['relative_moneyness'] <= tgt_moneyness + moneyness_width)]
+        
+            if option_details.empty:
+                return None
+            
+            option_details['build_date'] = date
+            option_details['ticker'] = ticker
+            option_details['moneyness'] = tgt_moneyness
+            option_details['TGT_DTE'] = tgt_dte
+            option_details.reset_index(inplace = True)
+            option_details.set_index('build_date', inplace = True)
+            option_details['right'] = right
+            option_details.drop(columns = ['C','P'], inplace = True)
+            option_details['option_id'] = option_details.apply(lambda x: generate_option_tick_new(symbol = x['ticker'], 
+                                                                        exp = x['expiration'].strftime('%Y-%m-%d'), strike = float(x['strike']), right = x['right']), axis = 1)
+            return_dataframe = pd.concat([return_dataframe, option_details])
+        clear_context()
+        return_dataframe.drop_duplicates(inplace = True)
 
-
+    except Exception as e:
+        raise
+    
+    
+    return return_dataframe.sort_values('relative_moneyness', ascending=False)
+    
 
 
 def produce_order_candidates(settings, tick, date, right = 'P'):
@@ -198,24 +217,6 @@ def produce_order_candidates(settings, tick, date, right = 'P'):
     for spec in settings['specifics']:
         order_candidates[spec['direction']].append(chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width']))
     return order_candidates
-
-
-def liquidity_check(id, date, pass_threshold = 250):
-    sample_id = deepcopy(get_option_specifics_from_key(id))
-    new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
-    transfer_dict = {}
-    for k, v in sample_id.items():
-
-        if k in new_dict_keys:
-            if k == 'strike':
-                transfer_dict[new_dict_keys[k]] = float(sample_id[k])
-            else:
-                transfer_dict[new_dict_keys[k]] = sample_id[k]
-
-    start = (pd.to_datetime(date) - BDay(10)).strftime('%Y-%m-%d')
-    oi_data = retrieve_openInterest(**transfer_dict, end_date=date, start_date=start)
-    # print(f'Open Interest > {pass_threshold} for {id}:', oi_data.Open_interest.mean() )
-    return oi_data.Open_interest.mean() > pass_threshold
 
 
 def available_close_check(id, date, threshold = 0.7):
@@ -233,7 +234,7 @@ def available_close_check(id, date, threshold = 0.7):
     if cache_key in close_cache:
         close_data_sample = close_cache[cache_key]
     else:
-        start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
+        start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
         close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
         close_cache[cache_key] = close_data_sample
     close_mask_series = close_data_sample.Close != 0
@@ -259,7 +260,7 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
                             transfer_dict[new_dict_keys[k]] = float(sample_id[k])
                         else:
                             transfer_dict[new_dict_keys[k]] = sample_id[k]
-                start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
+                start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
                 close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
                 close = close_data_sample['Midpoint'][date]
                 spot_cache[cache_key] = close
@@ -292,7 +293,7 @@ def liquidity_check(id, date, pass_threshold = 250, lookback = 10):
             else:
                 transfer_dict[new_dict_keys[k]] = sample_id[k]
 
-    start = (pd.to_datetime(date) - BDay(lookback)).strftime('%Y-%m-%d')
+    start = LOOKBACKS[date][lookback]  # Used precomputed BDay(30)
     oi_data = retrieve_openInterest(**transfer_dict, end_date=date, start_date=start)
     # print(f'Open Interest > {pass_threshold} for {id}:', oi_data.Open_interest.mean() )
     return oi_data.Open_interest.mean() > pass_threshold
@@ -313,7 +314,7 @@ def available_close_check(id, date, threshold = 0.7):
     if cache_key in close_cache:
         close_data_sample = close_cache[cache_key]
     else:
-        start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
+        start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
         close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
         close_cache[cache_key] = close_data_sample
     close_mask_series = close_data_sample.Close != 0
@@ -339,7 +340,7 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
                             transfer_dict[new_dict_keys[k]] = float(sample_id[k])
                         else:
                             transfer_dict[new_dict_keys[k]] = sample_id[k]
-                start = (pd.to_datetime(date) - BDay(30)).strftime('%Y-%m-%d')
+                start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
                 close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
                 close_data_sample = close_data_sample[~close_data_sample.index.duplicated(keep = 'first')]
                 close = close_data_sample['Midpoint'][date]
