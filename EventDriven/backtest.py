@@ -15,7 +15,7 @@ from EventDriven.event import *
 from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
-from EventDriven.riskmanager_async import RiskManager
+from EventDriven.riskmanager_threading import RiskManager
 from queue import Queue
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
@@ -52,7 +52,7 @@ class OptionSignalBacktest():
         self.risk_free_rate = 0.055
         
     #TODO: improve the exception handling by checking for specific exceptions
-    async def run(self):
+    def run(self):
         while True:  # Loop over bars
             if not self.bars.continue_backtest:
                 self.trades = self.portfolio.get_trades_new()
@@ -83,7 +83,7 @@ class OptionSignalBacktest():
                         if event.type == "MARKET":
                             self.strategy.calculate_signals()
                         elif event.type == "SIGNAL":
-                            await self.portfolio.update_signal(event)
+                            self.portfolio.update_signal(event)
                         elif event.type == "ORDER":
                             self.logger.info(f"Order event: {event.option}")
                             self.executor.execute_order_randomized_slippage(event)
