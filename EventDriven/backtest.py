@@ -15,26 +15,12 @@ from EventDriven.event import *
 from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
-from EventDriven.riskmanager_threading import RiskManager
+from EventDriven.riskmanager import RiskManager
 from queue import Queue
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
 import traceback
 
-
-##NOTE:
-## - Create an `Assistant Portfolio Manager` that allows custom functionality
-## - Create a `Risk Manager` that allows custom functionality
-## - Include an option to trade on next days open/close or current days close
-## - 
-    ## - Eg: Picking the best option to trade/Structure/Cash position
-
-## - Strategy Abstract class should have self.open.buy, self.open.sell, self.close.buy, self.close.sell
-    ## - This will be to simplify SignalEvent generation
-## - Strategy class currently only checks for signal True/False to generate SignalEvent. There needs to be a functionality to check if there is no active position as well
-##   This is to avoid generating a SignalEvent when there is already an active position.
-
-## - For Backtest, we can find a way to flip btwn a signal backtest and a backtest that uses the current price to generate a signal.
 
 class OptionSignalBacktest():
     """
