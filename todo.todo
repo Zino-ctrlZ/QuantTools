@@ -46,3 +46,10 @@ Additional Portfolio Attributes:
     - Cash Dict, for each symbol
     - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
     - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
+
+Feb 10, 2025 updates: 
+    ☐ Fix data consistency issues (zino)
+    ☐ implement deepcopy where objects/dataframes are assigned (zino)
+    ☐ Investigate get_trades_new  (zino)
+    ☐ Fix errors during backtest, known issues: openBB, cols[-1] = 'close' IndexError: list assignment index out of range in get_order (chidi)
+    ☐ After fixing the above, push to main branch and focus on optimization for optionSignalBacktest 
