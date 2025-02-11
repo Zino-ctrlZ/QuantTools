@@ -6,8 +6,10 @@ Portfolio File:
         ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14)
 
     ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25)
-    ☐ Make a module for demo
-
+    ✔ Make a module for demo @done(25-02-10 21:39)
+    ☐ implement deep copy where objects/dataframes are assigned 
+    ☐ Investigate get_trades_new (chidi mentioned it was not working)
+    ☐ Ensure all data is consistent, trades, all_positions, current_positions etc
 
 Data File:
     ☐ update_latest_bars doesn't need arguments.
@@ -16,7 +18,7 @@ Data File:
 
 
 Strategy File:
-    ☐ We will use LONG, SHORT and CLOSE. CLOSE checks if there is an active position then sends the OPPOSITE signal to Porfolio manager.
+    ✔ We will use LONG, SHORT and CLOSE. CLOSE checks if there is an active position then sends the OPPOSITE signal to Porfolio manager. @done(25-02-10 22:55)
 
 
 Risk Manager:
@@ -31,7 +33,7 @@ General:
     ☐ Add days lag and `trade_on`
     ☐ Secondary queue/list to repopulate next bar
     ☐ Getting divYield to have a max retries to factor in sporadic errors 
-    ☐ Enforce typedDicts for functions 
+    ☐ Enforce typedDicts for functions
 
 
 
