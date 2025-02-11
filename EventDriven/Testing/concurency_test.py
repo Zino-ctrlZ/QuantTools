@@ -103,7 +103,7 @@ if __name__ == '__main__' :
     except Exception as e:
       print('error occured: ', e)
     
-  run_processes()
+  # run_processes()
   
   # test the run_async function, log the results to a file
   def run_async():
@@ -141,4 +141,4 @@ if __name__ == '__main__' :
       print('error occured: ', e)
       
   
-  # run_async()
+  run_async()
