@@ -26,11 +26,7 @@ from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
-if eval(os.environ.get('ASYNC', True)):
-    from EventDriven.riskmanager_async import RiskManager
-else:
-    from EventDriven.riskmanager import RiskManager
-
+from EventDriven.riskmanager_threading import RiskManager
 from trade.helpers.Logging import setup_logger
 
 
