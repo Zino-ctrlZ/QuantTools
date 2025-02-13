@@ -32,7 +32,7 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 from trade.models.ModelLibrary import ModelLibrary
 from dbase.database.SQLHelpers import DatabaseAdapter
-from trade.helpers.decorators import log_error
+from trade.helpers.decorators import log_error, log_error_with_stack
 import copy
 from copy import deepcopy
 import plotly.graph_objects as go

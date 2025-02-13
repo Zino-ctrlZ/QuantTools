@@ -29,7 +29,7 @@ from pprint import pprint
 import numpy as np
 import matplotlib.pyplot as plt
 from threading import Thread
-from trade.helpers.decorators import log_time, log_error
+from trade.helpers.decorators import log_time, log_error, log_error_with_stack
 import pandas as pd
 logger = setup_logger('OptionChain')
 
@@ -152,7 +152,7 @@ class OptionChain:
     def __str__(self) -> str:
         return f"OptionChain({self.ticker}, {self.build_date})"
 
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def __initiate_chain(self):
         query = f"""
         SELECT * FROM vol_surface.option_chain 
@@ -174,7 +174,7 @@ class OptionChain:
         self.save_thread.start()
         return chain_new
 
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def get_chain(self, return_values = False):
         if return_values:
             return self.chain
@@ -183,7 +183,7 @@ class OptionChain:
             return self.simple_chain
 
     
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def __option_chain_bool(self):
 
         # Set build date
@@ -204,7 +204,7 @@ class OptionChain:
         return contracts_v2
     
    
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def initiate_lab(self):
         force_build = self.kwargs.get('force_build', False)
         if self.chain is None:
@@ -212,7 +212,7 @@ class OptionChain:
         self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width, force_build = force_build)
 
     
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def _save_chain(self):
         if self.chain is None:
             self.get_chain(True)

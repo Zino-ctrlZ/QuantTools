@@ -31,7 +31,7 @@ from trade.helpers.Context import Context
 from dbase.DataAPI.ThetaData import retrieve_ohlc, retrieve_quote_rt, retrieve_eod_ohlc, resample, retrieve_quote
 from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
-from trade.helpers.decorators import log_error
+from trade.helpers.decorators import log_error, log_error_with_stack
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
 logger = setup_logger('OptionDataManager.py', stream_log_level=logging.CRITICAL)
@@ -90,7 +90,7 @@ class OptionDataManager:
         self.opttick = generate_option_tick(symbol, right, exp, strike)
         self.Stock = Stock(symbol, run_chain = False)
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, False)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
 
         """
@@ -176,7 +176,7 @@ class OptionDataManager:
         
         return resampled[(resampled.index >= start) & (resampled.index <= end)]
         
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, False)
     def __save_intra_to_update(self, start, end):
         data = pd.DataFrame({'symbol': [self.symbol], 'optiontick': [self.opttick], 'exp': [self.exp], 'right': [self.right],'default_fill': [self.default_fill], 'strike': [self.strike], 'start': [start], 'end': [end]})
         path  = f'{os.environ["JOURNAL_PATH"]}/Algo/InputFiles/IntraSaveLog.xlsx'
@@ -423,7 +423,7 @@ class OptionDataManager:
         self.__save_data(processed_data, timeAggType)
 
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, False)
     def __save_data(self, data, timeAggType) -> None:
         OptDataManagerLogger.info(f"OptionDataManager saving data for {self.opttick}")
         UseTable = self.tables[timeAggType]
@@ -440,7 +440,7 @@ class OptionDataManager:
 
 
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, False)
     def __verify_return_data_integrity(self, data, timeAggType):
 
         ## Check for missing dates

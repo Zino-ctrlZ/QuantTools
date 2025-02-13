@@ -26,7 +26,7 @@ from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
-from EventDriven.riskmanager_threading import RiskManager
+from EventDriven.riskmanager import RiskManager
 from trade.helpers.Logging import setup_logger
 
 

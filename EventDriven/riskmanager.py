@@ -19,11 +19,15 @@ from itertools import product
 import pandas as pd
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from trade.helpers.Logging import setup_logger
+from trade.helpers.decorators import log_error_with_stack
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.threads import runThreads
 from trade.helpers.types import ResultsEnum
 import numpy as np
 import time
+
+logger = setup_logger('QuantTools.EventDriven.riskmanager')
 
 # Caching holidays to avoid redundant function calls
 HOLIDAY_SET = set(USFederalHolidayCalendar().holidays(start='2000-01-01', end='2030-12-31').strftime('%Y-%m-%d'))
@@ -52,7 +56,7 @@ oi_cache = {}
 spot_cache = {}
 
 
-
+@log_error_with_stack(logger)
 def populate_cache(order_candidates, date = '2024-03-12',):
 
     global close_cache, oi_cache, spot_cache
@@ -361,6 +365,8 @@ class OrderPicker:
         self.data_availability_threshold = 0.7
         self.lookback = 30
 
+        
+    @log_error_with_stack(logger)
     def get_order(self, 
                   tick, 
                   date,
@@ -380,7 +386,7 @@ class OrderPicker:
                 direction_index[indx] = -1
 
 
-        load_chain(date, 'TSLA')
+        load_chain(date, 'TSLA') ## Why is this here?
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
 
         if any([x2 is None for x in order_candidates.values() for x2 in x]):
@@ -416,6 +422,7 @@ class OrderPicker:
         ## Keep only unique combinations. Not repeating a contract.
         filtered = [t for t in tradeable_ids if len(set(t)) == len(t)]
 
+
         ## Get the price of the structure
         ## Using List Comprehension to sum the prices of the structure per index
         results = [
@@ -424,17 +431,18 @@ class OrderPicker:
 
         ## Convert to DataFrame, and sort by the price of the structure.
         return_dataframe = pd.DataFrame(results)
+        if return_dataframe.empty:
+            return {
+                'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
+                'data': None
+            } 
         cols = return_dataframe.columns.tolist()
         cols[-1] = 'close'
         return_dataframe.columns= cols
         return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1)
 
 
-        if return_dataframe.empty:
-            return {
-                'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
-                'data': None
-            } 
+
             
         ## Rename the columns to the direction names
         return_dataframe.columns = list(str_direction_index.values()) + ['close']
