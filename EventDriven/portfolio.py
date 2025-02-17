@@ -82,7 +82,7 @@ class OptionSignalPortfolio(Portfolio):
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.options_data = {}
-        self.weight_map = self.__construct_weight(weight_map = None)
+        self.weight_map = self.__construct_weight(weight_map = weight_map)
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
