@@ -41,7 +41,7 @@ class OptionSignalBacktest():
             
             #check for data to feed backtest
             if not has_backtest_data: 
-                self.trades = self.portfolio.get_trades_new()
+                self.trades = self.portfolio.get_trades()
                 self.logger.info("No more data to feed backtest")
                 print("No more data to feed backtest")
                 break
@@ -63,7 +63,7 @@ class OptionSignalBacktest():
                     print(f"Event queue is empty, processed {event_count} event(s)")
                    
                     # Update portfolio time index after processing all events
-                    self.portfolio.update_timeindex_new()
+                    self.portfolio.update_timeindex()
                     
                     #advance scheduler queue to next date 
                     self.events.advance_date()
