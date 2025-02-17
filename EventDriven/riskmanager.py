@@ -58,57 +58,65 @@ spot_cache = {}
 
 @log_error_with_stack(logger)
 def populate_cache(order_candidates, date = '2024-03-12',):
-
     global close_cache, oi_cache, spot_cache
 
     tempholder1 = {}
     tempholder2 = {}
 
-    ## Create necessary data structures
-    ## Looping through the order candidates to get the necessary data, and organize into a list of lists that will be passed to runProcesses function
-    for j, direction in enumerate(order_candidates):
-        for i,data in enumerate(order_candidates[direction]):
-            data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
-            start = LOOKBACKS[date][20]  # Used precomputed BDay(20) instead of recalculating
-            data[['end_date', 'start_date']] = date, start
-            data['exp'] = data['exp'].dt.strftime('%Y-%m-%d')
-            tempholder1[i+j] = (data[['symbol', 'end_date', 'exp', 'right', 'start_date', 'strike']].T.values.tolist())
-            tempholder2[i+j] = data[['symbol', 'right', 'exp','strike']].T.values.tolist()
-
-    ## Extending lists, to ensure only one runProcesses call is made, instead of run per side
-    for i, data in tempholder1.items():
-        if i == 0:
-            OrderedList = data
-            tickOrderedList = tempholder2[i]
-        else:
-            for position, vars in enumerate(data):
-                OrderedList[position].extend(vars)
-            for position, vars in enumerate(tempholder2[i]):
-                tickOrderedList[position].extend(vars)
-
-
-    eod_results = (runThreads(retrieve_eod_ohlc, OrderedList, 'map'))
-    oi_results = (runThreads(retrieve_openInterest, OrderedList, 'map'))
-    tick_results = (runThreads(generate_option_tick_new, tickOrderedList, 'map'))
+    if is_holiday(date):
+        return 'holiday'
     
-    ## Save to Dictionary Cache
-    for tick, eod, oi in zip(tick_results, eod_results, oi_results):
+    else:
 
-        cache_key = f"{tick}_{date}"
+        ## Create necessary data structures
+        ## Looping through the order candidates to get the necessary data, and organize into a list of lists that will be passed to runProcesses function
+        for j, direction in enumerate(order_candidates):
+            for i,data in enumerate(order_candidates[direction]):
+                if isinstance(data, str) and data =='theta_data_error':
+                    return 'theta_data_error'
+                
 
-        close_cache[cache_key] = eod
-        oi_cache[cache_key] = oi
+                data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
+                start = LOOKBACKS[date][20]  # Used precomputed BDay(20) instead of recalculating
+                data[['end_date', 'start_date']] = date, start
+                data['exp'] = data['exp'].dt.strftime('%Y-%m-%d')
+                tempholder1[i+j] = (data[['symbol', 'end_date', 'exp', 'right', 'start_date', 'strike']].T.values.tolist())
+                tempholder2[i+j] = data[['symbol', 'right', 'exp','strike']].T.values.tolist()
+
+        ## Extending lists, to ensure only one runProcesses call is made, instead of run per side
+        for i, data in tempholder1.items():
+            if i == 0:
+                OrderedList = data
+                tickOrderedList = tempholder2[i]
+            else:
+                for position, vars in enumerate(data):
+                    OrderedList[position].extend(vars)
+                for position, vars in enumerate(tempholder2[i]):
+                    tickOrderedList[position].extend(vars)
 
 
-    ## Test1: Run spot_cache process after close_cache has been populate.
-    
-    spot_results = runThreads(return_closePrice, [tick_results, [date]*len(tick_results)], 'map')
-    for tick, spot in zip(tick_results, spot_results):
-        cache_key = f"{tick}_{date}"
-        spot_cache[cache_key] = spot
+        eod_results = (runThreads(retrieve_eod_ohlc, OrderedList, 'map'))
+        oi_results = (runThreads(retrieve_openInterest, OrderedList, 'map'))
+        tick_results = (runThreads(generate_option_tick_new, tickOrderedList, 'map'))
+        
+        ## Save to Dictionary Cache
+        for tick, eod, oi in zip(tick_results, eod_results, oi_results):
+
+            cache_key = f"{tick}_{date}"
+
+            close_cache[cache_key] = eod
+            oi_cache[cache_key] = oi
 
 
-    ## Test2: We will edit the populate spot_cache populate function to make an api call instead of using the cache.
+        ## Test1: Run spot_cache process after close_cache has been populate.
+        
+        spot_results = runThreads(return_closePrice, [tick_results, [date]*len(tick_results)], 'map')
+        for tick, spot in zip(tick_results, spot_results):
+            cache_key = f"{tick}_{date}"
+            spot_cache[cache_key] = spot
+
+
+        ## Test2: We will edit the populate spot_cache populate function to make an api call instead of using the cache.
 
 
 
@@ -150,8 +158,7 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_wid
     return_dataframe = pd.DataFrame()
     errors = {}
     if is_holiday(date):  # Replaced is_USholiday() with the optimized function
-        return None, errors
-
+        return 'holiday'
     try:
         print(date, ticker) if print_stderr else None
         chain_key = f"{date}_{ticker}"
@@ -163,7 +170,10 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_wid
                 Stock_obj = Stock(ticker, run_chain=False)
                 end_time = time.time()
                 print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
-                Option_Chain = Stock_obj.option_chain()
+                try:
+                    Option_Chain = Stock_obj.option_chain()
+                except:
+                    return 'theta_data_error'
                 Spot = Stock_obj.spot(ts=False)
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
@@ -209,18 +219,11 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_wid
         return_dataframe.drop_duplicates(inplace = True)
 
     except Exception as e:
-        raise
+        return 'error'
     
     
     return return_dataframe.sort_values('relative_moneyness', ascending=False)
     
-
-
-def produce_order_candidates(settings, tick, date, right = 'P'):
-    order_candidates = {'long': [], 'short': []}
-    for spec in settings['specifics']:
-        order_candidates[spec['direction']].append(chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width']))
-    return order_candidates
 
 
 def available_close_check(id, date, threshold = 0.7):
@@ -281,7 +284,8 @@ def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
 def produce_order_candidates(settings, tick, date, right = 'P'):
     order_candidates = {'long': [], 'short': []}
     for spec in settings['specifics']:
-        order_candidates[spec['direction']].append(chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width']))
+        chain = chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width'])
+        order_candidates[spec['direction']].append(chain)
     return order_candidates
 
 
@@ -386,7 +390,6 @@ class OrderPicker:
                 direction_index[indx] = -1
 
 
-        load_chain(date, 'TSLA') ## Why is this here?
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
 
         if any([x2 is None for x in order_candidates.values() for x2 in x]):
@@ -396,8 +399,17 @@ class OrderPicker:
             } 
 
 
-        populate_cache(order_candidates, date=date)
+        returned = populate_cache(order_candidates, date=date)
 
+        if returned == 'holiday':
+            return {
+                'result': ResultsEnum.IS_HOLIDAY.value,
+                'data': None}
+        elif returned == 'theta_data_error':
+            return {
+                'result': ResultsEnum.UNAVAILABLE_CONTRACT.value,
+                'data': None
+            }
 
         for direction in order_candidates:
             for i,data in enumerate(order_candidates[direction]):
@@ -435,14 +447,18 @@ class OrderPicker:
             return {
                 'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
                 'data': None
-            } 
+            }
         cols = return_dataframe.columns.tolist()
         cols[-1] = 'close'
         return_dataframe.columns= cols
-        return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1)
+        return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
 
 
-
+        if return_dataframe.empty:
+            return {
+                'result': ResultsEnum.MAX_PRICE_TOO_LOW.value,
+                'data': None
+            }
             
         ## Rename the columns to the direction names
         return_dataframe.columns = list(str_direction_index.values()) + ['close']
@@ -452,11 +468,12 @@ class OrderPicker:
         ## Create the trade_id with the direction and the id of the contract.
         id = ''
         for k, v in return_order.items():
-            id += f"&{k[0].upper()}:{v[0]}"
-
+            if len(v) > 0:
+                id += f"&{k[0].upper()}:{v[0]}"
+        print(return_dataframe)
         return_order['trade_id'] = id
         return_order['close'] = return_dataframe.close.values[0]
-        print(return_dataframe)
+        
         return_dict = {
             'result': ResultsEnum.SUCCESSFUL.value,
             'data': return_order
