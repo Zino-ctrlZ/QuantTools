@@ -1,12 +1,4 @@
-
-from dotenv import load_dotenv
-load_dotenv()
-import os
-import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) #type: ignore
-sys.path.append(
-    os.environ.get('DBASE_DIR')) #type: ignore
+from queue import Empty as emptyEventQueue
 from dbase.DataAPI.ThetaData import * #type: ignore
 from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd
@@ -16,7 +8,7 @@ from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
 from EventDriven.riskmanager import RiskManager
-from queue import Queue
+from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
 import traceback
@@ -28,7 +20,12 @@ class OptionSignalBacktest():
     """
     
     def __init__(self, trades: pd.DataFrame, initial_capital: int =100000 ) -> None:
-        self.events = Queue(maxsize=0)  
+        #set start and end date
+        self.start_date = pd.to_datetime(trades['EntryTime']).min()
+        self.end_date = pd.to_datetime(trades['ExitTime']).max()
+        
+        #initialize critical components 
+        self.events = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.events, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.events)
         self.risk_manager = RiskManager(self.bars, self.events, initial_capital)
@@ -37,31 +34,47 @@ class OptionSignalBacktest():
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         
-    #TODO: improve the exception handling by checking for specific exceptions
     def run(self):
         while True:  # Loop over bars
-            if not self.bars.continue_backtest:
+            # Update bars and log progress
+            has_backtest_data = self.bars.update_bars()
+            
+            #check for data to feed backtest
+            if not has_backtest_data: 
                 self.trades = self.portfolio.get_trades_new()
                 self.logger.info("No more data to feed backtest")
                 print("No more data to feed backtest")
                 break
-
-            # Update bars and log progress
-            self.bars.update_bars()
+            
             latest_bars = self.bars.get_latest_bars("")
             self.logger.debug(f"Latest bars: {latest_bars}")  # Optional logging level
             print(latest_bars)
+            
+            # Get current event queue
+            current_event_queue = self.events.get_current_queue()
+            event_count = 0
 
             # Process events for the current bar
-            while not self.events.empty():  # Avoid blocking
+            while True:  # Avoid blocking
                 try:
-                    event = self.events.get_nowait()
+                    event = current_event_queue.get_nowait()
+                except emptyEventQueue:
+                    self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
+                    print(f"Event queue is empty, processed {event_count} event(s)")
+                   
+                    # Update portfolio time index after processing all events
+                    self.portfolio.update_timeindex_new()
+                    
+                    #advance scheduler queue to next date 
+                    self.events.advance_date()
+                    break
                 except Exception as e:
                     self.logger.error(f"Error fetching event: {e}")
                     print(f"Error fetching event: {e}")
-                    continue
+                    break
 
                 if event:
+                    event_count += 1
                     try:
                         self.logger.info(f"Processing event: {event.type}")
                         print(f"Processing event: {event.type}")
@@ -80,9 +93,7 @@ class OptionSignalBacktest():
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
                         self.logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
-                        print(f"Error processing event: {e}")
-                # Update portfolio time index after processing all events
-                self.portfolio.update_timeindex_new()
+                        print(f"Error processing event: {e}")   
 
         
     

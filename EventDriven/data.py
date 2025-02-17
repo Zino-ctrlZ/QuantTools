@@ -1,4 +1,5 @@
 #This handles how market data is sourced and drip feeds the event loop
+from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 import datetime
@@ -260,6 +261,7 @@ class HistoricTradeDataHandler(DataHandler):
         self.events = events
         self._open_trade_data()
         self.options_data = {}
+        
     def _open_trade_data(self): 
         unique_tickers = self.trades_df['Ticker'].unique()
         self.symbol_list = unique_tickers
@@ -301,20 +303,20 @@ class HistoricTradeDataHandler(DataHandler):
     def get_latest_bars(self, symbol ='', N=1) -> pd.DataFrame:
         return self.latest_signal_df.tail(N)
     
-    def update_bars(self):
+    def update_bars(self) -> Optional[bool]:
         try: 
             bar_generator = self._get_new_bar()
             #Get next bar from the generator
             bar = next(bar_generator)
         except StopIteration:
-            print("No more signals available")
             self.continue_backtest = False
         else: 
             if bar is not None:
                 bar_df = pd.DataFrame([bar])
             self.latest_signal_df = pd.concat([self.latest_signal_df, bar_df], axis=0)
-        self.events.put(MarketEvent())
+            self.events.put(MarketEvent())
         
+        return self.continue_backtest
         
     def update_options_data_on_order(self, contract): 
         """
