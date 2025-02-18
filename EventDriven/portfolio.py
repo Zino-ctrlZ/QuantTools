@@ -5,29 +5,19 @@
 # - Position Management: Rolling Options, Hedging, Position sizing
 # - 
 
-
-
-from dotenv import load_dotenv
-load_dotenv()
-
-import os
-import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) #type: ignore
-sys.path.append(
-    os.environ.get('DBASE_DIR')) #type: ignore
-from trade.helpers.helper import parse_option_tick
+import math
+from abc import ABCMeta, abstractmethod
 import pandas as pd
 
-from dbase.DataAPI.ThetaData import list_contracts, retrieve_option_ohlc, is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
+from trade.helpers.helper import parse_option_tick
+from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
-
-from abc import ABCMeta, abstractmethod
+from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.riskmanager import RiskManager
-from trade.helpers.Logging import setup_logger
+
 
 
 class Portfolio(object):
@@ -69,7 +59,7 @@ class OptionSignalPortfolio(Portfolio):
     initial_capital: int
     """
     
-    def __init__(self, bars : HistoricTradeDataHandler, events, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
+    def __init__(self, bars : HistoricTradeDataHandler, events, risk_manager : RiskManager, weight_map = None, initial_capital = 10000, max_contract_price = 500.0): 
         self.bars = bars
         self.events = events
         self.symbol_list = self.bars.symbol_list
@@ -79,12 +69,14 @@ class OptionSignalPortfolio(Portfolio):
         self.current_positions = self.__construct_current_positions()
         self.all_holdings = self.__construct_all_holdings()
         self.current_holdings = self.__construct_current_holdings()
-        self._generate_underlier_data()
-        self.max_option_budget = 0.1 * self.initial_capital
+        self.__weight_map = self.__construct_weight(weight_map = weight_map)
+        self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
+        self.current_weighted_holdings = self.__construct_current_weighted_Holdings()
+        self.weighted_holdings = self.__construct_weighted_holdings()
+        self.__generate_underlier_data()
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.options_data = {}
-        self.weight_map = self.__construct_weight(weight_map = weight_map)
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -94,6 +86,7 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.trades = {}
+        self.max_contract_price = max_contract_price / 100.0
 
     @property
     def order_settings(self):
@@ -113,8 +106,7 @@ class OptionSignalPortfolio(Portfolio):
         else:
             raise ValueError('Order Settings can either be a callable or a dicitonary')
         self._order_settings = _setting
-        
-        
+            
     def __enfore_order_settings(self, settings):
         self.logger.warn('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
         available_types = ['spread', 'naked', 'stock']
@@ -124,20 +116,31 @@ class OptionSignalPortfolio(Portfolio):
 
         if settings['type'] == 'spread' and len(settings['specific']) < 2:
                 raise ValueError(f'Expected 2 legs for spreads')
+            
     
+    # if weight map is set externally, recalculate the allocated cash map
+    @property
+    def weight_map(self): 
+        return self.__weight_map
+    
+    @weight_map.setter
+    def weight_map(self, weight_map):
+        if weight_map is not None:
+            weight_total = sum(weight_map.values())
+            assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
+            assert all(x in self.symbol_list for x in weight_map.keys()), f"Symbol not in symbol list"
+            self.__weight_map = weight_map
+            self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
+        
     def __construct_weight(self, weight_map): 
         if weight_map is not None:
             weight_total = sum(weight_map.values())
             assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
+            assert all(x in self.symbol_list for x in weight_map.keys()), f"Symbol not in symbol list"
             return weight_map
-        
-        weight = round(1/len(self.symbol_list), 2) #spread capital between all symbols 
-        return {sym: weight for sym in self.symbol_list}
-    
-    def set_weight(self, weight_map):
-        weight_total = sum(weight_map.values())
-        assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
-        self.weight_map = weight_map
+        else: 
+            weight = round(1/len(self.symbol_list), 2) #spread capital between all symbols 
+            return {sym: weight for sym in self.symbol_list}
     
     def __construct_current_positions(self):
         d = {s: {} for s in self.symbol_list}
@@ -148,7 +151,7 @@ class OptionSignalPortfolio(Portfolio):
         Constructs the holdings list using the start_date
         to determine when the time index will begin.
         """
-        d = dict( (k,v) for k, v in [(s, 0.0) for s in self.symbol_list] )
+        d = {s: 0.0 for s in self.symbol_list}
         d['datetime'] = self.bars.start_date
         d['cash'] = self.initial_capital
         d['commission'] = 0.0
@@ -162,13 +165,33 @@ class OptionSignalPortfolio(Portfolio):
         return [d]
     
     def __construct_current_holdings(self): 
-        d = dict((k, v) for k, v in [(s, 0.0) for s in self.symbol_list]) #key is underlier, value is total value of all postitions held
+        d = {s: 0.0 for s in self.symbol_list} #key is underlier, value is total value of all postitions held
         d['cash'] = self.initial_capital
         d['commission'] = 0.0
         d['total'] = self.initial_capital
         return d
     
-    def _generate_underlier_data(self):
+    def __construct_current_weighted_Holdings(self): 
+        d = {s: self.allocated_cash_map[s] for s in self.symbol_list}
+        d['commission'] = 0.0
+        d['total'] = self.initial_capital
+        return d
+    
+    
+    
+    def __construct_weighted_holdings(self): 
+        """
+        improved version of current_holdings, this attributes each symbols holdings to the market value of the position + left over allocated cash for the symbol
+        """
+        left_over_capital = (1.0 - sum(self.__weight_map.values())) * self.initial_capital
+        d = {s: self.allocated_cash_map[s] for s in self.symbol_list}
+        d['datetime'] = self.bars.start_date
+        d['cash'] = left_over_capital
+        d['commission'] = 0.0
+        d['total'] = self.initial_capital
+        return [d]
+        
+    def __generate_underlier_data(self):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
             self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
@@ -185,28 +208,26 @@ class OptionSignalPortfolio(Portfolio):
         symbol = signal.symbol
         signal_type = signal.signal_type
         order_type = 'MKT'
-        max_price = int(5) # max price is multiplied by 100 , so 5 is 500
-        cash_at_hand = self.current_holdings['cash']
+        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts
         
         if signal_type == 'LONG': #buy calls
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', max_price, self.order_settings)
-            
+            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', self.max_contract_price, self.order_settings)  
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
                 return None
             self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
-            order_quantity = (cash_at_hand * self.weight_map[symbol] )/ (position['close'] * 100)
+            order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
             return order
         elif signal_type == 'SHORT': #buy puts
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', max_price, self.order_settings)
+            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', self.max_contract_price, self.order_settings)
             position = position_result['data'] if position_result['data'] is not None else None
             if position is None:  
                 self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
                 return None
             self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
-            order_quantity = (cash_at_hand * self.weight_map[symbol] )/ (position['close'] * 100)
+            order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity,direction= 'BUY', position = position)
             return order
         elif signal_type == 'CLOSE':
@@ -258,6 +279,8 @@ class OptionSignalPortfolio(Portfolio):
                 self.trades[trade_id]['entry_date'] = fill_event.datetime
                 self.trades[trade_id]['quantity'] = fill_event.quantity
                 self.trades[trade_id]['symbol'] = fill_event.symbol
+                self.trades[trade_id]['commission'] = fill_event.commission
+                self.trades[trade_id]['market_value'] = fill_event.market_value * 100
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -285,27 +308,7 @@ class OptionSignalPortfolio(Portfolio):
                 
                 # Update positions list with new quantities
         self.current_positions[fill_event.symbol] = new_position_data
-        
-    def calculate_close_on_position(self, position) -> float: 
-        """
-        Calculate the close price on a position
-        the close price is the difference between the long and short legs of the position 
-        """
-        long_legs_cost = 0.0
-        short_legs_cost = 0.0
-        if 'long' in position:
-            for option_id in position['long']: 
-                option_data = self.__get_latest_option_data(option_id)
-                if option_data is not None: 
-                    long_legs_cost += option_data['Midpoint'] ## Find a way to make this dynamic
 
-        if 'short'in position:
-            for option_id in position['short']: 
-                option_data = self.__get_latest_option_data(option_id)
-                if option_data is not None: 
-                    short_legs_cost += option_data['Midpoint']
-
-        return long_legs_cost - short_legs_cost
     
     def update_holdings_from_fill(self, fill_event: FillEvent):
         """
@@ -315,6 +318,14 @@ class OptionSignalPortfolio(Portfolio):
         Parameters:
         fill - The FillEvent object to update the holdings with.
         """
+        
+        
+        if fill_event.direction == 'BUY': 
+            # available cash for the symbol is the left over cash after buying the contract
+            self.allocated_cash_map[fill_event.symbol] -= fill_event.fill_cost * 100
+            
+            
+            
         # Check whether the fill is buy or sell
         fill_dir = 1 if fill_event.direction == 'BUY' else -1   
         cost = fill_dir * fill_event.fill_cost
@@ -322,6 +333,12 @@ class OptionSignalPortfolio(Portfolio):
         self.current_holdings['commission'] += fill_event.commission
         self.current_holdings['cash'] -= cost
         self.current_holdings['total'] -= cost
+        
+        
+        
+        self.current_weighted_holdings['commission'] += fill_event.commission
+        
+
         
     def update_timeindex(self): 
         """
@@ -335,15 +352,24 @@ class OptionSignalPortfolio(Portfolio):
         if current_date.weekday() >= 5:
             return
         
-        
-        new_holdings_entry = dict( (k,v) for k, v in [(s, 0.0) for s in self.symbol_list] ) #new holdings dictionary
+        #new holdings dictionary
+        new_holdings_entry = {s: 0.0 for s in self.symbol_list} 
         new_holdings_entry['datetime'] = current_date 
         new_holdings_entry['cash'] = self.current_holdings['cash']
         new_holdings_entry['commission'] = self.current_holdings['commission']
         new_holdings_entry['total'] = self.current_holdings['cash']
         
-        new_positions_entry = {s: {} for s in self.symbol_list} #new positions dictionary
+        #new positions dictionary
+        new_positions_entry = {s: {} for s in self.symbol_list} 
         new_positions_entry['datetime'] = current_date
+        
+        #new weighted holdings dictionary
+        new_weighted_holdings_entry = {s: self.allocated_cash_map[s] for s in self.symbol_list}
+        new_weighted_holdings_entry['datetime'] = current_date
+        new_weighted_holdings_entry['cash'] = (1.0 - sum(self.__weight_map.values())) * self.initial_capital
+        new_weighted_holdings_entry['commission'] = self.current_weighted_holdings['commission']
+        new_weighted_holdings_entry['total'] = 0.0
+        
         for sym in self.symbol_list:
             if 'position' in self.current_positions[sym]:
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
@@ -352,13 +378,19 @@ class OptionSignalPortfolio(Portfolio):
                 
                 #update holdings
                 if 'exit_price' in self.current_positions[sym]: 
-                    #use the exit price to update the total holdings value
+                    #use holdings to include pnl from closed position and set holdings to price at exit
                     new_holdings_entry['total'] += self.current_positions[sym]['exit_price'] 
                     new_holdings_entry[sym] = self.current_positions[sym]['exit_price'] 
+                
+                    #updated the available cash to include pnl from the closed position
+                    self.allocated_cash_map[sym] += self.current_positions[sym]['exit_price']
+                    new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
                 else:
                     new_holdings_entry['total'] += market_value #update  value of total holdings with the market value of the position
                     new_holdings_entry[sym] = market_value #update the value of the symbol in the holdings dictionary
          
+                    new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
+                    
 
                 #update positions
                 if 'exit_price' in self.current_positions[sym]: #if position is closed, set current_positions to empty dict
@@ -375,12 +407,17 @@ class OptionSignalPortfolio(Portfolio):
                     current_position_data['quantity'] = self.current_positions[sym]['quantity']
                     current_position_data['market_value'] = market_value
                     new_positions_entry[sym] = current_position_data
-            else :
-                new_positions_entry[sym] = {}
-                new_holdings_entry[sym] = 0.0
+                    
+                #update total weighted holdings
+                new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
+            else: 
+                # if no position held for symbol, add the available cash to the symbol to the total equity 
+                new_weighted_holdings_entry['total'] += self.allocated_cash_map[sym]
                 
+        #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
         self.all_holdings.append(new_holdings_entry)
+        self.weighted_holdings.append(new_weighted_holdings_entry)
         
     def update_fill(self, event):
         """
@@ -391,6 +428,28 @@ class OptionSignalPortfolio(Portfolio):
             self.update_positions_from_fill(event)
             self.update_holdings_from_fill(event)
         
+        
+    def calculate_close_on_position(self, position) -> float: 
+        """
+        Calculate the close price on a position
+        the close price is the difference between the long and short legs of the position 
+        """
+        long_legs_cost = 0.0
+        short_legs_cost = 0.0
+        if 'long' in position:
+            for option_id in position['long']: 
+                option_data = self.__get_latest_option_data(option_id)
+                if option_data is not None: 
+                    long_legs_cost += option_data['Midpoint']
+
+        if 'short'in position:
+            for option_id in position['short']: 
+                option_data = self.__get_latest_option_data(option_id)
+                if option_data is not None: 
+                    short_legs_cost += option_data['Midpoint']
+
+        return long_legs_cost - short_legs_cost
+    
     def get_trades(self) -> pd.DataFrame:
         """
         return timeseries of portfolio trades
