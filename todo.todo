@@ -26,6 +26,7 @@ Portfolio File:
     ☐ Make max close a variable
     ☐ Commissions look too low. 
     ☐ Add floor to contracts quantity
+    ☐ Add an attribution function (Chidi)
 
 Data File:
     ☐ update_latest_bars doesn't need arguments.
@@ -50,7 +51,7 @@ Risk Manager:
 General:
     ☐ Implement buy on Open.
     ☐ Add days lag and `trade_on`
-    ☐ Secondary queue/list to repopulate next bar
+    ✘ Secondary queue/list to repopulate next bar @cancelled(25-02-17 21:11)
     ☐ Getting divYield to have a max retries to factor in sporadic errors 
     ☐ Enforce typedDicts for functions
     ☐ Add rebalancing
@@ -89,3 +90,4 @@ Usable:
 Backtest:
     ☐ Re-run walkforward
     ☐ Write doctrsing and type hint
+

@@ -13,10 +13,11 @@ from trade.assets.Option import Option
 from dateutil.relativedelta import relativedelta
 import yfinance as yf
 from threading import Thread
-from trade.helpers.helper import generate_option_tick, identify_interval
+from trade.helpers.helper import generate_option_tick_new, identify_interval
 
 structures = ['CallVertical', 'PutVertical', 'SyntheticForward', 'RiskReversal', 'Strangle', 'Straddle']
 
+##Add Naked Call, Naked Put
 def validate_leg(leg):
     assert isinstance(leg, list), "Leg must be a list of dictionaries"
     for opt in leg:
@@ -421,7 +422,6 @@ class OptionStructure:
             legs_list = []
             legs_positions = self.base_structure[direction]
             for pos in legs_positions:
-                # with Context(end_date = self.end_date):
                 legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right'], run_chain = self.run_chain))
                 self.asset = legs_list[0].asset
             setattr(self, direction, legs_list)
