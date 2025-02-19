@@ -12,7 +12,6 @@ Portfolio File:
     ✔ remove old functions in portfolio.py and clean _new functions @done(25-02-17 20:16)
     ✘ Catch theta data no listed contracts error. @cancelled(25-02-17 20:16)
     ☐ Save the orders we can't get because of price. (???)
-    ☐ Add order_settings for orderEvents. 
     ☐ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day, is_holiday go to next day, is_money_too_low (adjust to max cash ), no_contracts(Just drop.)
         ☐ min moneyness breaker
     ✔ In all_holdings: @done(25-02-17 22:55)
@@ -26,6 +25,12 @@ Portfolio File:
     ✔ Make max close a variable @done(25-02-17 22:56)
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+
+Events:
+    ☐ Add order_settings for orderEvents. 
+    ☐ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day
+    ☐ add count indicator to show how many times an event has been triggered
+    ☐ Add a signal_id to each event, for tracking trades, add signal_id to each trade
 
 Data File:
     ☐ update_latest_bars doesn't need arguments.

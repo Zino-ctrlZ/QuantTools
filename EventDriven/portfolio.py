@@ -65,15 +65,6 @@ class OptionSignalPortfolio(Portfolio):
         self.symbol_list = self.bars.symbol_list
         self.start_date = bars.start_date.strftime("%Y%m%d")
         self.initial_capital = initial_capital
-        self.all_positions = self.__construct_all_positions()
-        self.current_positions = self.__construct_current_positions()
-        self.all_holdings = self.__construct_all_holdings()
-        self.current_holdings = self.__construct_current_holdings()
-        self.__weight_map = self.__construct_weight(weight_map = weight_map)
-        self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
-        self.current_weighted_holdings = self.__construct_current_weighted_Holdings()
-        self.weighted_holdings = self.__construct_weighted_holdings()
-        self.__generate_underlier_data()
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.options_data = {}
@@ -87,6 +78,16 @@ class OptionSignalPortfolio(Portfolio):
         }
         self.trades = {}
         self.max_contract_price = max_contract_price / 100.0
+        
+        # call internal functions to construct key portfolio data
+        self.__construct_all_positions()
+        self.__construct_current_positions()
+        self.__construct_all_holdings()
+        self.__construct_current_holdings()
+        self.__construct_weight_map(weight_map = weight_map)
+        self.__construct_current_weighted_Holdings()
+        self.__construct_weighted_holdings()
+        self.__generate_underlier_data()
 
     @property
     def order_settings(self):
@@ -108,7 +109,7 @@ class OptionSignalPortfolio(Portfolio):
         self._order_settings = _setting
             
     def __enfore_order_settings(self, settings):
-        self.logger.warn('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
+        self.logger.warning('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
         available_types = ['spread', 'naked', 'stock']
         assert 'type' in settings.keys() and 'specifics' in settings.keys() and 'name' in settings.keys(), f'Expected both of `type`, `name` and `specifics` in settings keys'
         assert settings['type'] in available_types, f'`type` must be one of {available_types}'
@@ -125,27 +126,45 @@ class OptionSignalPortfolio(Portfolio):
     
     @weight_map.setter
     def weight_map(self, weight_map):
-        if weight_map is not None:
-            weight_total = sum(weight_map.values())
-            assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
-            assert all(x in self.symbol_list for x in weight_map.keys()), f"Symbol not in symbol list"
-            self.__weight_map = weight_map
-            self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
+        self.__construct_weight_map(weight_map)
+        self.__construct_current_weighted_Holdings()
+        self.__construct_weighted_holdings()
         
-    def __construct_weight(self, weight_map): 
+        
+    # internal functions to construct key portfolio data 
+    
+    def __construct_weight_map(self, weight_map): 
         if weight_map is not None:
+            for s in weight_map.keys():
+                if s not in self.symbol_list:
+                    print(f"Symbol {s} not being processed but present in weight_map" )
+                    self.logger.warning(f"Symbol {s} not being processed but present in weight_map")
+            weight_map = {x : weight_map[x] for x in self.symbol_list}
             weight_total = sum(weight_map.values())
             assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
-            assert all(x in self.symbol_list for x in weight_map.keys()), f"Symbol not in symbol list"
-            return weight_map
+            
         else: 
-            weight = round(1/len(self.symbol_list), 2) #spread capital between all symbols 
-            return {sym: weight for sym in self.symbol_list}
+            weight_map = {x: 1/len(self.symbol_list) for x in self.symbol_list} #spread capital between all symbols 
+        
+        self.__weight_map = weight_map
+        self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
     
     def __construct_current_positions(self):
         d = {s: {} for s in self.symbol_list}
-        return d
+        self.current_positions = d
+        
+    def __construct_all_positions(self): 
+        d = {s: {} for s in self.symbol_list} #key is underlier, value is list of option contracts
+        d['datetime'] = self.bars.start_date
+        self.all_positions = [d]
     
+    def __construct_current_holdings(self): 
+        d = {s: self.allocated_cash_map[s] for s in self.symbol_list} #key is underlier, value is total value of all postitions held
+        d['cash'] = self.initial_capital
+        d['commission'] = 0.0
+        d['total'] = self.initial_capital
+        self.current_holdings = d
+        
     def __construct_all_holdings(self):
         """
         Constructs the holdings list using the start_date
@@ -156,28 +175,14 @@ class OptionSignalPortfolio(Portfolio):
         d['cash'] = self.initial_capital
         d['commission'] = 0.0
         d['total'] = self.initial_capital
-        return [d]
-    
-    
-    def __construct_all_positions(self): 
-        d = {s: {} for s in self.symbol_list} #key is underlier, value is list of option contracts
-        d['datetime'] = self.bars.start_date
-        return [d]
-    
-    def __construct_current_holdings(self): 
-        d = {s: 0.0 for s in self.symbol_list} #key is underlier, value is total value of all postitions held
-        d['cash'] = self.initial_capital
-        d['commission'] = 0.0
-        d['total'] = self.initial_capital
-        return d
+        self.all_holdings =  [d]
     
     def __construct_current_weighted_Holdings(self): 
         d = {s: self.allocated_cash_map[s] for s in self.symbol_list}
         d['commission'] = 0.0
         d['total'] = self.initial_capital
-        return d
-    
-    
+        d['cash'] = self.initial_capital - sum(self.allocated_cash_map.values()) 
+        self.current_weighted_holdings = d   
     
     def __construct_weighted_holdings(self): 
         """
@@ -189,13 +194,14 @@ class OptionSignalPortfolio(Portfolio):
         d['cash'] = left_over_capital
         d['commission'] = 0.0
         d['total'] = self.initial_capital
-        return [d]
+        self.weighted_holdings = [d]
         
     def __generate_underlier_data(self):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
             self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
              
+
 
     def generate_order(self, signal : SignalEvent):
         """
