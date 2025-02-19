@@ -26,6 +26,7 @@ Portfolio File:
     ✔ Make max close a variable @done(25-02-17 22:56)
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+    ☐ Add Attribution & Greek timeseries @Chidi
 
 Data File:
     ☐ update_latest_bars doesn't need arguments.
@@ -88,5 +89,7 @@ Usable:
 
 Backtest:
     ☐ Re-run walkforward
-    ☐ Write doctrsing and type hint
+    ☐ Write doctrsing and type hint:
+        - WFA Codes
+        - PTBacktester
 
