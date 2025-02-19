@@ -18,3 +18,14 @@ conn.request("POST", "/thetadata", payload, headers)
 res = conn.getresponse()
 data = res.read()
 print(data.decode("utf-8"))
+
+print("\n\n\n")
+retrieve_quote_payload = json.dumps({
+  "method": "GET", 
+  "url": "http://127.0.0.1:25510/v2/hist/option/quote?end_date=20230706&root=MSFT&use_csv=true&exp=20240621&ivl=1800000&right=C&start_date=20230706&strike=355000&start_time=34200000&rth=False&end_time=57600000"
+})
+conn.request("POST", "/thetadata", retrieve_quote_payload, headers)
+res = conn.getresponse()
+data = res.read()
+print(data.decode("utf-8"))
+conn.close()
