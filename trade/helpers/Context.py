@@ -41,7 +41,6 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
 
     """
     initialize_configuration()
-    
     try:
         if timeframe is not None:
             Configuration.timeframe = str(timeframe)
@@ -82,7 +81,6 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
                 ##TEMP: For now, all passed dates will be set to EOD
                 build_time = '16:00'
                 end_date = end_date.replace(hour=pd.Timestamp(build_time).time().hour, minute=pd.Timestamp(build_time).time().minute, second=pd.Timestamp(build_time).time().second, microsecond=0)
-
             Configuration.end_date = datetime.strftime(
                 end_date, format='%Y-%m-%d %H:%M:%S')
         else:
@@ -103,9 +101,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
             Configuration.end_date = datetime.strftime(
                 today, format='%Y-%m-%d %H:%M:%S')
 
-
         build_time = pd.Timestamp(build_time)
-
         if print_context:
             print(f"""
             Settings in this Context:
@@ -118,6 +114,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
         yield
 
     finally:
+        
         Configuration.timewidth = None
         Configuration.timeframe = None
         Configuration.start_date = None

@@ -57,7 +57,30 @@ spot_cache = {}
 
 
 @log_error_with_stack(logger)
-def populate_cache(order_candidates, date = '2024-03-12',):
+def populate_cache(order_candidates: dict, 
+                   date: str = '2024-03-12',) -> str|None:
+    
+    """
+    populates the cache with the necessary data for the order candidates
+
+    params:
+    order_candidates: dict: dictionary containing the order candidates
+        example: {'type': 'naked',
+                    'specifics': [{'direction': 'long',
+                    'rel_strike': .900,
+                    'dte': 365,
+                    'moneyness_width': 0.15},
+                    {'direction': 'short',
+                    'rel_strike': .80,
+                    'dte': 365,
+                    'moneyness_width': 0.15}],
+
+                    'name': 'vertical_spread'}
+    date: str: date to populate the cache for
+
+    returns:
+    str|None: returns 'holiday' if the date is a holiday, 'theta_data_error' if there is an error in the theta data, None otherwise
+    """
     global close_cache, oi_cache, spot_cache
 
     tempholder1 = {}
@@ -120,7 +143,18 @@ def populate_cache(order_candidates, date = '2024-03-12',):
 
 
 
-def return_closePrice(id, date):
+def return_closePrice(id: str, 
+                      date: str) -> float:
+    """
+    returns the close price of the option contract
+    id: str: id of the option contract, corresponding to cache keys.
+        ps: Use spot_cache.keys() to get the keys
+    date: str: date to get the close price for
+
+    returns:
+    float: close price of the option contract
+    
+    """
     global close_cache, spot_cache
     cache_key = f"{id}_{date}"
     close_data = close_cache[cache_key]
@@ -129,7 +163,21 @@ def return_closePrice(id, date):
     return close
 
 
-def load_chain(date, ticker,  print_stderr = False):
+def load_chain(date: str, 
+               ticker: str,  
+               print_stderr: bool = False) -> None:
+        """
+        loads the option chain for the given date and ticker
+
+        params:
+        date: str: date to load the chain for
+        ticker: str: ticker to load the chain for
+        print_stderr: bool: whether to print to stderr or not
+
+        returns:
+        None
+        
+        """
         print(date, ticker) if print_stderr else None
         ## Get both calls and puts per moneyness. For 1 Moneyness, both will most be available. If not, if one is False, other True. 
         ## We will need to get two rows. 
@@ -154,7 +202,30 @@ def load_chain(date, ticker,  print_stderr = False):
 
 
 
-def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_width=0.15, print_stderr=False):
+def chain_details(date: str, 
+                  ticker: str, 
+                  tgt_dte: int, 
+                  tgt_moneyness: float, 
+                  right: str ='P', 
+                  moneyness_width: float =0.15, 
+                  print_stderr: bool = False) -> pd.DataFrame:
+    
+
+    """
+    Returns the option chain details for the given date, ticker, target days to expiration, target moneyness, right, and moneyness width
+
+    params:
+    date: str: date to get the chain for
+    ticker: str: ticker to get the chain for
+    tgt_dte: int: target days to expiration
+    tgt_moneyness: float: target moneyness
+    right: str: right of the option contract. Default is 'P'
+    moneyness_width: float: moneyness width. Default is 0.15. This is the width of the moneyness spread
+    print_stderr: bool: whether to print to stderr or not
+
+    returns:
+    pd.DataFrame: option chain details
+    """
     return_dataframe = pd.DataFrame()
     errors = {}
     if is_holiday(date):  # Replaced is_USholiday() with the optimized function
@@ -226,7 +297,22 @@ def chain_details(date, ticker, tgt_dte, tgt_moneyness, right='P', moneyness_wid
     
 
 
-def available_close_check(id, date, threshold = 0.7):
+def available_close_check(id: str, 
+                          date: str, 
+                          threshold: float = 0.7) -> bool:
+    
+    """
+    checks if the close price is available for the given id and date
+
+    params:
+    id: str: id of the option contract
+        ps: Use spot_cache.keys() to get the available ids
+    date: str: date to check the close price for
+    threshold: float: threshold to check if the close price is available. Default is 0.7
+
+    returns:
+    bool: True if the close price is available, False otherwise
+    """
     cache_key = f"{id}_{date}"
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
@@ -248,40 +334,35 @@ def available_close_check(id, date, threshold = 0.7):
     return close_mask_series.sum()/len(close_mask_series) > threshold
 
 
-def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
-    pack_price = {}
-    pack_dataframe = pd.DataFrame()
+def produce_order_candidates(settings: dict, 
+                             tick: str, 
+                             date: str, 
+                             right: str = 'P') -> dict:
+    """
+    returns the order candidates for the given settings, tick, date, and right
 
-    for pack_i, pack in enumerate(tradeables):
-        pack_close = 0
-        for i, id in enumerate(pack):
-            if id not in spot_cache:
-                
-                cache_key = f"{id}_{date}"
-                sample_id = deepcopy(get_option_specifics_from_key(id))
-                new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
-                transfer_dict = {}
-                for k, v in sample_id.items():
-                    if k in new_dict_keys:
-                        if k == 'strike':
-                            transfer_dict[new_dict_keys[k]] = float(sample_id[k])
-                        else:
-                            transfer_dict[new_dict_keys[k]] = sample_id[k]
-                start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
-                close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
-                close = close_data_sample['Midpoint'][date]
-                spot_cache[cache_key] = close
-            else:
-                close = cache_key[id]
+    params:
+    settings: dict: settings for the order candidates
+        example: {'type': 'naked',
+                    'specifics': [{'direction': 'long',
+                    'rel_strike': .900,
+                    'dte': 365,
+                    'moneyness_width': 0.15},
+                    {'direction': 'short',
+                    'rel_strike': .80,
+                    'dte': 365,
+                    'moneyness_width': 0.15}],
 
-            pack_close += close * direction_index[i]
-            pack_dataframe.at[pack_i, i] = id
+                    'name': 'vertical_spread'}
 
-        pack_dataframe.at[pack_i, 'close'] = pack_close
-    return pack_dataframe
+    tick: str: ticker to get the order candidates for
+    date: str: date to get the order candidates for
+    right: str: right of the option contract. Default is 'P'
+    
+    returns:
+    dict: order_candidates
+    """
 
-
-def produce_order_candidates(settings, tick, date, right = 'P'):
     order_candidates = {'long': [], 'short': []}
     for spec in settings['specifics']:
         chain = chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width'])
@@ -289,7 +370,24 @@ def produce_order_candidates(settings, tick, date, right = 'P'):
     return order_candidates
 
 
-def liquidity_check(id, date, pass_threshold = 250, lookback = 10):
+def liquidity_check(id: str, 
+                    date: str, 
+                    pass_threshold: int|float = 250, 
+                    lookback: int = 10) -> bool:
+    
+    """
+    returns True if the liquidity is greater than the pass_threshold, False otherwise
+
+    params:
+    id: str: id of the option contract
+        ps: Use oi_cache.keys() to get the available ids
+    date: str: date to check the liquidity for
+    pass_threshold: int|float: threshold to check if the liquidity is greater than. Default is 250
+    lookback: int: lookback to check the liquidity for. Default is 10
+
+    returns:
+    bool: True if the liquidity is greater than the pass_threshold, False otherwise
+    """
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
     transfer_dict = {}
@@ -307,76 +405,55 @@ def liquidity_check(id, date, pass_threshold = 250, lookback = 10):
     return oi_data.Open_interest.mean() > pass_threshold
 
 
-def available_close_check(id, date, threshold = 0.7):
-    cache_key = f"{id}_{date}"
-    sample_id = deepcopy(get_option_specifics_from_key(id))
-    new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
-    transfer_dict = {}
-    for k, v in sample_id.items():
-        if k in new_dict_keys:
-            if k == 'strike':
-                transfer_dict[new_dict_keys[k]] = float(sample_id[k])
-            else:
-                transfer_dict[new_dict_keys[k]] = sample_id[k]
-    
-    if cache_key in close_cache:
-        close_data_sample = close_cache[cache_key]
-    else:
-        start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
-        close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
-        close_cache[cache_key] = close_data_sample
-    close_mask_series = close_data_sample.Close != 0
-    return close_mask_series.sum()/len(close_mask_series) > threshold
-
-
-def get_structure_price(tradeables, direction_index, date, tick, right = 'P'):
-    pack_price = {}
-    pack_dataframe = pd.DataFrame()
-
-    for pack_i, pack in enumerate(tradeables):
-        pack_close = 0
-        for i, id in enumerate(pack):
-            if id not in spot_cache:
-                
-                cache_key = f"{id}_{date}"
-                sample_id = deepcopy(get_option_specifics_from_key(id))
-                new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
-                transfer_dict = {}
-                for k, v in sample_id.items():
-                    if k in new_dict_keys:
-                        if k == 'strike':
-                            transfer_dict[new_dict_keys[k]] = float(sample_id[k])
-                        else:
-                            transfer_dict[new_dict_keys[k]] = sample_id[k]
-                start = LOOKBACKS[date][30]  # Used precomputed BDay(30)
-                close_data_sample = retrieve_eod_ohlc(**transfer_dict, start_date=start, end_date=date)
-                close_data_sample = close_data_sample[~close_data_sample.index.duplicated(keep = 'first')]
-                close = close_data_sample['Midpoint'][date]
-                spot_cache[cache_key] = close
-            else:
-                close = cache_key[id]
-
-            pack_close += close * direction_index[i]
-            pack_dataframe.at[pack_i, i] = id
-
-        pack_dataframe.at[pack_i, 'close'] = pack_close
-    return pack_dataframe
 
 
 class OrderPicker:
-    def __init__(self):
-        self.liquidity_threshold = 250
-        self.data_availability_threshold = 0.7
-        self.lookback = 30
+    def __init__(self, liquidity_threshold: int = 250, data_availability_threshold: float = 0.7, lookback: int = 30):
+        """
+        initializes the OrderPicker class
+        
+        params:
+        liquidity_threshold: int: liquidity threshold. Default is 250
+        data_availability_threshold: float: data availability threshold. Default is 0.7
+        lookback: int: lookback. Default is 30
+        """
+        self.liquidity_threshold = liquidity_threshold
+        self.data_availability_threshold = data_availability_threshold
+        self.lookback = lookback
 
         
     @log_error_with_stack(logger)
     def get_order(self, 
-                  tick, 
-                  date,
-                  right, 
-                  max_close,
-                  order_settings):
+                  tick: str, 
+                  date: str,
+                  right: str, 
+                  max_close: str,
+                  order_settings: dict) -> dict:
+        
+        """
+        returns the order for the given tick, date, right, max_close, and order_settings
+
+        params:
+        tick: str: ticker to get the order for
+        date: str: date to get the order for
+        right: str: right of the option contract (P or C)
+        max_close: str: maximum close price
+        order_settings: dict: settings for the order
+            example: {'type': 'naked',
+                        'specifics': [{'direction': 'long',
+                        'rel_strike': .900,
+                        'dte': 365,
+                        'moneyness_width': 0.15},
+                        {'direction': 'short',
+                        'rel_strike': .80,
+                        'dte': 365,
+                        'moneyness_width': 0.15}],
+
+                        'name': 'vertical_spread'}
+
+        returns:
+        dict: order
+        """
         
         ## Create necessary data structures
         direction_index = {}
@@ -488,6 +565,16 @@ class RiskManager:
                  events,
                  initial_capital,
                  ):
+        
+        """
+        initializes the RiskManager class
+
+        params:
+        bars: Bars: bars
+        events: Events: events
+        initial_capital: float: initial capital
+        """
+        
         self.bars = bars
         self.events = events
         self.initial_capital = initial_capital

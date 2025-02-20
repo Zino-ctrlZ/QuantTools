@@ -10,7 +10,7 @@ from trade.helpers.helper import  change_to_last_busday
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
 from trade.assets.Stock import Stock
-from trade.helpers.helper import generate_option_tick, identify_interval
+from trade.helpers.helper import generate_option_tick, identify_interval, generate_option_tick_new
 from threading import Thread
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -35,6 +35,7 @@ class Option:
         today = datetime.today()
         end_date = datetime.strftime(today, format='%Y-%m-%d')
         _end_date = Configuration.end_date or end_date
+        # print(Configuration.end_date)
         
         key = (ticker, strike, _end_date, exp_date, put_call)
         if key not in cls._instances:
@@ -78,6 +79,7 @@ class Option:
         ## Note: Monitor if this is the best approach
         end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
+        assert pd.to_datetime(exp_date) >= pd.to_datetime(self.__end_date), f"Cannot build option on date past expiration"
         self.__default_fill = default_fill
         self.__dataManager = OptionDataManager(ticker, exp_date, put_call, strike, self.default_fill)
 
@@ -104,7 +106,7 @@ class Option:
             self.__start_date = Configuration.start_date or start_date
             self.__security = yf.Ticker(ticker.upper())
             self.__S0 = self.__set__S0() # This should be current market spot for the underlier, should always be realtime.
-            self.__OptTick = generate_option_tick(ticker, put_call, exp_date, strike)
+            self.__OptTick = generate_option_tick_new(ticker, put_call, exp_date, strike)
             self.__prev_close = None # This should be previous DAY close of the OPTION
             self.__y = self.asset.y
             self.rf_rate = self.asset.rf_rate
@@ -225,7 +227,8 @@ class Option:
 
     
     def __set_pv(self):
-        self.__pv= self.spot()[f'{self.default_fill.capitalize()}'].values[0]
+        spot = self.spot()
+        self.__pv= spot[f'{self.default_fill.capitalize()}'].values[0]
 
 
 
@@ -272,8 +275,13 @@ class Option:
 
         if ts:
             data = self.__dataManager.get_timeseries(ts_start, ts_end, interval, type_ = 'spot', model = model)
+            if isinstance(data, dict):
+                raise ValueError(f"Data is not available for {self.ticker} {self.put_call} {self.K} {self.exp} {spot_type} {ts_timeframe} {ts_timewidth}")
+
         else:
             data = self.__dataManager.get_spot(spot_type, query_date = ts_end)
+            if isinstance(data, dict):
+                raise ValueError(f"Data is not available for {self.ticker} {self.put_call} {self.K} {self.exp} {spot_type} {ts_timeframe} {ts_timewidth}")
 
         return data
     

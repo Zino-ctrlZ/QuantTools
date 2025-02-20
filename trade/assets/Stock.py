@@ -43,7 +43,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
-logger = setup_logger('Stock')
+logger = setup_logger('trade.asset.Stock')
 
 
 
@@ -280,8 +280,12 @@ class Stock:
         """
 
         ## To-do: Ensure this is previous day close RELATIVE to the end date
-        close = float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['prev_close'].values[0])
-        self.__set_close(close)
+        try:
+           close = float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['prev_close'].values[0])
+        except Exception as e:
+            if 'Results not found'.lower() in e.__str__().lower():
+                close = float(obb.equity.price.quote(symbol=self.ticker, provider='fmp').to_dataframe()['prev_close'].values[0])
+                self.__set_close(close)
         return close
 
 

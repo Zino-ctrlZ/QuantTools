@@ -25,6 +25,7 @@ Portfolio File:
     ✔ Make max close a variable @done(25-02-17 22:56)
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+    ☐ Add Attribution & Greek timeseries @Chidi
 
 Events:
     ☐ Add order_settings for orderEvents. 
@@ -55,7 +56,7 @@ Risk Manager:
 General:
     ☐ Implement buy on Open.
     ☐ Add days lag and `trade_on`
-    ☐ Secondary queue/list to repopulate next bar
+    ✘ Secondary queue/list to repopulate next bar @cancelled(25-02-17 21:11)
     ☐ Getting divYield to have a max retries to factor in sporadic errors 
     ☐ Enforce typedDicts for functions
     ☐ Add rebalancing
@@ -93,4 +94,7 @@ Usable:
 
 Backtest:
     ☐ Re-run walkforward
-    ☐ Write doctrsing and type hint
+    ☐ Write doctrsing and type hint:
+        - WFA Codes
+        - PTBacktester
+

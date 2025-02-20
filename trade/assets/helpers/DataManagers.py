@@ -21,7 +21,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import concurrent.futures
 from trade.assets.Stock import Stock
-from trade.helpers.helper import generate_option_tick
+from trade.helpers.helper import generate_option_tick_new
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.helper import IV_handler, time_distance_helper, binomial_implied_vol, wait_for_response
 from trade.helpers.helper import extract_numeric_value, change_to_last_busday
@@ -87,7 +87,7 @@ class OptionDataManager:
         self.right = right.upper()
         self.strike = strike
         self.default_fill = default_fill
-        self.opttick = generate_option_tick(symbol, right, exp, strike)
+        self.opttick = generate_option_tick_new(symbol, right, exp, strike)
         self.Stock = Stock(symbol, run_chain = False)
 
     @log_error_with_stack(OptDataManagerLogger, False)
@@ -252,6 +252,7 @@ class OptionDataManager:
                                         strike = self.strike)
                 
                 if data is None:
+
                     OptDataManagerLogger.info(f"{self.opttick} doesn't quote have data for {query_date}")
                     return {datetime.now().strftime('%Y-%m-%d %H:%M:%S'): "DATA UNAVAILABLE"}
                 
@@ -259,6 +260,7 @@ class OptionDataManager:
 
                 return data[['Bid', 'Ask', 'Midpoint', 'Weighted_midpoint']]
             except Exception as e:
+                OptDataManagerLogger.error(f"Error in get_spot for {self.opttick}. Error: {e}")
                 return {datetime.now().strftime('%Y-%m-%d %H:%M:%S'): "DATA UNAVAILABLE"}
         else:
             raise ValueError(f"Expected 'close' or 'quote' for type_, got {type_}")

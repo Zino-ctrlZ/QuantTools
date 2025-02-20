@@ -12,6 +12,7 @@ from trade.helpers.helper import (change_to_last_busday,
                                   implied_volatility, 
                                   time_distance_helper, 
                                   generate_option_tick, 
+                                  generate_option_tick_new,
                                   setup_logger,
                                   binomial_implied_vol)
 
@@ -219,7 +220,7 @@ class OptionChain:
         chain = self.chain.copy()
         chain.drop(columns = ['root'], inplace = True)
         chain['moneyness'] = chain['strike'] / chain['Spot']
-        chain['option_tick'] = chain.apply(lambda x: generate_option_tick(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
+        chain['option_tick'] = chain.apply(lambda x: generate_option_tick_new(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
         chain['build_date'] = self.build_date
         self.dbAdapter.save_to_database(chain, 'vol_surface', 'option_chain')
 
