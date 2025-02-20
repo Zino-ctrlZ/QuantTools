@@ -46,6 +46,9 @@ Risk Manager:
     ☐ Handle Stop loss.
     ☐ Scaling in
     ☐ Rolling
+    ☐ (Consider) Add Vega, Gamma, Delta limits?
+    ☐ In add a min size filter
+    ☐ ## Add a setter to update lookback dictionary in OrderPicker/RM file
 
 
 General:

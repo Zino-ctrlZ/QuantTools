@@ -15,6 +15,7 @@ from scipy.stats import percentileofscore
 from dbase.DataAPI.ThetaData import (list_contracts, retrieve_openInterest, retrieve_eod_ohlc, retrieve_quote)
 from pandas.tseries.offsets import BDay
 from pandas.tseries.holiday import USFederalHolidayCalendar
+from trade.helpers.decorators import log_error_with_stack
 from itertools import product
 import pandas as pd
 from copy import deepcopy
@@ -28,23 +29,34 @@ import numpy as np
 import time
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager')
+LOOKBACKS = {}
+
+def _retrieve_openInterest(*args, **kwargs):
+    try:
+        return retrieve_openInterest(*args, **kwargs)
+    except Exception as e:
+        return None
+
 
 # Caching holidays to avoid redundant function calls
 HOLIDAY_SET = set(USFederalHolidayCalendar().holidays(start='2000-01-01', end='2030-12-31').strftime('%Y-%m-%d'))
 
 # Precompute BDay lookbacks to eliminate redundant calculations
-def precompute_lookbacks(start_date, end_date):
-    trading_days = pd.date_range(start=start_date, end=end_date, freq=BDay())
-    lookback_cache = {}
-    for date in trading_days:
-        lookback_cache[date.strftime('%Y-%m-%d')] = {
-            10: (date - BDay(10)).strftime('%Y-%m-%d'),
-            20: (date - BDay(20)).strftime('%Y-%m-%d'),
-            30: (date - BDay(30)).strftime('%Y-%m-%d'),
-        }
-    return lookback_cache
+def precompute_lookbacks(start_date, end_date, _range = [10, 20, 30]):
 
-LOOKBACKS = precompute_lookbacks('2000-01-01', '2030-12-31')
+    ## Extending to allow for multiple lookbacks
+    global LOOKBACKS
+    trading_days = pd.date_range(start=start_date, end=end_date, freq=BDay())
+    if len(LOOKBACKS) == 0:
+        lookback_cache = {x.strftime('%Y-%m-%d'): {} for x in trading_days}
+    else:
+        lookback_cache = LOOKBACKS
+    for date in trading_days:
+        dates = {x: (date - BDay(x)).strftime('%Y-%m-%d') for x in _range}
+        lookback_cache[date.strftime('%Y-%m-%d')].update(dates)
+    LOOKBACKS = lookback_cache
+
+precompute_lookbacks('2000-01-01', '2030-12-31')
 
 # Function to check if a date is a holiday
 def is_holiday(date):
@@ -54,6 +66,7 @@ chain_cache = {}
 close_cache = {}
 oi_cache = {}
 spot_cache = {}
+order_cache = {}
 
 
 @log_error_with_stack(logger)
@@ -119,7 +132,7 @@ def populate_cache(order_candidates: dict,
 
 
         eod_results = (runThreads(retrieve_eod_ohlc, OrderedList, 'map'))
-        oi_results = (runThreads(retrieve_openInterest, OrderedList, 'map'))
+        oi_results = (runThreads(_retrieve_openInterest, OrderedList, 'map'))
         tick_results = (runThreads(generate_option_tick_new, tickOrderedList, 'map'))
         
         ## Save to Dictionary Cache
@@ -245,7 +258,7 @@ def chain_details(date: str,
                     Option_Chain = Stock_obj.option_chain()
                 except:
                     return 'theta_data_error'
-                Spot = Stock_obj.spot(ts=False)
+                Spot = Stock_obj.spot(ts=False, spot_type='chain_price') ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
                 Option_Chain['q'] = Stock_obj.div_yield()
@@ -400,9 +413,21 @@ def liquidity_check(id: str,
                 transfer_dict[new_dict_keys[k]] = sample_id[k]
 
     start = LOOKBACKS[date][lookback]  # Used precomputed BDay(30)
-    oi_data = retrieve_openInterest(**transfer_dict, end_date=date, start_date=start)
+    # oi_data = retrieve_openInterest(**transfer_dict, end_date=date, start_date=start)
+    oi_data = oi_cache[f"{id}_{date}"]
+
+    if isinstance(oi_data, pd.DataFrame):
+        if oi_data.empty:
+            return False
+        
+    elif oi_data is None:
+        return False
+    
+    oi_data = oi_data[~oi_data.index.duplicated(keep = 'first')]
+    oi_data = oi_data.iloc[:lookback]
     # print(f'Open Interest > {pass_threshold} for {id}:', oi_data.Open_interest.mean() )
-    return oi_data.Open_interest.mean() > pass_threshold
+    # return oi_data.Open_interest.mean() > pass_threshold if isinstance(oi_data, pd.DataFrame) else False
+    return oi_data.Open_interest.sum()/lookback > pass_threshold if isinstance(oi_data, pd.DataFrame) else False
 
 
 
@@ -419,7 +444,19 @@ class OrderPicker:
         """
         self.liquidity_threshold = liquidity_threshold
         self.data_availability_threshold = data_availability_threshold
-        self.lookback = lookback
+        self.__lookback = lookback
+        
+    @property
+    def lookback(self):
+        return self.__lookback
+    
+    @lookback.setter
+    def lookback(self, value):
+        global LOOKBACKS
+        initial_lookback_key = list(LOOKBACKS.keys())[0]
+        if value not in LOOKBACKS[initial_lookback_key].keys():
+            precompute_lookbacks('2000-01-01', '2030-12-31', _range = [value])
+        self.__lookback = value
 
         
     @log_error_with_stack(logger)
@@ -454,7 +491,10 @@ class OrderPicker:
         returns:
         dict: order
         """
-        
+        global order_cache
+        order_cache.setdefault(date, {})
+        order_cache[date].setdefault(tick, {})
+
         ## Create necessary data structures
         direction_index = {}
         str_direction_index = {}
@@ -468,33 +508,60 @@ class OrderPicker:
 
 
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
-
         if any([x2 is None for x in order_candidates.values() for x2 in x]):
-            return {
+            return_item = {
                 'result': "MONEYNESS_TOO_TIGHT",
                 'data': None
             } 
+            order_cache[date][tick] = return_item
+            return return_item
 
 
         returned = populate_cache(order_candidates, date=date)
 
         if returned == 'holiday':
-            return {
-                'result': ResultsEnum.IS_HOLIDAY.value,
-                'data': None}
-        elif returned == 'theta_data_error':
-            return {
-                'result': ResultsEnum.UNAVAILABLE_CONTRACT.value,
+            return_item = {
+                'result': "IS_HOLIDAY",
                 'data': None
             }
+            order_cache[date][tick] = return_item
+            return return_item
+        
+        elif returned == 'theta_data_error':
 
-        for direction in order_candidates:
+            return_item = {
+                'result': "UNAVAILABLE_CONTRACT",
+                'data': None
+            }
+            order_cache[date][tick] = return_item
+            return return_item
+    
+
+        for direction in order_candidates: ## Fix this to use .items()
             for i,data in enumerate(order_candidates[direction]):
-                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date))
+                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, pass_threshold=self.liquidity_threshold, lookback=self.lookback))
                 data = data[data.liquidity_check == True]
-                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date))
-                order_candidates[direction][i] = data[data.available_close_check == True] 
-
+                if data.empty:
+                    return_item = {
+                        'result': "TOO_ILLIQUID",
+                        'data': None
+                    }
+                    order_cache[date][tick] = return_item
+                    return return_item
+                
+                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, threshold=self.data_availability_threshold))
+                data = data[data.available_close_check == True] ## Filter out contracts that do not have close data.
+                if data.empty:
+                    return_item = {
+                        'result': "NO_TRADED_CLOSE",
+                        'data': None
+                    }
+                    order_cache[date][tick] = return_item
+                    return return_item
+                
+                # print("After Available Close Check")
+                # print(data)
+                order_candidates[direction][i] = data
 
 
 
@@ -521,21 +588,27 @@ class OrderPicker:
         ## Convert to DataFrame, and sort by the price of the structure.
         return_dataframe = pd.DataFrame(results)
         if return_dataframe.empty:
-            return {
+            return_item = {
                 'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
                 'data': None
             }
+            order_cache[date][tick] = return_item
+
+            return return_item
         cols = return_dataframe.columns.tolist()
         cols[-1] = 'close'
         return_dataframe.columns= cols
+        # print(return_dataframe)
         return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
 
 
         if return_dataframe.empty:
-            return {
+            return_item = {
                 'result': ResultsEnum.MAX_PRICE_TOO_LOW.value,
                 'data': None
             }
+            order_cache[date][tick] = return_item
+            return return_item
             
         ## Rename the columns to the direction names
         return_dataframe.columns = list(str_direction_index.values()) + ['close']
@@ -547,7 +620,6 @@ class OrderPicker:
         for k, v in return_order.items():
             if len(v) > 0:
                 id += f"&{k[0].upper()}:{v[0]}"
-        print(return_dataframe)
         return_order['trade_id'] = id
         return_order['close'] = return_dataframe.close.values[0]
         
@@ -555,7 +627,7 @@ class OrderPicker:
             'result': ResultsEnum.SUCCESSFUL.value,
             'data': return_order
         }
-
+        order_cache[date][tick] = return_dict
 
         return return_dict
 
