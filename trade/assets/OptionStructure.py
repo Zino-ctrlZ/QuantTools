@@ -422,7 +422,7 @@ class OptionStructure:
             legs_list = []
             legs_positions = self.base_structure[direction]
             for pos in legs_positions:
-                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right'], run_chain = self.run_chain))
+                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right'], run_chain = self.run_chain, default_fill=self.default_fill))
                 self.asset = legs_list[0].asset
             setattr(self, direction, legs_list)
             self.Structure[direction] = legs_list

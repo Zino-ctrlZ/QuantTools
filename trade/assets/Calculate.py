@@ -26,6 +26,7 @@ logger = setup_logger('Calculate.py', stream_log_level=logging.CRITICAL)
 ## To-Do: Find a way to return data fill for GB
 ## To-Do: Speed up RV PnL calc with Processing
 ## To-Do: Add logs for attribution returning zero values
+## To-Do: No need to calculate greeks if using RV for attribution
 
 
 
@@ -43,7 +44,8 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
         values = []
         with Context():
             for l in leg: 
-                assert isinstance(l, Option), "Leg must be an Option object"
+                assert isinstance(l, Option) or l.__class__.__name__ == 'Option', "Leg must be an Option object"
+
                 if leg_name == 'long':
                     values.append(func(l, *args, **kwargs))
                 else:
@@ -685,10 +687,7 @@ class Calculate:
         start = ts_start if ts_start is not None else today - relativedelta(months=6)
         end = ts_end if ts_end is not None else today
         if asset.__class__.__name__ == 'Option':
-
-
-
-
+    
             ## Designate the columns to be used
             vol_col = ['Bs_iv' if asset.model == 'bsm' else 'Binomial_iv']
             if asset.default_fill:
@@ -716,7 +715,7 @@ class Calculate:
                 close_fill_mask = pd.Series([True]*len(full_data), index = full_data.index)
             else:
                 raise Exception(f"Invalid replace option. Expected 'partial', 'close', 'default_fill', recieved {replace}")
-            
+
             ## Fill missing data + Rename columns to Option_Close
             full_data.rename(columns = {'Close': 'Option_Close'}, inplace = True)
             full_data.loc[close_fill_mask, 'Option_Close'] = full_data.loc[close_fill_mask, asset.default_fill.capitalize()]
@@ -728,7 +727,6 @@ class Calculate:
                                 ts_timewidth= ts_timewidth,
                                 ts = True)[vol_col]
             full_data[vol_col] = vol
-
             ## Fill missing Vol data
             full_data.loc[close_fill_mask, vol_col[0]] = full_data.loc[close_fill_mask, vol_col[1]]
 
@@ -739,8 +737,7 @@ class Calculate:
             full_data[vol_col] = full_data[vol_col].ffill()
             
             
-
-            
+            print(full_data)
             # # GET STOCK TIMESERIES
             stock_ts = asset.asset.spot(ts = True,
                                         ts_start = ts_start, ts_end = ts_end, ts_timewidth = ts_timewidth,
@@ -767,6 +764,7 @@ class Calculate:
             full_data[[f'{x}_Change_Percent' for x in spot_col_2+['Stock_Close']] ] = full_data[spot_col_2+['Stock_Close']].pct_change()
             full_data[['RF_rate_Change_Mark']] = full_data[['RF_rate']] - full_data[['RF_rate']].shift(periods = 1)
 
+
             ## ADD GREEKS. Make sure it is previous timestamp greeks
             greeks = asset.greeks(ts_start= ts_start, 
                                 ts_end = ts_end,
@@ -782,7 +780,6 @@ class Calculate:
             full_data.reset_index(inplace = True)
             ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
             full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
-            full_data.dropna(inplace = True)
 
 
             if method == "GB":
@@ -942,7 +939,8 @@ def fullRevalPnL(
     # print(f'Total PnL: {total_pnl:.5f}')
     # print(f'Actual PnL: {pv1-pv0}')
     # print(f'Unexplained PnL: {(pv1-pv0) - total_pnl}')
-
+    pnl = pv1-pv0
+    pnl = price1 - price0
     return {'Delta_PnL': delta_pnl*100, 
             'Gamma_PnL': gamma_pnl* 100, 
             'Vega_PnL': vega_pnl*100, 
@@ -952,7 +950,7 @@ def fullRevalPnL(
             'Vanna_PnL': vanna_pnl*100, 
             'Dividend_PnL': div_pnl*100, 
             'Total_PnL': total_pnl*100, 
-            'Unexplained_PnL': ((pv1-pv0)*100) - total_pnl*100, 
-            'Actual_PnL': ((pv1-pv0)*100), 
+            'Unexplained_PnL': ((pnl)*100) - total_pnl*100, 
+            'Actual_PnL': (pnl*100), 
             'Datetime': end,
-            'Price': pv0*100}
+            'Price': price1*100}

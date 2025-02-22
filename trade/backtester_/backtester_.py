@@ -150,6 +150,10 @@ class PTBacktester(AggregatorParent):
 
 
     def run(self) -> pd.DataFrame:
+        """
+        Runs the backtest for each dataset in the list and returns a dataframe containing the results
+        
+        """
         results = []
         for i, d in enumerate(self.datasets):
             d.backtest._strategy._name = d.name

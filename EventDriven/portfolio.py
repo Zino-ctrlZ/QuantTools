@@ -17,10 +17,13 @@ from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retriev
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.riskmanager import RiskManager
+from trade.backtester_.utils.aggregators import AggregatorParent
+from trade.backtester_.utils.utils import plot_portfolio
+from typing import Optional
+import plotly
 
 
-
-class Portfolio(object):
+class Portfolio(AggregatorParent):
     """
     The Portfolio class handles the positions and market
     value of all instruments at a resolution of a "bar",
@@ -77,8 +80,9 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.trades = {}
+        self.__trades = None ## Temporarily store trades data. Will change once Zino fixes the format
         self.max_contract_price = max_contract_price / 100.0
-        
+        self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
         self.__construct_current_positions()
@@ -200,8 +204,44 @@ class OptionSignalPortfolio(Portfolio):
         self.underlier_list_data = {}
         for underlier in self.symbol_list:
             self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
-             
 
+    @property
+    def _equity(self):
+        holdings = getattr(self, 'weighted_holdings')
+        equity_curve = pd.DataFrame(holdings).set_index('datetime')
+        equity_curve['total'] = equity_curve.iloc[:, :len(self.symbol_list)+1].sum(axis = 1) ##NOTE: Temp fix till calcs work
+        equity_curve.rename(columns = {'total': 'Total'}, inplace=True)
+        self.__equity = equity_curve
+        return self.__equity
+    
+    @property
+    def _trades(self):
+        trades = self.get_trades()
+        trades['ReturnPct'] = trades['ReturnPct']/100
+        self.__trades = trades
+        return self.__trades
+
+    def get_port_stats(self):
+        ## NOTE: I want to pass false if backtest is not run. How?
+        return True
+    
+    ##NOTE: Should move to performance.py?
+    def dates_(self, start: bool = True):
+        if start:
+            return self._equity.index.min()
+        else:
+            return self._equity.index.max()
+        
+    def buyNhold(self):
+        stock_ts = pd.DataFrame()
+        for stock in self.symbol_list:
+            stock_ts[stock] = self.underlier_list_data[stock].spot(ts = True, ts_start = self.dates_(), ts_end = self.dates_(start = False))['close'] * self.__weight_map[stock]
+            
+        stock_ts['Total'] = stock_ts.sum(axis = 1)
+        self.stock_equity = stock_ts
+        return ((stock_ts['Total'].iloc[-1] / stock_ts['Total'].iloc[0]) -1) * 100
+    
+             
 
     def generate_order(self, signal : SignalEvent):
         """
@@ -534,5 +574,39 @@ class OptionSignalPortfolio(Portfolio):
             returns a string format of underlier-expiration-strike-type from the dataframe of the columns root, expiration, strike, right
         """
         return f"{contract['root']}-{contract['expiration']}-{contract['strike']}-{contract['right']}"
+    
+
+    def plot_portfolio(self,
+                    benchmark: Optional[str] = 'SPY',
+                    plot_bnchmk: Optional[bool] = True,
+                    return_plot: Optional[bool] = False,
+                    start_plot: Optional[str] = None,
+                    **kwargs) -> Optional[plotly.graph_objects.Figure]:
+        """
+        Plots a graph of current porfolio metrics. These graphs are Equity Curve, Portfolio Drawdown, Trades, Periodic returns
+        Plotting function is plotly. Through **kwargs, you can edit the subplot
+        
+        Parameters:
+        benchmark (Optional[str]): Benchmark you would like to compare portfolio equity. Defaults to SPY
+        plot_bnchmk (Optional[bool]): Optionality to plot a benchmark or not
+        return_plot Optional[bool]: Returns the plot object. User may opt for this if they plan to make further editing beyond **kwargs functionality. 
+                                    Note, best to designate this to a variable to avoid being displayed twice
+
+        Returns: 
+        Plot: For further editing by the user
+        """
+        
+        stock = Stock(benchmark, run_chain = False)
+        data = stock.spot(ts = True, ts_start = self._equity.index[0], ts_end = self._equity.index[-1])
+        data.rename(columns = {x:x.capitalize() for x in data.columns}, inplace= True)
+        data = data.asfreq('B', method = 'ffill')
+        _bnch = data.fillna(0)
+        eq = self._equity
+        dd = self.dd(True)
+        tr = self._trades.copy()
+        tr['Size'] = tr['Quantity']
+
+        return plot_portfolio(tr, eq, dd, _bnch,plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
+
     
         

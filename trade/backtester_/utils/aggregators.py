@@ -2,6 +2,7 @@
 ## To-do: Add Thorp Expectancy (from building a winning system book)
 ## To-do: Add skew
 ## To-do: Is sharpe annualized?
+## To-Do: Change BuyNHold to the function in EventDrive.portfolio.OptionSignalPortfolio
 
 import sys
 import os
@@ -407,7 +408,8 @@ def avgPnL(trades_df: pd.DataFrame, Type_: str, value=True) -> float:
     PnL = trades_.PnL if value else trades_.ReturnPct
     WPnL = PnL[PnL > 0] if Type_.upper() == 'W' else PnL[PnL <=
                                                          0] if Type_.upper() == 'L' else PnL
-    return WPnL.mean() * 100
+
+    return WPnL.mean() * 100 if not WPnL.empty else 0
 
 
 def bestTrade(trades_df: pd.DataFrame) -> float:
@@ -437,7 +439,6 @@ def Expectancy(trades_df: pd.DataFrame) -> float:
     Returns the expected %pnl based on portfolio data
     """
     tr = trades_df
-
     return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
 
 
@@ -850,12 +851,50 @@ class AggregatorParent(ABC):
         """
         assert self.get_port_stats(), f"Run Portfolio Backtest before aggregating"
         MAR = 0.0 if not MAR else MAR
-        # tr = trades(PortStats)
+        
+        ## Extending to ensure useability in other places. It was originally designed for PTBacktest,
+        ## But can be used in other places
+
+        ## Re-implement dates_. This is very specific to PTBacktest
+
+
         assert isinstance(
             MAR, float), f"Recieved MAR of type {type(MAR)} instead of Type float"
+        
+        try:
+            start_overwrite = getattr(self, 'start_overwrite')
+        except AttributeError:
+            start_overwrite = None
+
+        try:
+            strategy = list(self.get_port_stats().values())[0]['_strategy']
+        except AttributeError:
+            strategy = None
+
+        try: 
+            equity = self.pf_value_ts()
+        except AttributeError:
+            equity = self._equity
+        except Exception:
+            raise Exception('Either implement pf_value_ts method or self.equity')
+
+        try:
+            trades = self.trades()
+        except TypeError:
+            trades = self._trades
+        except Exception:
+            raise Exception('Either implement trades method or self._trades')
+
+        try:
+            tickers = [dataset.name for dataset in self.datasets]
+        except AttributeError:
+            tickers = self.symbol_list
+        except Exception:
+            raise Exception('Either implement datasets attribute with PTDataset or self.symbol_list')
+
         rtrn_ = self.rtrn()
         series1 = pd.Series({
-            'Start': self.start_overwrite if self.start_overwrite else self.dates_(True),
+            'Start': start_overwrite if start_overwrite else self.dates_(True),
             'End': self.dates_(False),
             'Duration': self.dates_(False) - self.dates_(True),
             'Exposure Time [%]': self.ExposureDays(),
@@ -901,10 +940,10 @@ class AggregatorParent(ABC):
         series3 = pd.Series({
             'Winning Streak': self.streak('W'),
             'Losing Streak': self.streak('L'),
-            '_strategy': list(self.get_port_stats().values())[0]['_strategy'],
-            'equity_curve': self.pf_value_ts(),
-            '_trades': self.trades(),
-            '_tickers': [dataset.name for dataset in self.datasets]
+            '_strategy': strategy,
+            'equity_curve': equity,
+            '_trades': trades,
+            '_tickers': tickers
 
         })
         return pd.concat([series1, rtrn_series, series3])

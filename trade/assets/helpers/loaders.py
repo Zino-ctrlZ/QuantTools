@@ -6,7 +6,9 @@ from trade.helpers.Context import Context
 
 def create_object_from_id(option_id: str, 
                           date: str = datetime.today().strftime('%Y-%m-%d'), 
-                          run_chain: bool = False):
+                          run_chain: bool = False,
+                          default_fill: str = 'midpoint',
+                          **kwargs):
     
     """
     return an Option object from an option id, or an OptionStructure object from a structure id
@@ -43,9 +45,9 @@ def create_object_from_id(option_id: str,
                 })
 
         with Context(end_date=date) as ctx:
-            structure = OptionStructure(structure, run_chain = run_chain)
+            structure = OptionStructure(structure, run_chain = run_chain, default_fill = default_fill)
         return structure
     else:
         details = parse_option_tick(option_id)
         with Context(end_date=date) as ctx:
-            return Option(**details, run_chain = run_chain)
+            return Option(**details, run_chain = run_chain, default_fill = default_fill)

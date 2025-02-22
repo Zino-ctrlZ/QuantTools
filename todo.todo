@@ -24,8 +24,16 @@ Portfolio File:
         ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57)
     ✔ Make max close a variable @done(25-02-17 22:56)
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
+    ☐ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+    ☐ Handle Stop loss.
+    ☐ Scaling in
+    ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
     ☐ Add Attribution & Greek timeseries @Chidi
+    ☐ Add aggregator to portfolio
+    ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid
+    ☐ Add exercising contracts
+    ☐ Slippage should increase buy price and reduce sell
 
 Events:
     ☐ Add order_settings for orderEvents. 
@@ -50,7 +58,7 @@ Risk Manager:
     ☐ Return none if no order found 
     ☐ Handle Stop loss.
     ☐ Scaling in
-    ☐ Rolling
+    ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
     ☐ (Consider) Add Vega, Gamma, Delta limits?
     ☐ In add a min size filter
     ☐ ## Add a setter to update lookback dictionary in OrderPicker/RM file

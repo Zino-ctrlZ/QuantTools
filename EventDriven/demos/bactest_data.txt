@@ -1,38 +1,38 @@
-         163175362 function calls (162535385 primitive calls) in 664.251 seconds
+         158689244 function calls (158065791 primitive calls) in 1277.285 seconds
 
    Ordered by: cumulative time
-   List reduced from 2863 to 30 due to restriction <30>
+   List reduced from 2860 to 30 due to restriction <30>
 
    ncalls  tottime  percall  cumtime  percall filename:lineno(function)
-        2    0.000    0.000  664.254  332.127 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/IPython/core/interactiveshell.py:3541(run_code)
-        2    0.000    0.000  664.254  332.127 {built-in method builtins.exec}
-        1    0.035    0.035  664.254  664.254 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/backtest.py:37(run)
-       64    0.000    0.000  552.857    8.638 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:248(update_signal)
-       64    0.006    0.000  552.854    8.638 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:204(generate_order)
-    62/31    0.012    0.000  552.787   17.832 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/decorators.py:36(wrapper)
-       31    0.016    0.001  552.784   17.832 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:462(get_order)
-       31    0.005    0.000  351.680   11.345 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:350(produce_order_candidates)
-       62    0.017    0.000  351.675    5.672 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:218(chain_details)
-    31085  283.776    0.009  283.776    0.009 {method 'acquire' of '_thread.lock' objects}
-     8249    0.075    0.000  283.723    0.034 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:295(wait)
-     5724    0.053    0.000  279.238    0.049 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:428(result)
-       31    0.013    0.000  199.193    6.426 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:72(populate_cache)
-      124    0.008    0.000  198.640    1.602 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/threads.py:4(runThreads)
-     4968    0.013    0.000  193.750    0.039 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:612(result_iterator)
-     4844    0.026    0.000  193.735    0.040 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:314(_result_or_cancel)
-       83    0.026    0.000  164.855    1.986 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/Stock.py:361(spot)
-      331    0.060    0.000  140.651    0.425 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/helper.py:692(change_to_last_busday)
-      331    0.014    0.000  139.327    0.421 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/helper.py:680(is_USholiday)
-      331    0.009    0.000  138.718    0.419 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/calendars/nyse.py:1276(valid_days)
-      331    0.004    0.000  138.482    0.418 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/market_calendar.py:570(valid_days)
-      331   17.075    0.052  138.353    0.418 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/market_calendar.py:553(holidays)
-      145    0.004    0.000  126.669    0.874 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:500(request)
-      145    0.007    0.000  126.073    0.869 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:673(send)
-       83    0.003    0.000  122.738    1.479 /Users/chiemelienwanisobi/cloned_repos/FinanceDatabase/dbase/DataAPI/ThetaData.py:34(request_from_proxy)
-       83    0.002    0.000  122.730    1.479 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/api.py:14(request)
-     1872    0.017    0.000  120.672    0.064 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/socket.py:704(readinto)
-      145    0.004    0.000  117.683    0.812 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/adapters.py:613(send)
-      145    0.005    0.000  117.581    0.811 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:594(urlopen)
-      145    0.005    0.000  117.511    0.810 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:379(_make_request)
+        2    0.000    0.000 1277.289  638.644 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/IPython/core/interactiveshell.py:3541(run_code)
+        2    0.000    0.000 1277.289  638.644 {built-in method builtins.exec}
+        1    0.042    0.042 1277.288 1277.288 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/backtest.py:37(run)
+       64    0.000    0.000 1050.625   16.416 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:290(update_signal)
+       64    0.008    0.000 1050.623   16.416 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:246(generate_order)
+    62/31    0.017    0.000 1050.551   33.889 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/decorators.py:36(wrapper)
+       31    0.017    0.001 1050.546   33.889 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:462(get_order)
+    28549  698.014    0.024  698.014    0.024 {method 'acquire' of '_thread.lock' objects}
+     7466    0.078    0.000  697.924    0.093 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:295(wait)
+     5246    0.053    0.000  691.806    0.132 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:428(result)
+       31    0.028    0.001  550.308   17.752 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:72(populate_cache)
+      124    0.008    0.000  549.584    4.432 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/threads.py:4(runThreads)
+     4520    0.015    0.000  542.936    0.120 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:612(result_iterator)
+     4396    0.027    0.000  542.919    0.124 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:314(_result_or_cancel)
+       31    0.006    0.000  498.068   16.067 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:350(produce_order_candidates)
+       62    0.021    0.000  498.062    8.033 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:218(chain_details)
+      142    0.004    0.000  243.475    1.715 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:500(request)
+      142    0.006    0.000  242.777    1.710 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:673(send)
+       82    0.002    0.000  236.811    2.888 /Users/chiemelienwanisobi/cloned_repos/FinanceDatabase/dbase/DataAPI/ThetaData.py:34(request_from_proxy)
+       82    0.002    0.000  236.804    2.888 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/api.py:14(request)
+       80    0.033    0.000  236.409    2.955 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/Stock.py:361(spot)
+     1958    0.015    0.000  235.893    0.120 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/socket.py:704(readinto)
+      142    0.004    0.000  232.023    1.634 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/adapters.py:613(send)
+      142    0.005    0.000  231.920    1.633 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:594(urlopen)
+      142    0.004    0.000  231.844    1.633 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:379(_make_request)
+     1770  229.708    0.130  229.708    0.130 {method 'recv_into' of '_socket.socket' objects}
+      142    0.007    0.000  225.491    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connection.py:481(getresponse)
+      142    0.002    0.000  225.446    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:1351(getresponse)
+      142    0.005    0.000  225.435    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:318(begin)
+      142    0.004    0.000  225.352    1.587 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:285(_read_status)
 
 

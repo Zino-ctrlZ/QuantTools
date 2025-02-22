@@ -3,6 +3,7 @@
 ## To-Do: Add more details to the docstrings
 ## TO-DO: Apply Singleton pattern to OptionDataManager & Option
 ## To-Do: Create a structure class for Option with basic structures as key to picking it automaticall
+## To-Do: Write a setter for model attr
 ## To-Do: Add time out to all threads and error handling
 
 from trade.helpers.helper import  change_to_last_busday
@@ -58,7 +59,7 @@ class Option:
     strike: float,
     exp_date: str | datetime,
     put_call: str,
-    model: str = 'bt',
+    model: str = 'bsm',
     default_fill = 'midpoint',
     *args, **kwargs):
         """

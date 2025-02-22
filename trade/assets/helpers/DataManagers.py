@@ -459,10 +459,11 @@ class OptionDataManager:
         if data.reset_index().duplicated().sum() > 0:
             name = f"{self.opttick}_{datetime.today().strftime('%Y%m%d_%H:%M:%S')}"
             OptDataManagerLogger.info(f"{self.opttick} is has duplicates for {timeAggType} agg")
-            OptDataManagerLogger.info(f"{self.opttick} data saved in ./DataForLogs/{name}.csv")
-            if not os.path.exists('DataForLogs'):
-                os.mkdir('DataForLogs')
-            data.to_csv(f'./DataForLogs/{name}.csv', index = True)
+            data = data[~data.reset_index().duplicated()]
+            # OptDataManagerLogger.info(f"{self.opttick} data saved in ./DataForLogs/{name}.csv")
+            # if not os.path.exists('DataForLogs'):
+            #     os.mkdir('DataForLogs')
+            # data.to_csv(f'./DataForLogs/{name}.csv', index = True)
         
         return data
 
