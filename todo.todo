@@ -26,6 +26,8 @@ Portfolio File:
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
     ☐ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+    ☐ Add cash to total when calculating weighted_holdings 
+    ☐ Implement dataframe and numy instead of lists and list of dicts 
     ☐ Handle Stop loss.
     ☐ Scaling in
     ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
