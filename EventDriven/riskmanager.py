@@ -204,7 +204,7 @@ def load_chain(date: str,
                 end_time = time.time()
                 print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
                 Option_Chain = Stock_obj.option_chain()
-                Spot = Stock_obj.spot(ts = False)
+                Spot = Stock_obj.spot(ts = False, spot_type = 'chain_price') ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
                 Option_Chain['q'] = Stock_obj.div_yield()

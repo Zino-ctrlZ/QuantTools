@@ -309,8 +309,8 @@ def PatchedOptionFunc( func_name: str, long_leg = [], short_leg = [], return_all
     short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func_name}_long')
     long_leg_thread.start()
     short_leg_thread.start()
-    long_leg_thread.join()
-    short_leg_thread.join()
+    long_leg_thread.join(timeout=2*60)
+    short_leg_thread.join(timeout=2*60)
     structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
 
 

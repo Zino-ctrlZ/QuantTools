@@ -413,6 +413,9 @@ class Stock:
         if spot_type == 'chain_price':
                 df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
                                          start = '1960-01-01', interval= '1d', provider = provider)
+                df.index = pd.to_datetime(df.index)
+                df = df[(df.index > pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
+                df['close'] = df['chain_price']
         else:
             # print(ts_start, ts_end, interval, provider)
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)

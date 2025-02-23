@@ -736,8 +736,7 @@ class Calculate:
             full_data[vol_col] = full_data[vol_col].replace(0.0, np.nan)
             full_data[vol_col] = full_data[vol_col].ffill()
             
-            
-            print(full_data)
+
             # # GET STOCK TIMESERIES
             stock_ts = asset.asset.spot(ts = True,
                                         ts_start = ts_start, ts_end = ts_end, ts_timewidth = ts_timewidth,
@@ -784,7 +783,6 @@ class Calculate:
 
             if method == "GB":
                 PnL_Data = pd.DataFrame(index = full_data.index)
-                
                 PnL_Data['Delta_PnL'] = (full_data['Delta']*100)*full_data['Stock_Close_Change_Mark']
                 PnL_Data['Gamma_PnL'] = (full_data['Gamma']*100)*((full_data['Stock_Close_Change_Mark'])**2)*0.5
                 PnL_Data['Vega_PnL'] = (full_data['Vega']*100)*full_data['Vol_Change_Mark'] * 100

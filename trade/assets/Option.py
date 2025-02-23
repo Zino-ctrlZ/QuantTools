@@ -5,6 +5,7 @@
 ## To-Do: Create a structure class for Option with basic structures as key to picking it automaticall
 ## To-Do: Write a setter for model attr
 ## To-Do: Add time out to all threads and error handling
+## To-Do: Remove options that are not fully loaded from _instances
 
 from trade.helpers.helper import  change_to_last_busday
 # from trade.helpers.Configuration import Configuration
