@@ -20,12 +20,17 @@ from datetime import date
 import datetime as dt
 from datetime import datetime
 import yfinance as yf
+from trade.helpers.decorators import log_time
+import time
+from trade.helpers.Logging import setup_logger
 from trade.assets.helpers.DataManagers import OptionDataManager
+logger = setup_logger('trade.assets.Option') ## What does __name__ do here?
 
 ##TO-DO: Extend option to take option_id or othervariables
 class Option:
     _instances = {}
 
+    @log_time(logger)
     def __new__(cls, 
                 ticker = None, 
                 strike = None, 
@@ -54,7 +59,7 @@ class Option:
     def __str__(self):
         return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model}, Build On: {self.end_date})'
 
-
+    @log_time(logger)
     def __init__(self, 
     ticker: str,
     strike: float,
@@ -107,7 +112,8 @@ class Option:
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__security = yf.Ticker(ticker.upper())
-            self.__S0 = self.__set__S0() # This should be current market spot for the underlier, should always be realtime.
+            self.__S0 = self.__set__S0() # This should be current market spot for the underlier. The close as of that date.
+            self.__unadjusted_S0 = self.__set_unadjusted_S0() # This should be current market spot for the underlier. But not adjusted for splits and dividends
             self.__OptTick = generate_option_tick_new(ticker, put_call, exp_date, strike)
             self.__prev_close = None # This should be previous DAY close of the OPTION
             self.__y = self.asset.y
@@ -131,9 +137,11 @@ class Option:
 
 
             self.__sigma = None
-            Thread(target = self.__set_pv).start()
+            self.sigma_thread = Thread(target = self.__set_sigma)
+            self.sigma_thread.start()
             self.__pv = None
-            Thread(target = self.__set_pv).start()
+            self.pv_thread = Thread(target = self.__set_pv)
+            self.pv_thread.start()
 
     @property
     def asset(self):
@@ -175,22 +183,33 @@ class Option:
     def default_fill(self):
         return self.__default_fill
     
+    @property
+    def unadjusted_S0(self):
+        return self.__unadjusted_S0
+    
 
 
 
     @property
+    @log_time(logger)
     def sigma(self):
         """
         Retrieve Vol of the option. Using the default fill PV to calculate sigma
 
         This is intended to retrieve real time vol if end_date is set to today
         """
-        self.__set_sigma()
+        # self.__set_sigma() This is useful for if dealing with live. Which won't be happening anytime soon
+        while self.sigma_thread.is_alive():
+            time.sleep(5)
         return self.__sigma
 
     
     def __set__S0(self):
         s0 = list(self.asset.spot(ts = False).values())[-1]
+        return s0
+    
+    def __set_unadjusted_S0(self):
+        s0 = list(self.asset.spot(ts = False, spot_type='chain_price').values())[-1]
         return s0
 
     
@@ -201,6 +220,7 @@ class Option:
 
 
     @property
+    @log_time(logger)
     def pv(self):
         """
         Retrieve PV of the option. Using the default fill as PV
@@ -208,7 +228,8 @@ class Option:
         This is intended to retrieve real time PV if end_date is set to today
 
         """
-        self.__set_pv()
+        while self.pv_thread.is_alive():
+            time.sleep(1)
         return self.__pv
 
 
@@ -284,7 +305,6 @@ class Option:
             data = self.__dataManager.get_spot(spot_type, query_date = ts_end)
             if isinstance(data, dict):
                 raise ValueError(f"Data is not available for {self.ticker} {self.put_call} {self.K} {self.exp} {spot_type} {ts_timeframe} {ts_timewidth}")
-
         return data
     
     def vol(self, 

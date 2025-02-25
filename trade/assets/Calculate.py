@@ -15,6 +15,8 @@ import numpy as np
 from trade.helpers.Logging import setup_logger
 import logging
 from typing import Callable
+from pandas.tseries.offsets import BDay
+from trade.helpers.types import OptionModelAttributes
 
 logger = setup_logger('Calculate.py', stream_log_level=logging.CRITICAL)
 
@@ -57,8 +59,8 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
     short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func.__name__}_long')
     long_leg_thread.start()
     short_leg_thread.start()
-    long_leg_thread.join()
-    short_leg_thread.join()
+    long_leg_thread.join(timeout = 3 * 60)
+    short_leg_thread.join(timeout = 3 * 60)
 
     ## Quick fix for pct_spot_slides, Need underlier_spot_slides column to NOT be summed
     
@@ -182,7 +184,7 @@ class Calculate:
                     if sigma is None:
                         sigma = asset.sigma
                     if S0 is None:
-                        S0 = asset.S0
+                        S0 = asset.unadjusted_S0
                     if y is None:
                         y = asset.y
                     if put_call is None:
@@ -247,14 +249,14 @@ class Calculate:
         
         elif asset.__class__.__name__ == 'Option':
 
-            k = asset.K
-            exp_date = asset.exp
-            sigma = asset.sigma
-            s0 = asset.S0
-            y = asset.y
-            put_call = asset.put_call
-            r = asset.rf_rate
-            start = asset.end_date
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
             modelType = 'option'
             return Calculate.scenario_helper('spot', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
@@ -288,7 +290,6 @@ class Calculate:
         from trade.assets.Option import Option
         from trade.assets.OptionStructure import OptionStructure
 
-
         if asset is None:
             assert asset_type is not None, f'asset_type needed'
             assert asset_type.lower() in ['stock', 'option'], f'Invalid asset_type, expected "stock" or "option", recieved "{asset_type}"'
@@ -313,21 +314,21 @@ class Calculate:
                     
         elif isinstance(asset, Stock):
             raise TypeError('Cannot Calculate vol shocks for Stock')
-        elif isinstance(asset, Option):
-            k = asset.K
-            exp_date = asset.exp
-            sigma = asset.sigma
-            s0 = asset.S0
-            y = asset.y
-            put_call = asset.put_call
-            r = asset.rf_rate
-            start = asset.end_date
+        elif isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
             modelType = 'option'
             return Calculate.scenario_helper('vol', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
                             r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc).set_index('shocks')
 
-        elif isinstance(asset, OptionStructure):
+        elif isinstance(asset, OptionStructure) or asset.__class__.__name__ == 'OptionStructure':
             return_all = kwargs.get('return_all', False)
             return PatchedCalculateFunc(Calculate.pct_vol_slides, 
                                         long_leg = asset.long, 
@@ -335,6 +336,8 @@ class Calculate:
                                         return_all = return_all, 
                                         pct_spot = pct_spot, 
                                         greeks_to_calc = greeks_to_calc)
+        else:
+            raise TypeError(f'Invalid Asset Type. Recieved {asset}')
             
                                 
             
@@ -416,9 +419,14 @@ class Calculate:
         Returns the Delta of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -426,7 +434,8 @@ class Calculate:
             
             # print(f"Delta Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = delta(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            d = delta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -445,9 +454,14 @@ class Calculate:
         Returns the Vega of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -455,7 +469,8 @@ class Calculate:
             
             # print(f"Vega Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = vega(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            d = vega(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -475,15 +490,21 @@ class Calculate:
         Returns the Vanna of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
  
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = vanna(flag = asset.put_call.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -501,9 +522,14 @@ class Calculate:
         Returns the Volga of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -511,7 +537,8 @@ class Calculate:
             
             # print(f"Volga Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = volga(flag = asset.put_call.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            d = volga(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -529,9 +556,15 @@ class Calculate:
         Returns the Gamma of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -539,7 +572,7 @@ class Calculate:
             
             # print(f"Gamma Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = gamma(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            d = gamma(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -557,9 +590,15 @@ class Calculate:
         Returns the Theta of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -567,7 +606,7 @@ class Calculate:
             
             # print(f"Theta Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = theta(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            d = theta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -586,9 +625,15 @@ class Calculate:
         Returns the Rho of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value]
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            # args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
@@ -596,7 +641,7 @@ class Calculate:
             
             # print(f"Rho Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = rho(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
@@ -616,7 +661,7 @@ class Calculate:
         """
         from trade.assets.Option import Option
         kwargs = locals()
-        if isinstance(asset, Option):
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             try:
                 greeks = {'Delta': Calculate.delta(asset, S =S, K = K, r = r, sigma = sigma, start = start),
                 'Gamma': Calculate.gamma(asset, S =S, K = K, r = r, sigma = sigma, start = start),
@@ -628,7 +673,8 @@ class Calculate:
                 }
                 return greeks
                 
-            except:
+            except Exception as e:
+                print(e)
                 return {'Delta': 0.0, 'Gamma': 0.0, 'Vega': 0.0, 'Theta': 0.0, 'Rho': 0.0, 'Vanna': 0.0, 'Volga': 0.0}
             
         elif asset == None:
@@ -684,8 +730,12 @@ class Calculate:
 
         #GET OPTION TIMESERIES
         today = datetime.today()
-        start = ts_start if ts_start is not None else today - relativedelta(months=6)
-        end = ts_end if ts_end is not None else today
+        ## Dates to allow ffill
+        ts_start = ts_start if ts_start else asset.start_date
+        ts_end = ts_end if ts_end else asset.end_date
+        start = pd.to_datetime(ts_start) - BDay(2)
+        end = pd.to_datetime(ts_end) + BDay(2)
+        print(f"Start: {start}, End: {end}, ts_start: {ts_start}, ts_end: {ts_end}")
         if asset.__class__.__name__ == 'Option':
     
             ## Designate the columns to be used
@@ -697,8 +747,8 @@ class Calculate:
             greeks_col = ['Delta', 'Gamma', 'Vega', 'Theta', 'Rho', 'Vanna', 'Volga']
 
             ## GET OPTION TIMESERIES
-            spot_ts = asset.spot(ts_start= ts_start, 
-                                ts_end = ts_end,
+            spot_ts = asset.spot(ts_start= start, 
+                                ts_end = end,
                                 ts_timeframe= ts_timeframe,
                                 ts_timewidth= ts_timewidth,
                                 ts = True)[spot_col]
@@ -720,9 +770,10 @@ class Calculate:
             full_data.rename(columns = {'Close': 'Option_Close'}, inplace = True)
             full_data.loc[close_fill_mask, 'Option_Close'] = full_data.loc[close_fill_mask, asset.default_fill.capitalize()]
 
+
             ## Get Vol Timeseries
-            vol = asset.vol(ts_start= ts_start, 
-                                ts_end = ts_end,
+            vol = asset.vol(ts_start= start, 
+                                ts_end = end,
                                 ts_timeframe= ts_timeframe,
                                 ts_timewidth= ts_timewidth,
                                 ts = True)[vol_col]
@@ -735,12 +786,12 @@ class Calculate:
             ## To-Do, recalculate the pv with the new vol values
             full_data[vol_col] = full_data[vol_col].replace(0.0, np.nan)
             full_data[vol_col] = full_data[vol_col].ffill()
-            
 
             # # GET STOCK TIMESERIES
             stock_ts = asset.asset.spot(ts = True,
-                                        ts_start = ts_start, ts_end = ts_end, ts_timewidth = ts_timewidth,
-                                        ts_timeframe= ts_timeframe)
+                                        ts_start = start, ts_end = end, ts_timewidth = ts_timewidth,
+                                        ts_timeframe= ts_timeframe,
+                                        spot_type = OptionModelAttributes.spot_type.value)
             stock_ts.rename(columns = {x: x.capitalize() for x in stock_ts.columns}, inplace = True)
             full_data['Stock_Close'] = stock_ts[['Close']]
             full_data.ffill(inplace = True)
@@ -762,26 +813,28 @@ class Calculate:
             full_data['Option_Close_Change_Mark'] = full_data['Option_Close'] - full_data['Option_Close'].shift(1)
             full_data[[f'{x}_Change_Percent' for x in spot_col_2+['Stock_Close']] ] = full_data[spot_col_2+['Stock_Close']].pct_change()
             full_data[['RF_rate_Change_Mark']] = full_data[['RF_rate']] - full_data[['RF_rate']].shift(periods = 1)
-
-
-            ## ADD GREEKS. Make sure it is previous timestamp greeks
-            greeks = asset.greeks(ts_start= ts_start, 
-                                ts_end = ts_end,
-                                ts_timeframe= ts_timeframe,
-                                ts_timewidth= ts_timewidth,
-                                greek_type='greeks')
-            ## Fill missing greeks
-            greek_replace_col = [f'{asset.default_fill.capitalize()}_{greek.lower()}' for greek in greeks_col]
-            for index,replace_col in enumerate(greek_replace_col):
-                greeks.loc[close_fill_mask, greeks_col[index]] = greeks.loc[close_fill_mask, replace_col]
-
-            full_data = full_data.join(greeks.shift(1))
-            full_data.reset_index(inplace = True)
-            ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
-            full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
-
+            
 
             if method == "GB":
+
+                ## ADD GREEKS. Make sure it is previous timestamp greeks
+                greeks = asset.greeks(ts_start= start, 
+                                    ts_end = end,
+                                    ts_timeframe= ts_timeframe,
+                                    ts_timewidth= ts_timewidth,
+                                    greek_type='greeks')
+                ## Fill missing greeks
+                greek_replace_col = [f'{asset.default_fill.capitalize()}_{greek.lower()}' for greek in greeks_col]
+                greeks = greeks[greeks.index.isin(full_data.index)]
+                for index,replace_col in enumerate(greek_replace_col):
+                    greeks.loc[close_fill_mask, greeks_col[index]] = greeks.loc[close_fill_mask, replace_col]
+                full_data = full_data.join(greeks.shift(1))
+                full_data.reset_index(inplace = True)
+                ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
+                full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
+
+
+
                 PnL_Data = pd.DataFrame(index = full_data.index)
                 PnL_Data['Delta_PnL'] = (full_data['Delta']*100)*full_data['Stock_Close_Change_Mark']
                 PnL_Data['Gamma_PnL'] = (full_data['Gamma']*100)*((full_data['Stock_Close_Change_Mark'])**2)*0.5
@@ -800,10 +853,15 @@ class Calculate:
                 PnL_Data.set_index('Datetime', inplace = True)
                 PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark','Price' ]]
                 PnL_Data.rename(columns= {'Option_Close_Change_Mark': 'Actual_PnL'}, inplace = True)
-
+                PnL_Data = PnL_Data[(PnL_Data.index >= ts_start) & (PnL_Data.index <= ts_end)]
+                full_data = full_data[(full_data['Datetime'] >= ts_start) & (full_data['Datetime'] <= ts_end)]
+            
             elif method == "RV":
-                # full_data.reset_index(inplace = True)
+                full_data.reset_index(inplace = True)
+                ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
+                full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
                 full_data['prev_day_Datetime'] = full_data.Datetime.shift(1)
+
                 full_data.dropna(inplace = True)
                 PnL_Data = full_data.apply(lambda x: fullRevalPnL(
                                                                     {'S0': x['prev_day_Stock_Close'],
@@ -820,6 +878,9 @@ class Calculate:
                                                                      'y' : asset.y, 'price' : x['Option_Close']})
                     , axis = 1, result_type = 'expand')
                 PnL_Data.set_index('Datetime', inplace = True)
+                PnL_Data.index = pd.to_datetime(PnL_Data.index)
+                full_data = full_data[(full_data['Datetime'] >= ts_start) & (full_data['Datetime'] <= ts_end)]
+                PnL_Data = PnL_Data[(PnL_Data.index >= ts_start) & (PnL_Data.index <= ts_end)]
         
         elif asset.__class__.__name__ == 'OptionStructure':
             return_all = kwargs.get('return_all', False)

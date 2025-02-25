@@ -31,6 +31,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from threading import Thread
 from trade.helpers.decorators import log_time, log_error, log_error_with_stack
+from trade.helpers.types import OptionModelAttributes
 import pandas as pd
 logger = setup_logger('OptionChain')
 
@@ -81,7 +82,7 @@ def produce_chain_values(chain, date, ticker, stock):
     # with Context(end_date = date):
     # stk = Stock(ticker)
     stk = stock
-    spot = list(stk.spot(spot_type = 'chain_price').values())[0]
+    spot = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
     q = stk.div_yield()
     rf_rate = stk.rf_rate
     chain['Spot'] = spot
