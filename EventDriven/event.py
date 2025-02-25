@@ -1,5 +1,8 @@
 #Event indicate a change in the state of the strategy, market, portfolio or execution system.
 
+from datetime import datetime
+
+
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 
@@ -92,8 +95,8 @@ class FillEvent(Event):
     the commission of the trade from the brokerage.
     """
 
-    def __init__(self, datetime, symbol, exchange, quantity,
-                 direction, fill_cost, market_value, commission=None, option = None, position = None,  ):
+    def __init__(self, datetime : datetime | str, symbol : str, exchange : str, quantity : int,
+                 direction: str, fill_cost: float, market_value: float, commission : float =None, slippage : float = None , option = None, position = None ):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -123,6 +126,7 @@ class FillEvent(Event):
         self.option = option #TODO: remove old implementation, new one is position
         self.position = position
         self.market_value = market_value
+        self.slippage = slippage
 
         # Calculate commission
         if commission is None:

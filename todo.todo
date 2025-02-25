@@ -24,18 +24,19 @@ Portfolio File:
         ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57)
     ✔ Make max close a variable @done(25-02-17 22:56)
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
-    ☐ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity
-    ☐ Include EntrySlippage and ExitSlippage in trades
+    ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41)
+    ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41)
     ☐ Create two trades data. One that tracks actual assets, another that tracks position.
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
-    ☐ Add cash to total when calculating weighted_holdings 
-    ☐ Implement dataframe and numy instead of lists and list of dicts 
+    ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
+    ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
     ☐ Handle Stop loss.
     ☐ Scaling in
     ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
     ☐ Add Attribution & Greek timeseries @Chidi
     ☐ Add aggregator to portfolio
     ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid
+    ☐ For slippage, we can try determining slippage based on bid/ask spread
     ☐ Add exercising contracts
     ☐ Slippage should increase buy price and reduce sell
 
@@ -84,13 +85,13 @@ Setup Logger:
 
 
 Additional Portfolio Attributes:
-    - Cash Dict, for each symbol
+    ✔ Cash Dict, for each symbol @done(25-02-25 00:10)
     - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
     - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
 
 Feb 10, 2025 updates: 
     ✔ Fix data consistency issues (zino) @done(25-02-16 18:44)
-    ☐ implement deepcopy where objects/dataframes are assigned (zino)
+    ✔ implement deepcopy where objects/dataframes are assigned (zino) @done(25-02-25 00:10)
     ✔ Investigate get_trades_new  (zino) @done(25-02-16 18:44)
     ✔ Fix errors during backtest, known issues: openBB, cols[-1] = 'close' IndexError: list assignment index out of range in get_order (chidi) @done(25-02-16 23:42)
     ☐ After fixing the above, push to main branch and focus on optimization for optionSignalBacktest 
@@ -101,7 +102,7 @@ List Contracts:
 
 
 Usable:
-    ☐ In_holdings fixed.
+    ✔ In_holdings fixed. @done(25-02-25 00:10)
     ☐ 90% of trades from Stock go thru in Options
     ☐ Can conduct aggregation
     ☐ Can do naked & spreads without errors
