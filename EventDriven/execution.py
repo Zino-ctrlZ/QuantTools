@@ -80,10 +80,22 @@ class SimulatedExecutionHandler(ExecutionHandler):
         based on the max_slippage_pct attribute of the class.
         """
         assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
-        commission = self.commission_rate * event.quantity
-        slippage = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)    
-        price = event.position['close'] * (1 + slippage)
-        fill_cost = price * event.quantity + (commission/100) ## Commission is meant to increase buy price and reduce sell price.
-        market_value = price * event.quantity
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost, market_value=market_value, commission=commission, position=event.position)
+        assert event.direction == 'BUY' or event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {event.direction}"
+        commission = self.commission_rate * event.quantity * len(event.position.get('long', [])) #commission is per trade(leg) there should always be a long in a position, naked or spread
+        
+        # Generate slippage as a percentage
+        slippage_pct = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)
+        
+        #slippage may increase or decrease intended price
+        price = event.position['close'] * (1 + slippage_pct)  
+        market_value = (price * event.quantity) # cost before commission
+
+        # Adjust price based on order direction
+        if event.direction == 'BUY':
+            fill_cost = market_value + commission
+        elif event.direction == 'SELL':
+            fill_cost = market_value - commission
+
+        slippage_diff = (price - event.position['close'] ) * event.quantity
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff)
         self.events.put(fill_event)

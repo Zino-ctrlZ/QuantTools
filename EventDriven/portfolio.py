@@ -5,6 +5,7 @@
 # - Position Management: Rolling Options, Hedging, Position sizing
 # - 
 
+from copy import deepcopy
 import math
 from abc import ABCMeta, abstractmethod
 import pandas as pd
@@ -71,6 +72,7 @@ class OptionSignalPortfolio(Portfolio):
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.options_data = {}
+        self.underlier_list_data = {}
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -86,12 +88,9 @@ class OptionSignalPortfolio(Portfolio):
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
         self.__construct_current_positions()
-        self.__construct_all_holdings()
         self.__construct_weight_map(weight_map = weight_map)
-        self.__construct_current_holdings()
-        self.__construct_current_weighted_Holdings()
+        self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
-        self.__generate_underlier_data()
 
     @property
     def order_settings(self):
@@ -131,12 +130,11 @@ class OptionSignalPortfolio(Portfolio):
     @weight_map.setter
     def weight_map(self, weight_map):
         self.__construct_weight_map(weight_map)
-        self.__construct_current_weighted_Holdings()
+        self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
         
         
     # internal functions to construct key portfolio data 
-    
     def __construct_weight_map(self, weight_map): 
         if weight_map is not None:
             for s in weight_map.keys():
@@ -161,32 +159,10 @@ class OptionSignalPortfolio(Portfolio):
         d = {s: {} for s in self.symbol_list} #key is underlier, value is list of option contracts
         d['datetime'] = self.bars.start_date
         self.all_positions = [d]
-    
-    def __construct_current_holdings(self): 
-        d = {s: self.allocated_cash_map[s] for s in self.symbol_list} #key is underlier, value is total value of all postitions held
-        d['cash'] = self.initial_capital
-        d['commission'] = 0.0
-        d['total'] = self.initial_capital
-        self.current_holdings = d
         
-    def __construct_all_holdings(self):
-        """
-        Constructs the holdings list using the start_date
-        to determine when the time index will begin.
-        """
-        d = {s: 0.0 for s in self.symbol_list}
-        d['datetime'] = self.bars.start_date
-        d['cash'] = self.initial_capital
-        d['commission'] = 0.0
-        d['total'] = self.initial_capital
-        self.all_holdings =  [d]
     
-    def __construct_current_weighted_Holdings(self): 
-        d = {s: self.allocated_cash_map[s] for s in self.symbol_list}
-        d['commission'] = 0.0
-        d['total'] = self.initial_capital
-        d['cash'] = self.initial_capital - sum(self.allocated_cash_map.values()) 
-        self.current_weighted_holdings = d   
+    def __construct_current_weighted_holdings(self): 
+        self.current_weighted_holdings = {'commission': 0.0}   
     
     def __construct_weighted_holdings(self): 
         """
@@ -200,14 +176,17 @@ class OptionSignalPortfolio(Portfolio):
         d['total'] = self.initial_capital
         self.weighted_holdings = [d]
         
-    def __generate_underlier_data(self):
-        self.underlier_list_data = {}
-        for underlier in self.symbol_list:
-            self.underlier_list_data[underlier] = Stock(underlier, run_chain = False)
+    #lazy intialize Stock objects
+    def __get_underlier_data(self, symbol: str):
+        if symbol not in self.underlier_list_data:
+            self.underlier_list_data[symbol] = Stock(symbol, run_chain = False)
+        
+        return self.underlier_list_data[symbol]
+        
 
     @property
     def _equity(self):
-        holdings = getattr(self, 'weighted_holdings')
+        holdings = self.weighted_holdings
         equity_curve = pd.DataFrame(holdings).set_index('datetime')
         equity_curve['total'] = equity_curve.iloc[:, :len(self.symbol_list)+1].sum(axis = 1) ##NOTE: Temp fix till calcs work
         equity_curve.rename(columns = {'total': 'Total'}, inplace=True)
@@ -223,6 +202,11 @@ class OptionSignalPortfolio(Portfolio):
 
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
+        ## if the latest date on the bars is equal to the start date, backtest has yet to run
+        latest_bars = self.bars.get_latest_bars()
+        current_date = latest_bars.iloc[0]['Date']
+        if pd.to_datetime(self.start_date) == pd.to_datetime(current_date):
+            return False
         return True
     
     ##NOTE: Should move to performance.py?
@@ -235,11 +219,11 @@ class OptionSignalPortfolio(Portfolio):
     def buyNhold(self):
         stock_ts = pd.DataFrame()
         for stock in self.symbol_list:
-            stock_ts[stock] = self.underlier_list_data[stock].spot(ts = True, ts_start = self.dates_(), ts_end = self.dates_(start = False))['close'] * self.__weight_map[stock]
+            stock_ts[stock] = self.underlier_list_data.get(stock, self.__get_underlier_data(stock)).spot(ts = True, ts_start = self.dates_(), ts_end = self.dates_(start = False))['close'] * self.__weight_map[stock]
             
         stock_ts['Total'] = stock_ts.sum(axis = 1)
         self.stock_equity = stock_ts
-        return ((stock_ts['Total'].iloc[-1] / stock_ts['Total'].iloc[0]) -1) * 100
+        return self.__normalize_dollar_amount(((stock_ts['Total'].iloc[-1] / stock_ts['Total'].iloc[0]) -1))
     
              
 
@@ -249,33 +233,14 @@ class OptionSignalPortfolio(Portfolio):
         Interacts with RiskManager to get order based on settings and signal
         returns: OrderEvent
         """
-        self.__latest_signals = self.bars.get_latest_bars().iloc[0]
-        date_str = self.__latest_signals['Date'].strftime('%Y-%m-%d')
         symbol = signal.symbol
         signal_type = signal.signal_type
         order_type = 'MKT'
-        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts
         
         if signal_type == 'LONG': #buy calls
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'C', self.max_contract_price, self.order_settings)  
-            position = position_result['data'] if position_result['data'] is not None else None
-            if position is None:  
-                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
-                return None
-            self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
-            order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
-            return order
+            return self.create_order(symbol, signal, 'C', order_type)
         elif signal_type == 'SHORT': #buy puts
-            position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, 'P', self.max_contract_price, self.order_settings)
-            position = position_result['data'] if position_result['data'] is not None else None
-            if position is None:  
-                self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
-                return None
-            self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
-            order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity,direction= 'BUY', position = position)
-            return order
+            return self.create_order(symbol, signal, 'P', order_type)
         elif signal_type == 'CLOSE':
             current_position = self.current_positions[symbol]
             if 'position' not in current_position:
@@ -285,6 +250,22 @@ class OptionSignalPortfolio(Portfolio):
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'])
             return order
         return None
+    
+    def create_order(self, symbol: str, signal : SignalEvent, position_type: str, order_type: str = 'MKT'):
+        """
+        Takes a signal event and creates an order event based on the signal parameters
+        position_type: C/P
+        """
+        date_str = signal.datetime.strftime('%Y-%m-%d')
+        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts
+        position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, position_type, self.max_contract_price, self.order_settings)  
+        position = position_result['data'] if position_result['data'] is not None else None
+        if position is None:  
+            self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
+            return None
+        self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
+        order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
+        return OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
         
             
     def update_signal(self, event : SignalEvent):
@@ -314,19 +295,20 @@ class OptionSignalPortfolio(Portfolio):
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = fill_event.quantity
-                new_position_data['entry_price'] = fill_event.fill_cost * 100
-                new_position_data['market_value'] = fill_event.market_value * 100
+                new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 
                 
                 #update trade data on successful buy
                 trade_id = fill_event.position['trade_id']
                 self.trades[trade_id] = {}
-                self.trades[trade_id]['entry_price'] = fill_event.fill_cost * 100
+                self.trades[trade_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
                 self.trades[trade_id]['entry_date'] = fill_event.datetime
                 self.trades[trade_id]['quantity'] = fill_event.quantity
                 self.trades[trade_id]['symbol'] = fill_event.symbol
-                self.trades[trade_id]['commission'] = fill_event.commission
-                self.trades[trade_id]['market_value'] = fill_event.market_value * 100
+                self.trades[trade_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
+                self.trades[trade_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                self.trades[trade_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -349,12 +331,27 @@ class OptionSignalPortfolio(Portfolio):
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = fill_event.quantity
-                new_position_data['exit_price'] = fill_event.fill_cost * 100
-                new_position_data['market_value'] = fill_event.fill_cost * 100
+                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                
+                #update trade data on successful sell
+                self.trades[fill_event.position['trade_id']]['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
+                self.trades[fill_event.position['trade_id']]['exit_date'] = fill_event.datetime
+                self.trades[fill_event.position['trade_id']]['exit_commission'] = self.__normalize_dollar_amount(fill_event.commission)
+                self.trades[fill_event.position['trade_id']]['exit_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
+                self.trades[fill_event.position['trade_id']]['exit_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                
+
                 
                 # Update positions list with new quantities
         self.current_positions[fill_event.symbol] = new_position_data
 
+    
+    def __normalize_dollar_amount(self, price: float) -> float:
+        """
+        multiply by 100
+        """
+        return price * 100
     
     def update_holdings_from_fill(self, fill_event: FillEvent):
         """
@@ -368,20 +365,9 @@ class OptionSignalPortfolio(Portfolio):
         
         if fill_event.direction == 'BUY': 
             # available cash for the symbol is the left over cash after buying the contract
-            self.allocated_cash_map[fill_event.symbol] -= fill_event.fill_cost * 100
+            self.allocated_cash_map[fill_event.symbol] -= self.__normalize_dollar_amount(fill_event.fill_cost)
             
-            
-            
-        # Check whether the fill is buy or sell
-        fill_dir = 1 if fill_event.direction == 'BUY' else -1   
-        cost = fill_dir * fill_event.fill_cost
-        self.current_holdings[fill_event.symbol] += cost
-        self.current_holdings['commission'] += fill_event.commission
-        self.current_holdings['cash'] -= cost
-        self.current_holdings['total'] -= cost
-        
-        
-        
+        #track the total cash spent on commission
         self.current_weighted_holdings['commission'] += fill_event.commission
         
 
@@ -391,20 +377,12 @@ class OptionSignalPortfolio(Portfolio):
         Adds a new record to the holdings and positions matrix based on the current market data bar.
         """
         
-        latest_bars = self.bars.get_latest_bars() 
+        latest_bars = self.bars.get_latest_bars()
         current_date = latest_bars.iloc[0]['Date']
-
         # Check if the current date is a weekend (Saturday or Sunday)
         if current_date.weekday() >= 5:
             return
-        
-        #new holdings dictionary
-        new_holdings_entry = {s: 0.0 for s in self.symbol_list} 
-        new_holdings_entry['datetime'] = current_date 
-        new_holdings_entry['cash'] = self.current_holdings['cash']
-        new_holdings_entry['commission'] = self.current_holdings['commission']
-        new_holdings_entry['total'] = self.current_holdings['cash']
-        
+                
         #new positions dictionary
         new_positions_entry = {s: {} for s in self.symbol_list} 
         new_positions_entry['datetime'] = current_date
@@ -414,36 +392,25 @@ class OptionSignalPortfolio(Portfolio):
         new_weighted_holdings_entry['datetime'] = current_date
         new_weighted_holdings_entry['cash'] = (1.0 - sum(self.__weight_map.values())) * self.initial_capital
         new_weighted_holdings_entry['commission'] = self.current_weighted_holdings['commission']
-        new_weighted_holdings_entry['total'] = 0.0
+        new_weighted_holdings_entry['total'] = new_weighted_holdings_entry['cash']
         
         for sym in self.symbol_list:
             if 'position' in self.current_positions[sym]:
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
-                market_value = self.current_positions[sym]['quantity'] * current_close * 100
+                market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
                 
                 
                 #update holdings
                 if 'exit_price' in self.current_positions[sym]: 
-                    #use holdings to include pnl from closed position and set holdings to price at exit
-                    new_holdings_entry['total'] += self.current_positions[sym]['exit_price'] 
-                    new_holdings_entry[sym] = self.current_positions[sym]['exit_price'] 
-                
                     #updated the available cash to include pnl from the closed position
                     self.allocated_cash_map[sym] += self.current_positions[sym]['exit_price']
                     new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
                 else:
-                    new_holdings_entry['total'] += market_value #update  value of total holdings with the market value of the position
-                    new_holdings_entry[sym] = market_value #update the value of the symbol in the holdings dictionary
-         
                     new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
                     
 
                 #update positions
                 if 'exit_price' in self.current_positions[sym]: #if position is closed, set current_positions to empty dict
-                    #update trade data on successful sell
-                    self.trades[self.current_positions[sym]['position']['trade_id']]['exit_price'] = self.current_positions[sym]['exit_price']
-                    self.trades[self.current_positions[sym]['position']['trade_id']]['exit_date'] = current_date
-
                     self.current_positions[sym] = {}
                     new_positions_entry[sym] = {}
                 else: 
@@ -462,7 +429,6 @@ class OptionSignalPortfolio(Portfolio):
                 
         #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
-        self.all_holdings.append(new_holdings_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
         
     def update_fill(self, event):
@@ -496,6 +462,53 @@ class OptionSignalPortfolio(Portfolio):
 
         return long_legs_cost - short_legs_cost
     
+    
+    
+    # Getters 
+    def get_weighted_holdings(self) -> pd.DataFrame:
+        """
+        Converts `weighted_holdings` from a list of dictionaries to a Pandas DataFrame with datetime index.
+        Returns:
+            pd.DataFrame: A time-series DataFrame of weighted holdings.
+        """
+        df = pd.DataFrame(self.weighted_holdings)
+        df['datetime'] = pd.to_datetime(df['datetime'])  # Ensure datetime format
+        df.set_index('datetime', inplace=True)  # Set datetime as index
+        return df 
+    
+    
+    def get_all_positions(self) -> pd.DataFrame:
+        """
+        Converts `all_positions` from a list of dictionaries to a Pandas MultiIndex DataFrame.
+        - Index Level 1: datetime
+        - Index Level 2: symbol
+        Returns:
+            pd.DataFrame: A MultiIndex DataFrame of all positions.
+        """
+        records = []  # Temporary storage for DataFrame conversion
+        all_positions_copy = deepcopy(self.all_positions)  # Avoid modifying original list
+        for position_dict in all_positions_copy:
+            dt = position_dict.pop('datetime', pd.to_datetime(0))  # Extract timestamp
+            for symbol, position in position_dict.items():
+                if position:  # If there is an active position
+                    records.append([
+                        dt, symbol, 
+                        position.get('position', {}).get('long', []),
+                        position.get('position', {}).get('short', []),
+                        position.get('position', {}).get('trade_id', None),
+                        position.get('position', {}).get('close', None),
+                        position.get('quantity', 0),
+                        position.get('market_value', 0.0)
+                    ])
+
+        # Create DataFrame
+        df = pd.DataFrame(records, columns=['datetime', 'symbol', 'long', 'short', 'trade_id', 'close', 'quantity', 'market_value'])
+
+        # Set MultiIndex (datetime → symbol)
+        df.set_index(['datetime', 'symbol'], inplace=True)
+        df.index = df.index.set_levels(pd.to_datetime(df.index.levels[0]), level=0)  # Ensure datetime index
+        return df
+    
     def get_trades(self) -> pd.DataFrame:
         """
         return timeseries of portfolio trades
@@ -503,13 +516,27 @@ class OptionSignalPortfolio(Portfolio):
         trades_data = []
         for trade_id, data in self.trades.items():
             pnl = data['exit_price'] - data['entry_price']
-            return_pct = (pnl / data['entry_price']) * 100
+            return_pct = self.__normalize_dollar_amount((pnl / data['entry_price']))
+            total_entry_cost = data['entry_price'] * data['quantity'] + data['entry_commission'] + data['entry_slippage']
+            total_exit_cost = data['exit_price'] * data['quantity'] + data['exit_commission'] + data['exit_slippage']
+            auxilary_entry_cost = data['entry_market_value'] - total_entry_cost
+            auxilary_exit_cost = data['exit_market_value'] - total_exit_cost
             trades_data.append({
                 'Ticker': data['symbol'],
-                'PnL': pnl,
-                'EntryPrice': data['entry_price']/data['quantity'],
-                'ExitPrice': data['exit_price']/data['quantity'],
+                'PnL': self.__normalize_dollar_amount(pnl),
                 'ReturnPct': return_pct,
+                'EntryPrice': data['entry_price'],
+                'EntryCommission': data['entry_commission'],
+                'EntrySlippage': data['entry_slippage'],
+                'EntryMarketValue': data['entry_market_value'],
+                'TotalEntryCost': total_entry_cost,
+                'AuxilaryEntryCost': auxilary_entry_cost,
+                'ExitPrice': data['exit_price'],
+                'ExitCommission': data['exit_commission'], 
+                'ExitSlippage': data['exit_slippage'],
+                'ExitMarketValue': data['exit_market_value'],
+                'TotalExitCost': total_exit_cost,
+                'AuxilaryExitCost': auxilary_exit_cost,
                 'Quantity': data['quantity'],
                 'EntryTime': data['entry_date'],
                 'ExitTime': data['exit_date'],
@@ -520,15 +547,15 @@ class OptionSignalPortfolio(Portfolio):
         trades = pd.DataFrame(trades_data)
         return trades
     
-    def create_equity_curve(self) :
+    def get_equity_curve(self) :
         """
             create equity curve
         """
-        curve = pd.DataFrame(self.all_holdings)
+        curve = pd.DataFrame(self.weighted_holdings)
         curve.set_index('datetime', inplace=True)
         curve['returns'] = curve['total'].pct_change()
         curve['equity_curve'] = (1.0 + curve['returns']).cumprod()
-        self.equity_curve = curve
+        return curve
         
     def __get_latest_option_data(self, option_id: str) -> pd.Series:
         """
@@ -568,12 +595,6 @@ class OptionSignalPortfolio(Portfolio):
         else :
             return None
     
-    
-    def get_option_id(self, contract: pd.Series) -> str: 
-        """
-            returns a string format of underlier-expiration-strike-type from the dataframe of the columns root, expiration, strike, right
-        """
-        return f"{contract['root']}-{contract['expiration']}-{contract['strike']}-{contract['right']}"
     
 
     def plot_portfolio(self,

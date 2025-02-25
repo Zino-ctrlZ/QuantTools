@@ -1,38 +1,38 @@
-         158689244 function calls (158065791 primitive calls) in 1277.285 seconds
+         144414217 function calls (143789387 primitive calls) in 599.553 seconds
 
    Ordered by: cumulative time
-   List reduced from 2860 to 30 due to restriction <30>
+   List reduced from 2885 to 30 due to restriction <30>
 
    ncalls  tottime  percall  cumtime  percall filename:lineno(function)
-        2    0.000    0.000 1277.289  638.644 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/IPython/core/interactiveshell.py:3541(run_code)
-        2    0.000    0.000 1277.289  638.644 {built-in method builtins.exec}
-        1    0.042    0.042 1277.288 1277.288 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/backtest.py:37(run)
-       64    0.000    0.000 1050.625   16.416 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:290(update_signal)
-       64    0.008    0.000 1050.623   16.416 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:246(generate_order)
-    62/31    0.017    0.000 1050.551   33.889 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/decorators.py:36(wrapper)
-       31    0.017    0.001 1050.546   33.889 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:462(get_order)
-    28549  698.014    0.024  698.014    0.024 {method 'acquire' of '_thread.lock' objects}
-     7466    0.078    0.000  697.924    0.093 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:295(wait)
-     5246    0.053    0.000  691.806    0.132 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:428(result)
-       31    0.028    0.001  550.308   17.752 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:72(populate_cache)
-      124    0.008    0.000  549.584    4.432 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/threads.py:4(runThreads)
-     4520    0.015    0.000  542.936    0.120 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:612(result_iterator)
-     4396    0.027    0.000  542.919    0.124 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:314(_result_or_cancel)
-       31    0.006    0.000  498.068   16.067 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:350(produce_order_candidates)
-       62    0.021    0.000  498.062    8.033 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:218(chain_details)
-      142    0.004    0.000  243.475    1.715 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:500(request)
-      142    0.006    0.000  242.777    1.710 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:673(send)
-       82    0.002    0.000  236.811    2.888 /Users/chiemelienwanisobi/cloned_repos/FinanceDatabase/dbase/DataAPI/ThetaData.py:34(request_from_proxy)
-       82    0.002    0.000  236.804    2.888 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/api.py:14(request)
-       80    0.033    0.000  236.409    2.955 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/assets/Stock.py:361(spot)
-     1958    0.015    0.000  235.893    0.120 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/socket.py:704(readinto)
-      142    0.004    0.000  232.023    1.634 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/adapters.py:613(send)
-      142    0.005    0.000  231.920    1.633 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:594(urlopen)
-      142    0.004    0.000  231.844    1.633 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:379(_make_request)
-     1770  229.708    0.130  229.708    0.130 {method 'recv_into' of '_socket.socket' objects}
-      142    0.007    0.000  225.491    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connection.py:481(getresponse)
-      142    0.002    0.000  225.446    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:1351(getresponse)
-      142    0.005    0.000  225.435    1.588 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:318(begin)
-      142    0.004    0.000  225.352    1.587 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/http/client.py:285(_read_status)
+        2    0.000    0.000  599.555  299.777 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\IPython\core\interactiveshell.py:3517(run_code)
+        2    0.000    0.000  599.555  299.777 {built-in method builtins.exec}
+        1    0.023    0.023  599.555  599.555 C:\Users\Zino\python-playground\QuantTools\EventDriven\backtest.py:37(run)
+       64    0.000    0.000  464.310    7.255 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:271(update_signal)
+       64    0.001    0.000  464.309    7.255 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:230(generate_order)
+       31    0.002    0.000  464.304   14.978 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:254(create_order)
+    62/31    0.006    0.000  464.292   14.977 C:\Users\Zino\python-playground\QuantTools\trade\helpers\decorators.py:36(wrapper)
+       31    0.009    0.000  464.290   14.977 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:462(get_order)
+    21240  320.625    0.015  320.625    0.015 {method 'acquire' of '_thread.lock' objects}
+     5372    0.038    0.000  320.017    0.060 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\threading.py:288(wait)
+     3783    0.035    0.000  309.507    0.082 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:430(result)
+       31    0.003    0.000  240.588    7.761 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:350(produce_order_candidates)
+       62    0.011    0.000  240.585    3.880 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:218(chain_details)
+       31    0.009    0.000  222.936    7.191 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:72(populate_cache)
+      124    0.006    0.000  222.635    1.795 C:\Users\Zino\python-playground\QuantTools\trade\helpers\threads.py:4(runThreads)
+     3020    0.017    0.000  212.455    0.070 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:614(result_iterator)
+     2896    0.008    0.000  212.436    0.073 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:316(_result_or_cancel)
+      132    0.002    0.000  148.042    1.122 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\sessions.py:500(request)
+      132    0.004    0.000  147.875    1.120 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\sessions.py:673(send)
+       80    0.002    0.000  145.709    1.821 C:\Users\Zino\python-playground\FinanceDatabase\FinanceDatabase\dbase\DataAPI\ThetaData.py:34(request_from_proxy)
+       80    0.001    0.000  145.705    1.821 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\api.py:14(request)
+     1442    0.009    0.000  144.069    0.100 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\socket.py:691(readinto)
+     1279  141.901    0.111  141.901    0.111 {method 'recv_into' of '_socket.socket' objects}
+      132    0.003    0.000  137.738    1.043 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\adapters.py:613(send)
+      132    0.003    0.000  137.678    1.043 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connectionpool.py:594(urlopen)
+      132    0.003    0.000  137.650    1.043 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connectionpool.py:379(_make_request)
+      132    0.006    0.000  134.193    1.017 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connection.py:481(getresponse)
+      132    0.002    0.000  134.157    1.016 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\http\client.py:1331(getresponse)
+      132    0.003    0.000  134.147    1.016 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\http\client.py:311(begin)
+      132    0.003    0.000  134.082    1.016 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\http\client.py:278(_read_status)
 
 
