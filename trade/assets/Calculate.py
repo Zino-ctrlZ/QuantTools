@@ -735,7 +735,7 @@ class Calculate:
         ts_end = ts_end if ts_end else asset.end_date
         start = pd.to_datetime(ts_start) - BDay(2)
         end = pd.to_datetime(ts_end) + BDay(2)
-        print(f"Start: {start}, End: {end}, ts_start: {ts_start}, ts_end: {ts_end}")
+        # print(f"Start: {start}, End: {end}, ts_start: {ts_start}, ts_end: {ts_end}")
         if asset.__class__.__name__ == 'Option':
     
             ## Designate the columns to be used
