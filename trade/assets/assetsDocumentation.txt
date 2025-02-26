@@ -1,0 +1,9 @@
+Option:
+    - Created an unadjusted_S0 becasue that's what you use to price
+
+Calculate:
+    - Delta PnL will be calculated with pre-split actual price, if any splits
+        - Potential problems:
+            - How will it affect PnL calc for day just before the split
+
+            

@@ -24,7 +24,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_error_with_stack
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.threads import runThreads
-from trade.helpers.types import ResultsEnum
+from trade.helpers.types import ResultsEnum, OptionModelAttributes
 import numpy as np
 import time
 
@@ -204,7 +204,7 @@ def load_chain(date: str,
                 end_time = time.time()
                 print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
                 Option_Chain = Stock_obj.option_chain()
-                Spot = Stock_obj.spot(ts = False, spot_type = 'chain_price') ## need to use chain price to get the spot price, due to splits
+                Spot = Stock_obj.spot(ts = False, spot_type = OptionModelAttributes.spot_type.name) ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
                 Option_Chain['q'] = Stock_obj.div_yield()
@@ -258,7 +258,7 @@ def chain_details(date: str,
                     Option_Chain = Stock_obj.option_chain()
                 except:
                     return 'theta_data_error'
-                Spot = Stock_obj.spot(ts=False, spot_type='chain_price') ## need to use chain price to get the spot price, due to splits
+                Spot = Stock_obj.spot(ts=False, spot_type=OptionModelAttributes.spot_type.name) ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
                 Option_Chain['q'] = Stock_obj.div_yield()
