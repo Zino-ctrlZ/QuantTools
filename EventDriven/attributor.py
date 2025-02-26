@@ -10,8 +10,9 @@ from pandas.tseries.offsets import BDay
 from trade.assets.Option import Option
 import threading
 import time
+from trade.helpers.Logging import setup_logger
 from IPython.display import clear_output
-
+logger = setup_logger('EventDriven.attributor')
 
 
 class EVBAttributor:
