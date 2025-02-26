@@ -78,9 +78,9 @@ def save_block_option_keys(block_option_keys):
 
 
 def get_option_specifics_from_key(key):
-    if key in option_keys.keys():
-        return deepcopy(option_keys[key])
-    else:
+    try:
+        return parse_option_tick(key)
+    except:
         return None
 
 

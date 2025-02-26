@@ -111,7 +111,6 @@ def populate_cache(order_candidates: dict,
                 if isinstance(data, str) and data =='theta_data_error':
                     return 'theta_data_error'
                 
-
                 data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
                 start = LOOKBACKS[date][20]  # Used precomputed BDay(20) instead of recalculating
                 data[['end_date', 'start_date']] = date, start
@@ -258,7 +257,7 @@ def chain_details(date: str,
                     Option_Chain = Stock_obj.option_chain()
                 except:
                     return 'theta_data_error'
-                Spot = Stock_obj.spot(ts=False, spot_type=OptionModelAttributes.spot_type.name) ## need to use chain price to get the spot price, due to splits
+                Spot = Stock_obj.spot(ts=False, spot_type=OptionModelAttributes.spot_type.value) ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
                 Option_Chain['Spot'] = Spot
                 Option_Chain['q'] = Stock_obj.div_yield()
@@ -303,6 +302,7 @@ def chain_details(date: str,
         return_dataframe.drop_duplicates(inplace = True)
 
     except Exception as e:
+        raise e
         return 'error'
     
     
@@ -404,6 +404,7 @@ def liquidity_check(id: str,
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
     transfer_dict = {}
+    
     for k, v in sample_id.items():
 
         if k in new_dict_keys:

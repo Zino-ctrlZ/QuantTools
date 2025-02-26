@@ -30,10 +30,11 @@ Portfolio File:
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
     ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
     ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
+    ☐ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers
     ☐ Handle Stop loss.
     ☐ Scaling in
     ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-    ☐ Add Attribution & Greek timeseries @Chidi
+    ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10)
     ☐ Add aggregator to portfolio
     ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid
     ☐ For slippage, we can try determining slippage based on bid/ask spread

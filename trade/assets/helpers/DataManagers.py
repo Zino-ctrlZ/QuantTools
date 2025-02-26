@@ -93,7 +93,6 @@ class OptionDataManager:
 
     @log_error_with_stack(OptDataManagerLogger, True)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
-        # print("Getting TimeSeries")
         type_ = type_.lower()
         assert type_ in ['spot', 'vol', 'vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek'], f'expected "spot", "vol", "vega", "vanna", "volga", "delta", "gamma", "theta", "rho", "greeks", "greek" for type_, got {type_}'
         range_filters, flag, data = self.__verify_data_completeness(interval, start, end)
@@ -109,7 +108,6 @@ class OptionDataManager:
             gen_dataBool = True
     
         if gen_dataBool:   
-            # print("Generating Data")
             unProcessedData = self.__generate_optionData_to_save(range_filters, end, start, flag, **kwargs)
             if unProcessedData.__class__.__name__ == 'DataFrame':
                 thread_data = unProcessedData.copy()
@@ -123,7 +121,6 @@ class OptionDataManager:
                 unProcessedData.columns = [x.lower() for x in unProcessedData.columns]
                 cols = unProcessedData.columns
                 data.columns = [x.lower() for x in data.columns]
-                # print('In concat process')
                 unProcessedData = pd.concat([data,unProcessedData ])
             else:
                 OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query. It is not a dataframe, type: {type(unProcessedData)}")
@@ -147,8 +144,6 @@ class OptionDataManager:
         elif type_ == 'vol' or type_ in ['vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek']:
             organized_data = self.__vol_data_organize_handler(unProcessedData, flag, model = model)
 
-            # print("Organized Data")
-            # print(organized_data.head())
             if model == 'bs' or model == 'bsm':
                 metric = 'bs_iv'
             elif model == 'bt' or model == 'binomial':
@@ -167,14 +162,8 @@ class OptionDataManager:
                 organized_data = self.__greek_data_organizer_handler(unProcessedData, flag, type_)
                 column_agg = dict(zip(organized_data.columns, ['last']*len(organized_data.columns)))
 
-        # print("Organized Data")
-        # print(organized_data)
         return_verified_data = self.__verify_return_data_integrity(organized_data, flag)
-        # print("Return Verified Data")
-        # print(return_verified_data)
         resampled = self.__resample(return_verified_data, interval,column_agg)
-        # print("Resampled Data")
-        # print(resampled)
         if flag == 'INTRA':
             self.__save_intra_to_update(start, end)
         
