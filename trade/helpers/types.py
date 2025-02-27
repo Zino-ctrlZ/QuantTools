@@ -22,4 +22,16 @@ class ResultsEnum(Enum):
     MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
     TOO_ILLIQUID = 'TOO_ILLIQUID'
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
+
+
+class OptionModelAttributes(Enum):
+    S0 = 'unadjusted_S0'
+    K = 'K'
+    exp_date = 'exp'
+    sigma = 'sigma'
+    y = 'y'
+    put_call = 'put_call'
+    r = 'rf_rate'
+    start = 'end_date'
+    spot_type = 'chain_price'
     

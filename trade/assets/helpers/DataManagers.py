@@ -32,6 +32,7 @@ from dbase.DataAPI.ThetaData import retrieve_ohlc, retrieve_quote_rt, retrieve_e
 from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
 from trade.helpers.decorators import log_error, log_error_with_stack
+from trade.helpers.types import OptionModelAttributes
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
 logger = setup_logger('OptionDataManager.py', stream_log_level=logging.CRITICAL)
@@ -90,13 +91,8 @@ class OptionDataManager:
         self.opttick = generate_option_tick_new(symbol, right, exp, strike)
         self.Stock = Stock(symbol, run_chain = False)
 
-    @log_error_with_stack(OptDataManagerLogger, False)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
-
-        """
-        Method Res
-        """
-        
         type_ = type_.lower()
         assert type_ in ['spot', 'vol', 'vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek'], f'expected "spot", "vol", "vega", "vanna", "volga", "delta", "gamma", "theta", "rho", "greeks", "greek" for type_, got {type_}'
         range_filters, flag, data = self.__verify_data_completeness(interval, start, end)
@@ -125,7 +121,6 @@ class OptionDataManager:
                 unProcessedData.columns = [x.lower() for x in unProcessedData.columns]
                 cols = unProcessedData.columns
                 data.columns = [x.lower() for x in data.columns]
-                # print('In concat process')
                 unProcessedData = pd.concat([data,unProcessedData ])
             else:
                 OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query. It is not a dataframe, type: {type(unProcessedData)}")
@@ -149,8 +144,6 @@ class OptionDataManager:
         elif type_ == 'vol' or type_ in ['vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek']:
             organized_data = self.__vol_data_organize_handler(unProcessedData, flag, model = model)
 
-            # print("Organized Data")
-            # print(organized_data.head())
             if model == 'bs' or model == 'bsm':
                 metric = 'bs_iv'
             elif model == 'bt' or model == 'binomial':
@@ -176,7 +169,7 @@ class OptionDataManager:
         
         return resampled[(resampled.index >= start) & (resampled.index <= end)]
         
-    @log_error_with_stack(OptDataManagerLogger, False)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __save_intra_to_update(self, start, end):
         data = pd.DataFrame({'symbol': [self.symbol], 'optiontick': [self.opttick], 'exp': [self.exp], 'right': [self.right],'default_fill': [self.default_fill], 'strike': [self.strike], 'start': [start], 'end': [end]})
         path  = f'{os.environ["JOURNAL_PATH"]}/Algo/InputFiles/IntraSaveLog.xlsx'
@@ -321,7 +314,7 @@ class OptionDataManager:
             stk = Stock(self.symbol, run_chain = False)
             y = stk.div_yield()
             r = stk.rf_rate
-            s0 = list(stk.spot().values())[0]
+            s0 = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
 
         for p in price_cols:
             if len(data) == 0 or isinstance(data, dict):
@@ -425,7 +418,7 @@ class OptionDataManager:
         self.__save_data(processed_data, timeAggType)
 
 
-    @log_error_with_stack(OptDataManagerLogger, False)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __save_data(self, data, timeAggType) -> None:
         OptDataManagerLogger.info(f"OptionDataManager saving data for {self.opttick}")
         UseTable = self.tables[timeAggType]
@@ -442,7 +435,7 @@ class OptionDataManager:
 
 
 
-    @log_error_with_stack(OptDataManagerLogger, False)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __verify_return_data_integrity(self, data, timeAggType):
 
         ## Check for missing dates
@@ -459,7 +452,7 @@ class OptionDataManager:
         if data.reset_index().duplicated().sum() > 0:
             name = f"{self.opttick}_{datetime.today().strftime('%Y%m%d_%H:%M:%S')}"
             OptDataManagerLogger.info(f"{self.opttick} is has duplicates for {timeAggType} agg")
-            data = data[~data.reset_index().duplicated()]
+            data = data[~data.index.duplicated(keep = 'first')]
             # OptDataManagerLogger.info(f"{self.opttick} data saved in ./DataForLogs/{name}.csv")
             # if not os.path.exists('DataForLogs'):
             #     os.mkdir('DataForLogs')

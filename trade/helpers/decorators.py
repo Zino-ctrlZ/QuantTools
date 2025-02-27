@@ -10,6 +10,7 @@ def log_time(logger):
             result = func(*args, **kwargs)
             end = time.time()
             logger.info(f'{func.__name__} took {end - start} seconds')
+            logger.info(f'args {args}, kwargs: {kwargs}')
             return result
         return wrapper
     return decorator
