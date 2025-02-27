@@ -523,7 +523,7 @@ class OptionSignalPortfolio(Portfolio):
             auxilary_exit_cost = data['exit_market_value'] - total_exit_cost
             trades_data.append({
                 'Ticker': data['symbol'],
-                'PnL': self.__normalize_dollar_amount(pnl),
+                'PnL': pnl * data['quantity'],
                 'ReturnPct': return_pct,
                 'EntryPrice': data['entry_price'],
                 'EntryCommission': data['entry_commission'],

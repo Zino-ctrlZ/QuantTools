@@ -149,6 +149,10 @@ class EVBAttributor:
                 attribution.fillna(0, inplace=True)
                 
             for index, greeks in self.stored_data['greeks'].items():
+                if not isinstance(greeks, pd.DataFrame):
+                    print(f"{index} failed") if print_output else None
+                    failed.append(index)
+                    continue
                 days_mask = pt_greeks.index.isin(greeks.index)
                 pt_greeks.loc[days_mask, :] += greeks
                 pt_greeks.fillna(0, inplace=True)
