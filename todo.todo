@@ -39,7 +39,8 @@ Portfolio File:
     ☐ For slippage, we can try determining slippage based on bid/ask spread
     ☐ Add exercising contracts
     ☐ Slippage should increase buy price and reduce sell
-
+    ☐ Add max-close on tick
+      
 Events:
     ☐ Add order_settings for orderEvents. 
     ☐ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day
