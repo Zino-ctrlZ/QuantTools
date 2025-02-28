@@ -30,7 +30,8 @@ Portfolio File:
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
     ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
     ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
-    ☐ Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino).
+    ☐ (NEW) Save orders
+    ☐ (PRIORITY) Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino).
         ☐ When roll_bool is True, we roll when dte <= dte_min
         ☐ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid
             ☐ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium
