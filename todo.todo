@@ -73,7 +73,7 @@ Risk Manager:
     ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
     ☐ (Consider) Add Vega, Gamma, Delta limits?
     ☐ In add a min size filter
-    ☐ ## Add a setter to update lookback dictionary in OrderPicker/RM file
+    ✔ ## Add a setter to update lookback dictionary in OrderPicker/RM file @done(25-03-02 12:53)
 
 
 General:
@@ -111,7 +111,7 @@ List Contracts:
 Usable:
     ✔ In_holdings fixed. @done(25-02-25 00:10)
     ☐ 90% of trades from Stock go thru in Options
-    ☐ Can conduct aggregation
+    ✔ Can conduct aggregation @done(25-03-02 12:55)
     ☐ Can do naked & spreads without errors
     
 

@@ -45,8 +45,11 @@ from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
 logger = setup_logger('trade.asset.Stock')
 
-
-
+## Key is (OLD, NEW, DATE)
+TICK_CHANGE_ALIAS = {
+    'META': ('FB', 'META', '2021-10-28'),
+    'FB': ('FB', 'META', '2021-10-28'),
+}
 class Stock:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
