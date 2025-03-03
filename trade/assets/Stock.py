@@ -45,8 +45,11 @@ from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
 logger = setup_logger('trade.asset.Stock')
 
-
-
+## Key is (OLD, NEW, DATE)
+TICK_CHANGE_ALIAS = {
+    'META': ('FB', 'META', '2021-10-28'),
+    'FB': ('FB', 'META', '2021-10-28'),
+}
 class Stock:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
@@ -121,7 +124,8 @@ class Stock:
             # self.__init_option_chain() 
 
         ## Logic to run chain, compatible with singleton behavior
-        run_chain = kwargs.get('run_chain', True)
+        
+        run_chain = kwargs.get('run_chain', False) ## Leave default as False for now)
         if run_chain:
             if self.__OptChain is None:
                 self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
@@ -414,7 +418,7 @@ class Stock:
                 df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
                                          start = '1960-01-01', interval= '1d', provider = provider)
                 df.index = pd.to_datetime(df.index)
-                df = df[(df.index > pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
+                df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
                 df['close'] = df['chain_price']
         else:
             # print(ts_start, ts_end, interval, provider)

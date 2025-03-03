@@ -81,10 +81,17 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
         assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
         assert event.direction == 'BUY' or event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {event.direction}"
-        commission = self.commission_rate * event.quantity * len(event.position.get('long', [])) #commission is per trade(leg) there should always be a long in a position, naked or spread
-        
+        commission = self.commission_rate * event.quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
+
         # Generate slippage as a percentage
-        slippage_pct = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)
+        ## Slippage improvement
+        if event.direction == 'BUY':
+            ## We want to increase the price for buys by slippage
+            slippage_pct = random.uniform(self.max_slippage_pct * 0.25, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
+        elif event.direction == 'SELL':
+            ## We want to decrease the price for sells by slippage
+            slippage_pct = random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
+        # slippage_pct = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)
         
         #slippage may increase or decrease intended price
         price = event.position['close'] * (1 + slippage_pct)  

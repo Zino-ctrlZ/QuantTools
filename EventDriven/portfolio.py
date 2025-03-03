@@ -188,6 +188,7 @@ class OptionSignalPortfolio(Portfolio):
     def _equity(self):
         holdings = self.weighted_holdings
         equity_curve = pd.DataFrame(holdings).set_index('datetime')
+        equity_curve = equity_curve[~equity_curve.index.duplicated(keep='last')]
         equity_curve['total'] = equity_curve.iloc[:, :len(self.symbol_list)+1].sum(axis = 1) ##NOTE: Temp fix till calcs work
         equity_curve.rename(columns = {'total': 'Total'}, inplace=True)
         self.__equity = equity_curve
@@ -517,13 +518,13 @@ class OptionSignalPortfolio(Portfolio):
         for trade_id, data in self.trades.items():
             pnl = data['exit_price'] - data['entry_price']
             return_pct = self.__normalize_dollar_amount((pnl / data['entry_price']))
-            total_entry_cost = data['entry_price'] * data['quantity'] + data['entry_commission'] + data['entry_slippage']
-            total_exit_cost = data['exit_price'] * data['quantity'] + data['exit_commission'] + data['exit_slippage']
-            auxilary_entry_cost = data['entry_market_value'] - total_entry_cost
-            auxilary_exit_cost = data['exit_market_value'] - total_exit_cost
+            total_entry_cost = data['entry_price'] * data['quantity'] #+ data['entry_commission'] #+ data['entry_slippage'] ## Entry & Exit price already consider slippage
+            total_exit_cost = data['exit_price'] * data['quantity'] #+ data['exit_commission'] #+ data['exit_slippage']
+            auxilary_entry_cost = abs(data['entry_commission']) + abs(data['entry_slippage'])
+            auxilary_exit_cost = abs(data['exit_commission']) + abs(data['exit_slippage'])
             trades_data.append({
                 'Ticker': data['symbol'],
-                'PnL': self.__normalize_dollar_amount(pnl),
+                'PnL': pnl * data['quantity'],
                 'ReturnPct': return_pct,
                 'EntryPrice': data['entry_price'],
                 'EntryCommission': data['entry_commission'],

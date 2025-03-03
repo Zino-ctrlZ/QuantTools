@@ -38,6 +38,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
+from trade.helpers.exception import YFinanceEmptyData
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -55,10 +56,10 @@ option_keys = {}
 def import_option_keys():
     global option_keys
     import json
-    with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'r') as f:
+    with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'rb') as f:
         option_keys = json.load(f)
 
-import_option_keys()
+# import_option_keys()
 
 def save_option_keys(key, info):
     import json
@@ -77,9 +78,9 @@ def save_block_option_keys(block_option_keys):
 
 
 def get_option_specifics_from_key(key):
-    if key in option_keys.keys():
-        return deepcopy(option_keys[key])
-    else:
+    try:
+        return parse_option_tick(key)
+    except:
         return None
 
 
@@ -107,6 +108,10 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
     ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
     ## In the function, add a logger to log the anomalies
+
+    if data.empty and provider == 'yfinance':
+        logger.warning(f"yfinance returned empty data for {tick} is empty")
+        raise YFinanceEmptyData(f"yfinance returned empty data for {tick} is empty")
     return data
 
 def identify_interval(timewidth, timeframe, provider = 'default'):
@@ -613,7 +618,7 @@ def generate_option_tick(symbol, right, exp, strike):
         strike = float(strike)
     
     key = symbol.upper() + tick_date + pad_string(strike) +right.upper()
-    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
+    # save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
 
@@ -658,7 +663,7 @@ def generate_option_tick_new(symbol, right, exp, strike) -> str:
         strike = float(strike)
     
     key = symbol.upper() + tick_date + right.upper() + f'{strike}' 
-    save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
+    # save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
 def wait_for_response(wait_time, condition_func, interval):
