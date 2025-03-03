@@ -879,7 +879,7 @@ class AggregatorParent(ABC):
             raise Exception('Either implement pf_value_ts method or self.equity')
 
         try:
-            trades = self.trades()
+            trades = self.trades
         except TypeError:
             trades = self._trades
         except Exception:

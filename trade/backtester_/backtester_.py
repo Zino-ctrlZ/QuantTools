@@ -177,7 +177,7 @@ class PTBacktester(AggregatorParent):
         names = [d.name for d in self.datasets]
         names = [d.name for d in self.datasets]
         self.__port_stats = {name:results[i] for i, name in enumerate(names)}
-        self._trades = self.trades()
+        self._trades = self.__trades()
         self._equity = self.pf_value_ts()
         dataframe = pd.DataFrame(results).transpose()
         dataframe.columns = names

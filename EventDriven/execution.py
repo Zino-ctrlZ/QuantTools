@@ -1,5 +1,4 @@
-
-import random
+import numpy as np
 from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import FillEvent, OrderEvent
@@ -87,10 +86,10 @@ class SimulatedExecutionHandler(ExecutionHandler):
         ## Slippage improvement
         if event.direction == 'BUY':
             ## We want to increase the price for buys by slippage
-            slippage_pct = random.uniform(self.max_slippage_pct * 0.25, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
+            slippage_pct = np.random.uniform(self.max_slippage_pct * 0.25, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
         elif event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
-            slippage_pct = random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
+            slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
         # slippage_pct = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)
         
         #slippage may increase or decrease intended price

@@ -44,7 +44,7 @@ Portfolio File:
     ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid
     ☐ For slippage, we can try determining slippage based on bid/ask spread
     ☐ Add exercising contracts
-    ☐ Slippage should increase buy price and reduce sell
+    ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
     ☐ Add max-close on tick
       
 Events:
@@ -83,6 +83,8 @@ General:
     ☐ Getting divYield to have a max retries to factor in sporadic errors 
     ☐ Enforce typedDicts for functions
     ☐ Add rebalancing
+    ☐ Implement enum for signal types, order types & event types
+    ☐ move __enforce_order_settings into types.py, and use in signal class
 
 
 

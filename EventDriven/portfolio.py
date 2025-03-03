@@ -10,14 +10,16 @@ import math
 from abc import ABCMeta, abstractmethod
 import pandas as pd
 
+from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import parse_option_tick
+from trade.helpers.types import ResultsEnum
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 
 from EventDriven.event import  FillEvent, OrderEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
-from EventDriven.riskmanager import RiskManager
+from EventDriven.riskmanager import RiskManager, is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
 from typing import Optional
@@ -63,7 +65,7 @@ class OptionSignalPortfolio(Portfolio):
     initial_capital: int
     """
     
-    def __init__(self, bars : HistoricTradeDataHandler, events, risk_manager : RiskManager, weight_map = None, initial_capital = 10000, max_contract_price = 500.0): 
+    def __init__(self, bars : HistoricTradeDataHandler, events: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
         self.bars = bars
         self.events = events
         self.symbol_list = self.bars.symbol_list
@@ -71,6 +73,8 @@ class OptionSignalPortfolio(Portfolio):
         self.initial_capital = initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
+        self.moneyness_width_factor = 0.5 
+        self.max_contract_price_factor = 1.2 #increase max price by 20%
         self.options_data = {}
         self.underlier_list_data = {}
         self._order_settings =  {
@@ -81,9 +85,8 @@ class OptionSignalPortfolio(Portfolio):
             ],
             'name': 'vertical_spread'
         }
-        self.trades = {}
-        self.__trades = None ## Temporarily store trades data. Will change once Zino fixes the format
-        self.max_contract_price = max_contract_price / 100.0
+        self.__trades = {}
+        self.max_contract_price = {s: 5.0 for s in self.symbol_list} #max price for contracts set at $500
         self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
@@ -195,11 +198,40 @@ class OptionSignalPortfolio(Portfolio):
         return self.__equity
     
     @property
-    def _trades(self):
-        trades = self.get_trades()
-        trades['ReturnPct'] = trades['ReturnPct']/100
-        self.__trades = trades
-        return self.__trades
+    def trades(self):
+        trades_data = []
+        for trade_id, data in self.__trades.items():
+            pnl = data['exit_price'] - data['entry_price'] * data['quantity']
+            return_pct = (pnl / data['entry_price'])
+            total_entry_cost = data['entry_price'] * data['quantity'] 
+            total_exit_cost = data['exit_price'] * data['quantity'] 
+            auxilary_entry_cost = abs(data['entry_commission']) + abs(data['entry_slippage'])
+            auxilary_exit_cost = abs(data['exit_commission']) + abs(data['exit_slippage'])
+            trades_data.append({
+                'Ticker': data['symbol'],
+                'PnL': pnl,
+                'ReturnPct': return_pct,
+                'EntryPrice': data['entry_price'],
+                'EntryCommission': data['entry_commission'],
+                'EntrySlippage': data['entry_slippage'],
+                'EntryMarketValue': data['entry_market_value'],
+                'TotalEntryCost': total_entry_cost,
+                'AuxilaryEntryCost': auxilary_entry_cost,
+                'ExitPrice': data['exit_price'],
+                'ExitCommission': data['exit_commission'], 
+                'ExitSlippage': data['exit_slippage'],
+                'ExitMarketValue': data['exit_market_value'],
+                'TotalExitCost': total_exit_cost,
+                'AuxilaryExitCost': auxilary_exit_cost,
+                'Quantity': data['quantity'],
+                'EntryTime': data['entry_date'],
+                'ExitTime': data['exit_date'],
+                'Duration': (data['exit_date'] - data['entry_date']).days,
+                'Positions': trade_id
+            }) 
+
+        trades = pd.DataFrame(trades_data)
+        return trades
 
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
@@ -247,6 +279,10 @@ class OptionSignalPortfolio(Portfolio):
             if 'position' not in current_position:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
                 return None
+            if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
+                self.analyze_order_result({'result': ResultsEnum.IS_HOLIDAY}, signal)
+                return None
+            
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'])
             return order
@@ -259,14 +295,64 @@ class OptionSignalPortfolio(Portfolio):
         """
         date_str = signal.datetime.strftime('%Y-%m-%d')
         cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts
-        position_result = self.risk_manager.OrderPicker.get_order(symbol, date_str, position_type, self.max_contract_price, self.order_settings)  
+        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type, self.max_contract_price[signal.symbol], signal.order_settings if signal.order_settings is not None else self._order_settings)  
         position = position_result['data'] if position_result['data'] is not None else None
-        if position is None:  
-            self.logger.warning(f'No contracts found for {symbol} at {signal.datetime}, Inputs {locals()}')
+        if position is None:
+            self.analyze_order_result(position_result, signal)
             return None
         self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
         order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
         return OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
+        
+    
+    def analyze_order_result(self, position_result, signal: SignalEvent): 
+        """
+        Analyze the results of the order and update the portfolio or event scheduler accordingly
+        
+        MONEYNESS_TOO_TIGHT: adjust moneyness width by adding moneyness_width factor (default at 0.5) and add to queue
+        MAX_PRICE_TOO_LOW: adjust max_price by multiplying max_contract_price factor (default at 20%) on max_price dict and add to queue
+        IS_HOLIDAY: move signal to next trading day
+        NO_TRADED_CLOSE: move signal to next trading day
+        NO_ORDERS: log warning
+        UNSUCCESSFUL: log warning
+        UNAVAILABLE_CONTRACT: log warning
+        """
+        result = position_result['result']
+        if result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: # adjust moneyness width by 20% and add to queue   
+            order_settings = deepcopy(signal.order_setting if signal.order_setting is not None else self.order_settings) # use default order settings if signal order settings not set 
+            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] #increase moneyness width by 20%
+            new_signal = deepcopy(signal)
+            new_signal.order_settings = order_settings
+            self.logger.warning(f'Moneyness too tight for {signal.symbol} at {signal.datetime}, Inputs {locals()}, adjusted moneyness width by 20%')
+            print(f'Moneyness too tight for {signal.symbol} at {signal.datetime}, Inputs {locals()}, adjusted moneyness width by 20%')
+            self.events.put(new_signal)
+            
+                
+        elif result == ResultsEnum.IS_HOLIDAY.value or result == ResultsEnum.NO_TRADED_CLOSE.value: #move signal to next trading day
+            next_trading_day = self.events.get_next_trading_day()
+            new_signal = deepcopy(signal)
+            new_signal.datetime = next_trading_day
+            self.logger.warning(f'No trading on holiday: {pd.to_datetime(signal.datetime)} for {signal.symbol}, moving event to {next_trading_day} Inputs {locals()}')
+            print(f'No trading on holiday: {pd.to_datetime(signal.datetime)} for {signal.symbol}, moving event to {next_trading_day} Inputs {locals()}')
+            self.events.schedule_event(next_trading_day, new_signal)
+            
+                
+        elif result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
+            initial_contract_max_price = self.max_contract_price[signal.symbol]
+            self.max_contract_price[signal.symbol] = self.max_contract_price[signal.symbol] * self.max_contract_price_factor #increase max price by 20%
+            new_signal = deepcopy(signal)
+            self.logger.warning(f'Max price too low for {signal.symbol} at {initial_contract_max_price}, adjusted to {self.max_contract_price[signal.symbol]}, Inputs {locals()}')
+            print(f'Max price too low for {signal.symbol} at {initial_contract_max_price}, adjusted to {self.max_contract_price[signal.symbol]}, Inputs {locals()}')
+            self.events.put(new_signal)
+            
+            
+        elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
+            self.logger.warning(f'No contracts found for {signal.symbol} at {signal.datetime}, Inputs {locals()}')  
+            print(f'No contracts found for {signal.symbol} at {signal.datetime}, Inputs {locals()}')     
+        
+        else:
+            self.logger.warning(f'Unable to process order for {signal.symbol} at {signal.datetime}, RESULT: {result}, Inputs {locals()}')
+            print(f'Unable to process order for {signal.symbol} at {signal.datetime}, RESULT: {result}, Inputs {locals()}')
         
             
     def update_signal(self, event : SignalEvent):
@@ -302,14 +388,14 @@ class OptionSignalPortfolio(Portfolio):
                 
                 #update trade data on successful buy
                 trade_id = fill_event.position['trade_id']
-                self.trades[trade_id] = {}
-                self.trades[trade_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
-                self.trades[trade_id]['entry_date'] = fill_event.datetime
-                self.trades[trade_id]['quantity'] = fill_event.quantity
-                self.trades[trade_id]['symbol'] = fill_event.symbol
-                self.trades[trade_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
-                self.trades[trade_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-                self.trades[trade_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
+                self.__trades[trade_id] = {}
+                self.__trades[trade_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
+                self.__trades[trade_id]['entry_date'] = fill_event.datetime
+                self.__trades[trade_id]['quantity'] = fill_event.quantity
+                self.__trades[trade_id]['symbol'] = fill_event.symbol
+                self.__trades[trade_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
+                self.__trades[trade_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                self.__trades[trade_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -336,11 +422,11 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 
                 #update trade data on successful sell
-                self.trades[fill_event.position['trade_id']]['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
-                self.trades[fill_event.position['trade_id']]['exit_date'] = fill_event.datetime
-                self.trades[fill_event.position['trade_id']]['exit_commission'] = self.__normalize_dollar_amount(fill_event.commission)
-                self.trades[fill_event.position['trade_id']]['exit_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
-                self.trades[fill_event.position['trade_id']]['exit_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                self.__trades[fill_event.position['trade_id']]['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
+                self.__trades[fill_event.position['trade_id']]['exit_date'] = fill_event.datetime
+                self.__trades[fill_event.position['trade_id']]['exit_commission'] = self.__normalize_dollar_amount(fill_event.commission)
+                self.__trades[fill_event.position['trade_id']]['exit_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
+                self.__trades[fill_event.position['trade_id']]['exit_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 
 
                 
@@ -510,43 +596,7 @@ class OptionSignalPortfolio(Portfolio):
         df.index = df.index.set_levels(pd.to_datetime(df.index.levels[0]), level=0)  # Ensure datetime index
         return df
     
-    def get_trades(self) -> pd.DataFrame:
-        """
-        return timeseries of portfolio trades
-        """
-        trades_data = []
-        for trade_id, data in self.trades.items():
-            pnl = data['exit_price'] - data['entry_price']
-            return_pct = self.__normalize_dollar_amount((pnl / data['entry_price']))
-            total_entry_cost = data['entry_price'] * data['quantity'] #+ data['entry_commission'] #+ data['entry_slippage'] ## Entry & Exit price already consider slippage
-            total_exit_cost = data['exit_price'] * data['quantity'] #+ data['exit_commission'] #+ data['exit_slippage']
-            auxilary_entry_cost = abs(data['entry_commission']) + abs(data['entry_slippage'])
-            auxilary_exit_cost = abs(data['exit_commission']) + abs(data['exit_slippage'])
-            trades_data.append({
-                'Ticker': data['symbol'],
-                'PnL': pnl * data['quantity'],
-                'ReturnPct': return_pct,
-                'EntryPrice': data['entry_price'],
-                'EntryCommission': data['entry_commission'],
-                'EntrySlippage': data['entry_slippage'],
-                'EntryMarketValue': data['entry_market_value'],
-                'TotalEntryCost': total_entry_cost,
-                'AuxilaryEntryCost': auxilary_entry_cost,
-                'ExitPrice': data['exit_price'],
-                'ExitCommission': data['exit_commission'], 
-                'ExitSlippage': data['exit_slippage'],
-                'ExitMarketValue': data['exit_market_value'],
-                'TotalExitCost': total_exit_cost,
-                'AuxilaryExitCost': auxilary_exit_cost,
-                'Quantity': data['quantity'],
-                'EntryTime': data['entry_date'],
-                'ExitTime': data['exit_date'],
-                'Duration': (data['exit_date'] - data['entry_date']).days,
-                'Positions': trade_id
-            }) 
-
-        trades = pd.DataFrame(trades_data)
-        return trades
+        
     
     def get_equity_curve(self) :
         """

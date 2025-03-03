@@ -2,14 +2,14 @@
 
 from datetime import datetime
 
-
+from EventDriven.types import EventTypes
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 
     (inherited) events, that will trigger further events in the 
     trading infrastructure.   
     """
-    pass
+    pass    
 
 
 
@@ -32,7 +32,7 @@ class SignalEvent(Event):
     This is received by a Portfolio object and acted upon.
     """
     
-    def __init__(self, symbol, datetime, signal_type):
+    def __init__(self, symbol, datetime, signal_type: EventTypes, order_settings = None):
         """
         Initialises the SignalEvent.
 
@@ -40,12 +40,25 @@ class SignalEvent(Event):
         symbol - The ticker symbol, e.g. 'GOOG'.
         datetime - The timestamp at which the signal was generated.
         signal_type - 'LONG' or 'SHORT'.
+        order_settings - specifically for Order signals, to specify the kind of contract to generate, 
+            example: {'type': 'naked',
+                        'specifics': [{'direction': 'long',
+                        'rel_strike': .900,
+                        'dte': 365,
+                        'moneyness_width': 0.15},
+                        {'direction': 'short',
+                        'rel_strike': .80,
+                        'dte': 365,
+                        'moneyness_width': 0.15}],
+
+                        'name': 'vertical_spread'}
         """
         
         self.type = 'SIGNAL'
         self.symbol = symbol
         self.datetime = datetime
         self.signal_type = signal_type
+        self.order_settings = order_settings
 
 
 class OrderEvent(Event):
@@ -55,7 +68,7 @@ class OrderEvent(Event):
     quantity and a direction.
     """
 
-    def __init__(self, symbol, datetime, order_type, quantity, direction, option = None, position = None):
+    def __init__(self, symbol, datetime, order_type, quantity, direction, position = None):
         """
         Initialises the order type, setting whether it is
         a Market order ('MKT') or Limit order ('LMT'), has
@@ -67,7 +80,7 @@ class OrderEvent(Event):
         order_type - 'MKT' or 'LMT' for Market or Limit.
         quantity - Non-negative integer for quantity.
         direction - 'BUY' or 'SELL' for long or short.
-        option - A pandas dataframe with columns: root, expiration, strike, right (option type)
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
         """
         
         self.type = 'ORDER'
@@ -76,14 +89,13 @@ class OrderEvent(Event):
         self.order_type = order_type
         self.quantity = quantity
         self.direction = direction
-        self.option = option #TODO: remove old implementation, new one is position
-        self.position = position #a dict with 'long' and 'short' keys
+        self.position = position #a dict with 'long' and 'short' keys 
 
-    def print_order(self):
+    def __str__(self):
         """
         Outputs the values within the Order.
         """
-        print("Order: Symbol=%s, Type=%s, Quantity=%s, Direction=%s, Option=%s \n",self.symbol, self.order_type, self.quantity, self.direction, self.option) 
+        return f"Order: Symbol={self.symbol}, Type={self.order_type}, Quantity={self.quantity}, Direction={self.direction}, position={self.position}"
         
 
 

@@ -59,8 +59,8 @@ async def main():
   MAStrat.start_date = pd.to_datetime('1994-03-22')
   tt = PTBacktester(dataset, MAStrat, cash =1000, commission = 0.0035)
   stats = tt.run()
-  trades = tt.trades()
-  shorts = tt.trades()[tt.trades()['Size'] < 0]
+  trades = tt.__trades()
+  shorts = tt.__trades()[tt.__trades()['Size'] < 0]
   trades = trades[:10]
   
   # Backtest class 

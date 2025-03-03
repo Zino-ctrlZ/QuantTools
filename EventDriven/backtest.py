@@ -41,7 +41,7 @@ class OptionSignalBacktest():
             
             #check for data to feed backtest
             if not has_backtest_data: 
-                self.trades = self.portfolio.get_trades()
+                self.trades = self.portfolio.trades
                 self.logger.info("No more data to feed backtest")
                 print("No more data to feed backtest")
                 break
