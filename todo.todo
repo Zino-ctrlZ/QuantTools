@@ -27,7 +27,6 @@ Portfolio File:
     ✘ Commissions look too low. @cancelled(25-02-17 22:56)
     ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41)
     ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41)
-    ☐ Create two trades data. One that tracks actual assets, another that tracks position.
     ✔ Add floor to contracts quantity @done(25-02-17 22:56)
     ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
     ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
@@ -35,6 +34,7 @@ Portfolio File:
         ☐ When roll_bool is True, we roll when dte <= dte_min
         ☐ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid
             ☐ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium
+        ☐ Create two trades data. One that tracks actual assets, another that tracks position.
     ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35)
     ☐ Handle Stop loss.
     ☐ Scaling in

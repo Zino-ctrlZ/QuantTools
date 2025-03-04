@@ -24,7 +24,8 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_error_with_stack
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.threads import runThreads
-from trade.helpers.types import ResultsEnum, OptionModelAttributes
+from trade.helpers.types import OptionModelAttributes
+from EventDriven.types import ResultsEnum
 import numpy as np
 import time
 
@@ -112,6 +113,8 @@ def populate_cache(order_candidates: dict,
                     return 'theta_data_error'
                 
                 data[[ 'exp', 'strike', 'symbol']] = data[[ 'expiration', 'strike', 'ticker']]
+                if pd.to_datetime(date).weekday() >= 5:
+                    return 'weekend'
                 start = LOOKBACKS[date][20]  # Used precomputed BDay(20) instead of recalculating
                 data[['end_date', 'start_date']] = date, start
                 data['exp'] = data['exp'].dt.strftime('%Y-%m-%d')
@@ -170,6 +173,8 @@ def return_closePrice(id: str,
     global close_cache, spot_cache
     cache_key = f"{id}_{date}"
     close_data = close_cache[cache_key]
+    if close_data is None:
+        return None
     close_data = close_data[~close_data.index.duplicated(keep = 'first')]
     close = close_data['Midpoint'][date]
     return close
@@ -532,6 +537,14 @@ class OrderPicker:
 
             return_item = {
                 'result': "UNAVAILABLE_CONTRACT",
+                'data': None
+            }
+            order_cache[date][tick] = return_item
+            return return_item
+        
+        elif returned == 'weekend':
+            return_item = {
+                'result': "IS_WEEKEND",
                 'data': None
             }
             order_cache[date][tick] = return_item

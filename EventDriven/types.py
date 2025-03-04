@@ -11,6 +11,7 @@ class ResultsEnum(Enum):
     MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
     TOO_ILLIQUID = 'TOO_ILLIQUID'
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
+    IS_WEEKEND = 'IS_WEEKEND'
     
 class EventTypes(Enum): 
   SIGNAL = 'SIGNAL'

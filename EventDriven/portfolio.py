@@ -12,7 +12,7 @@ import pandas as pd
 
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import parse_option_tick
-from trade.helpers.types import ResultsEnum
+from EventDriven.types import ResultsEnum
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
@@ -88,6 +88,7 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.__trades = {}
+        self._trades = self.trades ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
         self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
@@ -145,7 +146,7 @@ class OptionSignalPortfolio(Portfolio):
     def max_contract_price(self, max_contract_price):
         assert isinstance(max_contract_price, dict), f'max_contract_price must be a dictionary'
         assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
-        self.__max_contract_price = max_contract_price
+        self.__max_contract_price = deepcopy(max_contract_price) ## Was editing the original dict
         
     # internal functions to construct key portfolio data 
     def __construct_weight_map(self, weight_map): 
@@ -337,7 +338,7 @@ class OptionSignalPortfolio(Portfolio):
             moneyness_tracker_index = self.moneyness_tracker.get(signal.signal_id, 0)
             # if moneyness width has been adjusted more than threshold, do not generate order
             if moneyness_tracker_index > self.min_moneyness_threshold: 
-                self.loger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
+                self.logger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 return None
             
@@ -368,7 +369,15 @@ class OptionSignalPortfolio(Portfolio):
                 
         elif result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
             initial_contract_max_price = self.__max_contract_price[signal.symbol]
-            self.__max_contract_price[signal.symbol] = min(self.__max_contract_price[signal.symbol] * self.max_contract_price_factor, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
+            new_max_price = self.__max_contract_price[signal.symbol] * self.max_contract_price_factor
+            allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) ## Max price should not exceed allocated cash
+            
+            if new_max_price > allocated_cash:
+                self.logger.warning(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
+                print(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
+                return None
+            
+            self.__max_contract_price[signal.symbol] = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
             new_signal = deepcopy(signal)
             self.logger.warning(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
             print(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
@@ -712,7 +721,7 @@ class OptionSignalPortfolio(Portfolio):
         _bnch = data.fillna(0)
         eq = self._equity
         dd = self.dd(True)
-        tr = self._trades.copy()
+        tr = self.trades.copy()
         tr['Size'] = tr['Quantity']
 
         return plot_portfolio(tr, eq, dd, _bnch,plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)

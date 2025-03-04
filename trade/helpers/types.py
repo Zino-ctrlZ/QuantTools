@@ -12,17 +12,6 @@ class PositionData(TypedDict):
     short: list[str]
 
 
-class ResultsEnum(Enum):
-    SUCCESSFUL = 'SUCCESSFUL'
-    MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
-    NO_ORDERS = 'NO_ORDERS'
-    UNSUCCESSFUL = 'UNSUCCESSFUL'
-    IS_HOLIDAY = 'IS_HOLIDAY'
-    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS' 
-    MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
-    TOO_ILLIQUID = 'TOO_ILLIQUID'
-    NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
-
 
 class OptionModelAttributes(Enum):
     S0 = 'unadjusted_S0'
