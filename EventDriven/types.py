@@ -17,3 +17,8 @@ class EventTypes(Enum):
   ORDER = 'ORDER'
   FILL = 'FILL'
   MARKET = 'MARKET'
+  
+class SignalTypes(Enum):
+  LONG = 'LONG'
+  SHORT = 'SHORT'
+  CLOSE = 'CLOSE'

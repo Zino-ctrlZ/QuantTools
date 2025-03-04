@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from EventDriven.types import EventTypes
+from EventDriven.types import EventTypes, SignalTypes
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 
@@ -32,7 +32,7 @@ class SignalEvent(Event):
     This is received by a Portfolio object and acted upon.
     """
     
-    def __init__(self, symbol, datetime, signal_type: EventTypes, order_settings = None):
+    def __init__(self, symbol, datetime, signal_type: SignalTypes, signal_id: str = None, order_settings = None):
         """
         Initialises the SignalEvent.
 
@@ -40,6 +40,7 @@ class SignalEvent(Event):
         symbol - The ticker symbol, e.g. 'GOOG'.
         datetime - The timestamp at which the signal was generated.
         signal_type - 'LONG' or 'SHORT'.
+        signal_id- A unique identifier for the signal 
         order_settings - specifically for Order signals, to specify the kind of contract to generate, 
             example: {'type': 'naked',
                         'specifics': [{'direction': 'long',
@@ -58,7 +59,11 @@ class SignalEvent(Event):
         self.symbol = symbol
         self.datetime = datetime
         self.signal_type = signal_type
+        self.signal_id = signal_id
         self.order_settings = order_settings
+        
+    def __str__(self):
+        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, trade_id:{self.signal_id}, Order Settings={self.order_settings}"
 
 
 class OrderEvent(Event):
@@ -68,7 +73,7 @@ class OrderEvent(Event):
     quantity and a direction.
     """
 
-    def __init__(self, symbol, datetime, order_type, quantity, direction, position = None):
+    def __init__(self, symbol, datetime, order_type, quantity, direction, position = None, signal_id: str = None):
         """
         Initialises the order type, setting whether it is
         a Market order ('MKT') or Limit order ('LMT'), has
@@ -81,6 +86,7 @@ class OrderEvent(Event):
         quantity - Non-negative integer for quantity.
         direction - 'BUY' or 'SELL' for long or short.
         position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
         """
         
         self.type = 'ORDER'
@@ -90,12 +96,13 @@ class OrderEvent(Event):
         self.quantity = quantity
         self.direction = direction
         self.position = position #a dict with 'long' and 'short' keys 
+        self.signal_id = signal_id
 
     def __str__(self):
         """
         Outputs the values within the Order.
         """
-        return f"Order: Symbol={self.symbol}, Type={self.order_type}, Quantity={self.quantity}, Direction={self.direction}, position={self.position}"
+        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{datetime},quantity={self.quantity}, direction={self.direction}, position={self.position} signal_id={self.signal_id}"
         
 
 
@@ -108,7 +115,7 @@ class FillEvent(Event):
     """
 
     def __init__(self, datetime : datetime | str, symbol : str, exchange : str, quantity : int,
-                 direction: str, fill_cost: float, market_value: float, commission : float =None, slippage : float = None , option = None, position = None ):
+                 direction: str, fill_cost: float, market_value: float, commission : float =None, slippage : float = None , position = None, signal_id: str = None):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -126,6 +133,7 @@ class FillEvent(Event):
         direction - The direction of fill ('BUY' or 'SELL')
         fill_cost - The holdings value in dollars.
         commission - An optional commission sent from IB.
+        signal_id - A unique identifier for the signal that generated the order
         """
         
         self.type = 'FILL'
@@ -135,10 +143,10 @@ class FillEvent(Event):
         self.quantity = quantity
         self.direction = direction
         self.fill_cost = fill_cost
-        self.option = option #TODO: remove old implementation, new one is position
         self.position = position
         self.market_value = market_value
         self.slippage = slippage
+        self.signal_id = signal_id
 
         # Calculate commission
         if commission is None:
@@ -146,6 +154,9 @@ class FillEvent(Event):
         else:
             self.commission = commission
 
+    def __str__(self):
+        return f"FillEvent symbol={self.symbol}, exchange={self.exchange}, quantity={self.quantity}, direction={self.direction}, fill_cost={self.fill_cost}, commission={self.commission}, market_value={self.market_value}, slippage={self.slippage}, position={self.position}, signal_id={self.signal_id}"
+    
     def calculate_ib_commission(self):
         """
         Calculates the fees of trading based on an Interactive

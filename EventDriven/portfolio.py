@@ -74,9 +74,11 @@ class OptionSignalPortfolio(Portfolio):
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.moneyness_width_factor = 0.5 
+        self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
         self.max_contract_price_factor = 1.2 #increase max price by 20%
         self.options_data = {}
         self.underlier_list_data = {}
+        self.moneyness_tracker = {}
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -86,7 +88,6 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.__trades = {}
-        self.max_contract_price = {s: 5.0 for s in self.symbol_list} #max price for contracts set at $500
         self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
@@ -136,6 +137,15 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
         
+    @property
+    def max_contract_price(self):
+        return self.__max_contract_price
+    
+    @max_contract_price.setter
+    def max_contract_price(self, max_contract_price):
+        assert isinstance(max_contract_price, dict), f'max_contract_price must be a dictionary'
+        assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
+        self.__max_contract_price = max_contract_price
         
     # internal functions to construct key portfolio data 
     def __construct_weight_map(self, weight_map): 
@@ -153,6 +163,7 @@ class OptionSignalPortfolio(Portfolio):
         
         self.__weight_map = weight_map
         self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
+        self.__max_contract_price = {s: self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s] * .5) for s in self.symbol_list} # default max contract price is 50% of allocated cash divided by 100
     
     def __construct_current_positions(self):
         d = {s: {} for s in self.symbol_list}
@@ -199,6 +210,7 @@ class OptionSignalPortfolio(Portfolio):
     
     @property
     def trades(self):
+        #NOTE: In the event of exercising, exit price will not be set, pnl will be calculated differently see todo  
         trades_data = []
         for trade_id, data in self.__trades.items():
             pnl = data['exit_price'] - data['entry_price'] * data['quantity']
@@ -227,7 +239,8 @@ class OptionSignalPortfolio(Portfolio):
                 'EntryTime': data['entry_date'],
                 'ExitTime': data['exit_date'],
                 'Duration': (data['exit_date'] - data['entry_date']).days,
-                'Positions': trade_id
+                'Positions': trade_id,
+                'SignalID': data['signal_id']
             }) 
 
         trades = pd.DataFrame(trades_data)
@@ -276,33 +289,35 @@ class OptionSignalPortfolio(Portfolio):
             return self.create_order(symbol, signal, 'P', order_type)
         elif signal_type == 'CLOSE':
             current_position = self.current_positions[symbol]
+            if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
+                self.analyze_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal)
+                return None
+            
             if 'position' not in current_position:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
                 return None
-            if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
-                self.analyze_order_result({'result': ResultsEnum.IS_HOLIDAY}, signal)
-                return None
             
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'])
+            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'], signal_id=current_position['signal_id'])
             return order
         return None
     
     def create_order(self, symbol: str, signal : SignalEvent, position_type: str, order_type: str = 'MKT'):
         """
         Takes a signal event and creates an order event based on the signal parameters
-        position_type: C/P
+        position_type: C|P
         """
         date_str = signal.datetime.strftime('%Y-%m-%d')
-        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts
-        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type, self.max_contract_price[signal.symbol], signal.order_settings if signal.order_settings is not None else self._order_settings)  
+        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts, leaving room for slippage and commission
+        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type, self.__max_contract_price[signal.symbol], signal.order_settings if signal.order_settings is not None else self._order_settings)  
         position = position_result['data'] if position_result['data'] is not None else None
         if position is None:
             self.analyze_order_result(position_result, signal)
+            self.logger.warning(f'position_type: {position_type}')
             return None
         self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
         order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
-        return OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position)
+        return OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
     
     def analyze_order_result(self, position_result, signal: SignalEvent): 
@@ -317,14 +332,28 @@ class OptionSignalPortfolio(Portfolio):
         UNSUCCESSFUL: log warning
         UNAVAILABLE_CONTRACT: log warning
         """
-        result = position_result['result']
-        if result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: # adjust moneyness width by 20% and add to queue   
-            order_settings = deepcopy(signal.order_setting if signal.order_setting is not None else self.order_settings) # use default order settings if signal order settings not set 
+        result = position_result['result'] #TODO: pass just the result and not the whole dict
+        if result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: # adjust moneyness width if moneyness_tracket_index has not exceeded threshold and add to queue   
+            moneyness_tracker_index = self.moneyness_tracker.get(signal.signal_id, 0)
+            # if moneyness width has been adjusted more than threshold, do not generate order
+            if moneyness_tracker_index > self.min_moneyness_threshold: 
+                self.loger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
+                print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
+                return None
+            
+            if moneyness_tracker_index == 0:
+                self.moneyness_tracker[signal.signal_id] = moneyness_tracker_index + 1
+            else:
+                self.moneyness_tracker[signal.signal_id] += 1
+            
+            
+                
+            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set 
             order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] #increase moneyness width by 20%
             new_signal = deepcopy(signal)
             new_signal.order_settings = order_settings
-            self.logger.warning(f'Moneyness too tight for {signal.symbol} at {signal.datetime}, Inputs {locals()}, adjusted moneyness width by 20%')
-            print(f'Moneyness too tight for {signal.symbol} at {signal.datetime}, Inputs {locals()}, adjusted moneyness width by 20%')
+            self.logger.warning(f'Not generating order because:{result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
+            print(f'Not generating order because:{result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             self.events.put(new_signal)
             
                 
@@ -332,27 +361,27 @@ class OptionSignalPortfolio(Portfolio):
             next_trading_day = self.events.get_next_trading_day()
             new_signal = deepcopy(signal)
             new_signal.datetime = next_trading_day
-            self.logger.warning(f'No trading on holiday: {pd.to_datetime(signal.datetime)} for {signal.symbol}, moving event to {next_trading_day} Inputs {locals()}')
-            print(f'No trading on holiday: {pd.to_datetime(signal.datetime)} for {signal.symbol}, moving event to {next_trading_day} Inputs {locals()}')
+            self.logger.warning(f'Not generating order because:{result} {signal}, moving event to {next_trading_day}')
+            print(f'Not generating order because:{result} {signal}, moving event to {next_trading_day}')
             self.events.schedule_event(next_trading_day, new_signal)
             
                 
         elif result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
-            initial_contract_max_price = self.max_contract_price[signal.symbol]
-            self.max_contract_price[signal.symbol] = self.max_contract_price[signal.symbol] * self.max_contract_price_factor #increase max price by 20%
+            initial_contract_max_price = self.__max_contract_price[signal.symbol]
+            self.__max_contract_price[signal.symbol] = min(self.__max_contract_price[signal.symbol] * self.max_contract_price_factor, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
             new_signal = deepcopy(signal)
-            self.logger.warning(f'Max price too low for {signal.symbol} at {initial_contract_max_price}, adjusted to {self.max_contract_price[signal.symbol]}, Inputs {locals()}')
-            print(f'Max price too low for {signal.symbol} at {initial_contract_max_price}, adjusted to {self.max_contract_price[signal.symbol]}, Inputs {locals()}')
+            self.logger.warning(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
+            print(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
             self.events.put(new_signal)
             
             
         elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
-            self.logger.warning(f'No contracts found for {signal.symbol} at {signal.datetime}, Inputs {locals()}')  
-            print(f'No contracts found for {signal.symbol} at {signal.datetime}, Inputs {locals()}')     
+            self.logger.warning(f'Not generating order because:{result} {signal}')  
+            print(f'Not generating order because:{result} {signal}')     
         
         else:
-            self.logger.warning(f'Unable to process order for {signal.symbol} at {signal.datetime}, RESULT: {result}, Inputs {locals()}')
-            print(f'Unable to process order for {signal.symbol} at {signal.datetime}, RESULT: {result}, Inputs {locals()}')
+            self.logger.warning(f'Not generating order because:{result} {signal}')
+            print(f'Not generating order because:{result} {signal}')
         
             
     def update_signal(self, event : SignalEvent):
@@ -384,6 +413,7 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['quantity'] = fill_event.quantity
                 new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                new_position_data['signal_id'] = fill_event.signal_id
                 
                 
                 #update trade data on successful buy
@@ -396,6 +426,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.__trades[trade_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
                 self.__trades[trade_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 self.__trades[trade_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
+                self.__trades[trade_id]['signal_id'] = fill_event.signal_id
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -433,6 +464,11 @@ class OptionSignalPortfolio(Portfolio):
                 # Update positions list with new quantities
         self.current_positions[fill_event.symbol] = new_position_data
 
+    def __normalize_dollar_amount_to_decimal(self, price: float) -> float:
+        """
+        divide by 100
+        """
+        return price / 100
     
     def __normalize_dollar_amount(self, price: float) -> float:
         """
@@ -506,6 +542,7 @@ class OptionSignalPortfolio(Portfolio):
                     current_position_data['position']['close'] = current_close 
                     current_position_data['quantity'] = self.current_positions[sym]['quantity']
                     current_position_data['market_value'] = market_value
+                    current_position_data['signal_id'] = self.current_positions[sym]['signal_id']
                     new_positions_entry[sym] = current_position_data
                     
                 #update total weighted holdings

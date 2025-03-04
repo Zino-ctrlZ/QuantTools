@@ -103,5 +103,5 @@ class SimulatedExecutionHandler(ExecutionHandler):
             fill_cost = market_value - commission
 
         slippage_diff = (price - event.position['close'] ) * event.quantity
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff)
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
         self.events.put(fill_event)

@@ -1,11 +1,5 @@
-from dotenv import load_dotenv
-load_dotenv()
-import os
-import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) #type: ignore
-
 from abc import ABCMeta, abstractmethod
+import pandas as pd
 
 from trade.assets import Stock
 
@@ -125,7 +119,7 @@ class OptionSignalStrategy(Strategy):
         for underlier in self.symbol_list:
             signal_value = latest_signals_row[underlier]
             if signal_value == 1:
-                signal = SignalEvent(underlier, date, 'LONG')
+                signal = SignalEvent(underlier, date, 'LONG', self.generate_signal_id(underlier, date, 'LONG'))
                 self.logger.info(f"LONG Signal for {underlier} at {date}")
                 self.events.put(signal)
             elif signal_value == -1:
@@ -133,9 +127,16 @@ class OptionSignalStrategy(Strategy):
                 self.logger.info(f"CLOSE Signal for {underlier} at {date}")
                 self.events.put(signal)
             elif signal_value == 2:
-                signal = SignalEvent(underlier, date, 'SHORT') 
+                signal = SignalEvent(underlier, date, 'SHORT', self.generate_signal_id(underlier, date, 'SHORT')) 
                 self.logger.info(f"SHORT Signal for {underlier} at {date}")
                 self.events.put(signal)
             else:
                 self.logger.info(f"No signal for {underlier} at {date}")
                 pass
+            
+    def generate_signal_id(self, underlier, date, signal_type):
+        signal_date = pd.to_datetime(date).strftime('%Y%m%d')
+        right = 'C' if signal_type == 'LONG' else 'P' 
+        key = underlier.upper() + signal_date + right.upper()
+        return key
+        

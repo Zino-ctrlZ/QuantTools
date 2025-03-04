@@ -26,11 +26,12 @@ class EventScheduler:
         
         # self.market_dates = pd.to_datetime(np.unique(self.valid_days))
         self.market_dates = pd.date_range(start=self.start_date, end=self.end_date, freq='D')
-        self.events_map: Dict[DatetimeIndex, Queue] = {
-            str(d): Queue(maxsize=0) for d in pd.date_range(start=self.start_date, end=self.end_date, freq='D')
+        self.events_map: Dict[str, Queue] = {
+            d.strftime('%Y-%m-%d'): Queue(maxsize=0) for d in self.market_dates
         }
         self.date_iterator = iter(self.events_map.keys())  # Iterator for fast traversal
         self.current_date = next(self.date_iterator)  # Start with the first date
+        self.events_dict = []
     
     
     
@@ -58,6 +59,7 @@ class EventScheduler:
     def put(self, event: Event):
         """Adds an event to the queue of the current date."""
         self.get_current_queue().put(event)
+        self.store_event(event)
 
     def schedule_event(self, event_date, event: Event):
         """
@@ -66,13 +68,18 @@ class EventScheduler:
         Event: Event object to be scheduled
         """
         event_date = pd.to_datetime(event_date)
-        event_date_str = str(event_date)
+        event_date_str = self.clean_date(event_date)
         if event_date < pd.to_datetime(self.current_date):
             raise ValueError(f"Cannot schedule event to past date {event_date}.")
         if event_date_str not in self.events_map:
             raise ValueError(f"Date {event_date} is out of backtest range.")
         
-        self.events_map.get(event_date_str, print(f"Event date {event_date} not found in backtest range.")).put(event)
+        if event_date_str not in self.events_map:
+            print(f"Event date {event_date_str} not found in backtest range.")
+            return 
+        
+        self.events_map[event_date_str].put(event)
+        self.store_event(event)
         
 
     def get_next_trading_day(self)-> DatetimeIndex:
@@ -85,4 +92,12 @@ class EventScheduler:
         """
         Cleans date string to ensure it is in the correct format
         """
-        return pd.to_datetime(date)
+        return pd.to_datetime(date).strftime('%Y-%m-%d')
+    
+    def store_event(self, event: Event):
+        """
+        Stores an event in the events dictionary.
+        """
+        if event.type != 'MARKET':
+            self.events_dict.append({"event": event, "date": self.current_date})
+        
