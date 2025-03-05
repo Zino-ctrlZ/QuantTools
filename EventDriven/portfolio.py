@@ -88,7 +88,6 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.__trades = {}
-        self._trades = self.trades ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
         self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
@@ -264,9 +263,10 @@ class OptionSignalPortfolio(Portfolio):
         trades = pd.DataFrame(trades_data)
         return trades
 
-    # @property
-    # def trades(self):
-    #     return pd.DataFrame(self.__trades).T
+    @property
+    def _trades(self):
+        ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
+        return self.trades
     
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
