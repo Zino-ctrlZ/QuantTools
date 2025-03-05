@@ -470,7 +470,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.logger.warning(f'Exercising contract for {symbol} at {event.datetime}')
                 print(f'Exercising contract for {symbol} at {event.datetime}')
                 self.events.put(ExerciseEvent(event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
-                ## if exercising, open new position if posiiton not closed yet.
+                ## if exercising, open new position if trade not closed yet.
                 continue
             
             
