@@ -459,7 +459,7 @@ class OptionSignalPortfolio(Portfolio):
                 buy_signal_event = SignalEvent( symbol, next_trading_day, direction , signal_id=current_position['signal_id'])
                 self.events.schedule_event(next_trading_day, buy_signal_event)
                 
-            elif symbol not in self.roll_map and dte == 0:
+            elif symbol not in self.roll_map and dte == 0:  ## Use or
                 position = self.current_positions[symbol]['position']
                 trade_data = self.__trades[position['trade_id']]
                 quantity = position['quantity']
@@ -470,6 +470,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.logger.warning(f'Exercising contract for {symbol} at {event.datetime}')
                 print(f'Exercising contract for {symbol} at {event.datetime}')
                 self.events.put(ExerciseEvent(event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
+                ## if exercising, open new position if posiiton not closed yet.
                 continue
             
             
