@@ -1,7 +1,8 @@
 import numpy as np
 from abc import ABCMeta, abstractmethod
 
-from EventDriven.event import FillEvent, OrderEvent
+from EventDriven.event import ExerciseEvent, FillEvent, OrderEvent
+from trade.helpers.helper import parse_option_tick
 
 # execution.py
 
@@ -105,3 +106,38 @@ class SimulatedExecutionHandler(ExecutionHandler):
         slippage_diff = (price - event.position['close'] ) * event.quantity
         fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
         self.events.put(fill_event)
+        
+    def execute_exercise(self, event: ExerciseEvent):
+        """
+        This method will execute an exercise event, calculate the pnl of the exercise and put a fill event on the queue
+        """
+        assert event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {event.type}"
+        ##
+        long_pnl = 0.0
+        short_pnl = 0.0
+        if event.long_premiums and 'long' in event.position:
+            assert all(option in event.position['long'] for option in event.long_premiums.keys()), f"option_id in premiums must be present in position. long_premium: {event.long_premiums.keys()}  long position: {event.position['long']}"
+            assert len(event.long_premiums) == len(event.position['long']), f"number of options in long_premiums must be equal to number of options in long position. long_premium: {len(event.long_premiums)}  long position: {len(event.position['long'])}"
+            for option_id, premium in event.long_premiums.items():
+                option_meta = parse_option_tick(option_id)
+                long_pnl += self.__calculate_premium_pnl(option_meta, event.spot, premium)
+        
+        if event.short_premiums and 'short' in event.position:
+            assert all(option in event.position['short'] for option in event.short_premiums.keys()), f"option_id in premiums must be present in position. short_premium: {event.short_premiums.keys()}  short position: {event.position['short']}"
+            assert len(event.short_premiums) == len(event.position['short']), f"number of options in short_premiums must be equal to number of options in short position. short_premium: {len(event.short_premiums)}  short position: {len(event.position['short'])}"
+            for option_id, premium in event.short_premiums.items():
+                option_meta = parse_option_tick(option_id)
+                short_pnl += self.__calculate_premium_pnl(option_meta, event.spot, premium)
+                
+        total_pnl = long_pnl - short_pnl
+        
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, 'EXERCISE', fill_cost=total_pnl, position=event.position, signal_id=event.signal_id)
+        self.events.put(fill_event)
+        
+    def __calculate_premium_pnl(self, option_meta, spot, premium):
+        if option_meta['option_type'] == 'C':
+            return max(0, spot - option_meta['strike']) - premium
+        elif option_meta['option_type'] == 'P':
+            return max(0, option_meta['strike'] - spot) - premium
+        else:
+            raise ValueError(f"Invalid option type: {option_meta['option_type']}")

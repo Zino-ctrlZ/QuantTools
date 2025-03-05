@@ -625,6 +625,11 @@ def generate_option_tick(symbol, right, exp, strike):
 def parse_option_tick(tick : str):
     """
     Parse the option tick into its components.
+    returns a dictionary with the following keys
+    ticker: str
+    put_call: str C|P
+    exp_date: str
+    strike: float
     """
     # Regex pattern to extract components
     pattern = r"([A-Za-z]+)(\d{8})([CP])(\d+(\.\d+)?)"

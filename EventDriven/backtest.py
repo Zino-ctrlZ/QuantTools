@@ -86,20 +86,20 @@ class OptionSignalBacktest():
                 if event:
                     event_count += 1
                     try:
-                        self.logger.info(f"Processing event: {event.type}")
+                        self.logger.info(f"Processing event: {event}")
                         print(f"Processing event: {event.type}")
 
                         if event.type == "MARKET":
                             self.strategy.calculate_signals()
+                            self.portfolio.analyze_roll(event)
                         elif event.type == "SIGNAL":
-                            self.logger.info(f"Signal event: {event}")
-                            self.portfolio.update_signal(event)
+                            self.portfolio.analyze_signal(event)
                         elif event.type == "ORDER":
-                            self.logger.info(f"Order event: {event}")
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == "FILL":
-                            self.logger.info(f"Fill event: {event}")
                             self.portfolio.update_fill(event)
+                        elif event.type == "EXERCISE":
+                            self.executor.execute_exercise(event)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:

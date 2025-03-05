@@ -319,8 +319,9 @@ class HistoricTradeDataHandler(DataHandler):
         else: 
             if bar is not None:
                 bar_df = pd.DataFrame([bar])
-            self.latest_signal_df = pd.concat([self.latest_signal_df, bar_df], axis=0)
-            self.events.put(MarketEvent())
+                self.latest_signal_df = pd.concat([self.latest_signal_df, bar_df], axis=0)
+                self.current_date = bar['Date']
+                self.events.put(MarketEvent(self.current_date))
         
         return self.continue_backtest
         

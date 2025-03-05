@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from EventDriven.types import EventTypes, SignalTypes
+from trade.helpers.helper import parse_option_tick
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 
@@ -19,13 +20,15 @@ class MarketEvent(Event):
     corresponding bars.
     """
 
-    def __init__(self):
+    def __init__(self, datetime):
         """
         Initialises the MarketEvent.
         """
         self.type = 'MARKET'
+        self.datetime = datetime
         
-        
+    def __str__(self):
+        return f"MarketEvent date:{self.datetime}"
 class SignalEvent(Event):
     """
     Handles the event of sending a Signal from a Strategy object.
@@ -115,7 +118,7 @@ class FillEvent(Event):
     """
 
     def __init__(self, datetime : datetime | str, symbol : str, exchange : str, quantity : int,
-                 direction: str, fill_cost: float, market_value: float, commission : float =None, slippage : float = None , position = None, signal_id: str = None):
+                 direction: str, fill_cost: float, market_value: float = None, commission : float =None, slippage : float = None , position = None, signal_id: str = None):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -157,20 +160,35 @@ class FillEvent(Event):
     def __str__(self):
         return f"FillEvent symbol={self.symbol}, exchange={self.exchange}, quantity={self.quantity}, direction={self.direction}, fill_cost={self.fill_cost}, commission={self.commission}, market_value={self.market_value}, slippage={self.slippage}, position={self.position}, signal_id={self.signal_id}"
     
-    def calculate_ib_commission(self):
+    
+class ExerciseEvent(Event): 
+    """
+    Encapsulates the notion of an exercise event, as returned from a brokerage. 
+    Stores the quantity of an instrument actually exercised and at what price. In addition, stores the commission of the trade from the brokerage.
+    """
+    
+    def __init__(self, datetime : datetime | str, symbol : str, quantity : int, entry_date: datetime| str, spot: float, long_premiums: dict, short_premiums:dict, position = None, signal_id: str = None):
         """
-        Calculates the fees of trading based on an Interactive
-        Brokers fee structure for API, in USD.
-
-        This does not include exchange or ECN fees.
-
-        Based on "US API Directed Orders":
-        https://www.interactivebrokers.com/en/index.php?f=commission&p=stocks2
+        Initialises the ExerciseEvent object. Sets the symbol, exchange, quantity, direction, cost of fill and an optional commission.
+        
+        Parameters:
+        datetime - The bar-resolution when the order was filled.
+        symbol - The instrument which was filled.
+        quantity - The filled quantity.
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
         """
-        full_cost = 1.3
-        if self.quantity <= 500:
-            full_cost = max(1.3, 0.013 * self.quantity)
-        else: # Greater than 500
-            full_cost = max(1.3, 0.008 * self.quantity)
-        full_cost = min(full_cost, 0.5 / 100.0 * self.quantity * self.fill_cost)
-        return full_cost
+        
+        self.type = 'EXERCISE'
+        self.datetime = datetime
+        self.symbol = symbol
+        self.quantity = quantity
+        self.spot = spot
+        self.position = position
+        self.signal_id = signal_id
+        self.long_premiums = long_premiums
+        self.short_premiums = short_premiums
+        self.entry_date = entry_date
+        
+    def __str__(self):
+        return f"ExerciseEvent symbol={self.symbol}, quantity={self.quantity}, long_premiums={self.long_premiums}, short_premiums={self.short_premiums}, position={self.position}, signal_id={self.signal_id}"
