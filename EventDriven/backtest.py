@@ -19,17 +19,27 @@ class OptionSignalBacktest():
     Encapsulates the settings and components for carrying out an event-driven backtest
     """
     
-    def __init__(self, trades: pd.DataFrame, initial_capital: int =100000 ) -> None:
-        #set start and end date
+    def __init__(self, trades: pd.DataFrame, initial_capital: int | float =100000 ) -> None:
+        """
+            trades: pd.DataFrame
+                Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
+            initial_capital: int
+                Initial capital to be used for backtesting
+        """
+        self.__construct_data(trades, initial_capital)
+        
+    def __construct_data(self, trades: pd.DataFrame, initial_capital: int) -> None: 
         self.start_date = pd.to_datetime(trades['EntryTime']).min()
         self.end_date = pd.to_datetime(trades['ExitTime']).max()
+        self.bars_trades = trades
+        self.initial_capital = initial_capital
         
         #initialize critical components 
         self.events = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.events, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.events)
         self.risk_manager = RiskManager(self.bars, self.events, initial_capital)
-        self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= initial_capital)
+        self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.events)
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
@@ -97,7 +107,15 @@ class OptionSignalBacktest():
                         print(f"Error processing event: {e}")   
 
         
-    
+    def clean_run(self, trades: pd.DataFrame = pd.DataFrame(), initial_capital: int = None):
+        """
+            Rerun the backtest with fresh set of data, the only set of data that persists are the last set of trades and capital data passed to the backtest, unless new data is passed in this function
+        """
+        clean_trades = self.bars_trades if trades.empty else trades
+        clean_capital = self.initial_capital if initial_capital == None else initial_capital
+        self.__construct_data(clean_trades, clean_capital)
+        self.run()
+        
     def get_all_holdings(self) -> pd.DataFrame:
         """
             return timeseries of portfolio holdings
