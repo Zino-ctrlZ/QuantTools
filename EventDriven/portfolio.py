@@ -73,7 +73,7 @@ class OptionSignalPortfolio(Portfolio):
         self.initial_capital = initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
-        self.moneyness_width_factor = 0.5 
+        self.moneyness_width_factor = 0.05 
         self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
         self.max_contract_price_factor = 1.2 #increase max price by 20%
         self.options_data = {}
