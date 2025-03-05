@@ -15,7 +15,7 @@ from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import MarketEvent
-
+from EventDriven.eventScheduler import EventScheduler
 
 
 
@@ -255,7 +255,13 @@ class HistoricTradeDataHandler(DataHandler):
     convert that to signals of 1 (for buy), -1 (for sell), 0 (for do nothing)
     """
     
-    def __init__(self, events, trades_df): 
+    def __init__(self, events: EventScheduler, trades_df: pd.DataFrame): 
+        """
+            trades: pd.DataFrame
+                Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
+            events: EventScheduler
+                Event scheduler to push events to the event queue
+        """
         self.trades_df = trades_df
         self.continue_backtest = True 
         self.events = events
@@ -270,7 +276,7 @@ class HistoricTradeDataHandler(DataHandler):
         
         self.start_date = self.trades_df['EntryTime'].min()
         self.end_date = self.trades_df['ExitTime'].max()
-        date_range = pd.date_range(start=self.start_date, end=self.end_date)
+        date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
         #initialize signal dataframe
         self.signal_df = pd.DataFrame({'Date': date_range})
         

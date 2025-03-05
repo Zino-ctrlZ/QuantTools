@@ -150,11 +150,14 @@ class OptionSignalPortfolio(Portfolio):
         
     # internal functions to construct key portfolio data 
     def __construct_weight_map(self, weight_map): 
+        unprocessed_symbols = []
         if weight_map is not None:
             for s in weight_map.keys():
                 if s not in self.symbol_list:
-                    print(f"Symbol {s} not being processed but present in weight_map" )
-                    self.logger.warning(f"Symbol {s} not being processed but present in weight_map")
+                    unprocessed_symbols.append(s)
+            if len(unprocessed_symbols) > 0:
+                print(f"The following symbols: {unprocessed_symbols} are being processed but present in weight_map" )
+                self.logger.warning(f"The following symbols: {unprocessed_symbols} are not being processed but present in weight_map")
             weight_map = {x : weight_map[x] for x in self.symbol_list}
             weight_total = sum(weight_map.values())
             assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
