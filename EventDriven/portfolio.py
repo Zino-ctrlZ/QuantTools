@@ -73,7 +73,7 @@ class OptionSignalPortfolio(Portfolio):
         self.initial_capital = initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
-        self.moneyness_width_factor = 0.5 
+        self.moneyness_width_factor = 0.05 
         self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
         self.max_contract_price_factor = 1.2 #increase max price by 20%
         self.options_data = {}
@@ -88,7 +88,6 @@ class OptionSignalPortfolio(Portfolio):
             'name': 'vertical_spread'
         }
         self.__trades = {}
-        self._trades = self.trades ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
         self.__equity = None
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
@@ -264,9 +263,10 @@ class OptionSignalPortfolio(Portfolio):
         trades = pd.DataFrame(trades_data)
         return trades
 
-    # @property
-    # def trades(self):
-    #     return pd.DataFrame(self.__trades).T
+    @property
+    def _trades(self):
+        ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
+        return self.trades
     
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
@@ -459,7 +459,7 @@ class OptionSignalPortfolio(Portfolio):
                 buy_signal_event = SignalEvent( symbol, next_trading_day, direction , signal_id=current_position['signal_id'])
                 self.events.schedule_event(next_trading_day, buy_signal_event)
                 
-            elif symbol not in self.roll_map and dte == 0:
+            elif symbol not in self.roll_map and dte == 0:  ## Use or
                 position = self.current_positions[symbol]['position']
                 trade_data = self.__trades[position['trade_id']]
                 quantity = position['quantity']
@@ -470,6 +470,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.logger.warning(f'Exercising contract for {symbol} at {event.datetime}')
                 print(f'Exercising contract for {symbol} at {event.datetime}')
                 self.events.put(ExerciseEvent(event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
+                ## if exercising, open new position if trade not closed yet.
                 continue
             
             
