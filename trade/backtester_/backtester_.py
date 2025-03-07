@@ -77,6 +77,9 @@ class PTBacktester(AggregatorParent):
         strategy (class): Strategy class to be used for backtesting
         cash (Union[int, float, dict]): Initial cash to be used for backtesting. If dict, must contain all tickers in the datalist
         strategy_settings (dict): Dictionary containing the tick as key and settings as value. Eg: {AAPL: {"entry_ma":10}}
+        start_overwrite (Optional[str]): Start date to overwrite the backtest start date. If None, it will use the earliest date in the dataset
+            This is useful for when you have a strategy that starts at a certain date, which is greater than the earliest date in the dataset.
+            Typically to allow buffer to calculate indicators.
         **kwargs: Additional keyword arguments to be passed to the backtesting.py library
 
         Returns:
@@ -161,9 +164,10 @@ class PTBacktester(AggregatorParent):
             if d.param_settings:
                 # print(d.name, "param_settings", d.param_settings)
                 if d.param_settings:
-                    for setting, value in d.param_settings.items():                    
+                    for setting, value in d.param_settings.items(): ## Set the settings for the strategy, per dataset                
                         setattr(self.strategy, setting, value)
             stats = d.backtest.run()
+            ## Since the strategy is uninitialized, we reset the settings to default, to avoid any carry over in the next run
             self.reset_settings() if d.param_settings else None
             try:
                 del d.backtest._strategy._name
@@ -222,6 +226,10 @@ class PTBacktester(AggregatorParent):
             port_equity_data = port_equity_data[port_equity_data.index.date >= pd.to_datetime(self.start_overwrite).date()]
         port_equity_data = port_equity_data[~port_equity_data.index.duplicated(keep = 'first')]
         return port_equity_data
+    
+    def __trades(self):
+        return self.trades()
+        
 
 
     def plot_portfolio(self,
