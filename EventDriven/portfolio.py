@@ -481,12 +481,11 @@ class OptionSignalPortfolio(Portfolio):
             
                 
                 
-    def update_positions_from_fill(self, fill_event: FillEvent):
+    def update_positions_on_fill(self, fill_event: FillEvent):
         """
         Takes a FilltEvent object and updates the current positions in the portfolio 
         When a buy is filled, the options data related to the contract is stored in the options_data dictionary. 
         This is so it can be fetched easily when needed 
-
         Parameters:
         fill - The FillEvent object to update the positions with.
         """
@@ -499,7 +498,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
-                
                 self.update_trades_on_buy(fill_event)
                 
                 #retain long legs options_data dictionary for future use 
@@ -529,7 +527,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['quantity'] = fill_event.quantity
                 new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-                
                 self.update_trades_on_sell(fill_event)
 
         if fill_event.direction == 'EXERCISE':
@@ -537,8 +534,7 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = fill_event.quantity
                 new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
-                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-                
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
                 self.update_trades_on_exercise(fill_event)
             
             
@@ -580,6 +576,7 @@ class OptionSignalPortfolio(Portfolio):
         trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
         trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
         trade_data['exit_method'] = 'sell' 
+        self.__trades[fill_event.position['trade_id']] = trade_data
         
     def update_trades_on_exercise(self, fill_event: FillEvent):
         """
@@ -597,6 +594,7 @@ class OptionSignalPortfolio(Portfolio):
         trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
         trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
         trade_data['exit_method'] = 'exercise'
+        self.__trades[fill_event.position['trade_id']] = trade_data
         
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
         """
@@ -728,7 +726,7 @@ class OptionSignalPortfolio(Portfolio):
         from a FillEvent.
         """
         if event.type == 'FILL': 
-            self.update_positions_from_fill(event)
+            self.update_positions_on_fill(event)
             self.update_holdings_from_fill(event)
             
     def calculate_close_on_position(self, position) -> float: 
