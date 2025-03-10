@@ -879,8 +879,10 @@ class AggregatorParent(ABC):
             raise Exception('Either implement pf_value_ts method or self.equity')
 
         try:
-            trades = self.trades
+            ## Function call for trades
+            trades = self.trades()
         except TypeError:
+            ## If trades is not implemented, we can use the self._trades attribute
             trades = self._trades
         except Exception:
             raise Exception('Either implement trades method or self._trades')

@@ -841,17 +841,19 @@ class Calculate:
                 PnL_Data['Vega_PnL'] = (full_data['Vega']*100)*full_data['Vol_Change_Mark'] * 100
                 PnL_Data['Theta_PnL'] = (full_data['Theta']*100) * full_data['total_seconds']
                 PnL_Data['Rho_PnL'] = (full_data['Rho']*100)*full_data['RF_rate_Change_Mark'] * 100
-                PnL_Data['Total'] = PnL_Data.sum(axis = 1)
+                PnL_Data['Volga_PnL'] = (full_data['Volga']*100)*((full_data['Vol_Change_Mark'])**2)
+                PnL_Data['Vanna_PnL'] = (full_data['Vanna']*100)*full_data['Stock_Close_Change_Mark']*full_data['Vol_Change_Mark']
+                PnL_Data['Total_PnL'] = PnL_Data.sum(axis = 1)
                 PnL_Data['Datetime'] = full_data['Datetime']
                 PnL_Data['Option_Close_Change_percent'] = full_data['Option_Close_Change_Percent']
                 PnL_Data['Stock_Close_Change_percent'] = full_data['Stock_Close_Change_Percent']
                 PnL_Data['Option_Close_Change_Mark'] = full_data['Option_Close_Change_Mark']*100
                 PnL_Data['Vol_Change_Diff'] = full_data['Vol_Change_Mark']   
-                PnL_Data['Unexplained'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total']
+                PnL_Data['Unexplained_PnL'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total_PnL']
                 PnL_Data['Price'] = full_data['Option_Close']*100
                 PnL_Data['DATA_FILL'] = full_data['DATA_FILL']
                 PnL_Data.set_index('Datetime', inplace = True)
-                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark','Price' ]]
+                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL','Volga_PnL', 'Vanna_PnL', 'Rho_PnL', 'Total_PnL', 'Unexplained_PnL', 'Option_Close_Change_Mark','Price' ]]
                 PnL_Data.rename(columns= {'Option_Close_Change_Mark': 'Actual_PnL'}, inplace = True)
                 PnL_Data = PnL_Data[(PnL_Data.index >= ts_start) & (PnL_Data.index <= ts_end)]
                 full_data = full_data[(full_data['Datetime'] >= ts_start) & (full_data['Datetime'] <= ts_end)]
