@@ -41,7 +41,7 @@ class Portfolio(AggregatorParent):
         Acts on a SignalEvent to generate new orders 
         based on the portfolio logic.
         """
-        raise NotImplementedError("Should implement update_signal()")
+        raise NotImplementedError("Should implement analyze_signal()")
 
     @abstractmethod
     def update_fill(self, event):
@@ -79,6 +79,7 @@ class OptionSignalPortfolio(Portfolio):
         self.options_data = {}
         self.underlier_list_data = {}
         self.moneyness_tracker = {}
+        self.unprocessed_signals = []
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -237,27 +238,27 @@ class OptionSignalPortfolio(Portfolio):
         trades_data = []
         for trade_id, data in self.__trades.items():
             trades_data.append({
-                'Ticker': data['symbol'],
-                'PnL': data['pnl'],
-                'ReturnPct': data['return_pct'],
-                'EntryPrice': data['entry_price'],
-                'EntryCommission': data['entry_commission'],
-                'EntrySlippage': data['entry_slippage'],
-                'EntryMarketValue': data['entry_market_value'],
-                'TotalEntryCost': data['total_entry_cost'],
-                'AuxilaryEntryCost': data['auxilary_entry_cost'],
-                'ExitPrice': data['exit_price'],
-                'ExitCommission': data['exit_commission'], 
-                'ExitSlippage': data['exit_slippage'],
-                'ExitMarketValue': data['exit_market_value'],
-                'TotalExitCost': data['total_exit_cost'],
-                'AuxilaryExitCost': data['auxilary_exit_cost'],
-                'Quantity': data['quantity'],
-                'EntryTime': data['entry_date'],
-                'ExitTime': data['exit_date'],
-                'Duration': (data['exit_date'] - data['entry_date']).days,
-                'Positions': data['trade_id'],
-                'SignalID': data['signal_id']
+                'Ticker': data.get('symbol', 'N/A'),
+                'PnL': data.get('pnl', 'N/A'),
+                'ReturnPct': data.get('return_pct', 'N/A'),
+                'EntryPrice': data.get('entry_price', 'N/A'),
+                'EntryCommission': data.get('entry_commission', 'N/A'),
+                'EntrySlippage': data.get('entry_slippage', 'N/A'),
+                'EntryMarketValue': data.get('entry_market_value', 'N/A'),
+                'TotalEntryCost': data.get('total_entry_cost', 'N/A'),
+                'AuxilaryEntryCost': data.get('auxilary_entry_cost', 'N/A'),
+                'ExitPrice': data.get('exit_price', 'N/A'),
+                'ExitCommission': data.get('exit_commission', 'N/A'), 
+                'ExitSlippage': data.get('exit_slippage', 'N/A'),
+                'ExitMarketValue': data.get('exit_market_value', 'N/A'),
+                'TotalExitCost': data.get('total_exit_cost', 'N/A'),
+                'AuxilaryExitCost': data.get('auxilary_exit_cost', 'N/A'),
+                'Quantity': data.get('quantity', 'N/A'),
+                'EntryTime': data.get('entry_date', 'N/A'),
+                'ExitTime': data.get('exit_date', 'N/A'),
+                'Duration': data.get('duration_days', 'N/A'),
+                'Positions': data.get('trade_id', 'N/A'),
+                'SignalID': data.get('signal_id', 'N/A')
             }) 
 
         trades = pd.DataFrame(trades_data)
@@ -305,10 +306,8 @@ class OptionSignalPortfolio(Portfolio):
         signal_type = signal.signal_type
         order_type = 'MKT'
         
-        if signal_type == 'LONG': #buy calls
-            return self.create_order(symbol, signal, 'C', order_type)
-        elif signal_type == 'SHORT': #buy puts
-            return self.create_order(symbol, signal, 'P', order_type)
+        if signal_type != 'CLOSE': #generate order for LONG or SHORT
+            return self.create_order( signal, order_type)
         elif signal_type == 'CLOSE':
             current_position = self.current_positions[symbol]
             if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
@@ -324,22 +323,23 @@ class OptionSignalPortfolio(Portfolio):
             return order
         return None
     
-    def create_order(self, symbol: str, signal : SignalEvent, position_type: str, order_type: str = 'MKT'):
+    def create_order(self, signal : SignalEvent, position_type: str, order_type: str = 'MKT'):
         """
         Takes a signal event and creates an order event based on the signal parameters
         position_type: C|P
         """
         date_str = signal.datetime.strftime('%Y-%m-%d')
-        cash_at_hand = self.allocated_cash_map[symbol] * .9 #use 90% of cash to buy contracts, leaving room for slippage and commission
-        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type, self.__max_contract_price[signal.symbol], signal.order_settings if signal.order_settings is not None else self._order_settings)  
+        position_type = 'C' if signal.signal_type == 'LONG' else 'P'
+        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol] * .9) #use 90% of cash to buy contracts, leaving room for slippage and commission
+        max_contract_price = self.__max_contract_price[signal.symbol] if self.__max_contract_price[signal.symbol] <= cash_at_hand else cash_at_hand 
+        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type,  max_contract_price, signal.order_settings if signal.order_settings is not None else self._order_settings)  
         position = position_result['data'] if position_result['data'] is not None else None
         if position is None:
             self.analyze_order_result(position_result, signal)
-            self.logger.warning(f'position_type: {position_type}')
             return None
-        self.logger.info(f'Buying LONG contract for {symbol} at {signal.datetime}')
-        order_quantity = math.floor(cash_at_hand / (position['close'] * 100))
-        return OrderEvent(symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
+        self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime}')
+        order_quantity = math.floor(cash_at_hand / position['close'])
+        return OrderEvent(signal.symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
     
     def analyze_order_result(self, position_result, signal: SignalEvent): 
@@ -361,6 +361,7 @@ class OptionSignalPortfolio(Portfolio):
             if moneyness_tracker_index > self.min_moneyness_threshold: 
                 self.logger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
+                self.unprocessed_signals.append(signal)
                 return None
             
             if moneyness_tracker_index == 0:
@@ -396,6 +397,7 @@ class OptionSignalPortfolio(Portfolio):
             if new_max_price > allocated_cash:
                 self.logger.warning(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
                 print(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
+                self.unprocessed_signals.append(signal)
                 return None
             
             self.__max_contract_price[signal.symbol] = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
@@ -408,10 +410,12 @@ class OptionSignalPortfolio(Portfolio):
         elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
             self.logger.warning(f'Not generating order because:{result} {signal}')  
             print(f'Not generating order because:{result} {signal}')     
+            self.unprocessed_signals.append(signal)
         
         else:
             self.logger.warning(f'Not generating order because:{result} {signal}')
             print(f'Not generating order because:{result} {signal}')
+            self.unprocessed_signals.append(signal)
         
             
     def analyze_signal(self, event : SignalEvent):
@@ -496,7 +500,7 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
                 
-                self.update_trades_on_open(fill_event)
+                self.update_trades_on_buy(fill_event)
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -533,13 +537,15 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = fill_event.quantity
                 new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                
                 self.update_trades_on_exercise(fill_event)
             
             
         # update current_Positions with new position data
         self.current_positions[fill_event.symbol] = new_position_data
 
-    def update_trades_on_open(self, fill_event: FillEvent):
+    def update_trades_on_buy(self, fill_event: FillEvent):
         """
         Update trade data on open
         """
