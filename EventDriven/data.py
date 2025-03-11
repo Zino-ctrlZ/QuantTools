@@ -1,6 +1,9 @@
 #This handles how market data is sourced and drip feeds the event loop
 from typing import Optional
 from dotenv import load_dotenv
+
+from EventDriven.helpers import generate_signal_id
+from EventDriven.types import SignalTypes
 load_dotenv()
 import datetime
 import os, os.path
@@ -14,7 +17,7 @@ from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
 
-from EventDriven.event import MarketEvent
+from EventDriven.event import MarketEvent, SignalEvent
 from EventDriven.eventScheduler import EventScheduler
 
 
@@ -269,6 +272,10 @@ class HistoricTradeDataHandler(DataHandler):
         self.options_data = {}
         
     def _open_trade_data(self): 
+        """
+        Create signal signal dataframe from trades dataframe and Schedule Trades
+        1 for LONG, 2 for SHORT, -1 for EXIT
+        """
         unique_tickers = self.trades_df['Ticker'].unique()
         self.symbol_list = unique_tickers
         self.trades_df['EntryTime'] = pd.to_datetime(self.trades_df['EntryTime'])
@@ -281,7 +288,10 @@ class HistoricTradeDataHandler(DataHandler):
         self.signal_df = pd.DataFrame({'Date': date_range})
         
         for ticker in unique_tickers: 
-            self.signal_df[ticker] = 0   
+            self.signal_df[ticker] = 0  
+        
+        for date in date_range:
+             self.events.schedule_event(date, MarketEvent(date))
             
         #populate signal dataframe
         for _, row in self.trades_df.iterrows():
@@ -289,10 +299,15 @@ class HistoricTradeDataHandler(DataHandler):
             exit_time = row['ExitTime']
             ticker = row['Ticker']
             size = row['Size']
+            signal : SignalTypes = SignalTypes.LONG.value if size > 0 else SignalTypes.SHORT.value
             #size in positive is for long positions whilenegative size is for short positions
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size > 0), ticker] = 1 
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size < 0), ticker] = 2
             self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1 
+            
+            #schedule signals
+            self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=generate_signal_id(ticker, entry_time, signal)))
+            self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, exit_time, signal)))
         
         signal_columns = ['Date'].append(unique_tickers)
         self.latest_signal_df = pd.DataFrame(columns=signal_columns)

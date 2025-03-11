@@ -29,6 +29,7 @@ class MarketEvent(Event):
         
     def __str__(self):
         return f"MarketEvent date:{self.datetime}"
+
 class SignalEvent(Event):
     """
     Handles the event of sending a Signal from a Strategy object.
@@ -66,8 +67,7 @@ class SignalEvent(Event):
         self.order_settings = order_settings
         
     def __str__(self):
-        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, trade_id:{self.signal_id}, Order Settings={self.order_settings}"
-
+        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, Order Settings={self.order_settings}, signal_id:{self.signal_id}"
 
 class OrderEvent(Event):
     """
@@ -105,10 +105,8 @@ class OrderEvent(Event):
         """
         Outputs the values within the Order.
         """
-        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{datetime},quantity={self.quantity}, direction={self.direction}, position={self.position} signal_id={self.signal_id}"
+        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{self.datetime}, quantity={self.quantity}, direction={self.direction}, position={self.position}, signal_id={self.signal_id}"
         
-
-
 class FillEvent(Event):
     """
     Encapsulates the notion of a Filled Order, as returned
@@ -158,9 +156,7 @@ class FillEvent(Event):
             self.commission = commission
 
     def __str__(self):
-        return f"FillEvent symbol={self.symbol}, exchange={self.exchange}, quantity={self.quantity}, direction={self.direction}, fill_cost={self.fill_cost}, commission={self.commission}, market_value={self.market_value}, slippage={self.slippage}, position={self.position}, signal_id={self.signal_id}"
-    
-    
+        return f"FillEvent symbol={self.symbol}, date:{self.datetime}, exchange={self.exchange}, quantity={self.quantity}, direction={self.direction}, fill_cost={self.fill_cost}, commission={self.commission}, market_value={self.market_value}, slippage={self.slippage}, position={self.position}, signal_id={self.signal_id}"        
 class ExerciseEvent(Event): 
     """
     Encapsulates the notion of an exercise event, as returned from a brokerage. 
@@ -191,4 +187,4 @@ class ExerciseEvent(Event):
         self.entry_date = entry_date
         
     def __str__(self):
-        return f"ExerciseEvent symbol={self.symbol}, quantity={self.quantity}, long_premiums={self.long_premiums}, short_premiums={self.short_premiums}, position={self.position}, signal_id={self.signal_id}"
+        return f"ExerciseEvent symbol={self.symbol}, date:{self.datetime} quantity={self.quantity}, long_premiums={self.long_premiums}, short_premiums={self.short_premiums}, position={self.position}, signal_id={self.signal_id}"

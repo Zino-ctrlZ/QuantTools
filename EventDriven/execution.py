@@ -129,9 +129,10 @@ class SimulatedExecutionHandler(ExecutionHandler):
                 option_meta = parse_option_tick(option_id)
                 short_pnl += self.__calculate_premium_pnl(option_meta, event.spot, premium)
                 
-        total_pnl = long_pnl - short_pnl
+        total_pnl = long_pnl + short_pnl
+        market_value = event.spot * event.quantity
         
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, 'EXERCISE', fill_cost=total_pnl, position=event.position, signal_id=event.signal_id)
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, 'EXERCISE', fill_cost=total_pnl, position=event.position,market_value=market_value, signal_id=event.signal_id)
         self.events.put(fill_event)
         
     def __calculate_premium_pnl(self, option_meta, spot, premium):

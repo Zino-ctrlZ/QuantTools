@@ -43,17 +43,18 @@ Portfolio File:
     
     ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
     ✔ Add max-close on tick @done(25-03-04 00:32)
-    ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35)
+    ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
       
 Events:
     ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26)
     ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day @done(25-03-04 18:26)
     ✘ add count indicator to show how many times an event has been triggered @cancelled(25-03-04 18:27)
     ✔ Add a signal_id to each event, for tracking trades, add signal_id to each trade @done(25-03-04 18:26)
+     ✔ improve store_events function @done(25-03-10 23:36)
 
 Data File:
     ✘ update_latest_bars doesn't need arguments. @cancelled(25-03-03 22:46)
-    ☐ only create market events when the date is a valid trading day 
+    ✔ only create market events when the date is a valid trading day @done(25-03-10 23:36)
     ✘ Create a class for price data/any other other trade @future-implementation(25-03-04 18:28)
     ✘ Data must drip feed data with ohlc fields @future-implementation(25-03-04 18:27)
 
