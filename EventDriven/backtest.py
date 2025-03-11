@@ -45,22 +45,14 @@ class OptionSignalBacktest():
         self.risk_free_rate = 0.055
         
     def run(self):
-        while True:  # Loop over bars
-            # Update bars and log progress
-            has_backtest_data = self.bars.update_bars()
-            
-            #check for data to feed backtest
-            if not has_backtest_data: 
-                self.trades = self.portfolio.trades
-                self.logger.info("No more data to feed backtest")
-                print("No more data to feed backtest")
+        while True: 
+            # Get current event queue
+            if self.events.current_date is None: 
+                self.logger.info("No more dates left.")
+                print("No more dates left.")
                 break
             
-            latest_bars = self.bars.get_latest_bars("")
-            self.logger.debug(f"Latest bars: {latest_bars}")  # Optional logging level
-            print(latest_bars)
-            
-            # Get current event queue
+            self.logger.info(f"Processing events for {self.events.current_date}")
             current_event_queue = self.events.get_current_queue()
             event_count = 0
 
@@ -90,7 +82,6 @@ class OptionSignalBacktest():
                         print(f"Processing event: {event.type}")
 
                         if event.type == "MARKET":
-                            self.strategy.calculate_signals()
                             self.portfolio.analyze_roll(event)
                         elif event.type == "SIGNAL":
                             self.portfolio.analyze_signal(event)

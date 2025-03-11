@@ -145,7 +145,8 @@ class OptionSignalPortfolio(Portfolio):
     
     @max_contract_price.setter
     def max_contract_price(self, max_contract_price):
-        assert isinstance(max_contract_price, dict), f'max_contract_price must be a dictionary'
+        if isinstance(max_contract_price, int):
+            max_contract_price = {s: max_contract_price for s in self.symbol_list}
         assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
         self.__max_contract_price = deepcopy(max_contract_price) ## Was editing the original dict
         
@@ -272,8 +273,7 @@ class OptionSignalPortfolio(Portfolio):
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
         ## if the latest date on the bars is equal to the start date, backtest has yet to run
-        latest_bars = self.bars.get_latest_bars()
-        current_date = latest_bars.iloc[0]['Date']
+        current_date = pd.to_datetime(self.events.current_date)
         if pd.to_datetime(self.start_date) == pd.to_datetime(current_date):
             return False
         return True
@@ -381,7 +381,7 @@ class OptionSignalPortfolio(Portfolio):
             
                 
         elif result == ResultsEnum.IS_HOLIDAY.value or result == ResultsEnum.NO_TRADED_CLOSE.value: #move signal to next trading day
-            next_trading_day = self.events.get_next_trading_day()
+            next_trading_day = signal.datetime + pd.offsets.BusinessDay(1)
             new_signal = deepcopy(signal)
             new_signal.datetime = next_trading_day
             self.logger.warning(f'Not generating order because:{result} {signal}, moving event to {next_trading_day}')
@@ -458,7 +458,7 @@ class OptionSignalPortfolio(Portfolio):
                 print(f'Rolling contract for {symbol} at {event.datetime}')
                 sell_signal_event = SignalEvent( symbol, event.datetime,'CLOSE', signal_id=current_position['signal_id'])
                 self.events.put(sell_signal_event)
-                next_trading_day = self.events.get_next_trading_day()
+                next_trading_day = event.datetime + pd.offsets.BusinessDay(1)
                 direction = 'LONG' if option_meta['put_call'] == 'C' else 'SHORT'
                 buy_signal_event = SignalEvent( symbol, next_trading_day, direction , signal_id=current_position['signal_id'])
                 self.events.schedule_event(next_trading_day, buy_signal_event)
@@ -576,7 +576,6 @@ class OptionSignalPortfolio(Portfolio):
         trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
         trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
         trade_data['exit_method'] = 'sell' 
-        self.__trades[fill_event.position['trade_id']] = trade_data
         
     def update_trades_on_exercise(self, fill_event: FillEvent):
         """
@@ -594,7 +593,6 @@ class OptionSignalPortfolio(Portfolio):
         trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
         trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
         trade_data['exit_method'] = 'exercise'
-        self.__trades[fill_event.position['trade_id']] = trade_data
         
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
         """
@@ -668,8 +666,7 @@ class OptionSignalPortfolio(Portfolio):
         Adds a new record to the holdings and positions matrix based on the current market data bar.
         """
         
-        latest_bars = self.bars.get_latest_bars()
-        current_date = latest_bars.iloc[0]['Date']
+        current_date = pd.to_datetime(self.events.current_date)
         # Check if the current date is a weekend (Saturday or Sunday)
         if current_date.weekday() >= 5:
             return
@@ -815,8 +812,8 @@ class OptionSignalPortfolio(Portfolio):
         params: option_id: str The option_id the contract was saved with during the fill process 
         returns: a series with columns: ms_of_day,open,high,low,close,volume,count,date
         """
-        latest_bars = self.bars.get_latest_bars()
-        current_date = latest_bars.iloc[0]['Date']
+        
+        current_date = pd.to_datetime(self.events.current_date)
         option_data_df = self.get_option_data(option_id)
         if option_data_df is None:
             return None
