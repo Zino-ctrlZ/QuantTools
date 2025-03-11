@@ -350,8 +350,6 @@ class OptionDataManager:
         end = change_to_last_busday(end).strftime('%Y-%m-%d')
 
      
-
-           
            ## STEP 1: RETRIEVE AVAILABLE DATA IN DATABASE 
         if ivl_str.lower() in ['d', 'w','q','y'] or ivl_str == 'M':
             ## EOD OHLCV
