@@ -465,6 +465,7 @@ def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> fl
     time_in = pd.DataFrame(index=equity_timeseries.index)
     time_in['position'] = 0
     tr = trades_df
+    tr.dropna(subset=['EntryTime', 'ExitTime'], inplace=True)
     for index, row in tr.iterrows():
         entry = pd.to_datetime(row['EntryTime']).date()
         exit_ = pd.to_datetime(row['ExitTime']).date()

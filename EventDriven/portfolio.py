@@ -9,7 +9,7 @@ from copy import deepcopy
 import math
 from abc import ABCMeta, abstractmethod
 import pandas as pd
-
+import numpy as np
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import parse_option_tick
 from EventDriven.types import ResultsEnum
@@ -239,27 +239,27 @@ class OptionSignalPortfolio(Portfolio):
         trades_data = []
         for trade_id, data in self.__trades.items():
             trades_data.append({
-                'Ticker': data.get('symbol', 'N/A'),
-                'PnL': data.get('pnl', 'N/A'),
-                'ReturnPct': data.get('return_pct', 'N/A'),
-                'EntryPrice': data.get('entry_price', 'N/A'),
-                'EntryCommission': data.get('entry_commission', 'N/A'),
-                'EntrySlippage': data.get('entry_slippage', 'N/A'),
-                'EntryMarketValue': data.get('entry_market_value', 'N/A'),
-                'TotalEntryCost': data.get('total_entry_cost', 'N/A'),
-                'AuxilaryEntryCost': data.get('auxilary_entry_cost', 'N/A'),
-                'ExitPrice': data.get('exit_price', 'N/A'),
-                'ExitCommission': data.get('exit_commission', 'N/A'), 
-                'ExitSlippage': data.get('exit_slippage', 'N/A'),
-                'ExitMarketValue': data.get('exit_market_value', 'N/A'),
-                'TotalExitCost': data.get('total_exit_cost', 'N/A'),
-                'AuxilaryExitCost': data.get('auxilary_exit_cost', 'N/A'),
-                'Quantity': data.get('quantity', 'N/A'),
-                'EntryTime': data.get('entry_date', 'N/A'),
-                'ExitTime': data.get('exit_date', 'N/A'),
-                'Duration': data.get('duration_days', 'N/A'),
-                'Positions': data.get('trade_id', 'N/A'),
-                'SignalID': data.get('signal_id', 'N/A')
+                'Ticker': data.get('symbol', np.nan),
+                'PnL': data.get('pnl', np.nan),
+                'ReturnPct': data.get('return_pct', np.nan),
+                'EntryPrice': data.get('entry_price', np.nan),
+                'EntryCommission': data.get('entry_commission', np.nan),
+                'EntrySlippage': data.get('entry_slippage', np.nan),
+                'EntryMarketValue': data.get('entry_market_value', np.nan),
+                'TotalEntryCost': data.get('total_entry_cost', np.nan),
+                'AuxilaryEntryCost': data.get('auxilary_entry_cost', np.nan),
+                'ExitPrice': data.get('exit_price', np.nan),
+                'ExitCommission': data.get('exit_commission', np.nan), 
+                'ExitSlippage': data.get('exit_slippage', np.nan),
+                'ExitMarketValue': data.get('exit_market_value', np.nan),
+                'TotalExitCost': data.get('total_exit_cost', np.nan),
+                'AuxilaryExitCost': data.get('auxilary_exit_cost', np.nan),
+                'Quantity': data.get('quantity', np.nan),
+                'EntryTime': data.get('entry_date', np.nan),
+                'ExitTime': data.get('exit_date', np.nan),
+                'Duration': data.get('duration_days', np.nan),
+                'Positions': data.get('trade_id', np.nan),
+                'SignalID': data.get('signal_id', np.nan)
             }) 
 
         trades = pd.DataFrame(trades_data)
@@ -319,7 +319,10 @@ class OptionSignalPortfolio(Portfolio):
                 return None
             
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'], signal_id=current_position['signal_id'])
+            position =  current_position['position']
+            position['close'] = self.calculate_close_on_position(position) ## Add
+            # order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'], signal_id=current_position['signal_id'])
+            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=current_position['signal_id'])
             return order
         return None
     
@@ -573,7 +576,7 @@ class OptionSignalPortfolio(Portfolio):
         trade_data['total_exit_cost'] = fill_event.fill_cost
         trade_data['auxilary_exit_cost'] = abs(trade_data['exit_commission']) + abs(trade_data['exit_slippage'])
         trade_data['pnl'] =  (trade_data['exit_price'] - trade_data['entry_price']) * trade_data['quantity']
-        trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
+        trade_data['return_pct'] = (trade_data['pnl'] / (trade_data['entry_price']* trade_data['quantity'])) ## Added quantity because PnL is total contract, whereas entry price is per contract
         trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
         trade_data['exit_method'] = 'sell' 
         
@@ -653,11 +656,21 @@ class OptionSignalPortfolio(Portfolio):
         fill - The FillEvent object to update the holdings with.
         """
         
+        print(fill_event.datetime)
+        print(fill_event.symbol, fill_event.direction)
         
         if fill_event.direction == 'BUY': 
             # available cash for the symbol is the left over cash after buying the contract
             self.allocated_cash_map[fill_event.symbol] -= self.__normalize_dollar_amount(fill_event.fill_cost)
-            
+        
+        elif fill_event.direction == 'SELL':
+            print(fill_event)
+            print(fill_event.fill_cost)
+            print(fill_event.position)
+            print("Current Cash at Sell:", self.allocated_cash_map[fill_event.symbol])
+            print("Cash at Sell if we add FillCost:", self.allocated_cash_map[fill_event.symbol] + self.__normalize_dollar_amount(fill_event.fill_cost))
+            self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
+            # self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
         #track the total cash spent on commission
         self.current_weighted_holdings['commission'] += fill_event.commission
          
