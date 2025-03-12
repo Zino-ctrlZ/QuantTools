@@ -51,7 +51,8 @@ Events:
     ✘ add count indicator to show how many times an event has been triggered @cancelled(25-03-04 18:27)
     ✔ Add a signal_id to each event, for tracking trades, add signal_id to each trade @done(25-03-04 18:26)
      ✔ improve store_events function @done(25-03-10 23:36)
-
+     ☐ Make ROLL its own event
+     
 Data File:
     ✘ update_latest_bars doesn't need arguments. @cancelled(25-03-03 22:46)
     ✔ only create market events when the date is a valid trading day @done(25-03-10 23:36)
