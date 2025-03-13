@@ -371,7 +371,7 @@ class OptionSignalPortfolio(Portfolio):
                 print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 unprocess_dict = signal.__dict__
                 unprocess_dict['reason'] = result
-                self.unprocessed_signals.append(signal.__dict__)
+                self.unprocessed_signals.append(unprocess_dict)
                 return None
             
             if moneyness_tracker_index == 0:
@@ -431,7 +431,7 @@ class OptionSignalPortfolio(Portfolio):
             print(f'Not generating order because:{result} {signal}')
             unprocess_dict = signal.__dict__
             unprocess_dict['reason'] = result
-            self.unprocessed_signals.append(signal.__dict__)
+            self.unprocessed_signals.append(unprocess_dict)
         
             
     def analyze_signal(self, event : SignalEvent):
