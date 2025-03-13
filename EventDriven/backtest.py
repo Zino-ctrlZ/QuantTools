@@ -45,7 +45,7 @@ class OptionSignalBacktest():
         self.risk_free_rate = 0.055
         
     def run(self):
-        while True: 
+        while True: ##Loop through the dates
             # Get current event queue
             if self.events.current_date is None: 
                 self.logger.info("No more dates left.")
@@ -57,7 +57,7 @@ class OptionSignalBacktest():
             event_count = 0
 
             # Process events for the current bar
-            while True:  # Avoid blocking
+            while True:  # Avoid blocking. Loops through the event queue
                 try:
                     event = current_event_queue.get_nowait()
                 except emptyEventQueue:
@@ -92,7 +92,8 @@ class OptionSignalBacktest():
                         elif event.type == EventTypes.EXERCISE.value:
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:
-                            self.portfolio.execute_roll(event)
+                            print("\nPerforming Roll Operation\n")
+                            self.__roll(event, current_event_queue)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
@@ -108,6 +109,39 @@ class OptionSignalBacktest():
         clean_capital = self.initial_capital if initial_capital == None else initial_capital
         self.__construct_data(clean_trades, clean_capital)
         self.run()
+
+    def __roll(self, roll_event, current_event_queue) -> None:
+        """
+        Performs a roll in the same day by closing the current position and opening a new one.
+        Closing Operation first executes a close order and fills, then opening operation executes an open order and fills
+        """
+        print("Using roll function")
+        roll_action = ['CLOSE', 'OPEN']
+        event_count = 0
+        for action in roll_action: ## For each action, we want to carry out all processes
+            self.portfolio.execute_roll(roll_event, action) ## Execute the roll event
+            event_count += 1
+            while True: ##Starts event queue processing
+                try: ## Gets current event from the queue for that date
+                    event = current_event_queue.get_nowait()
+                    
+                except emptyEventQueue: 
+                    ## If the queue is empty, we break out of the loop, and return to outer loop
+                    ## If there is no actions in outta loop, we return control to the main loop
+                    break
+                ## Processes the event
+                if event.type == EventTypes.MARKET.value:
+                    self.portfolio.analyze_positions(event)
+                elif event.type == EventTypes.SIGNAL.value:
+                    self.portfolio.analyze_signal(event)
+                elif event.type == EventTypes.ORDER.value:
+                    self.executor.execute_order_randomized_slippage(event)
+                elif event.type == EventTypes.FILL.value:
+                    self.portfolio.update_fill(event)
+        print(f"Roll processed {event_count} event(s)")
+        self.logger.info(f"Roll Function processed {event_count} roll event(s)")
+
+
         
     def get_all_holdings(self) -> pd.DataFrame:
         """
