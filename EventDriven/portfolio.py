@@ -475,14 +475,12 @@ class OptionSignalPortfolio(Portfolio):
 
             
             if symbol in self.roll_map and dte <= self.roll_map[symbol]:
-                if not is_USholiday(market_event.datetime) :
-                    self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
-                    direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
-                    rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
-                    self.events.put(rollEvent)
-                else:
-                    self.logger.warning(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
-                    print(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
+                self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
+                direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
+                rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
+                self.events.put(rollEvent)
+                self.logger.warning(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
+                print(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
 
             elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                 position = self.current_positions[symbol]['position']
@@ -510,72 +508,10 @@ class OptionSignalPortfolio(Portfolio):
             self.events.put(sell_signal_event)
         print()
         if action == 'OPEN':
-            next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(0) ##Changed to 0 from 1, same day roll
             buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
-            # self.events.schedule_event(next_trading_day, buy_signal_event)
             self.events.put(buy_signal_event)
                 
                 
-    def update_positions_on_fill(self, fill_event: FillEvent):
-        """
-        Takes a FilltEvent object and updates the current positions in the portfolio 
-        When a buy is filled, the options data related to the contract is stored in the options_data dictionary. 
-        This is so it can be fetched easily when needed 
-        Parameters:
-        fill - The FillEvent object to update the positions with.
-        """
-        # Check whether the fill is a buy or sell
-        new_position_data = {}
-        if fill_event.direction == 'BUY': 
-            if fill_event.position is not None: 
-                new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
-                new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
-                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-                new_position_data['signal_id'] = fill_event.signal_id
-                self.update_trades_on_buy(fill_event)
-                
-                #retain long legs options_data dictionary for future use 
-                if 'long' in fill_event.position: 
-                    for option_id in fill_event.position['long']: 
-                        option_meta = parse_option_tick(option_id)
-                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                        if option_data is not None: 
-                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                        else:
-                            self.logger.warning(f'No data found for {option_id}')
-                
-                #retain short legs options_data dictionary for future use 
-                if 'short' in fill_event.position: 
-                    for option_id in fill_event.position['short']: 
-                        option_meta = parse_option_tick(option_id)
-                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                        if option_data is not None: 
-                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                        else:
-                            self.logger.warning(f'No data found for {option_id}')
-                
-                        
-        if fill_event.direction == 'SELL':
-            if fill_event.position is not None: 
-                new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
-                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
-                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-                self.update_trades_on_sell(fill_event)
-
-        if fill_event.direction == 'EXERCISE':
-            if fill_event.position is not None:
-                new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
-                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
-                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
-                self.update_trades_on_exercise(fill_event)
-            
-            
-        # update current_Positions with new position data
-        self.current_positions[fill_event.symbol] = new_position_data
-
     def update_trades_on_buy(self, fill_event: FillEvent):
         """
         Update trade data on open
@@ -734,6 +670,10 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
                 self.update_trades_on_exercise(fill_event)
+                
+                # open a new position after exercise
+                new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.OPEN.value, signal_id=fill_event.signal_id)
+                self.events.put(new_signal)
             
             
         # update current_Positions with new position data
