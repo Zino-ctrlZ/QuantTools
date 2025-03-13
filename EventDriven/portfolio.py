@@ -12,12 +12,12 @@ import pandas as pd
 import numpy as np
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import parse_option_tick
-from EventDriven.types import ResultsEnum
+from EventDriven.types import ResultsEnum, SignalTypes
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 
-from EventDriven.event import  ExerciseEvent, FillEvent, MarketEvent, OrderEvent, SignalEvent
+from EventDriven.event import  ExerciseEvent, FillEvent, MarketEvent, OrderEvent, RollEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.riskmanager import RiskManager, is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
@@ -364,7 +364,7 @@ class OptionSignalPortfolio(Portfolio):
             if moneyness_tracker_index > self.min_moneyness_threshold: 
                 self.logger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
-                self.unprocessed_signals.append(signal)
+                self.unprocessed_signals.append(signal.__dict__)
                 return None
             
             if moneyness_tracker_index == 0:
@@ -400,7 +400,7 @@ class OptionSignalPortfolio(Portfolio):
             if new_max_price > allocated_cash:
                 self.logger.warning(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
                 print(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
-                self.unprocessed_signals.append(signal)
+                self.unprocessed_signals.append(signal.__dict__)
                 return None
             
             self.__max_contract_price[signal.symbol] = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
@@ -413,12 +413,12 @@ class OptionSignalPortfolio(Portfolio):
         elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
             self.logger.warning(f'Not generating order because:{result} {signal}')  
             print(f'Not generating order because:{result} {signal}')     
-            self.unprocessed_signals.append(signal)
+            self.unprocessed_signals.append(signal.__dict__)
         
         else:
             self.logger.warning(f'Not generating order because:{result} {signal}')
             print(f'Not generating order because:{result} {signal}')
-            self.unprocessed_signals.append(signal)
+            self.unprocessed_signals.append(signal.__dict__)
         
             
     def analyze_signal(self, event : SignalEvent):
@@ -432,7 +432,7 @@ class OptionSignalPortfolio(Portfolio):
         if order_event is not None:
             self.events.put(order_event)
                 
-    def analyze_roll(self, event: MarketEvent): 
+    def analyze_positions(self, market_event: MarketEvent): 
         """
         Analyze the current positions and determine if any need to be rolled
         """
@@ -454,19 +454,14 @@ class OptionSignalPortfolio(Portfolio):
                     expiry_date = option_meta['exp_date']
                     break
             
-            dte = (pd.to_datetime(expiry_date) - pd.to_datetime(event.datetime)).days
-            #exercise contract if symbol not in roll map
+            dte = (pd.to_datetime(expiry_date) - pd.to_datetime(market_event.datetime)).days
+            
             if symbol in self.roll_map and dte <= self.roll_map[symbol]:
-                self.logger.info(f'Rolling contract for {symbol} at {event.datetime}')
-                print(f'Rolling contract for {symbol} at {event.datetime}')
-                sell_signal_event = SignalEvent( symbol, event.datetime,'CLOSE', signal_id=current_position['signal_id'])
-                self.events.put(sell_signal_event)
-                next_trading_day = event.datetime + pd.offsets.BusinessDay(1)
-                direction = 'LONG' if option_meta['put_call'] == 'C' else 'SHORT'
-                buy_signal_event = SignalEvent( symbol, next_trading_day, direction , signal_id=current_position['signal_id'])
-                self.events.schedule_event(next_trading_day, buy_signal_event)
+                direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
+                rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
+                self.events.put(rollEvent)
                 
-            elif symbol not in self.roll_map and dte == 0:  ## Use or
+            elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                 position = self.current_positions[symbol]['position']
                 trade_data = self.__trades[position['trade_id']]
                 quantity = position['quantity']
@@ -474,14 +469,25 @@ class OptionSignalPortfolio(Portfolio):
                 underlier = self.__get_underlier_data(symbol)
                 spot = underlier.spot(ts = True, ts_start = entry_date, ts_end = entry_date)['close']
                 long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
-                self.logger.warning(f'Exercising contract for {symbol} at {event.datetime}')
-                print(f'Exercising contract for {symbol} at {event.datetime}')
-                self.events.put(ExerciseEvent(event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
+                self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
+                print(f'Exercising contract for {symbol} at {market_event.datetime}')
+                self.events.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
                 ## if exercising, open new position if trade not closed yet.
                 continue
             
-            
-            
+    def execute_roll(self, roll_event: RollEvent):
+        """
+        Execute the roll event by closing the current position and opening a new one
+        rollEvent: RollEvent
+        """
+        self.logger.info(f'Rolling contract for {roll_event}')
+        print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
+        sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
+        self.events.put(sell_signal_event)
+        print()
+        next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(1)
+        buy_signal_event = SignalEvent( roll_event.symbol, next_trading_day, roll_event.signal_type , signal_id=roll_event.signal_id)
+        self.events.schedule_event(next_trading_day, buy_signal_event)
                 
                 
     def update_positions_on_fill(self, fill_event: FillEvent):
@@ -647,7 +653,67 @@ class OptionSignalPortfolio(Portfolio):
         """
         return price * 100
     
-    def update_holdings_from_fill(self, fill_event: FillEvent):
+    def update_positions_on_fill(self, fill_event: FillEvent):
+        """
+        Takes a FilltEvent object and updates the current positions in the portfolio 
+        When a buy is filled, the options data related to the contract is stored in the options_data dictionary. 
+        This is so it can be fetched easily when needed 
+        Parameters:
+        fill - The FillEvent object to update the positions with.
+        """
+        # Check whether the fill is a buy or sell
+        new_position_data = {}
+        if fill_event.direction == 'BUY': 
+            if fill_event.position is not None: 
+                new_position_data['position'] = fill_event.position
+                new_position_data['quantity'] = fill_event.quantity
+                new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                new_position_data['signal_id'] = fill_event.signal_id
+                self.update_trades_on_buy(fill_event)
+                
+                #retain long legs options_data dictionary for future use 
+                if 'long' in fill_event.position: 
+                    for option_id in fill_event.position['long']: 
+                        option_meta = parse_option_tick(option_id)
+                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                        if option_data is not None: 
+                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                        else:
+                            self.logger.warning(f'No data found for {option_id}')
+                
+                #retain short legs options_data dictionary for future use 
+                if 'short' in fill_event.position: 
+                    for option_id in fill_event.position['short']: 
+                        option_meta = parse_option_tick(option_id)
+                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                        if option_data is not None: 
+                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                        else:
+                            self.logger.warning(f'No data found for {option_id}')
+            
+                    
+        if fill_event.direction == 'SELL':
+            if fill_event.position is not None: 
+                new_position_data['position'] = fill_event.position
+                new_position_data['quantity'] = fill_event.quantity
+                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                self.update_trades_on_sell(fill_event)
+
+        if fill_event.direction == 'EXERCISE':
+            if fill_event.position is not None:
+                new_position_data['position'] = fill_event.position
+                new_position_data['quantity'] = fill_event.quantity
+                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
+                self.update_trades_on_exercise(fill_event)
+            
+            
+        # update current_Positions with new position data
+        self.current_positions[fill_event.symbol] = new_position_data
+
+    def update_holdings_on_fill(self, fill_event: FillEvent):
         """
         Takes a FillEvent object and updates the holdings matrix
         to reflect the holdings value.
@@ -670,13 +736,12 @@ class OptionSignalPortfolio(Portfolio):
             print("Current Cash at Sell:", self.allocated_cash_map[fill_event.symbol])
             print("Cash at Sell if we add FillCost:", self.allocated_cash_map[fill_event.symbol] + self.__normalize_dollar_amount(fill_event.fill_cost))
             self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
-            # self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
-        #track the total cash spent on commission
+         
         self.current_weighted_holdings['commission'] += fill_event.commission
          
     def update_timeindex(self): 
         """
-        Adds a new record to the holdings and positions matrix based on the current market data bar.
+        Adds a new record to the holdings and positions matrix based on the current market data bar. Runs at the end of the trading day (i.e all events for the day have been processed)
         """
         
         current_date = pd.to_datetime(self.events.current_date)
@@ -700,12 +765,12 @@ class OptionSignalPortfolio(Portfolio):
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
                 
+                self.current_positions[sym]['position']['close'] = market_value
+                self.current_positions[sym]['market_value'] = market_value
                 
                 #update holdings
                 if 'exit_price' in self.current_positions[sym]: 
-                    #updated the available cash to include pnl from the closed position
-                    self.allocated_cash_map[sym] += self.current_positions[sym]['exit_price']
-                    new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
+                    new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
                 else:
                     new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
                     
@@ -715,10 +780,7 @@ class OptionSignalPortfolio(Portfolio):
                     self.current_positions[sym] = {}
                     new_positions_entry[sym] = {}
                 else: 
-                    current_position_data = deepcopy(self.current_positions[sym])
-                    current_position_data['position']['close'] = current_close 
-                    current_position_data['market_value'] = market_value
-                    new_positions_entry[sym] = current_position_data
+                    new_positions_entry[sym] = deepcopy(self.current_positions[sym])
                     
                 #update total weighted holdings
                 new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
@@ -737,7 +799,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         if event.type == 'FILL': 
             self.update_positions_on_fill(event)
-            self.update_holdings_from_fill(event)
+            self.update_holdings_on_fill(event)
             
     def calculate_close_on_position(self, position) -> float: 
         """

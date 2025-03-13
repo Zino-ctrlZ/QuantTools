@@ -188,3 +188,32 @@ class ExerciseEvent(Event):
         
     def __str__(self):
         return f"ExerciseEvent symbol={self.symbol}, date:{self.datetime} quantity={self.quantity}, long_premiums={self.long_premiums}, short_premiums={self.short_premiums}, position={self.position}, signal_id={self.signal_id}"
+    
+    
+class RollEvent(Event): 
+    """
+    Encapsulates the notion of a roll event, this event simply tells the portfolio to close its current position and open anew position
+    """
+    
+    def __init__(self, datetime: datetime | str, symbol: str, signal_type: SignalTypes, position: dict, signal_id: str = None):
+        """
+        Initialises the RollEvent object. Sets the symbol, exchange, signal_type, direction, cost of fill and an optional commission.
+        
+        Parameters:
+        datetime - The bar-resolution when the order was filled.
+        symbol - The instrument which was filled.
+        signal_type - 'LONG' or 'SHORT'.
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
+        """
+        
+        self.type = 'ROLL'
+        self.datetime = datetime
+        self.symbol = symbol
+        self.signal_type = signal_type
+        self.position = position
+        self.signal_id = signal_id
+    
+    def __str__(self):
+        return f"RollEvent symbol={self.symbol}, date:{self.datetime}, signal_type={self.signal_type}, position={self.position}, signal_id={self.signal_id}"   
+    

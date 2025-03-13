@@ -19,6 +19,7 @@ class EventTypes(Enum):
   FILL = 'FILL'
   MARKET = 'MARKET'
   EXERCISE = 'EXERCISE'
+  ROLL = 'ROLL'
   
 class SignalTypes(Enum):
   LONG = 'LONG'
