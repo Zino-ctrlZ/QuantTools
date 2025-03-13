@@ -62,7 +62,13 @@ Events:
     ✘ add count indicator to show how many times an event has been triggered @cancelled(25-03-04 18:27)
     ✔ Add a signal_id to each event, for tracking trades, add signal_id to each trade @done(25-03-04 18:26)
      ✔ improve store_events function @done(25-03-10 23:36)
-     ☐ Make ROLL its own event 
+     ✔ Make ROLL its own event @done(25-03-13 18:36)
+
+EventScheduler:
+    ☐ Create subclass of queue and overide getnowait() function
+    ☐ Implement a dictionary that mirrors the queue, keys will be same as the events_dict, each dictionary value will have CLOSE and OPEN dictionaries that store signals. 
+    ☐ When processing, if the event is a signal event to OPEN, check for matching signal to CLOSE on that same day, put the buy back in the event queue for same day if there is a matching close in existence, have a check for if that reverse operation has been conducted to prevent infinite loops 
+    ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
 Data File:
     ✘ update_latest_bars doesn't need arguments. @cancelled(25-03-03 22:46)
