@@ -35,8 +35,8 @@ Portfolio File:
         ☐ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid
             ☐ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium
     ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35)
-    ☐ Handle Stop loss.
-    ☐ Scaling in
+    ☐ Handle Stop loss (LONG TERM).
+    ☐ Scaling in (LONG TERM)
     ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
     ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10)
     ✘ Add aggregator to portfolio @cancelled(25-03-04 00:36)

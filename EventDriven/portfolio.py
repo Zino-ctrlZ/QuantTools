@@ -369,6 +369,8 @@ class OptionSignalPortfolio(Portfolio):
             if moneyness_tracker_index > self.min_moneyness_threshold: 
                 self.logger.warning(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
                 print(f'Not generating order because:{result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
+                unprocess_dict = signal.__dict__
+                unprocess_dict['reason'] = result
                 self.unprocessed_signals.append(signal.__dict__)
                 return None
             
@@ -405,7 +407,9 @@ class OptionSignalPortfolio(Portfolio):
             if new_max_price > allocated_cash:
                 self.logger.warning(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
                 print(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
-                self.unprocessed_signals.append(signal.__dict__)
+                unprocess_dict = signal.__dict__
+                unprocess_dict['reason'] = ResultsEnum.MAX_PRICE_TOO_LOW.value
+                self.unprocessed_signals.append(unprocess_dict)
                 return None
             
             self.__max_contract_price[signal.symbol] = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
@@ -418,11 +422,15 @@ class OptionSignalPortfolio(Portfolio):
         elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
             self.logger.warning(f'Not generating order because:{result} {signal}')  
             print(f'Not generating order because:{result} {signal}')     
-            self.unprocessed_signals.append(signal.__dict__)
+            unprocess_dict = signal.__dict__
+            unprocess_dict['reason'] = result
+            self.unprocessed_signals.append(unprocess_dict)
         
         else:
             self.logger.warning(f'Not generating order because:{result} {signal}')
             print(f'Not generating order because:{result} {signal}')
+            unprocess_dict = signal.__dict__
+            unprocess_dict['reason'] = result
             self.unprocessed_signals.append(signal.__dict__)
         
             
