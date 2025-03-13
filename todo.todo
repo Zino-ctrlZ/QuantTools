@@ -1,49 +1,60 @@
 Portfolio File:
-    ✔ Extend OptionSignalClass @done(25-01-27 00:25)
-    ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14)
-    ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14)
-    ✘ Write a logic to generate spreads based on criteria @cancelled(25-01-27 22:14)
-        ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14)
+    Now:
+        ✔ Extend OptionSignalClass @done(25-01-27 00:25)
+        ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14)
+        ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14)
+        ✘ Write a logic to generate spreads based on criteria @cancelled(25-01-27 22:14)
+            ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14)
 
-    ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25)
-    ✔ Make a module for demo @done(25-02-10 21:39)
-    ✔ Investigate get_trades_new (chidi mentioned it was not working) @done(25-02-16 18:44)
-    ✔ Ensure all data is consistent, trades, all_positions, current_positions etc @done(25-02-16 18:44)
-    ✔ remove old functions in portfolio.py and clean _new functions @done(25-02-17 20:16)
-    ✘ Catch theta data no listed contracts error. @cancelled(25-02-17 20:16)
-    ☐ Save the orders we can't get because of price. (???)
-    ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day, is_holiday go to next day, is_money_too_low (adjust to max cash ), no_contracts(Just drop.) @done(25-03-04 22:09)
-        ✔ min moneyness breaker @done(25-03-04 22:10)
-    ✔ In all_holdings: @done(25-02-17 22:55)
-        ✔ Cash to be the weight not allocated * initial capital @done(25-02-17 22:55)
-        ✔ Tickers Value to be current market value of cash assigned to the ticker @done(25-02-17 22:55)
-        ✔ Eg: $1100, bought 10 contracts for 100. You have $100. Market value will be 10 * 100 (Contracts value) + $100 (Unallocated cash) @done(25-02-17 22:55)
-            ✔ Example extends to next day & contract value increases to 105. Market value will be (10 * 105) + $100 @done(25-02-17 22:55)
+        ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25)
+        ✔ Make a module for demo @done(25-02-10 21:39)
+        ✔ Investigate get_trades_new (chidi mentioned it was not working) @done(25-02-16 18:44)
+        ✔ Ensure all data is consistent, trades, all_positions, current_positions etc @done(25-02-16 18:44)
+        ✔ remove old functions in portfolio.py and clean _new functions @done(25-02-17 20:16)
+        ✘ Catch theta data no listed contracts error. @cancelled(25-02-17 20:16)
+        ✔ Save the orders we can't get because of price. (???) @done(25-03-13 17:08)
+        ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day, is_holiday go to next day, is_money_too_low (adjust to max cash ), no_contracts(Just drop.) @done(25-03-04 22:09)
+            ✔ min moneyness breaker @done(25-03-04 22:10)
+        ✔ In all_holdings: @done(25-02-17 22:55)
+            ✔ Cash to be the weight not allocated * initial capital @done(25-02-17 22:55)
+            ✔ Tickers Value to be current market value of cash assigned to the ticker @done(25-02-17 22:55)
+            ✔ Eg: $1100, bought 10 contracts for 100. You have $100. Market value will be 10 * 100 (Contracts value) + $100 (Unallocated cash) @done(25-02-17 22:55)
+                ✔ Example extends to next day & contract value increases to 105. Market value will be (10 * 105) + $100 @done(25-02-17 22:55)
 
-    ✔ Initialize available cash for each tick with weight * iniitial capital @done(25-02-17 22:57)
-        ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57)
-    ✔ Make max close a variable @done(25-02-17 22:56)
-    ✘ Commissions look too low. @cancelled(25-02-17 22:56)
-    ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41)
-    ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41)
-    ☐ Create two trades data. One that tracks actual assets, another that tracks position.
-    ✔ Add floor to contracts quantity @done(25-02-17 22:56)
-    ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
-    ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
-    ☐ (PRIORITY) Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino).
-        ☐ When roll_bool is True, we roll when dte <= dte_min
-        ☐ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid
-            ☐ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium
-    ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35)
-    ☐ Handle Stop loss (LONG TERM).
-    ☐ Scaling in (LONG TERM)
-    ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-    ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10)
-    ✘ Add aggregator to portfolio @cancelled(25-03-04 00:36)
+        ✔ Initialize available cash for each tick with weight * iniitial capital @done(25-02-17 22:57)
+            ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57)
+        ✔ Make max close a variable @done(25-02-17 22:56)
+        ✘ Commissions look too low. @cancelled(25-02-17 22:56)
+        ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41)
+        ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41)
+        ✔ Create two trades data. One that tracks actual assets, another that tracks position. @done(25-03-13 17:08)
+        ✔ Add floor to contracts quantity @done(25-02-17 22:56)
+        ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
+        ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
+        ✔ (PRIORITY) Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino). @done(25-03-13 17:09)
+            ✔ When roll_bool is True, we roll when dte <= dte_min @done(25-03-13 17:09)
+            ✔ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid @done(25-03-13 17:09)
+                ✔ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium @done(25-03-13 17:09)
+        ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35)
+        
+        ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10)
+        ✘ Add aggregator to portfolio @cancelled(25-03-04 00:36)
+        
+        ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
+        ✔ Add max-close on tick @done(25-03-04 00:32)
+        ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
     
-    ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
-    ✔ Add max-close on tick @done(25-03-04 00:32)
-    ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
+    Long Term:
+        ☐ Implement buy on Open, Bid, Ask.
+        ☐ Getting divYield to have a max retries to factor in sporadic errors 
+        ☐ Add rebalancing
+        ☐ Implement enum for signal types, order types & event types
+        ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
+        ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
+        ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
+        ☐ Stop Loss, Scaling in & Out, Trailing Stop
+        ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
+        ☐ Handle the Exercise Properly
       
 Events:
     ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26)
