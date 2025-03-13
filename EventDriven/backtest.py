@@ -60,9 +60,6 @@ class OptionSignalBacktest():
             while True:  # Avoid blocking. Loops through the event queue
                 try:
                     event = current_event_queue.get_nowait()
-                    roll_action = ['CLOSE', 'OPEN'] ## Roll order to enforce full execution of close before opening a new position
-                    action_idx = 0
-                    roll_on_this_date = False ## Flag to determine if we should roll on this date, necessary to ensure that we close and open a position on the same date
                 except emptyEventQueue:
                     self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
                     print(f"Event queue is empty, processed {event_count} event(s)")
@@ -95,9 +92,8 @@ class OptionSignalBacktest():
                         elif event.type == EventTypes.EXERCISE.value:
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:
-                            if action_idx < len(roll_action):
-                                print("\nPerforming Roll Operation\n")
-                                self.__roll(event, current_event_queue)
+                            print("\nPerforming Roll Operation\n")
+                            self.__roll(event, current_event_queue)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:

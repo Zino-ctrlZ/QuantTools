@@ -449,6 +449,10 @@ class OptionSignalPortfolio(Portfolio):
         """
         Analyze the current positions and determine if any need to be rolled
         """
+        if is_USholiday(market_event.datetime):
+            self.logger.warning(f"Market is closed on {market_event.datetime}, skipping")
+            return
+        
         for symbol in self.symbol_list:
             current_position = self.current_positions[symbol]
             if 'position' not in current_position:
