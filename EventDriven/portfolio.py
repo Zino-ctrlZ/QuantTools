@@ -342,7 +342,11 @@ class OptionSignalPortfolio(Portfolio):
             self.analyze_order_result(position_result, signal)
             return None
         self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime} Position: {position}')
+        print("Buy Details")
+        print(f"Position: {position}, Date: {date_str}, Signal: {signal}")
+        print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
         order_quantity = math.floor(cash_at_hand / position['close'])
+        print("Order Quantity", order_quantity, "Cash at Hand", cash_at_hand, "Close", position['close'])
         return OrderEvent(signal.symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
     
@@ -456,12 +460,18 @@ class OptionSignalPortfolio(Portfolio):
                     break
             
             dte = (pd.to_datetime(expiry_date) - pd.to_datetime(market_event.datetime)).days
+
             
             if symbol in self.roll_map and dte <= self.roll_map[symbol]:
-                direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
-                rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
-                self.events.put(rollEvent)
-                
+                if not is_USholiday(market_event.datetime) :
+                    self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
+                    direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
+                    rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
+                    self.events.put(rollEvent)
+                else:
+                    self.logger.warning(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
+                    print(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
+
             elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                 position = self.current_positions[symbol]['position']
                 trade_data = self.__trades[position['trade_id']]
@@ -476,20 +486,22 @@ class OptionSignalPortfolio(Portfolio):
                 ## if exercising, open new position if trade not closed yet.
                 continue
             
-    def execute_roll(self, roll_event: RollEvent):
+    def execute_roll(self, roll_event: RollEvent, action: str):
         """
         Execute the roll event by closing the current position and opening a new one
         rollEvent: RollEvent
         """
         self.logger.info(f'Rolling contract for {roll_event}')
         print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
-        sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
-        self.events.put(sell_signal_event)
+        if action == 'CLOSE':
+            sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
+            self.events.put(sell_signal_event)
         print()
-        next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(0) ##Changed to 0 from 1, same day roll
-        buy_signal_event = SignalEvent( roll_event.symbol, next_trading_day, roll_event.signal_type , signal_id=roll_event.signal_id)
-        # self.events.schedule_event(next_trading_day, buy_signal_event)
-        self.events.put(buy_signal_event)
+        if action == 'OPEN':
+            next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(0) ##Changed to 0 from 1, same day roll
+            buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
+            # self.events.schedule_event(next_trading_day, buy_signal_event)
+            self.events.put(buy_signal_event)
                 
                 
     def update_positions_on_fill(self, fill_event: FillEvent):

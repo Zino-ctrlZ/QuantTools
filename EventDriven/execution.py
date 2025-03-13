@@ -108,13 +108,15 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
         # Adjust price based on order direction
         if event.direction == 'BUY':
+            print("Buy Order", "Position:", event.position, "Price:", price, "Quantity:", event.quantity, "Datetime:", event.datetime)
             fill_cost = market_value + commission
         elif event.direction == 'SELL':
+            print("Sell Order", "Position:", event.position, "Price:", price, "Quantity:", event.quantity, "Datetime:", event.datetime)
             fill_cost = market_value - commission
 
         slippage_diff = (price - event.position['close'] ) * event.quantity
         fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
-        exec_cache['fill'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(fill_event)
+        exec_cache['fill'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}_{event.direction}'] = deepcopy(fill_event)
         self.events.put(fill_event)
         
     def execute_exercise(self, event: ExerciseEvent):
