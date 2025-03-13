@@ -765,7 +765,7 @@ class OptionSignalPortfolio(Portfolio):
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
                 
-                self.current_positions[sym]['position']['close'] = market_value
+                self.current_positions[sym]['position']['close'] = current_close
                 self.current_positions[sym]['market_value'] = market_value
                 
                 #update holdings
