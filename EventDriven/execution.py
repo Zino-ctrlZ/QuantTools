@@ -3,7 +3,15 @@ from abc import ABCMeta, abstractmethod
 
 from EventDriven.event import ExerciseEvent, FillEvent, OrderEvent
 from trade.helpers.helper import parse_option_tick
+from trade.helpers.Logging import setup_logger
+from copy import deepcopy
 
+logger = setup_logger('EventDriven.execution')
+exec_cache = {
+    'order': {},
+    'fill': {},
+    'exercise': {}
+}
 # execution.py
 
 class ExecutionHandler(object):
@@ -82,6 +90,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
         assert event.direction == 'BUY' or event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {event.direction}"
         commission = self.commission_rate * event.quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
+        exec_cache['order'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(event)
 
         # Generate slippage as a percentage
         ## Slippage improvement
@@ -105,6 +114,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
         slippage_diff = (price - event.position['close'] ) * event.quantity
         fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
+        exec_cache['fill'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(fill_event)
         self.events.put(fill_event)
         
     def execute_exercise(self, event: ExerciseEvent):

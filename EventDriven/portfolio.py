@@ -318,9 +318,10 @@ class OptionSignalPortfolio(Portfolio):
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
                 return None
             
-            self.logger.info(f'Selling contract for {symbol} at {signal.datetime}')
+            
             position =  current_position['position']
-            position['close'] = self.calculate_close_on_position(position) ## Add
+            self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
+            # position['close'] = self.calculate_close_on_position(position) ## Add
             # order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'], signal_id=current_position['signal_id'])
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=current_position['signal_id'])
             return order
@@ -340,7 +341,7 @@ class OptionSignalPortfolio(Portfolio):
         if position is None:
             self.analyze_order_result(position_result, signal)
             return None
-        self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime}')
+        self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime} Position: {position}')
         order_quantity = math.floor(cash_at_hand / position['close'])
         return OrderEvent(signal.symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
@@ -485,9 +486,10 @@ class OptionSignalPortfolio(Portfolio):
         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
         self.events.put(sell_signal_event)
         print()
-        next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(1)
+        next_trading_day = pd.to_datetime(roll_event.datetime) + pd.offsets.BusinessDay(0) ##Changed to 0 from 1, same day roll
         buy_signal_event = SignalEvent( roll_event.symbol, next_trading_day, roll_event.signal_type , signal_id=roll_event.signal_id)
-        self.events.schedule_event(next_trading_day, buy_signal_event)
+        # self.events.schedule_event(next_trading_day, buy_signal_event)
+        self.events.put(buy_signal_event)
                 
                 
     def update_positions_on_fill(self, fill_event: FillEvent):
@@ -765,7 +767,7 @@ class OptionSignalPortfolio(Portfolio):
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
                 
-                self.current_positions[sym]['position']['close'] = market_value
+                self.current_positions[sym]['position']['close'] = current_close ##Update close price for every iteration
                 self.current_positions[sym]['market_value'] = market_value
                 
                 #update holdings
