@@ -80,6 +80,7 @@ class OptionSignalPortfolio(Portfolio):
         self.underlier_list_data = {}
         self.moneyness_tracker = {}
         self.unprocessed_signals = []
+        self.resolve_orders = True #resolve orders if they are not processed
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -338,8 +339,11 @@ class OptionSignalPortfolio(Portfolio):
         max_contract_price = self.__max_contract_price[signal.symbol] if self.__max_contract_price[signal.symbol] <= cash_at_hand else cash_at_hand 
         position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type,  max_contract_price, signal.order_settings if signal.order_settings is not None else self._order_settings)  
         position = position_result['data'] if position_result['data'] is not None else None
-        if position is None:
-            self.analyze_order_result(position_result, signal)
+        if position is None :
+            if self.resolve_orders == True :
+                self.analyze_order_result(position_result, signal)
+            else:
+                self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal}')
             return None
         self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime} Position: {position}')
         print("Buy Details")
