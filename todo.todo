@@ -43,6 +43,8 @@ Portfolio File:
         ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
         ✔ Add max-close on tick @done(25-03-04 00:32)
         ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
+        ☐ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism
+        ☐ make max close passable in a signal for cases where max close is too low
     
     Long Term:
         ☐ Implement buy on Open, Bid, Ask.
