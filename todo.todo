@@ -57,6 +57,7 @@ Portfolio File:
         ☐ Stop Loss, Scaling in & Out, Trailing Stop
         ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
         ☐ Handle the Exercise Properly
+        ☐ Hedging 
       
 Events:
     ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26)
