@@ -364,7 +364,7 @@ def trades(port_stats) -> pd.DataFrame:
         holder = v['_trades']
         holder['Ticker'] = k
         trades_df = pd.concat([trades_df, holder])
-    return trades_df.sort_values(['EntryTime', 'ExitTime'])
+    return trades_df.sort_values(['EntryTime', 'ExitTime']).reset_index(drop = True)
 
 
 def numOfTrades(trades_df) -> int:

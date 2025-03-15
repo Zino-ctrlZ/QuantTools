@@ -91,6 +91,7 @@ class OptionSignalPortfolio(Portfolio):
         }
         self.__trades = {}
         self.__equity = None
+        self.__transactions = []
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
         self.__construct_current_positions()
@@ -223,6 +224,10 @@ class OptionSignalPortfolio(Portfolio):
         
         return self.underlier_list_data[symbol]
         
+
+    @property
+    def transactions(self):
+        return pd.DataFrame(self.__transactions)
 
     @property
     def _equity(self):
@@ -692,21 +697,27 @@ class OptionSignalPortfolio(Portfolio):
         fill - The FillEvent object to update the holdings with.
         """
         
-        print(fill_event.datetime)
-        print(fill_event.symbol, fill_event.direction)
-        
+        transaction = {}
+        transaction['datetime'] = fill_event.datetime
+        transaction['symbol'] = fill_event.symbol
+        transaction['direction'] = fill_event.direction
         if fill_event.direction == 'BUY': 
             # available cash for the symbol is the left over cash after buying the contract
+            transaction['cash_before'] = self.allocated_cash_map[fill_event.symbol]
             self.allocated_cash_map[fill_event.symbol] -= self.__normalize_dollar_amount(fill_event.fill_cost)
+            transaction['cash_after'] = self.allocated_cash_map[fill_event.symbol]
         
         elif fill_event.direction == 'SELL':
-            print(fill_event)
-            print(fill_event.fill_cost)
-            print(fill_event.position)
-            print("Current Cash at Sell:", self.allocated_cash_map[fill_event.symbol])
-            print("Cash at Sell if we add FillCost:", self.allocated_cash_map[fill_event.symbol] + self.__normalize_dollar_amount(fill_event.fill_cost))
+            # print(fill_event)
+            # print(fill_event.fill_cost)
+            # print(fill_event.position)
+            # print("Current Cash at Sell:", self.allocated_cash_map[fill_event.symbol])
+            # print("Cash at Sell if we add FillCost:", self.allocated_cash_map[fill_event.symbol] + self.__normalize_dollar_amount(fill_event.fill_cost))
+            transaction['cash_before'] = self.allocated_cash_map[fill_event.symbol]
             self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
-         
+            transaction['cash_after'] = self.allocated_cash_map[fill_event.symbol] 
+
+        self.__transactions.append(transaction)
         self.current_weighted_holdings['commission'] += fill_event.commission
          
     def update_timeindex(self): 

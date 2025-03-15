@@ -84,11 +84,15 @@ class PTBacktester(AggregatorParent):
 
         Returns:
         None
+
+        Accessible Attributes In Strategy Class:
+        - _name: Name of the ticker
+        - _runIndex: Index of the ticker in the dataset list
             
         """
         
         self.datasets = []
-        self.strategy = deepcopy(strategy)
+        self.__strategy = deepcopy(strategy)
         self.__port_stats = None
         self._trades = None
         self._equity = None
@@ -150,6 +154,16 @@ class PTBacktester(AggregatorParent):
     def reset_settings(self):
         for settings, value in self.default_settings.items():
             setattr(self.strategy, settings, value)
+
+    @property
+    def strategy(self):
+        return self.__strategy
+    
+    @strategy.setter
+    def strategy(self, value):
+        self.__strategy = value
+        for d in self.datasets:
+            d.backtest._strategy = deepcopy(value)
 
 
     def run(self) -> pd.DataFrame:
