@@ -73,6 +73,7 @@ class OptionSignalPortfolio(Portfolio):
         self.initial_capital = initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
+        self.dte_reduction_factor = 60 #reduce dte by 60 days if contract is too illiquid
         self.moneyness_width_factor = 0.05 
         self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
         self.max_contract_price_factor = 1.2 #increase max price by 20%
@@ -312,7 +313,7 @@ class OptionSignalPortfolio(Portfolio):
         elif signal_type == 'CLOSE':
             current_position = self.current_positions[symbol]
             if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
-                self.analyze_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal)
+                self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal)
                 return None
             
             if 'position' not in current_position:
@@ -320,10 +321,9 @@ class OptionSignalPortfolio(Portfolio):
                 return None
             
             
-            position =  current_position['position']
+            position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
-            # position['close'] = self.calculate_close_on_position(position) ## Add
-            # order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = current_position['position'], signal_id=current_position['signal_id'])
+            position['close'] = self.calculate_close_on_position(position) #calculate close price on position
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=current_position['signal_id'])
             return order
         return None
@@ -336,12 +336,13 @@ class OptionSignalPortfolio(Portfolio):
         date_str = signal.datetime.strftime('%Y-%m-%d')
         position_type = 'C' if signal.signal_type == 'LONG' else 'P'
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol] * .9) #use 90% of cash to buy contracts, leaving room for slippage and commission
-        max_contract_price = self.__max_contract_price[signal.symbol] if self.__max_contract_price[signal.symbol] <= cash_at_hand else cash_at_hand 
+        max_contract_price = self.__max_contract_price[signal.symbol] if signal.max_contract_price is None else signal.max_contract_price
+        max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
         position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type,  max_contract_price, signal.order_settings if signal.order_settings is not None else self._order_settings)  
         position = position_result['data'] if position_result['data'] is not None else None
         if position is None :
             if self.resolve_orders == True :
-                self.analyze_order_result(position_result, signal)
+                self.resolve_order_result(position_result, signal)
             else:
                 self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal}')
             return None
@@ -349,12 +350,11 @@ class OptionSignalPortfolio(Portfolio):
         print("Buy Details")
         print(f"Position: {position}, Date: {date_str}, Signal: {signal}")
         print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
-        order_quantity = math.floor(cash_at_hand / position['close'])
-        print("Order Quantity", order_quantity, "Cash at Hand", cash_at_hand, "Close", position['close'])
-        return OrderEvent(signal.symbol, signal.datetime, order_type, quantity=order_quantity, direction= 'BUY', position = position, signal_id = signal.signal_id)
+        print("Cash at Hand", cash_at_hand, "Close", position['close'])
+        return OrderEvent(signal.symbol, signal.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
     
-    def analyze_order_result(self, position_result, signal: SignalEvent): 
+    def resolve_order_result(self, position_result, signal: SignalEvent): 
         """
         Analyze the results of the order and update the portfolio or event scheduler accordingly
         
@@ -404,8 +404,8 @@ class OptionSignalPortfolio(Portfolio):
             
                 
         elif result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
-            initial_contract_max_price = self.__max_contract_price[signal.symbol]
-            new_max_price = self.__max_contract_price[signal.symbol] * self.max_contract_price_factor
+            initial_contract_max_price = self.__max_contract_price[signal.symbol] if signal.max_contract_price is None else signal.max_contract_price
+            new_max_price = initial_contract_max_price * self.max_contract_price_factor
             allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) ## Max price should not exceed allocated cash
             
             if new_max_price > allocated_cash:
@@ -416,20 +416,33 @@ class OptionSignalPortfolio(Portfolio):
                 self.unprocessed_signals.append(unprocess_dict)
                 return None
             
-            self.__max_contract_price[signal.symbol] = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol])) #increase max price by 20%
+            new_max_price = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]))
             new_signal = deepcopy(signal)
-            self.logger.warning(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
-            print(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {self.__max_contract_price[signal.symbol]} {signal} ')
+            signal.max_contract_price = new_max_price
+            self.logger.warning(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
+            print(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             self.events.put(new_signal)
+    
             
+        elif result == ResultsEnum.TOO_ILLIQUID.value or result == ResultsEnum.NO_ORDERS.value:
+            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set
+            initial_dte = order_settings['specifics'][0]['dte']
+            initial_dte = initial_dte - self.dte_reduction_factor
             
-        elif result == ResultsEnum.NO_ORDERS.value or result == ResultsEnum.UNSUCCESSFUL.value or result == ResultsEnum.UNAVAILABLE_CONTRACT.value :
-            self.logger.warning(f'Not generating order because:{result} {signal}')  
-            print(f'Not generating order because:{result} {signal}')     
-            unprocess_dict = signal.__dict__
-            unprocess_dict['reason'] = result
-            self.unprocessed_signals.append(unprocess_dict)
-        
+            if initial_dte < self.roll_map.get(signal.symbol, 365) or initial_dte < 0:
+                self.logger.warning(f'Not generating order because:{result} {signal}')
+                print(f'Not generating order because:{result} {signal}')
+                unprocess_dict = signal.__dict__
+                unprocess_dict['reason'] = result
+                self.unprocessed_signals.append(unprocess_dict)
+                return None
+                
+            order_settings['specifics'] = [{**x, 'dte': initial_dte} for x in order_settings['specifics']] #reduce dte by 1 day
+            new_signal = deepcopy(signal)
+            new_signal.order_settings = order_settings
+            self.logger.warning(f'Not generating order because:{result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
+            print(f'Not generating order because:{result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
+            self.events.put(new_signal)
         else:
             self.logger.warning(f'Not generating order because:{result} {signal}')
             print(f'Not generating order because:{result} {signal}')

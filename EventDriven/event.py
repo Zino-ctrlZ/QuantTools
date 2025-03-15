@@ -36,7 +36,7 @@ class SignalEvent(Event):
     This is received by a Portfolio object and acted upon.
     """
     
-    def __init__(self, symbol, datetime, signal_type: SignalTypes, signal_id: str = None, order_settings = None):
+    def __init__(self, symbol, datetime, signal_type: SignalTypes, signal_id: str = None, max_contract_price:int = None, order_settings = None):
         """
         Initialises the SignalEvent.
 
@@ -45,6 +45,7 @@ class SignalEvent(Event):
         datetime - The timestamp at which the signal was generated.
         signal_type - 'LONG' or 'SHORT'.
         signal_id- A unique identifier for the signal 
+        max_contract_price - The maximum price for the contract
         order_settings - specifically for Order signals, to specify the kind of contract to generate, 
             example: {'type': 'naked',
                         'specifics': [{'direction': 'long',
@@ -64,10 +65,11 @@ class SignalEvent(Event):
         self.datetime = datetime
         self.signal_type = signal_type
         self.signal_id = signal_id
+        self.max_contract_price = max_contract_price
         self.order_settings = order_settings
         
     def __str__(self):
-        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, Order Settings={self.order_settings}, signal_id:{self.signal_id}"
+        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, Order Settings={self.order_settings},Max Contract Price:{self.max_contract_price} , signal_id:{self.signal_id}"
 
 class OrderEvent(Event):
     """
@@ -76,7 +78,7 @@ class OrderEvent(Event):
     quantity and a direction.
     """
 
-    def __init__(self, symbol, datetime, order_type, quantity, direction, position = None, signal_id: str = None):
+    def __init__(self, symbol, datetime, order_type,  direction, cash:int | float = None ,quantity: int |float = None,position = None, signal_id: str = None):
         """
         Initialises the order type, setting whether it is
         a Market order ('MKT') or Limit order ('LMT'), has
@@ -86,6 +88,7 @@ class OrderEvent(Event):
         Parameters:
         symbol - The instrument to trade.
         order_type - 'MKT' or 'LMT' for Market or Limit.
+        cash - The cash available to spend on the order
         quantity - Non-negative integer for quantity.
         direction - 'BUY' or 'SELL' for long or short.
         position - A dict with 'long' and 'short' keys, just long if position is a naked option
@@ -96,6 +99,7 @@ class OrderEvent(Event):
         self.datetime = datetime
         self.symbol = symbol
         self.order_type = order_type
+        self.cash = cash
         self.quantity = quantity
         self.direction = direction
         self.position = position #a dict with 'long' and 'short' keys 
@@ -105,7 +109,7 @@ class OrderEvent(Event):
         """
         Outputs the values within the Order.
         """
-        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{self.datetime}, quantity={self.quantity}, direction={self.direction}, position={self.position}, signal_id={self.signal_id}"
+        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{self.datetime}, cash:{self.cash}, quantity={self.quantity}, direction={self.direction}, position={self.position}, signal_id={self.signal_id}"
         
 class FillEvent(Event):
     """

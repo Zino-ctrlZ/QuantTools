@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from abc import ABCMeta, abstractmethod
 
@@ -86,10 +87,10 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
         This method will execute an order with a random slippage
         based on the max_slippage_pct attribute of the class.
+        Note: Quantity takes precedence if both quantity and cash are provided, else quantity is determined by cash / price_of_contract
         """
         assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
         assert event.direction == 'BUY' or event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {event.direction}"
-        commission = self.commission_rate * event.quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
         exec_cache['order'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(event)
 
         # Generate slippage as a percentage
@@ -100,22 +101,24 @@ class SimulatedExecutionHandler(ExecutionHandler):
         elif event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
             slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
-        # slippage_pct = random.uniform(-self.max_slippage_pct, self.max_slippage_pct)
         
         #slippage may increase or decrease intended price
-        price = event.position['close'] * (1 + slippage_pct)  
-        market_value = (price * event.quantity) # cost before commission
+        price = event.position['close'] * (1 + slippage_pct)          
+        
+        quantity = event.quantity if event.quantity is not None else math.floor(event.cash/price)
+        commission = self.commission_rate * quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
 
+        market_value = (price * quantity) # cost before commission
         # Adjust price based on order direction
         if event.direction == 'BUY':
-            print("Buy Order", "Position:", event.position, "Price:", price, "Quantity:", event.quantity, "Datetime:", event.datetime)
+            print("Buy Order", "Position:", event.position, "Price:", price, "Quantity:", quantity, "Datetime:", event.datetime)
             fill_cost = market_value + commission
         elif event.direction == 'SELL':
-            print("Sell Order", "Position:", event.position, "Price:", price, "Quantity:", event.quantity, "Datetime:", event.datetime)
+            print("Sell Order", "Position:", event.position, "Price:", price, "Quantity:", quantity, "Datetime:", event.datetime)
             fill_cost = market_value - commission
 
-        slippage_diff = (price - event.position['close'] ) * event.quantity
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
+        slippage_diff = (price - event.position['close'] ) * quantity
+        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
         exec_cache['fill'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}_{event.direction}'] = deepcopy(fill_event)
         self.events.put(fill_event)
         
