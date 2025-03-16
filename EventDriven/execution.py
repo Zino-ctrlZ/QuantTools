@@ -105,7 +105,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         #slippage may increase or decrease intended price
         price = event.position['close'] * (1 + slippage_pct)          
         
-        quantity = event.quantity if event.quantity is not None else math.floor(event.cash/price)
+        quantity = event.quantity if event.quantity is not None else math.floor(event.cash/(price+self.commission_rate))
         commission = self.commission_rate * quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
 
         market_value = (price * quantity) # cost before commission

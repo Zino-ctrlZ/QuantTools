@@ -543,24 +543,28 @@ class OptionSignalPortfolio(Portfolio):
         """
          #update trade data on successful buy
         trade_id = fill_event.position['trade_id']
-        self.__trades[trade_id] = {}
-        self.__trades[trade_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
-        self.__trades[trade_id]['entry_date'] = fill_event.datetime
-        self.__trades[trade_id]['quantity'] = fill_event.quantity
-        self.__trades[trade_id]['symbol'] = fill_event.symbol
-        self.__trades[trade_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
-        self.__trades[trade_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-        self.__trades[trade_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
-        self.__trades[trade_id]['total_entry_cost'] = fill_event.fill_cost
-        self.__trades[trade_id]['auxilary_entry_cost'] = abs(self.__trades[trade_id]['entry_commission']) + abs(self.__trades[trade_id]['entry_slippage'])
-        self.__trades[trade_id]['signal_id'] = fill_event.signal_id
-        self.__trades[trade_id]['trade_id'] = trade_id
+        unique_id = f'{trade_id}_{fill_event.signal_id}'
+        self.__trades[unique_id] = {}
+        self.__trades[unique_id]['unique_id'] = unique_id
+        self.__trades[unique_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
+        self.__trades[unique_id]['entry_date'] = fill_event.datetime
+        self.__trades[unique_id]['quantity'] = fill_event.quantity
+        self.__trades[unique_id]['symbol'] = fill_event.symbol
+        self.__trades[unique_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
+        self.__trades[unique_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+        self.__trades[unique_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
+        self.__trades[unique_id]['total_entry_cost'] = fill_event.fill_cost
+        self.__trades[unique_id]['auxilary_entry_cost'] = abs(self.__trades[unique_id]['entry_commission']) + abs(self.__trades[unique_id]['entry_slippage'])
+        self.__trades[unique_id]['signal_id'] = fill_event.signal_id
+        self.__trades[unique_id]['trade_id'] = trade_id
 
     def update_trades_on_sell(self, fill_event: FillEvent):
         """
         Update trade data on successful sell
         """
-        trade_data = self.__trades[fill_event.position['trade_id']]
+        trade_id = fill_event.position['trade_id']
+        unique_id = f'{trade_id}_{fill_event.signal_id}'
+        trade_data = self.__trades[unique_id]
         trade_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
         trade_data['exit_date'] = fill_event.datetime
         trade_data['exit_commission'] = self.__normalize_dollar_amount(fill_event.commission)
@@ -714,6 +718,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         
         transaction = {}
+        transaction['signal_id'] = fill_event.signal_id
         transaction['datetime'] = fill_event.datetime
         transaction['symbol'] = fill_event.symbol
         transaction['direction'] = fill_event.direction
