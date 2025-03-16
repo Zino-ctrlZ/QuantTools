@@ -351,6 +351,8 @@ class OptionSignalPortfolio(Portfolio):
             else:
                 self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal}')
             return None
+        
+        self.moneyness_tracker[signal.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
         self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime} Position: {position}')
         print("Buy Details")
         print(f"Position: {position}, Date: {date_str}, Signal: {signal}")
@@ -397,6 +399,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f'Not generating order because:{result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             self.events.put(new_signal)
+           
             
                 
         elif result == ResultsEnum.IS_HOLIDAY.value or result == ResultsEnum.NO_TRADED_CLOSE.value: #move signal to next trading day
