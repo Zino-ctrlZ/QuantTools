@@ -80,7 +80,7 @@ class PTBacktester(AggregatorParent):
         start_overwrite (Optional[str]): Start date to overwrite the backtest start date. If None, it will use the earliest date in the dataset
             This is useful for when you have a strategy that starts at a certain date, which is greater than the earliest date in the dataset.
             Typically to allow buffer to calculate indicators.
-        **kwargs: Additional keyword arguments to be passed to the backtesting.py library
+        **kwargs: Additional keyword arguments to be passed to the Backtest class in backtesting.py
 
         Returns:
         None
