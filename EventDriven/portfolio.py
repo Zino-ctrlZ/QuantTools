@@ -423,7 +423,7 @@ class OptionSignalPortfolio(Portfolio):
             
             new_max_price = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]))
             new_signal = deepcopy(signal)
-            signal.max_contract_price = new_max_price
+            new_signal.max_contract_price = new_max_price
             self.logger.warning(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             print(f'Not generating order because:{result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             self.events.put(new_signal)
