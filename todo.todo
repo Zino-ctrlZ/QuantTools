@@ -137,7 +137,7 @@ List Contracts:
 
 Usable:
     ✔ In_holdings fixed. @done(25-02-25 00:10)
-    ☐ 90% of trades from Stock go thru in Options
+    ✔ 90% of trades from Stock go thru in Options @done(25-03-16 20:54)
     ✔ Can conduct aggregation @done(25-03-02 12:55)
     ✔ Can do naked & spreads without errors @done(25-03-04 21:53)
     
