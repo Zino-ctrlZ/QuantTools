@@ -24,6 +24,7 @@ Configuration = ConfigProxy()
 from trade.helpers.Context import Context
 import re
 from dateutil.relativedelta import relativedelta
+from trade.helpers.exception import OpenBBEmptyData
 import numpy as np
 import requests
 import pandas as pd

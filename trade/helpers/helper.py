@@ -38,7 +38,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
-from trade.helpers.exception import YFinanceEmptyData
+from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -98,7 +98,10 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
 
     Utilizes OpenBB historical api. Default provider is yfinance.
     """
-    data = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+    try:
+        data = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+    except:
+        raise OpenBBEmptyData(f"OpenBB returned empty data for {tick} between {start} and {end}")
     data.split_ratio.replace(0, 1, inplace = True)
     data['cum_split'] = data.split_ratio.cumprod()
     data['max_cum_split'] = data.cum_split.max()
