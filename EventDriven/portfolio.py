@@ -74,6 +74,7 @@ class OptionSignalPortfolio(Portfolio):
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
         self.dte_reduction_factor = 60 #reduce dte by 60 days if contract is too illiquid
+        self.min_acceptable_dte_threshold = 90 #minimum dte to accept a contract
         self.moneyness_width_factor = 0.05 
         self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
         self.max_contract_price_factor = 1.2 #increase max price by 20%
@@ -376,7 +377,7 @@ class OptionSignalPortfolio(Portfolio):
         new_order_settings['specifics'] = [{**x, 'dte': initial_dte} for x in new_order_settings['specifics']] #reduce dte by 1 day
         return new_order_settings
     
-    def resolve_order_result(self, position_result: ResultsEnum, signal: SignalEvent, call_count = 0): 
+    def resolve_order_result(self, position_result: ResultsEnum, signal: SignalEvent): 
         """
         Analyze the results of the order and update the portfolio or event scheduler accordingly
         
@@ -389,14 +390,20 @@ class OptionSignalPortfolio(Portfolio):
         UNAVAILABLE_CONTRACT: log warning
         """
         if position_result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: # adjust moneyness width if moneyness_tracket_index has not exceeded threshold and add to queue   
+            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set 
+            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] #increase moneyness width by 20%
+            new_signal = deepcopy(signal)
+            new_signal.order_settings = order_settings
+            
             moneyness_tracker_index = self.moneyness_tracker.get(signal.signal_id, 0)
             # if moneyness width has been adjusted more than threshold, do not generate order
             if moneyness_tracker_index > self.min_moneyness_threshold: 
-                self.logger.warning(f'Not generating order because:{position_result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
-                print(f'Not generating order because:{position_result} {signal}, moneyness width has been adjusted {moneyness_tracker_index} times, greater than threshold of {self.min_moneyness_threshold}')
-                unprocess_dict = signal.__dict__
-                unprocess_dict['reason'] = position_result
-                self.unprocessed_signals.append(unprocess_dict)
+                new_max_price = self.__max_contract_price[signal.symbol]
+                new_signal_on_dte = deepcopy(signal)
+                new_signal_on_dte.order_settings = None
+                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
+                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
+                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
                 return None
             
             if moneyness_tracker_index == 0:
@@ -406,10 +413,7 @@ class OptionSignalPortfolio(Portfolio):
             
             
                 
-            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set 
-            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] #increase moneyness width by 20%
-            new_signal = deepcopy(signal)
-            new_signal.order_settings = order_settings
+
             self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             self.events.put(new_signal)
@@ -431,20 +435,12 @@ class OptionSignalPortfolio(Portfolio):
             allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) ## Max price should not exceed allocated cash
             
             if new_max_price > allocated_cash:
-                if call_count < 2:
-                    new_max_price = self.__max_contract_price[signal.symbol]
-                    new_signal_on_dte = deepcopy(signal)
-                    new_signal_on_dte.max_contract_price = None
-                    self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
-                    print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
-                    self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte, call_count + 1)
-                    return None
- 
-                self.logger.warning(f'Not generating order because:{position_result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
-                print(f'Not generating order because:{position_result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
-                unprocess_dict = signal.__dict__
-                unprocess_dict['reason'] = ResultsEnum.MAX_PRICE_TOO_LOW.value
-                self.unprocessed_signals.append(unprocess_dict)
+                new_max_price = self.__max_contract_price[signal.symbol]
+                new_signal_on_dte = deepcopy(signal)
+                new_signal_on_dte.max_contract_price = None
+                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
+                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
+                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
                 return None
             
             new_max_price = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]))
@@ -460,7 +456,7 @@ class OptionSignalPortfolio(Portfolio):
             order_settings = self.__reduce_order_settings_dte_by_factor(order_settings)
             dte = order_settings['specifics'][0]['dte']
             
-            if dte < self.roll_map.get(signal.symbol, 365) or dte < 0:
+            if dte < self.min_acceptable_dte_threshold or dte <= 0:
                 self.logger.warning(f'Not generating order because:{position_result} {signal}')
                 print(f'Not generating order because:{position_result} {signal}')
                 unprocess_dict = signal.__dict__
