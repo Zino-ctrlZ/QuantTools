@@ -329,6 +329,16 @@ class OptionSignalPortfolio(Portfolio):
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
+            #on the off case where close price is negative, move sell to next trading day
+            if position['close'] < 0:
+                # move signal to next day 
+                new_signal = deepcopy(signal)
+                next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
+                new_signal.datetime = next_trading_day
+                self.logger.warning(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
+                print(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
+                self.events.schedule_event(next_trading_day, new_signal)
+                return None
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=current_position['signal_id'])
             return order
         return None
