@@ -301,7 +301,6 @@ class OptionSignalPortfolio(Portfolio):
         self.stock_equity = stock_ts
         return self.__normalize_dollar_amount(((stock_ts['Total'].iloc[-1] / stock_ts['Total'].iloc[0]) -1))
     
-             
 
     def generate_order(self, signal : SignalEvent):
         """
@@ -370,8 +369,14 @@ class OptionSignalPortfolio(Portfolio):
         print("Cash at Hand", cash_at_hand, "Close", position['close'])
         return OrderEvent(signal.symbol, signal.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal.signal_id)
         
+    def __reduce_order_settings_dte_by_factor(self, order_settings):
+        new_order_settings = deepcopy(order_settings)
+        initial_dte = new_order_settings['specifics'][0]['dte']
+        initial_dte = initial_dte - self.dte_reduction_factor
+        new_order_settings['specifics'] = [{**x, 'dte': initial_dte} for x in new_order_settings['specifics']] #reduce dte by 1 day
+        return new_order_settings
     
-    def resolve_order_result(self, position_result, signal: SignalEvent): 
+    def resolve_order_result(self, position_result, signal: SignalEvent, call_count = 0): 
         """
         Analyze the results of the order and update the portfolio or event scheduler accordingly
         
@@ -427,6 +432,15 @@ class OptionSignalPortfolio(Portfolio):
             allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) ## Max price should not exceed allocated cash
             
             if new_max_price > allocated_cash:
+                if call_count < 2:
+                    new_max_price = self.__max_contract_price[signal.symbol]
+                    new_signal_on_dte = deepcopy(signal)
+                    new_signal_on_dte.max_contract_price = None
+                    self.logger.warning(f'Not generating order because:{result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
+                    print(f'Not generating order because:{result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
+                    self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte, call_count + 1)
+                    return None
+ 
                 self.logger.warning(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
                 print(f'Not generating order because:{result} {signal}, new price {new_max_price} exceeds allocated cash {allocated_cash}')
                 unprocess_dict = signal.__dict__
@@ -444,10 +458,10 @@ class OptionSignalPortfolio(Portfolio):
             
         elif result == ResultsEnum.TOO_ILLIQUID.value or result == ResultsEnum.NO_ORDERS.value:
             order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set
-            initial_dte = order_settings['specifics'][0]['dte']
-            initial_dte = initial_dte - self.dte_reduction_factor
+            order_settings = self.__reduce_order_settings_dte_by_factor(order_settings)
+            dte = order_settings['specifics'][0]['dte']
             
-            if initial_dte < self.roll_map.get(signal.symbol, 365) or initial_dte < 0:
+            if dte < self.roll_map.get(signal.symbol, 365) or dte < 0:
                 self.logger.warning(f'Not generating order because:{result} {signal}')
                 print(f'Not generating order because:{result} {signal}')
                 unprocess_dict = signal.__dict__
@@ -455,7 +469,6 @@ class OptionSignalPortfolio(Portfolio):
                 self.unprocessed_signals.append(unprocess_dict)
                 return None
                 
-            order_settings['specifics'] = [{**x, 'dte': initial_dte} for x in order_settings['specifics']] #reduce dte by 1 day
             new_signal = deepcopy(signal)
             new_signal.order_settings = order_settings
             self.logger.warning(f'Not generating order because:{result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
