@@ -396,21 +396,23 @@ class OptionSignalPortfolio(Portfolio):
             new_signal.order_settings = order_settings
             
             moneyness_tracker_index = self.moneyness_tracker.get(signal.signal_id, 0)
-            # if moneyness width has been adjusted more than threshold, do not generate order
-            if moneyness_tracker_index > self.min_moneyness_threshold: 
-                new_max_price = self.__max_contract_price[signal.symbol]
-                new_signal_on_dte = deepcopy(signal)
-                new_signal_on_dte.order_settings = None
-                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
-                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
-                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
-                return None
-            
+
             if moneyness_tracker_index == 0:
                 self.moneyness_tracker[signal.signal_id] = moneyness_tracker_index + 1
             else:
                 self.moneyness_tracker[signal.signal_id] += 1
             
+            # if moneyness width has been adjusted more than threshold, do not generate order
+            if moneyness_tracker_index > self.min_moneyness_threshold: 
+                new_max_price = self.__max_contract_price[signal.symbol]
+                new_signal_on_dte = deepcopy(signal) 
+                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings
+                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
+                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
+                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
+                return None
+            
+
             
                 
 

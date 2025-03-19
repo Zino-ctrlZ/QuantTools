@@ -109,6 +109,8 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     data['split_factor'] = data.max_cum_split / data.cum_split
     data['chain_price'] = data.close * data.split_factor
     data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+    data['is_split_date'] = data['split_ratio'] != 1
+    data.index = pd.to_datetime(data.index)
     ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
     ## In the function, add a logger to log the anomalies
 
@@ -148,7 +150,24 @@ def extract_numeric_value(timeframe_str):
     return strings, integers
 
 
+def find_split_dates_within_range(tick: str, 
+                                 start: str, 
+                                 end: str):
+    """
+    Find split dates within a range
+    params:
+    tick: str, stock ticker
+    start: str, start date
+    end: str, end date
 
+    return:
+    list of split dates within the range
+    
+    
+    """
+    data = retrieve_timeseries(tick, '1900-01-01', end, '1d')
+    data = data[data.index.date >= pd.to_datetime(start).date()]
+    return data[data['is_split_date'] == True].index.strftime('%Y-%m-%d').tolist()
 
 
 
