@@ -13,10 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.extend(
     [os.environ.get('WORK_DIR'), os.environ.get('DBASE_DIR')])
-from dbase.DataAPI.ThetaData import (retrieve_quote_rt, 
-                                     retrieve_eod_ohlc,
-                                     retrieve_quote, 
-                                     list_contracts)
+from dbase.DataAPI.ThetaData import (list_contracts)
 
 # from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
@@ -24,7 +21,7 @@ Configuration = ConfigProxy()
 from trade.helpers.Context import Context
 import re
 from dateutil.relativedelta import relativedelta
-from trade.helpers.exception import OpenBBEmptyData
+from trade.helpers.exception import OpenBBEmptyData, raise_tick_name_change
 import numpy as np
 import requests
 import pandas as pd
@@ -44,13 +41,11 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
+from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker
 logger = setup_logger('trade.asset.Stock')
 
-## Key is (OLD, NEW, DATE)
-TICK_CHANGE_ALIAS = {
-    'META': ('FB', 'META', '2021-10-28'),
-    'FB': ('FB', 'META', '2021-10-28'),
-}
+
+
 class Stock:
     rf_rate = None  # Initializing risk free rate
     rf_ts = None
@@ -67,7 +62,7 @@ class Stock:
         ## I can update the end_date in __init__ if I need to
 
         end_date = Configuration.end_date or _end_date
-        key = (ticker.upper(), end_date)
+        key = (verify_ticker(ticker).upper(), end_date)
         if key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[key] = instance

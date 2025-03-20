@@ -46,6 +46,7 @@ Portfolio File:
         ☐ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism
         ☐ make max close passable in a signal for cases where max close is too low
         ☐ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage
+        ☐ For missing value, use intrinsic value are price
     
     Long Term:
         ☐ Implement buy on Open, Bid, Ask.
