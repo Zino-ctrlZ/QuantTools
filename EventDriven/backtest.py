@@ -90,10 +90,7 @@ class OptionSignalBacktest():
                         self.logger.info(f"Processing event: {event}")
                         print(f"Processing event: {event.type}")
 
-                        if event.type == EventTypes.MARKET.value:
-                            # self.portfolio.analyze_positions(event)
-                            pass
-                        elif event.type == EventTypes.SIGNAL.value:
+                        if event.type == EventTypes.SIGNAL.value:
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
                             self.executor.execute_order_randomized_slippage(event)

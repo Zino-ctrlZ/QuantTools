@@ -406,7 +406,7 @@ class OptionSignalPortfolio(Portfolio):
             if moneyness_tracker_index > self.min_moneyness_threshold: 
                 new_max_price = self.__max_contract_price[signal.symbol]
                 new_signal_on_dte = deepcopy(signal) 
-                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings
+                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings #first run threshold is exceeded, use default order settings, on next runs use signal order settings
                 self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
                 print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
                 self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)

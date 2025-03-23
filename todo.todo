@@ -63,6 +63,8 @@ Portfolio File:
         ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
         ☐ Handle the Exercise Properly
         ☐ Hedging 
+        ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
+        ☐ Create table for split date @chidi
       
 Events:
     ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26)
