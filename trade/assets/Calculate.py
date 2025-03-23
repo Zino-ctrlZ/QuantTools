@@ -41,7 +41,7 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
     assert hasattr(Calculate, func.__name__), f"Function {func.__name__} not a member of {Calculate}"
     assert func.__name__ in alllowable_func, f"Function {func.__name__} not allowed for this operation"
     structure_dict = {'long': [], 'short': []}
-
+    return_both_data = False
     def get_func_values(leg, leg_name, *args, **kwargs):
         values = []
         with Context():
@@ -80,7 +80,10 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
         structure_dict['total']['underlier_spot_slides'] = underlier_series
 
     else:
-        structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
+        if return_both_data:
+            structure_dict['total'] = sum([x[1] for x in structure_dict['long']]) + sum([x[1] for x in structure_dict['short']])
+        else:
+            structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
 
 
 

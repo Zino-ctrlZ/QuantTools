@@ -47,6 +47,9 @@ Portfolio File:
         ☐ make max close passable in a signal for cases where max close is too low
         ☐ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage
         ☐ For missing value, use intrinsic value are price
+        ☐ add a setter for roll_map & min_acceptable_dte_threshold:
+            - min_acceptable_dte_threshold cannot be less than roll_map
+            - Error message `min_acceptable_dte_threshold cannot be less than roll_map, this avoids placing a roll the same day as opening a trade`
     
     Long Term:
         ☐ Implement buy on Open, Bid, Ask.

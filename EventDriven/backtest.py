@@ -11,6 +11,7 @@ from EventDriven.riskmanager import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
+from copy import deepcopy
 import traceback
 
 
@@ -59,7 +60,15 @@ class OptionSignalBacktest():
             # Process events for the current bar
             while True:  # Avoid blocking. Loops through the event queue
                 try:
+                    if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
+                        ## But if there's a roll, I want to process the roll event, and no_wait will not throwi an error
+                        print("Using If statement for last event")
+                        self.portfolio.update_timeindex()
+                        self.portfolio.analyze_positions(event) ## Temporary fix for last event to be analyzing posiitons
+
+                    # print(f"Current Queue on {self.events.current_date}",list(deepcopy(current_event_queue.queue)))
                     event = current_event_queue.get_nowait()
+
                 except emptyEventQueue:
                     self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
                     print(f"Event queue is empty, processed {event_count} event(s)")
@@ -82,7 +91,8 @@ class OptionSignalBacktest():
                         print(f"Processing event: {event.type}")
 
                         if event.type == EventTypes.MARKET.value:
-                            self.portfolio.analyze_positions(event)
+                            # self.portfolio.analyze_positions(event)
+                            pass
                         elif event.type == EventTypes.SIGNAL.value:
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
@@ -118,9 +128,12 @@ class OptionSignalBacktest():
         print("Using roll function")
         roll_action = ['CLOSE', 'OPEN']
         event_count = 0
+        # print("Current Queue",list(deepcopy(current_event_queue.queue)))
         for action in roll_action: ## For each action, we want to carry out all processes
+            # print(f"Processing {action} action")
             self.portfolio.execute_roll(roll_event, action) ## Execute the roll event
             event_count += 1
+            
             while True: ##Starts event queue processing
                 try: ## Gets current event from the queue for that date
                     event = current_event_queue.get_nowait()

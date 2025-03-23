@@ -524,8 +524,6 @@ class OptionSignalPortfolio(Portfolio):
                 direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
                 rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
                 self.events.put(rollEvent)
-                self.logger.warning(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
-                print(f"Rolling contract for {symbol} at {market_event.datetime} is a holiday, skipping")
 
             elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                 position = self.current_positions[symbol]['position']
