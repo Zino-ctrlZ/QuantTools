@@ -32,6 +32,7 @@ from dbase.DataAPI.ThetaData import retrieve_ohlc, retrieve_quote_rt, retrieve_e
 from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
 from trade.helpers.decorators import log_error, log_error_with_stack
+from trade.models.utils import resolve_missing_vol
 from trade.helpers.types import OptionModelAttributes
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
@@ -602,6 +603,24 @@ class OptionDataManager:
                                                 r = x['rf_rate'],
                                                 q = x['dividend'],
                                                 flag = x['put/call'].lower()), axis = 1)
+        ## If after using Midpoint, we still have zero values, we will use resolve vols function
+        zero_mask = result == 0
+        print(zero_mask)
+        if zero_mask.sum() > 0:
+            OptDataManagerLogger.info(f"Zero values found for {self.opttick}. Resolving missing vol")
+            print(f"Zero values found for {self.opttick}. Resolving missing vol")
+            zero_result = data[zero_mask].apply(lambda x: resolve_missing_vol(
+                underlier = self.symbol,
+                expiration= pd.to_datetime(x['expiration']).strftime('%Y-%m-%d'),
+                strike = x['strike'],
+                put_call= x['put/call'],
+                datetime  = pd.to_datetime(x['datetime']).strftime('%Y-%m-%d'),
+                S = x['underlier_price'],   
+                r = x['rf_rate'],
+                q = x['dividend'],
+            ), axis = 1)
+            result[zero_mask] = zero_result
+
         return result
 
     def __greek_data_organizer_handler(self, data, timeAgg, greek):
