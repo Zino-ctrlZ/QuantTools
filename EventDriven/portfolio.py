@@ -539,20 +539,32 @@ class OptionSignalPortfolio(Portfolio):
                 ## if exercising, open new position if trade not closed yet.
                 continue
             
-    def execute_roll(self, roll_event: RollEvent, action: str):
+    # def execute_roll(self, roll_event: RollEvent, action: str):
+    #     """
+    #     Execute the roll event by closing the current position and opening a new one
+    #     rollEvent: RollEvent
+    #     """
+    #     self.logger.info(f'Rolling contract for {roll_event}')
+    #     print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
+    #     if action == 'CLOSE':
+    #         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
+    #         self.events.put(sell_signal_event)
+    #     print()
+    #     if action == 'OPEN':
+    #         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
+    #         self.events.put(buy_signal_event)
+            
+    def execute_roll(self, roll_event: RollEvent):
         """
         Execute the roll event by closing the current position and opening a new one
         rollEvent: RollEvent
         """
         self.logger.info(f'Rolling contract for {roll_event}')
         print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
-        if action == 'CLOSE':
-            sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
-            self.events.put(sell_signal_event)
-        print()
-        if action == 'OPEN':
-            buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
-            self.events.put(buy_signal_event)
+        sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
+        self.events.put(sell_signal_event)
+        buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
+        self.events.put(buy_signal_event)
                 
                 
     def update_trades_on_buy(self, fill_event: FillEvent):

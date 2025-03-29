@@ -61,12 +61,9 @@ class OptionSignalBacktest():
             while True:  # Avoid blocking. Loops through the event queue
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                        ## But if there's a roll, I want to process the roll event, and no_wait will not throwi an error
-                        print("Using If statement for last event")
-                        self.portfolio.update_timeindex()
-                        self.portfolio.analyze_positions(event) ## Temporary fix for last event to be analyzing posiitons
+                        ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
+                        self.portfolio.analyze_positions(event) 
 
-                    # print(f"Current Queue on {self.events.current_date}",list(deepcopy(current_event_queue.queue)))
                     event = current_event_queue.get_nowait()
 
                 except emptyEventQueue:
@@ -74,6 +71,7 @@ class OptionSignalBacktest():
                     print(f"Event queue is empty, processed {event_count} event(s)")
                    
                     # Update portfolio time index after processing all events
+                    
                     self.portfolio.update_timeindex()
                     
                     #advance scheduler queue to next date 
@@ -100,7 +98,8 @@ class OptionSignalBacktest():
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:
                             print("\nPerforming Roll Operation\n")
-                            self.__roll(event, current_event_queue)
+                            self.portfolio.execute_roll(event)
+                            # self.__roll(event, current_event_queue)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
@@ -125,7 +124,6 @@ class OptionSignalBacktest():
         print("Using roll function")
         roll_action = ['CLOSE', 'OPEN']
         event_count = 0
-        # print("Current Queue",list(deepcopy(current_event_queue.queue)))
         for action in roll_action: ## For each action, we want to carry out all processes
             # print(f"Processing {action} action")
             self.portfolio.execute_roll(roll_event, action) ## Execute the roll event
