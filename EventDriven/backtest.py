@@ -78,7 +78,7 @@ class OptionSignalBacktest():
                     self.events.advance_date()
                     break
                 except Exception as e:
-                    self.logger.error(f"Error fetching event: {e}")
+                    self.logger.error(f"Error fetching event: {e}\n{traceback.format_exc()}")
                     print(f"Error fetching event: {e}")
                     break
 
@@ -94,6 +94,7 @@ class OptionSignalBacktest():
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
+                            self.portfolio.update_timeindex()
                         elif event.type == EventTypes.EXERCISE.value:
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:

@@ -499,7 +499,7 @@ class OptionSignalPortfolio(Portfolio):
             return
         
         for symbol in self.symbol_list:
-            current_position = self.current_positions[symbol]
+            current_position = self.current_positions[symbol] 
             if 'position' not in current_position:
                 continue
             

@@ -123,6 +123,7 @@ class Stock:
         ## Logic to run chain, compatible with singleton behavior
         
         run_chain = kwargs.get('run_chain', False) ## Leave default as False for now)
+        self.run_chain = run_chain
         if run_chain:
             if self.__OptChain is None:
                 self.chain_init_thread = Thread(target = self.__init_option_chain, name = self.__repr__() + '_ChainInit')
@@ -225,6 +226,14 @@ class Stock:
         last_bus = change_to_last_busday(self.end_date)
         self.rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
+    
+    def rebuild_chain(self):
+        """
+        Method to rebuild the Option Chain
+        """
+        self.__init_option_chain()
+        self.run_chain = True
+
 
     def vol(self, exp, strike_type, strike, right):
         """
@@ -261,6 +270,10 @@ class Stock:
             strike_k = strike
 
         ## Check if Option Chain is ready, this is because the OptionChain initiation is done in a thread
+        if not self.run_chain:
+            logger.error('Option Chain not initialied. Use self.rebuild_chain() to initialize')
+            return None
+
         if self.OptChain is None or self.OptChain.lab is None:
             raise ValueError('Option Chain not ready, please wait for it to be ready')
             return None

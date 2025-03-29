@@ -650,6 +650,7 @@ class RiskManager:
                  bars,
                  events,
                  initial_capital,
+                 portfolio_manager = None
                  ):
         
         """
@@ -664,7 +665,7 @@ class RiskManager:
         self.bars = bars
         self.events = events
         self.initial_capital = initial_capital
-        # self.symbol_list = self.bars.symbol_list
+        self.pm = portfolio_manager
         self.OrderPicker = OrderPicker()
 
 
