@@ -42,6 +42,7 @@ from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker
+from trade.helpers.types import OptionModelAttributes
 logger = setup_logger('trade.asset.Stock')
 
 
@@ -194,7 +195,8 @@ class Stock:
         try:
             force_build = self.kwargs.get('force_build', False)
             logger.info(f'Initializing Option Chain for {self.ticker} on {self.end_date}')
-            chain = OptionChain(self.ticker, self.end_date, self, self.dumas_width, force_build = force_build)
+            end_date = pd.to_datetime(self.end_date).strftime('%Y-%m-%d')
+            chain = OptionChain(self.ticker, end_date, self, self.dumas_width, force_build = force_build)
             self.__OptChain = chain
             self.__chain = self.__OptChain.get_chain(True)
             self.OptChain.initiate_lab()
@@ -238,7 +240,7 @@ class Stock:
         dict: {'k': strike, 'dumas': dumas vol, 'svi': svi vol}
         """
         exp = identify_length(*extract_numeric_value(exp))
-        spot = list(self.spot().values())[0]
+        spot = list(self.spot(spot_type=OptionModelAttributes.spot_type.value).values())[0]
 
         ## Check if strike is a list, ndarray or float
         if isinstance(strike, list):

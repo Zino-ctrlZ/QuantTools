@@ -1,4 +1,4 @@
-
+## To-Do: Switch Binomial Pricing to Leisen-Reimer Formulas
 import inspect
 import time
 import os
@@ -33,6 +33,7 @@ from openbb import obb
 import pandas as pd
 import numpy as np
 import inspect
+from datetime import datetime
 from copy import deepcopy
 from trade.helpers.Logging import setup_logger
 from trade.helpers.types import OptionTickMetaData
@@ -45,14 +46,21 @@ logger = setup_logger('trade.helpers.helper')
 # To-Dos: 
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
-
-
-
-
-
-
-
 option_keys = {}
+
+def save_vol_resolve(opt_tick, datetime, vol_resolve):
+    """Utility function to save vol_resolve to json file"""
+    import os, json
+    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve.json', 'r') as f:
+        data = json.load(f)
+    datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
+    data.setdefault(datetime, {})
+    data[datetime][opt_tick]= {}
+    data[datetime][opt_tick]['VolResolve'] = vol_resolve
+    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve.json', 'w') as f:
+        json.dump(data, f)
+
+
 def import_option_keys():
     global option_keys
     import json
@@ -181,7 +189,7 @@ def copy_doc_from(func):
         return method
     return wrapper
 
-from datetime import datetime
+
 
 def contains_time_format(date_str: str) -> bool:
     try:
@@ -192,13 +200,10 @@ def contains_time_format(date_str: str) -> bool:
 
 def time_distance_helper(exp: str, strt: str = None) -> float:
     if strt is None:
-        start_date = datetime.today()
-    else:
-        strt_2 = parse_date(strt)
-        start_date = strt_2
-       
-    parsed_dte = parse_date(exp + ' 16:00:00') if not contains_time_format(exp) else parse_date(exp)
-    parsed_dte = parsed_dte
+        strt = datetime.today()
+    
+    # parsed_dte = parse_date(exp + ' 16:00:00') if not contains_time_format(exp) else parse_date(exp)
+    parsed_dte, start_date = pd.to_datetime(exp), pd.to_datetime(strt)
     days = (parsed_dte - start_date).total_seconds()
 
     T = days/(365.25*24*3600)
@@ -234,13 +239,13 @@ def binomial(K: Union[int, float], exp_date: str, sigma: float, r: float = None,
             S0 = stock.prev_close()
             S0 = S0.close
     else:
-        y = 0
+        if y is None:
+            y = 0
     if r is None:
         rates = 0.005
         r = rates.iloc[len(rates)-1, 0]/100
 
     # Create a formula to get implied vol
-
     T = time_distance_helper(exp_date, start)
     dt = T/N
     nu = r - 0.5*sigma**2
@@ -323,8 +328,6 @@ def implied_vol_bt(S0, K, r, market_price,exp_date: str, flag='c', tol=0.0000000
         Cprime = vega(flag, S0, K, T, r, vol_old)*100
         C = bs_price - market_price
         vol_new = vol_old - C/Cprime
-        bs_new = bs(flag, S0, K, T, r, vol_new)
-        # or abs(bs_new - market_price) < tol):
         if (abs((vol_old - vol_new)/vol_old)) < tol:
             break
         vol_old = vol_new
@@ -380,6 +383,9 @@ def vanna(S, K, r, T, sigma, flag, q):
 import QuantLib as ql
 from datetime import datetime
 
+
+
+
 def optionPV_helper(
     spot_price: float,
     strike_price: float | int,
@@ -421,6 +427,21 @@ def optionPV_helper(
 
     try:
         # Option Parameters
+
+
+        if model == 'bt':
+            binomial_price = binomial(
+                K = strike_price,
+                exp_date = exp_date,
+                sigma = volatility,
+                r = risk_free_rate,
+                S0=spot_price,
+                y = dividend_yield,
+                opttype=putcall,
+                start = settlement_date_str
+            )
+            return binomial_price
+
         spot_price = spot_price # Current stock price
         strike_price = strike_price  # Option strike price
         maturity_date_str = exp_date  # Option maturity date as a string
@@ -461,16 +482,9 @@ def optionPV_helper(
         # Black-Scholes-Merton Process (with dividend yield)
         bsm_process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, risk_free_ts, volatility_ts)
 
-        if model == 'bt':
 
-            # Binomial Pricing (Jarrow-Rudd)
-            binomial_engine = ql.BinomialVanillaEngine(bsm_process, "JarrowRudd", 1000)
-            american_option = ql.VanillaOption(payoff, exercise)
-            american_option.setPricingEngine(binomial_engine)
-            binomial_price = american_option.NPV()
-            return binomial_price
         
-        elif model == 'mcs':
+        if model == 'mcs':
             # Monte Carlo Pricing (Longstaff-Schwartz)
             monte_carlo_engine = ql.MCAmericanEngine(bsm_process, "PseudoRandom", timeSteps=250, requiredSamples=10000)
             american_option = ql.VanillaOption(payoff, exercise)
@@ -547,7 +561,9 @@ def IV_handler(**kwargs):
 
 
     try:
+
         iv = implied_volatility(**kwargs)
+
         if np.isinf(iv):
             iv = 0
         return iv
@@ -572,54 +588,17 @@ def binomial_implied_vol(price, S, K, r, T, option_type, pricing_date, dividend_
         'dividend_yield': dividend_yield
     }
     try:
-        # Ensure option_type is in uppercase
-        
-        option_type = option_type.upper()
-        pricing_date = pd.to_datetime(pricing_date)
-        T = pd.to_datetime(T)
-        # Convert Python datetime objects to QuantLib Date objects
-        pricing_date_ql = ql.Date(pricing_date.day, pricing_date.month, pricing_date.year)
-        maturity_date_ql = ql.Date(T.day, T.month, T.year)
-        # settlement_date_ql = ql.Date(settlement_date.day, settlement_date.month, settlement_date.year)
-
-        # Option type
-        if option_type == 'C':
-            option_type = ql.Option.Call
-        elif option_type == 'P':
-            option_type = ql.Option.Put
-        else:
-            raise ValueError("Invalid option type. Use 'C' for Call or 'P' for Put.")
-
-        # Set up the QuantLib option
-        payoff = ql.PlainVanillaPayoff(option_type, K)
-        exercise = ql.EuropeanExercise(maturity_date_ql)
-        european_option = ql.VanillaOption(payoff, exercise)
-
-        # Set up the QuantLib Black-Scholes-Merton process
-        spot_handle = ql.QuoteHandle(ql.SimpleQuote(S))
-        rate_handle = ql.YieldTermStructureHandle(
-            ql.FlatForward(pricing_date_ql, r, ql.Actual360())
-        )
-        dividend_handle = ql.YieldTermStructureHandle(
-            ql.FlatForward(pricing_date_ql, dividend_yield, ql.Actual360())
-        )
-        vol_handle = ql.BlackVolTermStructureHandle(
-            ql.BlackConstantVol(pricing_date_ql, ql.NullCalendar(), ql.QuoteHandle(ql.SimpleQuote(0.0)), ql.Actual360())
+        return implied_vol_bt(
+        S0 = S,
+        K = K,
+        exp_date = T,
+        r = r,
+        y = dividend_yield,
+        market_price=price,
+        flag = option_type,
+        start = pricing_date
         )
 
-        bsm_process = ql.BlackScholesMertonProcess(spot_handle, dividend_handle, rate_handle, vol_handle)
-
-        # Set up the binomial engine
-        binomial_engine = ql.BinomialVanillaEngine(bsm_process, 'crr', 100)
-
-        # Set the pricing engine to the option
-        european_option.setPricingEngine(binomial_engine)
-
-        # Calculate the implied volatility
-        implied_volatility = european_option.impliedVolatility(price, bsm_process)
-        if np.isinf(implied_volatility):
-            implied_volatility = 0
-        return implied_volatility
 
     except Exception as e:
         logger.warning('')
