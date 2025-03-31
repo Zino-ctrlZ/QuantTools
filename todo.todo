@@ -43,9 +43,9 @@ Portfolio File:
         ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
         ✔ Add max-close on tick @done(25-03-04 00:32)
         ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
-        ☐ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism
-        ☐ make max close passable in a signal for cases where max close is too low
-        ☐ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage
+        ✔ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism @done(25-03-30 21:09)
+        ✔ make max close passable in a signal for cases where max close is too low @done(25-03-30 21:09)
+        ✔ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage @done(25-03-30 21:08)
         ☐ For missing value, use intrinsic value are price
         ☐ add a setter for roll_map & min_acceptable_dte_threshold:
             - min_acceptable_dte_threshold cannot be less than roll_map
@@ -55,7 +55,7 @@ Portfolio File:
         ☐ Implement buy on Open, Bid, Ask.
         ☐ Getting divYield to have a max retries to factor in sporadic errors 
         ☐ Add rebalancing
-        ☐ Implement enum for signal types, order types & event types
+        ✔ Implement enum for signal types, order types & event types @done(25-03-30 21:12)
         ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
         ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
         ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
@@ -75,9 +75,9 @@ Events:
      ✔ Make ROLL its own event @done(25-03-13 18:36)
 
 EventScheduler:
-    ☐ Create subclass of queue and overide getnowait() function
-    ☐ Implement a dictionary that mirrors the queue, keys will be same as the events_dict, each dictionary value will have CLOSE and OPEN dictionaries that store signals. 
-    ☐ When processing, if the event is a signal event to OPEN, check for matching signal to CLOSE on that same day, put the buy back in the event queue for same day if there is a matching close in existence, have a check for if that reverse operation has been conducted to prevent infinite loops 
+    ✔ Create subclass of queue and overide getnowait() function @done(25-03-30 21:09)
+    ✘ Implement a dictionary that mirrors the queue, keys will be same as the events_dict, each dictionary value will have CLOSE and OPEN dictionaries that store signals. @cancelled(25-03-30 21:10)
+    ✔ When processing, if the event is a signal event to OPEN, check for matching signal to CLOSE on that same day, put the buy back in the event queue for same day if there is a matching close in existence, have a check for if that reverse operation has been conducted to prevent infinite loops @done(25-03-30 21:10)
     ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
 Data File:
