@@ -43,7 +43,7 @@ class SignalEvent(Event):
         Parameters:
         symbol - The ticker symbol, e.g. 'GOOG'.
         datetime - The timestamp at which the signal was generated.
-        signal_type - 'LONG' or 'SHORT'.
+        signal_type - 'LONG', 'SHORT' or 'CLOSE'.
         signal_id- A unique identifier for the signal 
         max_contract_price - The maximum price for the contract
         order_settings - specifically for Order signals, to specify the kind of contract to generate, 
