@@ -167,3 +167,8 @@ cython_debug/
 EventDriven/testing/data/*
 thoughts_log.md
 .DS_Store
+EventDriven/logs/*
+EventDriven/input/*
+EventDriven/output/*
+EventDriven/testing/*
+EventDriven/demos/*
