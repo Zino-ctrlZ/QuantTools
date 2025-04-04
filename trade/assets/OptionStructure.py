@@ -1,6 +1,6 @@
 import sys, os
 from dotenv import load_dotenv
-sys.path.extend([os.environ['WORK_DIR'], os.environ['DBASE_DIR']])
+# sys.path.extend([os.environ['WORK_DIR'], os.environ['DBASE_DIR']])
 from trade.assets.Option import Option
 import pandas as pd
 from datetime import datetime

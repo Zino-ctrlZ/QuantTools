@@ -13,6 +13,7 @@ import numpy as np
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import parse_option_tick
 from EventDriven.types import ResultsEnum, SignalTypes
+from EventDriven.riskmanager import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
@@ -83,6 +84,7 @@ class OptionSignalPortfolio(Portfolio):
         self.moneyness_tracker = {}
         self.unprocessed_signals = []
         self.resolve_orders = True #resolve orders if they are not processed
+        self.risk_manager.pm = self ## Would be better to pass this in the constructor. Only achievable if we initialize risk manager in portfolio constructor
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -226,6 +228,9 @@ class OptionSignalPortfolio(Portfolio):
         
         return self.underlier_list_data[symbol]
         
+    @property
+    def get_underlier_data(self):
+        return self.__get_underlier_data
 
     @property
     def transactions(self):
@@ -350,10 +355,16 @@ class OptionSignalPortfolio(Portfolio):
         """
         date_str = signal.datetime.strftime('%Y-%m-%d')
         position_type = 'C' if signal.signal_type == 'LONG' else 'P'
-        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol] * .9) #use 90% of cash to buy contracts, leaving room for slippage and commission
+        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol] * 1) #use 90% of cash to buy contracts, leaving room for slippage and commission
         max_contract_price = self.__max_contract_price[signal.symbol] if signal.max_contract_price is None else signal.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
-        position_result = self.risk_manager.OrderPicker.get_order(signal.symbol, date_str, position_type,  max_contract_price, signal.order_settings if signal.order_settings is not None else self._order_settings)  
+        position_result = self.risk_manager.get_order(tick = signal.symbol, 
+                                                                  date = date_str, 
+                                                                  right = position_type,  
+                                                                  max_close = max_contract_price, 
+                                                                  order_settings= signal.order_settings if signal.order_settings is not None else self._order_settings,
+                                                                  signal_id = signal.signal_id)  
+        
         position = position_result['data'] if position_result['data'] is not None else None
         if position is None :
             if self.resolve_orders == True :
@@ -511,7 +522,7 @@ class OptionSignalPortfolio(Portfolio):
                     expiry_date = option_meta['exp_date']
                     break
             elif 'short' in current_position['position']:
-                for option_id in current_position['position']['long']:
+                for option_id in current_position['position']['short']:
                     option_meta = parse_option_tick(option_id)
                     expiry_date = option_meta['exp_date']
                     break

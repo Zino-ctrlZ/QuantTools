@@ -39,7 +39,7 @@ class OptionSignalBacktest():
         self.events = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.events, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.events)
-        self.risk_manager = RiskManager(self.bars, self.events, initial_capital)
+        self.risk_manager = RiskManager(self.bars, self.events, initial_capital, self.start_date, self.end_date)
         self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.events)
         self.logger = setup_logger('OptionSignalBacktest')
@@ -62,7 +62,8 @@ class OptionSignalBacktest():
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
                         ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
-                        self.portfolio.analyze_positions(event) 
+                        actions = self.risk_manager.analyze_position() 
+                        print("Risk Manager Actions: ", actions)
 
                     event = current_event_queue.get_nowait()
 

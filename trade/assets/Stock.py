@@ -11,8 +11,8 @@ import sys
 import os
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.extend(
-    [os.environ.get('WORK_DIR'), os.environ.get('DBASE_DIR')])
+# sys.path.extend(
+#     [os.environ.get('WORK_DIR', ''), os.environ.get('DBASE_DIR', '')])
 from dbase.DataAPI.ThetaData import (list_contracts)
 
 # from trade.helpers.Configuration import Configuration
@@ -34,7 +34,7 @@ from trade.models.VolSurface import SurfaceLab
 load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
-from dbase.DataAPI.ThetaData import resample, list_contracts
+from dbase.DataAPI.ThetaData import resample, retrieve_chain_bulk
 from pandas.tseries.offsets import BDay
 from dbase.database.SQLHelpers import DatabaseAdapter
 from pathos.multiprocessing import ProcessingPool as Pool
@@ -449,6 +449,13 @@ class Stock:
                 spot = {end: df[spot_type].values[-1]}
             return spot
     
+    # def option_chain(self, date = None, return_price = 'Midpoint'):
+        # if not date:
+        #     date = self.end_date
+        # contracts = retrieve_chain_bulk(self.ticker, 0, date, date, '16:00')
+        # contracts['DTE'] = (contracts['Expiration'] - pd.to_datetime(date)).dt.days
+        # return contracts.pivot_table(index=['Expiration', 'DTE','Strike'], columns='Right',values = return_price, aggfunc=sum)
+
     def option_chain(self, date = None):
         if not date:
             date = self.end_date

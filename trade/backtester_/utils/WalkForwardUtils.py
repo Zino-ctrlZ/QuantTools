@@ -1,7 +1,7 @@
 import os
 import sys
-sys.path.append(
-    os.environ.get('WORK_DIR'))
+# sys.path.append(
+#     os.environ.get('WORK_DIR'))
 from trade.backtester_.backtester_ import PTBacktester, PTDataset
 from trade.assets.Stock import Stock
 import pandas as pd

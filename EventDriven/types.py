@@ -30,3 +30,14 @@ class FillTypes(Enum):
   OPEN = 'BUY'
   CLOSE = 'SELL'
   EXERCISE = 'EXERCISE'
+
+class OpenPositionAction(Enum):
+   ROLL = 'ROLL'
+   EXERCISE = 'EXERCISE'
+   HOLD = 'HOLD'
+   ADJUST = 'ADJUST'
+
+class PositionAdjustmentReason(Enum):
+   DTE_ROLL = 'DTE_ROLL'
+   MONEYNESS_ROLL = 'MONEYNESS_ROLL'
+   LIMIT_BREACH = 'LIMIT_BREACH'

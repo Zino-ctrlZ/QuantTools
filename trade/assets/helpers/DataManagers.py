@@ -10,8 +10,7 @@ from dotenv import load_dotenv
 import os
 import sys
 load_dotenv()
-sys.path.append(os.environ.get('DBASE_DIR'))
-sys.path.append(os.environ.get('WORK_DIR'))
+
 import logging
 from openpyxl import load_workbook
 from datetime import datetime, date
@@ -24,7 +23,7 @@ from trade.assets.Stock import Stock
 from trade.helpers.helper import generate_option_tick_new
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.helper import IV_handler, time_distance_helper, binomial_implied_vol, wait_for_response
-from trade.helpers.helper import extract_numeric_value, change_to_last_busday
+from trade.helpers.helper import extract_numeric_value, change_to_last_busday, parse_option_tick
 from trade.helpers.Logging import setup_logger
 from trade.assets.Calculate import Calculate
 from trade.helpers.Context import Context
@@ -66,11 +65,13 @@ class OptionDataManager:
     tmfrms = [ 'h', 'd', 'w', 'M', 'q', 'y']
 
     def __init__(self,
-                symbol: str,
-                exp: str | datetime | date,
-                right: str,
-                strike: float,
-                default_fill: str = 'midpoint') -> None:
+                symbol: str = None,
+                exp: str | datetime | date = None,
+                right: str = None,
+                strike: float = None,
+                default_fill: str = 'midpoint',
+                opttick: str = None,
+                **kwargs) -> None:
         """
         Returns an object for querying data
 
@@ -80,17 +81,32 @@ class OptionDataManager:
         right: Put(P) or Call (C)
         strike: Option Strike
         default_fill: How to fill zero values for close. 'midpoint' or 'weighted_midpoint'
+        opttick: Option ticker, if provided, will ignore symbol, exp, right, strike and be initialized with the string
         """
-        assert isinstance(strike, float), f"Strike has to be type float, recieved {type(strike)}"
-        if default_fill not in ['midpoint', 'weighted_midpoint', None]:
-            raise ValueError("Expected default_fill to be one of: 'midpoint', 'weighted_midpoint', None ")
-        self.exp = exp
-        self.symbol = symbol
-        self.right = right.upper()
-        self.strike = strike
+
+        if opttick is not None:
+            assert isinstance(opttick, str), f"opttick has to be type str, recieved {type(opttick)}"
+            option_meta = parse_option_tick(opttick)
+            self.symbol = option_meta['ticker']
+            self.exp = option_meta['exp_date']
+            self.right = option_meta['put_call']
+            self.strike = option_meta['strike']
+            self.opttick = opttick
+
+        else:
+            assert isinstance(strike, float), f"Strike has to be type float, recieved {type(strike)}"
+            if default_fill not in ['midpoint', 'weighted_midpoint', None]:
+                raise ValueError("Expected default_fill to be one of: 'midpoint', 'weighted_midpoint', None ")
+            
+            assert all([symbol, exp, right, strike]), "symbol, exp, right, strike are required"
+            self.exp = exp
+            self.symbol = symbol
+            self.right = right.upper()
+            self.strike = strike
+            self.opttick = generate_option_tick_new(symbol, right, exp, strike)
+
         self.default_fill = default_fill
-        self.opttick = generate_option_tick_new(symbol, right, exp, strike)
-        self.Stock = Stock(symbol, run_chain = False)
+        self.Stock = Stock(self.symbol, run_chain = False)
 
     @log_error_with_stack(OptDataManagerLogger, True)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
@@ -157,6 +173,8 @@ class OptionDataManager:
 
             else:
                 unProcessedData = unProcessedData.set_index('datetime')
+                unProcessedData = unProcessedData[~unProcessedData.index.duplicated(keep = 'first')]
+                organized_data = organized_data[~organized_data.index.duplicated(keep = 'first')]
                 volColumns = [x.lower() for x in column_agg.keys()]
                 unProcessedData[volColumns] = organized_data[column_agg.keys()]
                 unProcessedData.reset_index(inplace = True)
@@ -605,10 +623,9 @@ class OptionDataManager:
                                                 flag = x['put/call'].lower()), axis = 1)
         ## If after using Midpoint, we still have zero values, we will use resolve vols function
         zero_mask = result == 0
-        print(zero_mask)
         if zero_mask.sum() > 0:
             OptDataManagerLogger.info(f"Zero values found for {self.opttick}. Resolving missing vol")
-            print(f"Zero values found for {self.opttick}. Resolving missing vol")
+            print(f"{zero_mask.sum()} Zero values found for {self.opttick}. Resolving missing vol")
             zero_result = data[zero_mask].apply(lambda x: resolve_missing_vol(
                 underlier = self.symbol,
                 expiration= pd.to_datetime(x['expiration']).strftime('%Y-%m-%d'),

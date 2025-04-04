@@ -1,8 +1,8 @@
 import time
 start_time = time.time() 
 import os, sys
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
+# sys.path.append(os.environ['WORK_DIR'])
+# sys.path.append(os.environ['DBASE_DIR'])
 from trade.models.VolSurface import SurfaceLab
 from dbase.database.SQLHelpers import DatabaseAdapter
 from trade.helpers.helper import (change_to_last_busday, 

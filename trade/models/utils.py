@@ -121,6 +121,19 @@ def resolve_missing_vol(
                                                         q = q,
                                                         flag = x['right'].lower()), axis = 1)
         
+
+        ## Start with using Close as Vol
+        contracts_filtered['mid_vol'] = contracts_filtered['close_vol']
+        contracts_filtered.mid_vol.replace(0, np.nan, inplace = True)
+        tgt_strike_vol = contracts_filtered.loc[idx_tgt, 'mid_vol']
+        if not np.isnan(tgt_strike_vol):
+                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'CLOSE_VOL'))
+                save_thread.start()
+                print("Close Vol Resolved for ", opt_tick)
+                return (contracts_filtered.reset_index(drop = True), tgt_strike_vol) if return_full else tgt_strike_vol
+
+
+
         ## Replace the zero values with the interpolated values
         contracts_filtered.mid_vol.replace(0, np.nan, inplace = True)
         contracts_filtered['mid_vol_interpolate'] = contracts_filtered['mid_vol'].interpolate()
@@ -146,8 +159,11 @@ def resolve_missing_vol(
                                 return_model = True,
                                 print_url = print_url
                                 )
-
-                        if model.preferred_mse >= 0.0184587085747542: ## Arbitarily chosen threshold. From Poorly fitted model
+                        
+                        if model == 0: ## This datetime == expirtion:
+                                return 0
+                        
+                        elif model.preferred_mse >= 0.0184587085747542: ## Arbitarily chosen threshold. From Poorly fitted model
                                 ## Poorly fitted model shouldn't be used
                                 save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'POOR_FIT'))
                                 save_thread.start()
@@ -163,6 +179,7 @@ def resolve_missing_vol(
                                 ## If the model returns a value, then we return that value
                                 save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'SVI_FITTING'))
                                 save_thread.start()
+                                print("SVI Model Fitted for ", opt_tick)
                                 return vol if not return_full else (model, vol)
                 return resolve_missing_vol(
                         underlier = underlier,
@@ -179,4 +196,5 @@ def resolve_missing_vol(
         
         save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'INTERPOLATED'))
         save_thread.start()
+        print("Interpolated Vol Resolved for ", opt_tick, " on ", datetime)
         return (contracts_filtered.reset_index(drop = True), tgt_strike_vol) if return_full else tgt_strike_vol

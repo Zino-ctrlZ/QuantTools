@@ -5,8 +5,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) # type: ignore
+# sys.path.append(
+#     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
 from typing import Union
 # from trade.helpers.Configuration import Configuration
@@ -40,6 +40,7 @@ from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
 from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
+import traceback
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -317,7 +318,7 @@ def implied_vol_bt(S0, K, r, market_price,exp_date: str, flag='c', tol=0.0000000
         market_price: market observed price
         tol: user choosen tolerance
     """
-    T = time_distance_helper(exp_date)
+    T = time_distance_helper(exp_date, start)
     max_iter = 200  # max number of iterations
     vol_old = 0.2  # initial guess
     count = 0
@@ -576,13 +577,46 @@ def IV_handler(**kwargs):
 
 
 
-def binomial_implied_vol(price, S, K, r, T, option_type, pricing_date, dividend_yield):
+def binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, dividend_yield):
+    """
+    Calculate the implied volatility of an option using the binomial tree model.
+
+    :param price: option price
+    :type price: float
+    :param S: underlying asset price
+    :type S: float
+    :param K: strike price
+    :type K: float
+    :param r: risk-free interest rate
+    :type r: float
+    :param exp_date: Expiration date
+    :type exp_date: str
+    :param option_type: 'c' or 'p' for call or put
+    :type option_type: str
+    :param pricing_date: Pricing date
+    :type pricing_date: str
+    :param dividend_yield: annualized continuous dividend rate
+    :type dividend_yield: float
+
+    >>> price = 5.87602423383
+    >>> S = 100
+    >>> K = 100
+    >>> r = .01
+    >>> option_type = 'c'
+    >>> exp_date = '2024-03-08'
+    >>> pricing_date = '2024-03-08'
+    >>> dividend_yield = 0
+
+    >>> iv = binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, dividend_yield)
+
+    
+    """
     kwargs = {
         'price': price,
         'S': S,
         'K': K,
         'r': r,
-        'T': T,
+        'T': exp_date,
         'option_type': option_type,
         'pricing_date': pricing_date,
         'dividend_yield': dividend_yield
@@ -591,7 +625,7 @@ def binomial_implied_vol(price, S, K, r, T, option_type, pricing_date, dividend_
         return implied_vol_bt(
         S0 = S,
         K = K,
-        exp_date = T,
+        exp_date = exp_date,
         r = r,
         y = dividend_yield,
         market_price=price,
@@ -601,9 +635,11 @@ def binomial_implied_vol(price, S, K, r, T, option_type, pricing_date, dividend_
 
 
     except Exception as e:
+        print(e)
         logger.warning('')
         logger.warning('"binomial_implied_vol" raised the below error')
         logger.warning(e)
+        logger.warning(f"Traceback: {traceback.format_exc()}")
         logger.warning(f'Kwargs: {kwargs}')
         return 0.0
 

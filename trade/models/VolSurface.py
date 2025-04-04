@@ -6,8 +6,8 @@
 import os, sys
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
+# sys.path.append(os.environ['WORK_DIR'])
+# sys.path.append(os.environ['DBASE_DIR'])
 import matplotlib.pyplot as plt 
 plt.style.use('ggplot')
 import math
@@ -77,16 +77,19 @@ def fit_svi_model(
         """
         print_url = kwargs.get('print_url', False)
         datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
+        if pd.to_datetime(expiration).date() == pd.to_datetime(datetime).date():
+            logger.error('Expiration date is the same as the datetime. Returning 0')
+            return (0, 0) if return_model else 0
+            
 
         ## Retrieve the chain
         data = retrieve_chain_bulk(
-        symbol = underlier,
-        exp = expiration,
-        start_date = datetime,
-        end_date = datetime,
-        end_time = '16:00',
-        print_url = print_url)
-
+                    symbol = underlier,
+                    exp = expiration,
+                    start_date = datetime,
+                    end_date = datetime,
+                    end_time = '16:00',
+                    print_url = print_url)
 
         data['DTE'] = (pd.to_datetime(data.Expiration) - pd.to_datetime(data.index)).dt.days
         data['r'] = r
@@ -105,7 +108,7 @@ def fit_svi_model(
         data_filtered = data[data.vol != 0]
         call_data = data_filtered[data_filtered.right == 'C']
         call_data['strike'] = call_data.Strike
-        model = SVIModelBuilder(call_data, datetime, 49)
+        model = SVIModelBuilder(call_data, datetime, 1)
         model.build_model()
         return (model.predict(kwargs['Strike'])[0], model) if return_model else model.predict(kwargs['Strike'])[0]
         

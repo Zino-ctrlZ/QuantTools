@@ -8,7 +8,8 @@ def runThreads(func, OrderedInputs: list[list], run_type: str = 'map') -> list:
     params:
     --------
     func: Function to run in multiple threads.
-    OrderedInputs: List of inputs to pass to the function.
+    OrderedInputs: List of inputs to pass to the function. Example:
+                   [[input1, input1, input1], [input2, input2, input2], [input3, input3, input3]]
     
     run_type: Type of multithreading execution. Default is 'map'.
 

@@ -2,8 +2,8 @@ from dotenv import load_dotenv
 import sys
 import os
 load_dotenv()
-sys.path.append(
-    os.environ.get('DBASE_DIR'))
+# sys.path.append(
+#     os.environ.get('DBASE_DIR', ''))
 from dbase.database.SQLHelpers import *
 from dbase.DataAPI.ThetaData import *
 import datetime
