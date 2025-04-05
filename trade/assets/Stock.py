@@ -365,7 +365,7 @@ class Stock:
         spot.set_index('Date', inplace = True)
         spot['yearly_dividend'] = div_history['yearly_dividend']
         spot.fillna(method = 'ffill', inplace = True)
-        spot.set_index('date', inplace = True)
+        # spot.set_index('Date', inplace = True)
         ## Calculate Dividend Yield
         spot['dividend_yield'] = (spot['yearly_dividend']/spot['close'])
         div_yield = spot['dividend_yield']

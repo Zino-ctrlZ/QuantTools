@@ -108,9 +108,19 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     Utilizes OpenBB historical api. Default provider is yfinance.
     """
     try:
-        data = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+        res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
     except:
         raise OpenBBEmptyData(f"OpenBB returned empty data for {tick} between {start} and {end}")
+    
+    
+    ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
+    data = res.to_df()
+    if 'split_ratio' not in data.columns:
+        res_vs = [r.__dict__ for r in res.results]
+        data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
+        data['split_ratio'] = 0
+
+
     data.split_ratio.replace(0, 1, inplace = True)
     data['cum_split'] = data.split_ratio.cumprod()
     data['max_cum_split'] = data.cum_split.max()
