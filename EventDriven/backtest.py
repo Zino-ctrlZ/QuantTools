@@ -86,7 +86,7 @@ class OptionSignalBacktest():
                     event_count += 1
                     try:
                         self.logger.info(f"Processing event: {event}")
-                        print(f"Processing event: {event.type}")
+                        print(f"Processing event: {event.type} {event.datetime}")
 
                         if event.type == EventTypes.SIGNAL.value:
                             self.portfolio.analyze_signal(event)

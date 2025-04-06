@@ -316,7 +316,14 @@ class OptionSignalPortfolio(Portfolio):
         if signal_type != 'CLOSE': #generate order for LONG or SHORT
             return self.create_order( signal, order_type)
         elif signal_type == 'CLOSE':
-            current_position = self.current_positions[symbol]
+            if signal.signal_id not in self.current_positions[symbol]:
+                self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
+                unprocess_dict = signal.__dict__
+                unprocess_dict['reason'] = (f'Signal not held in current positions at that time')
+                self.unprocessed_signals.append(unprocess_dict)
+                return None
+            
+            current_position = self.current_positions[symbol][signal.signal_id]
             if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
                 self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal)
                 return None
@@ -499,60 +506,46 @@ class OptionSignalPortfolio(Portfolio):
             return
         
         for symbol in self.symbol_list:
-            current_position = self.current_positions[symbol] 
-            if 'position' not in current_position:
-                continue
-            
-            expiry_date = ''
-            
-            if 'long' in current_position['position']:
-                for option_id in current_position['position']['long']:
-                    option_meta = parse_option_tick(option_id)
-                    expiry_date = option_meta['exp_date']
-                    break
-            elif 'short' in current_position['position']:
-                for option_id in current_position['position']['long']:
-                    option_meta = parse_option_tick(option_id)
-                    expiry_date = option_meta['exp_date']
-                    break
-            
-            dte = (pd.to_datetime(expiry_date) - pd.to_datetime(market_event.datetime)).days
+            for signal_id in self.current_positions[symbol]: 
+                current_position = self.current_positions[symbol][signal_id]
+                if 'position' not in current_position:
+                    continue
+                
+                expiry_date = ''
+                
+                if 'long' in current_position['position']:
+                    for option_id in current_position['position']['long']:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta['exp_date']
+                        break
+                elif 'short' in current_position['position']:
+                    for option_id in current_position['position']['long']:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta['exp_date']
+                        break
+                
+                dte = (pd.to_datetime(expiry_date) - pd.to_datetime(market_event.datetime)).days
 
-            
-            if symbol in self.roll_map and dte <= self.roll_map[symbol]:
-                self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
-                direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
-                rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=current_position['signal_id'])
-                self.events.put(rollEvent)
+                
+                if symbol in self.roll_map and dte <= self.roll_map[symbol]:
+                    self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
+                    direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
+                    rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=signal_id)
+                    self.events.put(rollEvent)
 
-            elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                position = self.current_positions[symbol]['position']
-                trade_data = self.__trades[position['trade_id']]
-                quantity = position['quantity']
-                entry_date = trade_data['entry_date']
-                underlier = self.__get_underlier_data(symbol)
-                spot = underlier.spot(ts = True, ts_start = entry_date, ts_end = entry_date)['close']
-                long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
-                self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
-                print(f'Exercising contract for {symbol} at {market_event.datetime}')
-                self.events.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
-                ## if exercising, open new position if trade not closed yet.
-                continue
-            
-    # def execute_roll(self, roll_event: RollEvent, action: str):
-    #     """
-    #     Execute the roll event by closing the current position and opening a new one
-    #     rollEvent: RollEvent
-    #     """
-    #     self.logger.info(f'Rolling contract for {roll_event}')
-    #     print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
-    #     if action == 'CLOSE':
-    #         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
-    #         self.events.put(sell_signal_event)
-    #     print()
-    #     if action == 'OPEN':
-    #         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
-    #         self.events.put(buy_signal_event)
+                elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
+                    position = current_position['position']
+                    trade_data = self.__trades[position['trade_id']]
+                    quantity = position['quantity']
+                    entry_date = trade_data['entry_date']
+                    underlier = self.__get_underlier_data(symbol)
+                    spot = underlier.spot(ts = True, ts_start = entry_date, ts_end = entry_date)['close']
+                    long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
+                    self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
+                    print(f'Exercising contract for {symbol} at {market_event.datetime}')
+                    self.events.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
+                    ## if exercising, open new position if trade not closed yet.
+                    continue
             
     def execute_roll(self, roll_event: RollEvent):
         """
@@ -736,7 +729,8 @@ class OptionSignalPortfolio(Portfolio):
             
             
         # update current_Positions with new position data
-        self.current_positions[fill_event.symbol] = new_position_data
+        # self.current_positions[fill_event.symbol]= new_position_data
+        self.current_positions[fill_event.symbol][fill_event.signal_id] = new_position_data
 
     def update_holdings_on_fill(self, fill_event: FillEvent):
         """
@@ -793,36 +787,90 @@ class OptionSignalPortfolio(Portfolio):
         new_weighted_holdings_entry['total'] = new_weighted_holdings_entry['cash']
         
         for sym in self.symbol_list:
-            if 'position' in self.current_positions[sym]:
-                current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
-                market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
+            new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
+            remove_signals = []
+            for signal_id in self.current_positions[sym]:
+                current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]['position'])
+                market_value = self.__normalize_dollar_amount(self.current_positions[sym][signal_id]['quantity'] * current_close)
                 
-                self.current_positions[sym]['position']['close'] = current_close ##Update close price for every iteration
-                self.current_positions[sym]['market_value'] = market_value
+                self.current_positions[sym][signal_id]['position']['close'] = current_close ##Update close price for every iteration
+                self.current_positions[sym][signal_id]['market_value'] = market_value
                 
                 #update holdings
-                if 'exit_price' in self.current_positions[sym]: 
-                    new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
-                else:
-                    new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
+                if 'exit_price' not in self.current_positions[sym][signal_id]: 
+                     new_weighted_holdings_entry[sym] += market_value #update the holdings value to the market value of position + left over allocated cash
                     
 
                 #update positions
-                if 'exit_price' in self.current_positions[sym]: #if position is closed, set current_positions to empty dict
-                    self.current_positions[sym] = {}
-                    new_positions_entry[sym] = {}
+                if 'exit_price' in self.current_positions[sym][signal_id]: #if position is closed, remove the signal from current_positions
+                    #remove signal
+                    remove_signals.append(signal_id)
                 else: 
-                    new_positions_entry[sym] = deepcopy(self.current_positions[sym])
+                    new_positions_entry[sym][signal_id] = deepcopy(self.current_positions[sym][signal_id])
                     
-                #update total weighted holdings
-                new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
-            else: 
-                # if no position held for symbol, add the available cash to the symbol to the total equity 
-                new_weighted_holdings_entry['total'] += self.allocated_cash_map[sym]
+            
+            #cleanup current_positions
+            for signal_id in remove_signals:
+                del self.current_positions[sym][signal_id]
+            #update total weighted holdings
+            new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
                 
         #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
+        
+    # def update_timeindex(self): 
+    #     """
+    #     Adds a new record to the holdings and positions matrix based on the current market data bar. Runs at the end of the trading day (i.e all events for the day have been processed)
+    #     """
+        
+    #     current_date = pd.to_datetime(self.events.current_date)
+    #     # Check if the current date is a weekend (Saturday or Sunday)
+    #     if current_date.weekday() >= 5:
+    #         return
+                
+    #     #new positions dictionary
+    #     new_positions_entry = {s: {} for s in self.symbol_list} 
+    #     new_positions_entry['datetime'] = current_date
+        
+    #     #new weighted holdings dictionary
+    #     new_weighted_holdings_entry = {s: self.allocated_cash_map[s] for s in self.symbol_list}
+    #     new_weighted_holdings_entry['datetime'] = current_date
+    #     new_weighted_holdings_entry['cash'] = (1.0 - sum(self.__weight_map.values())) * self.initial_capital
+    #     new_weighted_holdings_entry['commission'] = self.current_weighted_holdings['commission']
+    #     new_weighted_holdings_entry['total'] = new_weighted_holdings_entry['cash']
+        
+    #     for sym in self.symbol_list:
+    #         if 'position' in self.current_positions[sym]:
+    #             current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
+    #             market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
+                
+    #             self.current_positions[sym]['position']['close'] = current_close ##Update close price for every iteration
+    #             self.current_positions[sym]['market_value'] = market_value
+                
+    #             #update holdings
+    #             if 'exit_price' in self.current_positions[sym]: 
+    #                 new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
+    #             else:
+    #                 new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
+                    
+
+    #             #update positions
+    #             if 'exit_price' in self.current_positions[sym]: #if position is closed, set current_positions to empty dict
+    #                 self.current_positions[sym] = {}
+    #                 new_positions_entry[sym] = {}
+    #             else: 
+    #                 new_positions_entry[sym] = deepcopy(self.current_positions[sym])
+                    
+    #             #update total weighted holdings
+    #             new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
+    #         else: 
+    #             # if no position held for symbol, add the available cash to the symbol to the total equity 
+    #             new_weighted_holdings_entry['total'] += self.allocated_cash_map[sym]
+                
+    #     #append the new holdings and positions to the list of all holdings and positions
+    #     self.all_positions.append(new_positions_entry)
+    #     self.weighted_holdings.append(new_weighted_holdings_entry)
         
     def update_fill(self, event):
         """
@@ -881,8 +929,8 @@ class OptionSignalPortfolio(Portfolio):
         all_positions_copy = deepcopy(self.all_positions)  # Avoid modifying original list
         for position_dict in all_positions_copy:
             dt = position_dict.pop('datetime', pd.to_datetime(0))  # Extract timestamp
-            for symbol, position in position_dict.items():
-                if position:  # If there is an active position
+            for symbol, positions in position_dict.items(): #TODO:all positions structure now by signal, get symbol from position 
+                for signal_id, position in positions.items():
                     records.append([
                         dt, symbol, 
                         position.get('position', {}).get('long', []),
@@ -890,11 +938,12 @@ class OptionSignalPortfolio(Portfolio):
                         position.get('position', {}).get('trade_id', None),
                         position.get('position', {}).get('close', None),
                         position.get('quantity', 0),
-                        position.get('market_value', 0.0)
+                        position.get('market_value', 0.0),
+                        signal_id
                     ])
 
         # Create DataFrame
-        df = pd.DataFrame(records, columns=['datetime', 'symbol', 'long', 'short', 'trade_id', 'close', 'quantity', 'market_value'])
+        df = pd.DataFrame(records, columns=['datetime', 'symbol', 'long', 'short', 'trade_id', 'close', 'quantity', 'market_value', signal_id])
 
         # Set MultiIndex (datetime → symbol)
         df.set_index(['datetime', 'symbol'], inplace=True)
