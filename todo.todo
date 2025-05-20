@@ -50,6 +50,12 @@ Portfolio File:
         ☐ add a setter for roll_map & min_acceptable_dte_threshold:
             - min_acceptable_dte_threshold cannot be less than roll_map
             - Error message `min_acceptable_dte_threshold cannot be less than roll_map, this avoids placing a roll the same day as opening a trade`
+        ☐ Make trades dataframe multiindex, use the trade_id as the first index and sell quantity as the second index
+        ☐ Perform Reduced sell. 
+        ☐ Allow multiple positions for a single ticker and factor in resizing.
+        ☐ Execute order proxy: This produces the exact data of executing and ordeer and returns it. if less than 0, we reduce the quantity and try again.
+        ☐ Create basic Hedge Class with Calculate hedge ratio. (Should have an open & close method.)
+        ☐ Make Positions an object
     
     Long Term:
         ☐ Implement buy on Open, Bid, Ask.
@@ -93,6 +99,12 @@ Strategy File:
 
 Risk Manager:
     ✔ Create a dummy risk manager. (Compute risk exposure) @done(25-01-21 07:33)
+    ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
+    ☐ Get Close From Chain, with bulk
+    ☐ Improve speed of rm
+    ☐ Add RM Print Statement
+    ☐ Add Portfolio Print Statement
+    ☐ Implement The Bool for Analyze Position
     ☐ Enforce scenario limits
     ☐ Extend risk manager to enforce moneyness spread btwn contracts
     ☐ Return none if no order found 

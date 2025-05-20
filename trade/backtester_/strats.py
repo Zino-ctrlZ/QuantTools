@@ -2,8 +2,8 @@ from backtesting.lib import crossover
 import pandas_ta as ta
 import os
 import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) # type: ignore
+# sys.path.append(
+#     os.environ.get('WORK_DIR')) # type: ignore
 from backtesting.backtesting import Strategy
 import pandas as pd
     

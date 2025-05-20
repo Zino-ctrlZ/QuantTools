@@ -54,7 +54,6 @@ fastapi==0.111.1
 fastapi-cli==0.0.5
 fastjsonschema==2.20.0
 filelock==3.16.1
--e git+https://github.com/Zino-ctrlZ/FinanceDatabase.git@b95fe6fbfebe9e02ea0610d566ea3e268815acff#egg=FinanceDatabase
 fonttools==4.53.1
 frozendict==2.4.4
 frozenlist==1.5.0
@@ -84,7 +83,7 @@ huggingface-hub==0.26.1
 hyper==0.7.0
 hyperframe==3.2.0
 idna==3.10
-importlib_metadata @ file:///home/conda/feedstock_root/build_artifacts/importlib-metadata_1726082825846/work
+importlib-metadata==6.11.0
 installer==0.7.0
 ipykernel @ file:///Users/runner/miniforge3/conda-bld/ipykernel_1719845458456/work
 ipython @ file:///home/conda/feedstock_root/build_artifacts/ipython_1727944696411/work
@@ -179,7 +178,6 @@ polygon-api-client==1.14.2
 posthog==3.5.2
 pox==0.3.4
 ppft==1.7.6.8
--e git+https://github.com/Zino-ctrlZ/stop-loss-script.git@133cf623a1b43b7c25ee14f4812d152a027daf4e#egg=private_backtest&subdirectory=BACKTEST/private_backtest
 prompt_toolkit==3.0.47
 propcache==0.2.0
 proto-plus==1.25.0
@@ -215,7 +213,6 @@ pyzmq==26.2.0
 qdldl==0.1.7.post4
 QuantLib==1.35
 QuantLib-Python==1.18
--e git+https://github.com/Zino-ctrlZ/QuantTools.git@030c9c2128a372d185f4e42e7d7cdfcd53237fc8#egg=QuantTools
 rapidfuzz==3.9.6
 readmeai==0.5.99.post5
 referencing==0.35.1
@@ -277,5 +274,5 @@ xattr==1.1.0
 xmltodict==0.13.0
 xyzservices==2024.9.0
 yarl==1.16.0
-yfinance==0.2.43
+yfinance==0.2.54
 zipp @ file:///home/conda/feedstock_root/build_artifacts/zipp_1726248574750/work

@@ -1,0 +1,30 @@
+{
+    "INTRADAY_AGG": "5m",
+    "MARKET_OPEN_TIME": "09:30",
+    "MARKET_CLOSE_TIME": "16:00",
+    "AVAILABLE_PRICING_MODELS": [
+        "bs",
+        "binomial",
+        "mc"
+    ],
+    "AVAILABLE_INTERVALS": [
+        "h",
+        "d",
+        "w",
+        "q",
+        "y",
+        "M",
+        "m"
+    ],
+    "AVAILABLE_GREEKS": [
+        "vega",
+        "vanna",
+        "volga",
+        "delta",
+        "gamma",
+        "theta",
+        "rho"
+    ],
+    "UPPER_BOUND_MONEYNESS": 1.2,
+    "LOWER_BOUND_MONEYNESS": 0.8
+}

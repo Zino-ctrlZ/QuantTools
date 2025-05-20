@@ -10,8 +10,8 @@ from backtesting import Backtest
 import pandas as pd
 import sys
 import os
-sys.path.append(
-    os.environ.get('WORK_DIR'))
+# sys.path.append(
+#     os.environ.get('WORK_DIR'))
 from trade.assets.Stock import Stock
 import plotly.io as pio
 import plotly.express as px

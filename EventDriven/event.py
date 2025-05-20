@@ -167,7 +167,16 @@ class ExerciseEvent(Event):
     Stores the quantity of an instrument actually exercised and at what price. In addition, stores the commission of the trade from the brokerage.
     """
     
-    def __init__(self, datetime : datetime | str, symbol : str, quantity : int, entry_date: datetime| str, spot: float, long_premiums: dict, short_premiums:dict, position = None, signal_id: str = None):
+    def __init__(self, 
+                 datetime : datetime | str, 
+                 symbol : str, 
+                 quantity : int, 
+                 entry_date: datetime| str, 
+                 spot: float, 
+                 long_premiums: dict, 
+                 short_premiums:dict, 
+                 position = None, 
+                 signal_id: str = None):
         """
         Initialises the ExerciseEvent object. Sets the symbol, exchange, quantity, direction, cost of fill and an optional commission.
         

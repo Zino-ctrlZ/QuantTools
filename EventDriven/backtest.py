@@ -39,7 +39,7 @@ class OptionSignalBacktest():
         self.events = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.events, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.events)
-        self.risk_manager = RiskManager(self.bars, self.events, initial_capital)
+        self.risk_manager = RiskManager(self.bars, self.events, initial_capital, self.start_date, self.end_date)
         self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.events)
         self.logger = setup_logger('OptionSignalBacktest')
@@ -61,12 +61,10 @@ class OptionSignalBacktest():
             while True:  # Avoid blocking. Loops through the event queue
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                        ## But if there's a roll, I want to process the roll event, and no_wait will not throwi an error
-                        print("Using If statement for last event")
-                        self.portfolio.update_timeindex()
-                        self.portfolio.analyze_positions(event) ## Temporary fix for last event to be analyzing posiitons
+                        ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
+                        actions = self.risk_manager.analyze_position() 
+                        print("Risk Manager Actions: ", actions)
 
-                    # print(f"Current Queue on {self.events.current_date}",list(deepcopy(current_event_queue.queue)))
                     event = current_event_queue.get_nowait()
 
                 except emptyEventQueue:
@@ -74,13 +72,14 @@ class OptionSignalBacktest():
                     print(f"Event queue is empty, processed {event_count} event(s)")
                    
                     # Update portfolio time index after processing all events
+                    
                     self.portfolio.update_timeindex()
                     
                     #advance scheduler queue to next date 
                     self.events.advance_date()
                     break
                 except Exception as e:
-                    self.logger.error(f"Error fetching event: {e}")
+                    self.logger.error(f"Error fetching event: {e}\n{traceback.format_exc()}")
                     print(f"Error fetching event: {e}")
                     break
 
@@ -96,11 +95,13 @@ class OptionSignalBacktest():
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
+                            self.portfolio.update_timeindex()
                         elif event.type == EventTypes.EXERCISE.value:
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:
                             print("\nPerforming Roll Operation\n")
-                            self.__roll(event, current_event_queue)
+                            self.portfolio.execute_roll(event)
+                            # self.__roll(event, current_event_queue)
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
@@ -125,7 +126,6 @@ class OptionSignalBacktest():
         print("Using roll function")
         roll_action = ['CLOSE', 'OPEN']
         event_count = 0
-        # print("Current Queue",list(deepcopy(current_event_queue.queue)))
         for action in roll_action: ## For each action, we want to carry out all processes
             # print(f"Processing {action} action")
             self.portfolio.execute_roll(roll_event, action) ## Execute the roll event

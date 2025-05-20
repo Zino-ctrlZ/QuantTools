@@ -6,32 +6,28 @@
 import os, sys
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
+# sys.path.append(os.environ['WORK_DIR'])
+# sys.path.append(os.environ['DBASE_DIR'])
 import matplotlib.pyplot as plt 
 plt.style.use('ggplot')
 import math
 from typing import Union
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
-from scipy.interpolate import interp1d, CubicSpline
-from trade.helpers.helper import optionPV_helper, generate_option_tick_new
+from scipy.interpolate import interp1d
+from trade.helpers.helper import IV_handler, binomial_implied_vol
 from trade.helpers.Logging import setup_logger
 from scipy.optimize import minimize 
 from py_vollib.black_scholes_merton import black_scholes_merton
 from trade.helpers.helper import time_distance_helper
 import warnings
-from pprint import pprint
-import ipywidgets as widgets 
 from abc import ABC, abstractmethod
 from pathos.multiprocessing import ProcessingPool as Pool
-from pathos.multiprocessing import cpu_count
 from threading import Thread
 from functools import partial
-from concurrent.futures import ThreadPoolExecutor
 from trade.models.ModelLibrary import ModelLibrary
 from dbase.database.SQLHelpers import DatabaseAdapter
+from dbase.DataAPI.ThetaData import retrieve_chain_bulk
 from trade.helpers.decorators import log_error, log_error_with_stack
 import copy
 from copy import deepcopy
@@ -49,6 +45,91 @@ shutdown_event = False
 
 
 ## To-Do: Make sure SVI never throws nan values
+
+
+def fit_svi_model(
+                underlier: str,
+                expiration: str,
+                datetime: str,
+                r: float,
+                q: float,
+                spot: float,
+                return_model: bool = False,
+                model = 'bs',
+                strike: float = 0,
+                **kwargs)-> float:
+        """
+        Simple function to interpolate a single Expiration date, at a time with SVI Model
+
+        Args:
+        underlier (str): Underlier symbol
+        expiration (str): Expiration date
+        datetime (str): Date to retrieve chain
+        r (float): Risk free rate
+        q (float): Dividend rate
+        spot (float): Spot price
+        return_model (bool): Return the model object
+        **kwargs: Additional arguments
+                print_url (bool): Print the URL
+
+        Returns:
+        float: Implied Volatility
+        (optional) SVIModelBuilder: Model object
+        
+        """
+        print_url = kwargs.get('print_url', False)
+        datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
+        if pd.to_datetime(expiration).date() == pd.to_datetime(datetime).date():
+            logger.error('Expiration date is the same as the datetime. Returning 0')
+            return (0, 0) if return_model else 0
+            
+
+        ## Retrieve the chain
+        end_time = kwargs.get('end_time', '16:00')
+        data = retrieve_chain_bulk(
+                    symbol = underlier,
+                    exp = expiration,
+                    start_date = datetime,
+                    end_date = datetime,
+                    end_time = end_time,
+                    print_url = print_url)
+
+        data['DTE'] = (pd.to_datetime(data.Expiration) - pd.to_datetime(data.index)).dt.days
+        data['r'] = r
+        data['q'] = q
+        data['right'] = data.Right
+        data['Spot'] = spot
+        data['price'] = data.Midpoint
+        if model == 'bs':
+            data['vol'] = data.apply(lambda x: IV_handler(
+                    price = x['price'],
+                    S = x['Spot'],
+                    K = x['Strike'],
+                    t = time_distance_helper(exp = x['Expiration'].strftime('%Y-%m-%d'), strt = x.name.strftime('%Y-%m-%d')),
+                    r = x['r'],
+                    q = x['q'],
+                    flag = x['right'].lower()), axis = 1)
+        elif model == 'binomial':
+            data['vol'] = data.apply(lambda x: binomial_implied_vol(
+                    price = x['price'],
+                    S = x['Spot'],
+                    K = x['Strike'],
+                    exp_date = x['Expiration'].strftime('%Y-%m-%d'),
+                    pricing_date = x.name.strftime('%Y-%m-%d'),
+                    r = x['r'],
+                    dividend_yield = x['q'],
+                    option_type = x['right'].lower()), axis = 1)
+        else:
+            raise ValueError(f'Invalid model type: {model}. Must be one of "bs" or "binomial"')
+        data_filtered = data[data.vol != 0]
+        call_data = data_filtered[data_filtered.right == 'C']
+        call_data['strike'] = call_data.Strike
+        model = SVIModelBuilder(call_data, datetime, 1)
+        model.build_model()
+        return (model.predict(strike)[0], model) if return_model else model.predict(strike)[0]
+        
+
+
 class ModelBuilder(ABC):
     """
     Abstract class for building Vol Surface models. This is only for the actual model, not the surface itself.
@@ -318,24 +399,23 @@ class DumasRollingModel:
 
     ## To-do: Predict IV for multiple T & K values, currently works for single T multiple K
     def predict_average(self, dte_target, k_range = None):
-        def predict_average(self, dte_target, k_range=None):
-            """
-            Predicts the average volatility surface for a given target days to expiration (DTE).
-            Parameters:
-            -----------
-            dte_target : int
-                The target days to expiration (DTE) for which the prediction is to be made. Must be between self.min_window and self.max_window.
-            k_range : int, float, or array-like, optional
-                The range of strike prices (k) for which the prediction is to be made. If None, a default range is used. If a single int or float is provided, it is converted to an array.
-            Returns:
-            --------
-            DumasModelResults
-                An object containing the predictions and the mean prediction for the given DTE and strike price range.
-            Raises:
-            -------
-            AssertionError
-                If dte_target is not between self.min_window and self.max_window.
-            """
+        """
+        Predicts the average volatility surface for a given target days to expiration (DTE).
+        Parameters:
+        -----------
+        dte_target : int
+            The target days to expiration (DTE) for which the prediction is to be made. Must be between self.min_window and self.max_window.
+        k_range : int, float, or array-like, optional
+            The range of strike prices (k) for which the prediction is to be made. If None, a default range is used. If a single int or float is provided, it is converted to an array.
+        Returns:
+        --------
+        DumasModelResults
+            An object containing the predictions and the mean prediction for the given DTE and strike price range.
+        Raises:
+        -------
+        AssertionError
+            If dte_target is not between self.min_window and self.max_window.
+        """
         assert self.min_window <= dte_target <= self.max_window, f'DTE must be between {self.min_window} and {self.max_window}'
         if isinstance(k_range, (int, float)):
             k_range = np.array([k_range])
@@ -623,6 +703,16 @@ class SVIModelBuilder(ModelBuilder):
         """
         if chain.empty:
             raise ValueError('Chain is empty!')
+
+        ## Assert necessary columns are present
+        assert 'Spot' in chain.columns, '`Spot` column is missing'
+        assert 'r' in chain.columns, 'Risk-free rate  `r` column is missing'
+        assert 'q' in chain.columns, 'Dividend yield `q` column is missing'
+        assert 'vol' in chain.columns, 'Implied Volatility `vol` column is missing'
+        assert 'DTE' in chain.columns, 'Days to Expiration `DTE` column is missing'
+        assert 'strike' in chain.columns, '`strike` column is missing'
+        assert 'price' in chain.columns, 'Price `price` column is missing'
+        assert 'right' in chain.columns, 'Right `right` column is missing'
 
 
         self.chain = chain
@@ -939,7 +1029,16 @@ class SVIModelBuilder(ModelBuilder):
         fig.update_layout(title=f'{self.right_name}:{self.DTE} DTE Market IV vs Strike Price', xaxis_title='Strike Price', yaxis_title='Implied Volatility', height = 800, width = 800)
         fig.show()
 
-    def predict(self, t, k):
+    def predict(self, k):
+        """
+        Predicts the implied volatility for a given strike price using the SVI model.
+
+        Parameters:
+        k (Union[float, int, np.ndarray]): Strike price(s) for which the implied volatility is to be predicted.
+        
+        Returns:
+        IV (Union[float, np.ndarray]): Predicted implied volatility for the given strike price(s).
+        """
         if isinstance(k, (int, float)):
             k = np.array([k])
 
@@ -1606,6 +1705,6 @@ class SurfaceLab:
     def __repr__(self):
         return f"SurfaceLab({self.ticker} on {pd.to_datetime(self.build_date).strftime('%Y%m%d')})"
     
-    def predict(self, dte, k, right, interpolate_variables = True):
+    def predict(self, dte, k, right, interpolate_variables = False):
         return self.manager.predict(dte, k, right, interpolate_variables)
 

@@ -167,3 +167,13 @@ cython_debug/
 EventDriven/testing/data/*
 thoughts_log.md
 .DS_Store
+
+# Caches
+.cache/
+.riskmanager_cache/
+
+# Others
+module_test/raw_code/DataManagers/scheduler/
+module_test/raw_code/DataManagers/requests_json/
+trade/helpers/clear_dirs.json
+trade/helpers/clear_dirs.txt
