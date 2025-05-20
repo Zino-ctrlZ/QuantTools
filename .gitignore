@@ -173,7 +173,13 @@ thoughts_log.md
 .riskmanager_cache/
 
 # Others
-module_test/raw_code/DataManagers/scheduler/
+## Only relevant for me since I do the scheduling
+module_test/raw_code/DataManagers/scheduler/   
 module_test/raw_code/DataManagers/requests_json/
+
+## Must be unique for each user
 trade/helpers/clear_dirs.json
 trade/helpers/clear_dirs.txt
+
+## Only relevant for me since I do the scheduling
+trade/helpers/*vol_resolve*.json
