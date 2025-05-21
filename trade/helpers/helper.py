@@ -880,6 +880,7 @@ def binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, di
 
 
     except Exception as e:
+        print(e)
         logger.warning('')
         logger.warning('"binomial_implied_vol" raised the below error')
         logger.warning(e)
