@@ -251,7 +251,19 @@ def update_caches(x):
     refresh_cache()
     global oi_cache, close_cache, oi_cache, spot_cache
     key = f"{x.Optiontick.unique()[0]}"
-    x = x.set_index('Datetime')
+    
+    ## When updating cache, we either set the data if not in cache, or append the data if it is in cache
+    if key in close_cache.keys(): ## Appending data
+        data = close_cache[key]
+        data.columns = data.columns.str.lower() ## This is to normalize for appending
+        x.columns = x.columns.str.lower()
+        x.set_index('datetime', inplace=True)
+        x = pd.concat([data, x], axis=0)
+        x.columns = x.columns.str.capitalize() ## Keeping the original format
+        x = x[~x.index.duplicated(keep = 'first')]
+    
+    else: ## Setting data
+        x = x.set_index('Datetime')
     close_cache[key] = x
     oi_cache[key] = x['Openinterest'].to_frame(name = 'Open_interest')
     return
@@ -343,15 +355,17 @@ def organize_data_for_query(missing_list: list,
         parsed_opts = pd.concat([parsed_opts, pd.DataFrame(opt_meta, index = [0])], axis=0)
     return parsed_opts
 
-def drop_cache_duplicates():
+def format_cache():
     """
-    Drops duplicates from the cache.
+    Drops duplicates from the cache & formats the columns to be capitalized.
     """
     global close_cache, oi_cache
     for key in close_cache.keys():
         close_cache[key] = close_cache[key][~close_cache[key].index.duplicated(keep = 'first')]
+        close_cache[key].columns = close_cache[key].columns.str.capitalize() ## This is to keep the original format
     for key in oi_cache.keys():
         oi_cache[key] = oi_cache[key][~oi_cache[key].index.duplicated(keep = 'first')]
+        oi_cache[key].columns = oi_cache[key].columns.str.capitalize()
 
     return
 
@@ -389,6 +403,31 @@ def update_spot_cache(opttick: list, target_date: str|datetime) -> None:
         spot_cache[cache_key] = spot
 
 
+def should_update_cache(key, start, end):
+
+    """
+    Check if the cache should be updated based on the key and date range.
+    
+    Args:
+        key (str): The key to check in the cache.
+        start (str): The start date for the date range.
+        end (str): The end date for the date range.
+        
+    Returns:
+        bool: True if the cache should be updated, False otherwise.
+    """
+
+    ## Update cache if not in close or oi cache
+    if key not in get_cache('close').keys() :
+        return True
+    
+    if key not in get_cache('oi').keys():
+        return True
+    
+    ## Update cache if the date range is not in the cache
+    close_df = get_cache('close')[key].copy()
+    close_df['Datetime'] = close_df.index
+    return not check_all_days_available(close_df, start, end)
 
 
 @log_error_with_stack(logger)
@@ -533,9 +572,26 @@ def populate_cache_v2(
     exp = full_data.Expiration.unique()[0]
     strikes_right = list(full_data[['Strike', 'Right']].itertuples(name=None, index=False))
     opttick = [generate_option_tick_new(tick, x[1], exp, x[0]) for x in strikes_right] 
-
+    
+    ## 1) Goal: Ensuring we don't requery the database for data we already have. Saves time
     ## Filtering out the ones that are already in the cache
     strikes_right = [x for x in strikes_right if opttick[strikes_right.index(x)] not in close_cache.keys()]
+    
+    ## 2) Goal: For all ticks in cache, we want to reupdate if start & end not in cache.
+    ## Getting opttick already in cache
+
+    cached_opttick = [x for x in opttick if x in close_cache.keys()]
+    non_cached_opttick = [x for x in opttick if x not in close_cache.keys()]
+    
+    ## Updating strikes_right list with this keys once we have checked that they should be updated
+    if len(cached_opttick) != 0:
+        update_list = [(parse_option_tick(key)["strike"], parse_option_tick(key)["put_call"]) \
+                       for key in cached_opttick if should_update_cache(key, start, end)]
+        strikes_right.extend(update_list)
+
+    strikes_right = list(set(strikes_right)) ## Removing duplicates
+    # return cached_opttick, non_cached_opttick, update_list, strikes_right
+
     logger.info(f"Info on {tick}, for date: {target_date}")
 
     ## Let's start with getting the requested data from database
@@ -624,7 +680,7 @@ def populate_cache_v2(
             ## Merge the data we have in cache with the data we just retrieved for the incomplete ticks
             merge_incomplete_data_in_cache(incomplete_dict = incomplete_dict, pre_processed_data = pre_processed_data)
             logger.info("Incomplete Dict: {}".format(incomplete_dict))
-            drop_cache_duplicates()
+            format_cache()
             refresh_cache()
             print("I'm proud of you, we are finally done")
 
@@ -633,6 +689,7 @@ def populate_cache_v2(
         ## Now we update the spot cache
         update_spot_cache(opttick = opttick, target_date = target_date)
     else:
+        format_cache()
         update_spot_cache(opttick = opttick, target_date = target_date)
 
     print("Now, my dear friend, we are done")
@@ -791,6 +848,11 @@ def chain_details(date: str,
             Option_Chain_Filtered['dte_spread'] = (Option_Chain_Filtered.index.get_level_values('DTE') - tgt_dte)**2
             Option_Chain_Filtered.sort_values(by=['dte_spread', 'moneyness_spread'], inplace=True)
             Option_Chain_Filtered = Option_Chain_Filtered.loc[Option_Chain_Filtered['dte_spread'] == Option_Chain_Filtered['dte_spread'].min()]
+            
+            ## Secondary fix for when dte_spread **2 leads to both lower bound and upper bound being the same. Which returns two Expirations
+            if len(Option_Chain_Filtered.reset_index().DTE.unique()) > 1:
+                Option_Chain_Filtered = Option_Chain_Filtered.loc[Option_Chain_Filtered.index.get_level_values('DTE') ==\
+                                                                   Option_Chain_Filtered.index.get_level_values('DTE').max()]
             
             if float(moneyness_width) == 0.0:
                 option_details = Option_Chain_Filtered.sort_values('moneyness_spread', ascending=False).head(1)

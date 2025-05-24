@@ -1,8 +1,12 @@
+## NOTE:
+## 1) If a split happens during a backtest window, the trade id won't be updated.
+
 
 from .utils import *
 from .actions import *
 from trade.helpers.helper import printmd, CustomCache
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
+HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
 logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
 order_cache = CustomCache(BASE, fname = "order")
@@ -292,7 +296,7 @@ class RiskManager:
         self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries") ## This is used for pricing, to account option strikes for splits
         self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data")
         self.position_data = CustomCache(BASE, fname = "rm_position_data")
-        self.dividend_timeseries = {}
+        self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries")
         self.sizing_type = sizing_type
         self.sizing_lev = leverage
         self.limits = {
@@ -317,6 +321,8 @@ class RiskManager:
         self.max_moneyness = max_moneyness
         self.option_price = option_price
         self._actions = {}
+        self.splits = CustomCache(HOME_BASE, fname = "split_names_dates", expiry = 1000)
+        self.clear_caches()
         
 
 
@@ -324,6 +330,16 @@ class RiskManager:
     def option_data(self):
         global close_cache
         return close_cache  
+    
+    def clear_caches(self):
+        """
+        Clears the caches
+        """
+        self.spot_timeseries.clear()
+        self.chain_spot_timeseries.clear()
+        self.position_data.clear()
+        self.dividend_timeseries.clear()
+
     
     @property
     def pm(self):

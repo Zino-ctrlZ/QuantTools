@@ -29,7 +29,7 @@ def runThreads(func, OrderedInputs: list[list],
         num_threads = min(len(OrderedInputs[0]), cpu_count())  # Limit threads to CPU cores or available inputs
         results = []
         if block:
-            with ThreadPoolExecutor(max_workers=num_threads, thread_name_prefix=thread_name_prefix) as executor:
+            with ThreadPoolExecutor(max_workers=num_threads, thread_name_prefix=thread_name_prefix+'_thread') as executor:
                 if run_type == 'map':
                     results = executor.map(func, *OrderedInputs)
                 else:

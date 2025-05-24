@@ -54,7 +54,9 @@ def get_risk_free_rate_helper(interval = '1d', use = 'db'):
 
     data = _fetch_rates(interval = interval).copy()
     # , {'daily':'last', 'annualized': 'last', 'name': 'last', 'description': 'last'}
-    return resample(data, interval) ## Not adding the resample schema for now
+    data = resample(data, interval)
+    data = data[~data.index.duplicated(keep = 'first')]
+    return data ## Not adding the resample schema for now
 
 
 def _fetch_rates(interval):

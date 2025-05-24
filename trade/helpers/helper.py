@@ -90,6 +90,7 @@ class CustomCache(Cache):
                  log_path: str | Path = None, 
                  clear_on_exit: bool = False, 
                  expire_days: int = 7,
+                 data: dict = None,
                  **kwargs):
         """
         Important Behavior:
@@ -124,6 +125,12 @@ class CustomCache(Cache):
         #3. Check if the cache is empty
         self.clear_on_exit = clear_on_exit
         
+        #4. If data is passed, load it into the cache
+        if data is not None:
+            if not isinstance(data, dict):
+                raise ValueError("Data must be a dictionary.")
+            for key, value in data.items():
+                self[key] = value
 
     @property
     def clear_on_exit(self):
@@ -165,6 +172,17 @@ class CustomCache(Cache):
 
     def items(self):
         return [(k, self[k]) for k in self]
+    
+    def update(self, other):
+        if isinstance(other, dict):
+            for key, value in other.items():
+                self[key] = value
+        elif isinstance(other, CustomCache):
+            for key, value in other.items():
+                self[key] = value
+        else:
+            raise ValueError("Other must be a dictionary or CustomCache instance.")
+    
     
     def __repr__(self):
         sample = dict(list(self.items())[:10])
@@ -389,7 +407,7 @@ def find_split_dates_within_range(tick: str,
     """
     data = retrieve_timeseries(tick, '1900-01-01', end, '1d')
     data = data[data.index.date >= pd.to_datetime(start).date()]
-    return data[data['is_split_date'] == True].index.strftime('%Y-%m-%d').tolist()
+    return list(data[data['is_split_date'] == True]['split_ratio'].to_frame().itertuples(name = None))
 
 
 
