@@ -4,8 +4,8 @@ import math
 from scipy.stats import norm
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
+# sys.path.append(os.environ['WORK_DIR'])
+# sys.path.append(os.environ['DBASE_DIR'])
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger("ModelLibrary.py")

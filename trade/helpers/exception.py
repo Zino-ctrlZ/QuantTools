@@ -7,5 +7,8 @@ class OpenBBEmptyData(Exception):
 class SymbolChangeError(Exception):
     pass
 
+class IncorrectExecutionError(Exception):
+    pass
+
 def raise_tick_name_change(tick, new_tick):
     raise SymbolChangeError(f"Tick name changed from {tick} to {new_tick}, access the new tick instead")

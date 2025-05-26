@@ -111,10 +111,8 @@ class SimulatedExecutionHandler(ExecutionHandler):
         market_value = (price * quantity) # cost before commission
         # Adjust price based on order direction
         if event.direction == 'BUY':
-            print("Buy Order", "Position:", event.position, "Price:", price, "Quantity:", quantity, "Datetime:", event.datetime)
             fill_cost = market_value + commission
         elif event.direction == 'SELL':
-            print("Sell Order", "Position:", event.position, "Price:", price, "Quantity:", quantity, "Datetime:", event.datetime)
             fill_cost = market_value - commission
 
         slippage_diff = (price - event.position['close'] ) * quantity

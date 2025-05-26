@@ -11,8 +11,7 @@ import sys
 import os
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.extend(
-    [os.environ.get('WORK_DIR'), os.environ.get('DBASE_DIR')])
+import backoff
 from dbase.DataAPI.ThetaData import (list_contracts)
 
 # from trade.helpers.Configuration import Configuration
@@ -34,7 +33,7 @@ from trade.models.VolSurface import SurfaceLab
 load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
-from dbase.DataAPI.ThetaData import resample, list_contracts
+from dbase.DataAPI.ThetaData import resample, retrieve_chain_bulk
 from pandas.tseries.offsets import BDay
 from dbase.database.SQLHelpers import DatabaseAdapter
 from pathos.multiprocessing import ProcessingPool as Pool
@@ -43,6 +42,7 @@ from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker
 from trade.helpers.types import OptionModelAttributes
+from dbase.utils import bus_range
 logger = setup_logger('trade.asset.Stock')
 
 
@@ -76,6 +76,9 @@ class Stock:
 
     def __str__(self):
         return f'Stock(Ticker: {self.ticker}, Build Date: {self.end_date})'
+
+    def __reduce__(self):
+        return (self.__class__, (self.ticker,))
 
 
     def __init__(self, ticker: str, **kwargs):
@@ -303,7 +306,7 @@ class Stock:
                 self.__set_close(close)
         return close
 
-
+    @backoff.on_exception(backoff.expo, IndexError, max_tries=5, logger=logger)
     def div_yield(self, div_type = 'yield'):
         div_history = self.div_yield_history(div_type = div_type)
         if not isinstance(div_history, pd.Series):
@@ -313,16 +316,18 @@ class Stock:
         else:
             end = change_to_last_busday(self.end_date).strftime('%Y-%m-%d')
             y = div_history[div_history.index == end][0]
+
             if div_type == 'yield':
                 self.__set_y(y)
             return y
         
 
-
+    @backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
     def div_yield_history(self, start = None, ts_timeframe = 'day', ts_timewidth = '1', div_type = 'yield'):
         """
         Return the yearly dividend yield
         """
+        ##Optional giveup for specific names during backoff: giveup=lambda e: "MSTR" in str(e)
         if not start:
             start_date = self.start_date
 
@@ -333,9 +338,12 @@ class Stock:
         try:
             div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider='yfinance').to_df()
         except:
-            return 0
-        
-
+            logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
+            logger.error(f"Probably due to no dividends history")
+            return pd.Series({x: 0 for x in bus_range(start = start_date, end = datetime.today(), freq = 'B')})
+    
+        if div_history.empty:
+            raise OpenBBEmptyData(f"Dividends history for {self.ticker} is empty")
         
         div_history.rename(columns = {'ex_dividend_date':'date'}, inplace = True)
         div_history.date = pd.to_datetime(div_history.date)
@@ -344,11 +352,9 @@ class Stock:
 
         ## Convert to daily, filling missing with 0
         div_history = div_history.asfreq('1D').fillna(0)
-
         ## Calculate yearly dividend using 365 rolling sum
         div_history["yearly_dividend"] = div_history.rolling(365).sum()
         div_history.dropna(inplace = True)
-
         if div_type == 'value':
             dates = pd.date_range(start = div_history.index.min(), end = datetime.today() ,freq = 'B')
             div_history = div_history.reindex(dates, method = 'ffill')
@@ -365,11 +371,11 @@ class Stock:
         spot.set_index('Date', inplace = True)
         spot['yearly_dividend'] = div_history['yearly_dividend']
         spot.fillna(method = 'ffill', inplace = True)
-        spot.set_index('date', inplace = True)
+        # spot.set_index('Date', inplace = True)
         ## Calculate Dividend Yield
         spot['dividend_yield'] = (spot['yearly_dividend']/spot['close'])
         div_yield = spot['dividend_yield']
-        div_yield = resample(div_yield, interval, {'dividend_yield':'last'})
+        div_yield = resample(div_yield, interval)
         return div_yield['dividend_yield'] if isinstance(div_yield, pd.DataFrame) else div_yield
 
 
@@ -427,7 +433,7 @@ class Stock:
         
         if spot_type == 'chain_price':
                 df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
-                                         start = '1960-01-01', interval= '1d', provider = provider)
+                                         start = '1960-01-01', interval= interval, provider = provider)
                 df.index = pd.to_datetime(df.index)
                 df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
                 df['close'] = df['chain_price']
@@ -449,13 +455,21 @@ class Stock:
                 spot = {end: df[spot_type].values[-1]}
             return spot
     
+    # def option_chain(self, date = None, return_price = 'Midpoint'):
+        # if not date:
+        #     date = self.end_date
+        # contracts = retrieve_chain_bulk(self.ticker, 0, date, date, '16:00')
+        # contracts['DTE'] = (contracts['Expiration'] - pd.to_datetime(date)).dt.days
+        # return contracts.pivot_table(index=['Expiration', 'DTE','Strike'], columns='Right',values = return_price, aggfunc=sum)
+
     def option_chain(self, date = None):
         if not date:
             date = self.end_date
         contracts = list_contracts(self.ticker, date)
         contracts.expiration = pd.to_datetime(contracts.expiration, format='%Y%m%d')
-        contracts['DTE'] = (contracts['expiration'] - pd.to_datetime(date)).dt.days
-        contracts_v2 = contracts.pivot_table(index=['expiration', 'DTE','strike'], columns='right',values = 'root', aggfunc='count')
+        contracts.columns = [x.capitalize() for x in contracts.columns]
+        contracts['DTE'] = (contracts['Expiration'] - pd.to_datetime(date)).dt.days
+        contracts_v2 = contracts.pivot_table(index=['Expiration', 'DTE','Strike'], columns='Right',values = 'Root', aggfunc='count')
         contracts_v2.fillna(0, inplace = True)
         contracts_v2.where(contracts_v2 == 1, False, inplace = True)
         contracts_v2.where(contracts_v2 == 0, True, inplace = True)

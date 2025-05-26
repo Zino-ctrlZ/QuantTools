@@ -2,11 +2,12 @@
 import inspect
 import time
 import os
+import backoff
 from dotenv import load_dotenv
 load_dotenv()
 import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) # type: ignore
+# sys.path.append(
+#     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
 from typing import Union
 # from trade.helpers.Configuration import Configuration
@@ -27,11 +28,11 @@ from py_vollib.black_scholes import black_scholes as bs
 from py_vollib.black_scholes.greeks.numerical import delta, vega, theta, rho
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from py_vollib.black_scholes_merton import black_scholes_merton
+from py_lets_be_rational.exceptions import BelowIntrinsicException
 from scipy.stats import norm
 import yfinance as yf
 from openbb import obb
 import pandas as pd
-import numpy as np
 import inspect
 from datetime import datetime
 from copy import deepcopy
@@ -40,6 +41,18 @@ from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
 from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
+import traceback
+from pandas.tseries.holiday import USFederalHolidayCalendar
+import pandas_market_calendars as mcal
+from trade import HOLIDAY_SET, PRICING_CONFIG
+import json
+from dbase.utils import add_eod_timestamp, bus_range, enforce_bus_hours
+from pathlib import Path
+from diskcache import Cache
+from pprint import pprint, pformat
+import atexit
+import signal
+import shortuuid
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -48,16 +61,207 @@ logger = setup_logger('trade.helpers.helper')
 
 option_keys = {}
 
-def save_vol_resolve(opt_tick, datetime, vol_resolve):
+
+def _ipython_shutdown(_callable):
+    """
+    Register a shutdown function to be called when the IPython kernel is shutting down.
+    """
+    if not callable(_callable):
+        raise TypeError("The shutdown function must be callable.")
+    from IPython import get_ipython
+    try:
+        ipython = get_ipython()
+        if ipython is not None:
+            ipython.events.register('shutdown', _callable)
+    except ImportError as e:
+        pass
+
+    except Exception as e:
+        logger.error(f"Error during IPython shutdown registration: {e}")
+
+
+class CustomCache(Cache):
+    """
+    CustomCache is a dictionary-like object that stores data on disk. It is a subclass of diskcache.Cache and provides additional functionality
+    """
+    def __init__(self, 
+                 location: str | Path = None, 
+                 fname: str = None,
+                 log_path: str | Path = None, 
+                 clear_on_exit: bool = False, 
+                 expire_days: int = 7,
+                 data: dict = None,
+                 **kwargs):
+        """
+        Important Behavior:
+        1. The cache is pegged to a specific on disk data. Represented by location/fname
+        2. The cache is cleared on exit if clear_on_exit is set to True. Else, it will remain populated and open. But the location of the directory 
+            will be recorded in a file for later clean-up.
+        
+        :params location: str | Path: Folder to store the cache. If None, it will use the WORK_DIR environment variable.
+        :params fname: str: Name of the cache file. Defaults to 'cache'.
+        :params log_path: str | Path: Path to the log file. If None, it will use the WORK_DIR environment variable.
+        :params clear_on_exit: bool: Whether to clear the cache on exit. Defaults to False.
+        :params kwargs: Additional arguments to pass to the Cache constructor.
+
+        Example usage:
+        cache = CustomCache(location='/path/to/cache', fname='my_cache', log_path='/path/to/log.txt', clear_on_exit=True)
+        """
+        
+        #1. Check dir & create cache
+        fname = fname if fname else shortuuid.random(length=8)
+        dir = Path(location) / fname if location else Path(os.environ.get('WORK_DIR'))/'.cache'/fname
+        self.dir = dir
+        self.fname = fname
+        self.expiry_date = (datetime.today() + relativedelta(days=expire_days)).date().strftime('%Y-%m-%d')
+        self.__register_location = f'{os.environ["WORK_DIR"]}/trade/helpers/clear_dirs.json'
+        log_path = Path(log_path) if log_path else Path(os.environ.get('WORK_DIR'))/'trade'/'helpers'/'cache_clear_log.txt'
+        self.log_path = log_path
+        os.makedirs(dir, exist_ok=True)
+        
+        #2. Create cache
+        super().__init__(dir, **kwargs)
+
+        #3. Check if the cache is empty
+        self.clear_on_exit = clear_on_exit
+        
+        #4. If data is passed, load it into the cache
+        if data is not None:
+            if not isinstance(data, dict):
+                raise ValueError("Data must be a dictionary.")
+            for key, value in data.items():
+                self[key] = value
+
+    @property
+    def clear_on_exit(self):
+        return self._clear_on_exit
+    
+    @clear_on_exit.setter
+    def clear_on_exit(self, value):
+        if not isinstance(value, bool):
+            raise ValueError("clear_on_exit must be a boolean value.")
+        self._clear_on_exit = value
+        self._install_handlers()
+
+    @property
+    def register_location(self):
+        return self.__register_location
+    
+    def _install_handlers(self):
+        """
+        Central place to register whatever needs doing
+        depending on self._clear_on_exit.
+        """
+        if self._clear_on_exit:
+            atexit.register(self._on_exit)
+            signal.signal(signal.SIGTERM, self._on_signal)
+        else:
+            # just record the dir for later weekly cron clean-up
+            with open(self.register_location, 'r') as f:
+                json_file = json.load(f)
+            with open(self.register_location, 'w') as f:
+                loc = str(self.dir)
+                json_file.update({loc: self.expiry_date})
+                json.dump(json_file, f, default=str)
+
+    def keys(self):
+        return list(self)
+
+    def values(self):
+        return [self[k] for k in self]
+
+    def items(self):
+        return [(k, self[k]) for k in self]
+    
+    def update(self, other):
+        if isinstance(other, dict):
+            for key, value in other.items():
+                self[key] = value
+        elif isinstance(other, CustomCache):
+            for key, value in other.items():
+                self[key] = value
+        else:
+            raise ValueError("Other must be a dictionary or CustomCache instance.")
+    
+    
+    def __repr__(self):
+        sample = dict(list(self.items())[:10])
+        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+    def __str__(self):
+        sample = dict(list(self.items())[:10])
+        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+    
+    def setdefault(self, key, default):
+        if key not in self:
+            self[key] = default
+        return self[key]
+    
+    def _on_exit(self):
+        self.clear()
+        with open(f'{self.log_path}', 'a') as f:
+            f.write(f"Cache cleared by AtExit at {datetime.now()}\n")
+
+    def _on_signal(self, signum, frame):
+        self.clear()
+        self._on_exit()
+        os.kill(os.getpid(), signum)
+
+
+def check_all_days_available(x, _start, _end):
+    # print(x)
+    date_range = bus_range(_start, _end, freq = '1B')
+    dates_available = x.Datetime
+    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    return all(x in pd.DatetimeIndex(dates_available) for x in date_range)
+
+def check_missing_dates(x, _start, _end):
+    # print(x)
+    date_range = bus_range(_start, _end, freq = '1B')
+    dates_available = x.Datetime
+    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    return missing_dates_second_check
+
+def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
+
+    """Check for errors in the input parameters for the vol backout function"""
+    assert isinstance(sigma, (int, float)), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
+    assert isinstance(K, (int, float)), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
+    assert isinstance(S0, (int, float)), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
+    assert isinstance(r, (int, float)), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
+    assert isinstance(q, (int, float)), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
+    assert isinstance(market_price, (int, float)), f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
+    assert isinstance(flag, str), f"Recieved '{type(flag)}' for flag. Expected 'str'"
+
+    if sigma <= 0:
+        raise ValueError("Volatility must be positive.")
+    if K <= 0:
+        raise ValueError("Strike price must be positive.")
+    if S0 <= 0:
+        raise ValueError("Spot price must be positive.")
+    if T < 0:
+        raise ValueError("Time to expiration must be positive.")
+    if r < 0:
+        raise ValueError("Risk-free rate must be non-negative.")
+    if q < 0:
+        raise ValueError("Dividend yield must be non-negative.")
+    if market_price <= 0:
+        raise ValueError("Market price must be positive.")
+    if flag not in ['c', 'p']:
+        raise ValueError("Flag must be 'c' for call or 'p' for put.")
+    
+    if pd.isna(sigma) or pd.isna(K) or pd.isna(S0) or pd.isna(r) or pd.isna(q) or pd.isna(market_price):
+        raise ValueError("Input values cannot be NaN.")
+
+def save_vol_resolve(opt_tick, datetime, vol_resolve, agg = 'eod'):
     """Utility function to save vol_resolve to json file"""
     import os, json
-    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve.json', 'r') as f:
+    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve_{agg}.json', 'r') as f:
         data = json.load(f)
     datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
     data.setdefault(datetime, {})
     data[datetime][opt_tick]= {}
     data[datetime][opt_tick]['VolResolve'] = vol_resolve
-    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve.json', 'w') as f:
+    with open(f'{os.environ["WORK_DIR"]}/trade/helpers/vol_resolve_{agg}.json', 'w') as f:
         json.dump(data, f)
 
 
@@ -100,6 +304,7 @@ def filter_zeros(data):
     data = data.replace(0, np.nan)
     return data.ffill()
 
+@backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
 def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance', **kwargs):
     """
     Returns an OHLCV for provided ticker.
@@ -107,9 +312,19 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     Utilizes OpenBB historical api. Default provider is yfinance.
     """
     try:
-        data = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval).to_df()
+        res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
     except:
-        raise OpenBBEmptyData(f"OpenBB returned empty data for {tick} between {start} and {end}")
+        raise OpenBBEmptyData(f"OpenBB raised an unexpected error for {tick} with {provider} provider. Check the logs for more details")
+    
+    
+    ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
+    data = res.to_df()
+    if 'split_ratio' not in data.columns:
+        res_vs = [r.__dict__ for r in res.results]
+        data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
+        data['split_ratio'] = 0
+
+
     data.split_ratio.replace(0, 1, inplace = True)
     data['cum_split'] = data.split_ratio.cumprod()
     data['max_cum_split'] = data.cum_split.max()
@@ -125,6 +340,17 @@ def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance'
     if data.empty and provider == 'yfinance':
         logger.warning(f"yfinance returned empty data for {tick} is empty")
         raise YFinanceEmptyData(f"yfinance returned empty data for {tick} is empty")
+
+    ## Fix intraday data missing 16:00:00 timestamp
+    if 'h' in interval or 'm' in interval:
+        if 'm' in interval:
+            ## Pandas doesn't like the 'm' in the interval, so we need to replace it with 'min'. 'm' is month in pandas
+            interval = interval.replace('m', 'min')
+        data = enforce_bus_hours(data)
+        reindex = bus_range(data.index[0], data.index[-1], interval)
+        data = data.reindex(reindex, method='ffill').dropna()
+
+        
     return data
 
 def identify_interval(timewidth, timeframe, provider = 'default'):
@@ -157,6 +383,12 @@ def extract_numeric_value(timeframe_str):
     strings = [str(letter) for _, letter in match][0]
     return strings, integers
 
+def enforce_allowed_models(model: list) -> list:
+    """
+    Ensures that the model is in the allowed models list.
+    """
+    assert model in PRICING_CONFIG['AVAILABLE_PRICING_MODELS'], f"Model {model} is not in the allowed models list. Expected {PRICING_CONFIG['AVAILABLE_PRICING_MODELS']}"
+
 
 def find_split_dates_within_range(tick: str, 
                                  start: str, 
@@ -175,7 +407,7 @@ def find_split_dates_within_range(tick: str,
     """
     data = retrieve_timeseries(tick, '1900-01-01', end, '1d')
     data = data[data.index.date >= pd.to_datetime(start).date()]
-    return data[data['is_split_date'] == True].index.strftime('%Y-%m-%d').tolist()
+    return list(data[data['is_split_date'] == True]['split_ratio'].to_frame().itertuples(name = None))
 
 
 
@@ -199,11 +431,17 @@ def contains_time_format(date_str: str) -> bool:
         return False
 
 def time_distance_helper(exp: str, strt: str = None) -> float:
+    """
+    Calculate the time distance between two dates in years.
+    """
     if strt is None:
         strt = datetime.today()
     
-    # parsed_dte = parse_date(exp + ' 16:00:00') if not contains_time_format(exp) else parse_date(exp)
+    exp = pd.to_datetime(exp)
+    exp = exp.replace(hour = 16, minute = 0, second = 0, microsecond = 0,)
     parsed_dte, start_date = pd.to_datetime(exp), pd.to_datetime(strt)
+    if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
+        start_date = start_date.replace(hour=16, minute=0, second=0, microsecond=0)
     days = (parsed_dte - start_date).total_seconds()
 
     T = days/(365.25*24*3600)
@@ -308,7 +546,7 @@ def implied_vol_bs_helper(S0, K, T, r, market_price, flag='c', tol=1e-3, exp_dat
     return implied_vol
 
 
-def implied_vol_bt(S0, K, r, market_price,exp_date: str, flag='c', tol=0.000000000001,  y=None, start = None):
+def implied_vol_bt(S0, K, r, market_price,exp_date: str, flag='c', tol=0.000000000001,  y=None, start = None, break_time = 60):
     """Compute the implied volatility of an American Option
         S0: initial stock price
         K:  strike price
@@ -317,23 +555,35 @@ def implied_vol_bt(S0, K, r, market_price,exp_date: str, flag='c', tol=0.0000000
         market_price: market observed price
         tol: user choosen tolerance
     """
-    T = time_distance_helper(exp_date)
+    if pd.to_datetime(exp_date) == pd.to_datetime(start):
+        logger.warning(f"Expiration date {exp_date} is the same as start date {start}. Include HH:MM:SS in the start date, to prevent pricing EOD")
+
+    T = time_distance_helper(exp_date, start)
     max_iter = 200  # max number of iterations
     vol_old = 0.2  # initial guess
     count = 0
+    vol_backout_errors(vol_old, K, S0, T, r, y, market_price, flag)
+    start_time = time.time()
     for k in range(max_iter):
+        current_time = time.time()
+        if current_time - start_time > break_time:
+            logger.error(f"Binomial Implied vol took too long to calculate for {S0}, {K}, {r}, {market_price}, {exp_date}, {flag}, total time: {current_time - start_time}")
+            return 0.0
         bs_price = binomial(
             K=K, exp_date=exp_date, S0=S0,  r=r, sigma=vol_old, opttype=flag, y=y, start = start)
 
         Cprime = vega(flag, S0, K, T, r, vol_old)*100
         C = bs_price - market_price
         vol_new = vol_old - C/Cprime
+        vol_new = np.clip(vol_new, 0.0001, 5)
         if (abs((vol_old - vol_new)/vol_old)) < tol:
             break
         vol_old = vol_new
         count += 1
     implied_vol = vol_old
-
+    if pd.isna(implied_vol) or implied_vol == 0.0:
+        logger.warning(f"Binomial Implied vol is NaN for {S0}, {K}, {r}, {market_price}, Exp: {exp_date},  Flag: {flag}, Start: {start}")
+        return 0.0
     return implied_vol
 
 
@@ -395,7 +645,7 @@ def optionPV_helper(
     volatility: float,
     putcall: str,
     settlement_date_str: str,
-    model: str = 'bsm'
+    model: str = 'bs'
 ):
 
     """
@@ -422,14 +672,12 @@ def optionPV_helper(
     PV (float): Option present value
 
     """
-    assert model in ['mcs', 'bsm', 'bt'], f"Recieved '{model}' for model. Expected {['mcs', 'bsm', 'bt']}"
-
-
+    enforce_allowed_models(model)
     try:
         # Option Parameters
 
 
-        if model == 'bt':
+        if model == 'binomial':
             binomial_price = binomial(
                 K = strike_price,
                 exp_date = exp_date,
@@ -492,7 +740,7 @@ def optionPV_helper(
             monte_carlo_price = american_option.NPV()
             return monte_carlo_price
         
-        elif model == 'bsm':
+        elif model == 'bs':
             # Black-Scholes Pricing (Treated as European for comparison)
             european_exercise = ql.EuropeanExercise(maturity_date)
             european_option = ql.VanillaOption(payoff, european_exercise)
@@ -520,7 +768,7 @@ def pad_string(input_value):
     return padded_string
 
 
-def IV_handler(**kwargs):
+def IV_handler(*args, **kwargs):
     """
     Calculate the Black-Scholes-Merton implied volatility.
 
@@ -559,52 +807,104 @@ def IV_handler(**kwargs):
     
     """
 
-
+    keys = ['price', 'S', 'K', 't', 'r', 'q', 'flag']
+    if args:
+        extra_kwargs = {k: v for k, v in zip(keys, args)}
+        kwargs.update(extra_kwargs)
     try:
-
+        kwargs['flag'] = kwargs['flag'].lower()
         iv = implied_volatility(**kwargs)
 
         if np.isinf(iv):
             iv = 0
         return iv
-    except Exception as e:
+    except (BelowIntrinsicException, ZeroDivisionError) as e:
+        ## Add AboveMaximumException
         logger.warning('')
         logger.warning('"implied_volatility" raised the below error')
         logger.warning(e)
         logger.warning(f'Kwargs: {kwargs}')
         return 0.0
+    
+    except Exception as j:
+        logger.warning('')
+        logger.warning('"implied_volatility" unrelated error')
+        logger.warning(j)
+        logger.warning(f'Kwargs: {kwargs}')
+        return 0.0
+        
 
 
 
-def binomial_implied_vol(price, S, K, r, T, option_type, pricing_date, dividend_yield):
+def binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, dividend_yield):
+    """
+    Calculate the implied volatility of an option using the binomial tree model.
+
+    :param price: option price
+    :type price: float
+    :param S: underlying asset price
+    :type S: float
+    :param K: strike price
+    :type K: float
+    :param r: risk-free interest rate
+    :type r: float
+    :param exp_date: Expiration date
+    :type exp_date: str
+    :param option_type: 'c' or 'p' for call or put
+    :type option_type: str
+    :param pricing_date: Pricing date
+    :type pricing_date: str
+    :param dividend_yield: annualized continuous dividend rate
+    :type dividend_yield: float
+
+    >>> price = 5.87602423383
+    >>> S = 100
+    >>> K = 100
+    >>> r = .01
+    >>> option_type = 'c'
+    >>> exp_date = '2024-03-08'
+    >>> pricing_date = '2024-03-08'
+    >>> dividend_yield = 0
+
+    >>> iv = binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, dividend_yield)
+
+    
+    """
     kwargs = {
         'price': price,
         'S': S,
         'K': K,
         'r': r,
-        'T': T,
+        'T': exp_date,
         'option_type': option_type,
         'pricing_date': pricing_date,
         'dividend_yield': dividend_yield
     }
     try:
+        if price <= 0:
+            logger.warning('Market price is less than or equal to 0')
+            return 0.0
+        
         return implied_vol_bt(
         S0 = S,
         K = K,
-        exp_date = T,
+        exp_date = exp_date,
         r = r,
         y = dividend_yield,
         market_price=price,
-        flag = option_type,
+        flag = option_type.lower(),
         start = pricing_date
         )
 
 
     except Exception as e:
+        print(e)
         logger.warning('')
         logger.warning('"binomial_implied_vol" raised the below error')
         logger.warning(e)
+        logger.warning(f"Traceback: {traceback.format_exc()}")
         logger.warning(f'Kwargs: {kwargs}')
+        raise e
         return 0.0
 
 def generate_option_tick(symbol, right, exp, strike):
@@ -658,8 +958,9 @@ def parse_option_tick(tick : str):
 
 
 def generate_option_tick_new(symbol, right, exp, strike) -> str:
+    from datetime import datetime
     assert right.upper() in ['P', 'C'], f"Recieved '{right}' for right. Expected 'P' or 'C'"
-    assert isinstance(exp, str), f"Recieved '{type(exp)}' for exp. Expected 'str'" 
+    assert isinstance(exp, (str, datetime)), f"Recieved '{type(exp)}' for exp. Expected 'str'" 
     assert isinstance(strike, ( float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"
     
     tick_date = pd.to_datetime(exp).strftime('%Y%m%d')
@@ -695,9 +996,8 @@ def is_USholiday(date):
 
     # import holidays
     import pandas_market_calendars as mcal
-    nyse = mcal.get_calendar('NYSE')
-    date = pd.to_datetime(date).strftime('%Y-%m-%d')
-    return not bool(len(nyse.valid_days(start_date=date, end_date=date)))
+    date = pd.to_datetime(date)
+    return date.date().strftime('%Y-%m-%d') in HOLIDAY_SET
 
 
 def change_to_last_busday(end):

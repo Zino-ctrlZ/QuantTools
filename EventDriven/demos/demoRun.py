@@ -6,10 +6,10 @@ import sys
 import cProfile
 import pstats
 import io
-sys.path.append(
-    os.environ.get('WORK_DIR')) #type: ignore
-sys.path.append(
-    os.environ.get('DBASE_DIR')) #type: ignore
+# sys.path.append(
+#     os.environ.get('WORK_DIR', '')) #type: ignore
+# sys.path.append(
+#     os.environ.get('DBASE_DIR', '')) #type: ignore
 from dbase.DataAPI.ThetaData import * #type: ignore
 from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd

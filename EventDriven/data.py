@@ -9,10 +9,10 @@ import datetime
 import os, os.path
 import pandas as pd
 import sys
-sys.path.append(
-    os.environ.get('WORK_DIR')) #type: ignore
-sys.path.append(
-    os.environ.get('DBASE_DIR')) #type: ignore
+# sys.path.append(
+#     os.environ.get('WORK_DIR', '')) #type: ignore
+# sys.path.append(
+#     os.environ.get('DBASE_DIR', '')) #type: ignore
 from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod

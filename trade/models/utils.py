@@ -1,13 +1,14 @@
 import pandas as pd
 import numpy as np
 from threading import Thread
-from trade.helpers.helper import generate_option_tick_new, time_distance_helper, IV_handler, save_vol_resolve
+from trade.helpers.helper import generate_option_tick_new, time_distance_helper, IV_handler, save_vol_resolve, binomial_implied_vol
 from trade.models.VolSurface import fit_svi_model
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData import (
         list_contracts,
         retrieve_eod_ohlc
 )
+from datetime import time as dt_time
 
 logger = setup_logger('trade.models.utils')
 
@@ -22,6 +23,7 @@ def resolve_missing_vol(
         r: float,
         q: float,
         width = 3,
+        pricing_model = 'bs',
         **kwargs
 ) -> float:
         """
@@ -53,11 +55,17 @@ def resolve_missing_vol(
         
         ## Set Variables
         opt_tick = generate_option_tick_new(underlier, put_call, expiration, strike)
+        agg = kwargs.get('agg', 'eod')
         print_url = kwargs.get('print_url', False)
         max_width = kwargs.get('max_width', 5)
         return_full = kwargs.get('return_full', False)
         expiration = pd.to_datetime(expiration).strftime('%Y-%m-%d')
-        datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
+        datetime = pd.to_datetime(datetime)
+        if datetime.time() == dt_time(0, 0):
+                time = '16:00'
+        else:
+                time = datetime.strftime('%H:%M')
+        datetime = datetime.strftime('%Y-%m-%d')
 
         ## Get the list of contracts
         contracts = list_contracts(underlier, datetime, print_url = print_url)  ## Query Strikes from API
@@ -102,25 +110,59 @@ def resolve_missing_vol(
                 )['Close'][0], axis = 1)
         
         ## Calculate Implied Vol for the options on both Midpoint and Close
-                
-        contracts_filtered['mid_vol'] = contracts_filtered.apply(lambda x: IV_handler(
-                                                        price = x['Midpoint'],
-                                                        S = S,
-                                                        K = x['strike'],
-                                                        t = time_distance_helper(exp = expiration, strt = datetime),
-                                                        r = r,
-                                                        q = q,
-                                                        flag = x['right'].lower()), axis = 1)
+        if pricing_model == 'bs':
+                contracts_filtered['mid_vol'] = contracts_filtered.apply(lambda x: IV_handler(
+                                                                price = x['Midpoint'],
+                                                                S = S,
+                                                                K = x['strike'],
+                                                                t = time_distance_helper(exp = expiration, strt = datetime),
+                                                                r = r,
+                                                                q = q,
+                                                                flag = x['right'].lower()), axis = 1)
 
-        contracts_filtered['close_vol'] = contracts_filtered.apply(lambda x: IV_handler(
-                                                        price = x['Close'],
-                                                        S = S,
-                                                        K = x['strike'],
-                                                        t = time_distance_helper(exp = expiration, strt = datetime),
-                                                        r = r,
-                                                        q = q,
-                                                        flag = x['right'].lower()), axis = 1)
-        
+                contracts_filtered['close_vol'] = contracts_filtered.apply(lambda x: IV_handler(
+                                                                price = x['Close'],
+                                                                S = S,
+                                                                K = x['strike'],
+                                                                t = time_distance_helper(exp = expiration, strt = datetime),
+                                                                r = r,
+                                                                q = q,
+                                                                flag = x['right'].lower()), axis = 1)
+        elif pricing_model == 'binomial':
+                contracts_filtered['mid_vol'] = contracts_filtered.apply(lambda x: binomial_implied_vol(
+                                                                price = x['Midpoint'],
+                                                                S = S,
+                                                                K = x['strike'],
+                                                                exp_date = expiration,
+                                                                pricing_date =datetime,
+                                                                r = r,
+                                                                dividend_yield = q,
+                                                                option_type = x['right'].lower()), axis = 1)
+                contracts_filtered['close_vol'] = contracts_filtered.apply(lambda x: binomial_implied_vol(
+                                                                price = x['Close'],
+                                                                S = S,
+                                                                K = x['strike'],
+                                                                exp_date = expiration,
+                                                                pricing_date =datetime,
+                                                                r = r,
+                                                                dividend_yield = q,
+                                                                option_type = x['right'].lower()), axis = 1)
+        else:
+                raise ValueError(f"Model {pricing_model} not supported. Supported models are 'bs' and 'binomial'")
+                
+
+        ## Start with using Close as Vol
+        contracts_filtered['mid_vol'] = contracts_filtered['close_vol']
+        contracts_filtered.mid_vol.replace(0, np.nan, inplace = True)
+        tgt_strike_vol = contracts_filtered.loc[idx_tgt, 'mid_vol']
+        if not np.isnan(tgt_strike_vol):
+                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'CLOSE_VOL', agg))
+                save_thread.start()
+                print("Close Vol Resolved for ", opt_tick) if print_url else None
+                return (contracts_filtered.reset_index(drop = True), tgt_strike_vol) if return_full else tgt_strike_vol
+
+
+
         ## Replace the zero values with the interpolated values
         contracts_filtered.mid_vol.replace(0, np.nan, inplace = True)
         contracts_filtered['mid_vol_interpolate'] = contracts_filtered['mid_vol'].interpolate()
@@ -144,25 +186,30 @@ def resolve_missing_vol(
                                 spot = S,
                                 Strike = strike,
                                 return_model = True,
-                                print_url = print_url
+                                print_url = print_url,
+                                model=pricing_model
                                 )
-
-                        if model.preferred_mse >= 0.0184587085747542: ## Arbitarily chosen threshold. From Poorly fitted model
+                        
+                        if model == 0: ## This datetime == expirtion:
+                                return 0
+                        
+                        elif model.preferred_mse >= 0.0184587085747542: ## Arbitarily chosen threshold. From Poorly fitted model
                                 ## Poorly fitted model shouldn't be used
-                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'POOR_FIT'))
+                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'POOR_FIT', agg))
                                 save_thread.start()
                                 logger.error(f"{opt_tick}, {datetime} has a poorly fitted model. Returning zero")
                                 return 0
                         if np.isnan(vol) or vol == 0:
                                 ## If the model still returns zero, then we have to return zero
-                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'UNRESOLVED'))
+                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'UNRESOLVED', agg))
                                 save_thread.start()
                                 logger.error(f"{opt_tick}, {datetime} could not fit SVI model. Returning zero")
                                 return 0
                         else:
                                 ## If the model returns a value, then we return that value
-                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'SVI_FITTING'))
+                                save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'SVI_FITTING', agg))
                                 save_thread.start()
+                                print("SVI Model Fitted for ", opt_tick, 'ON', datetime) if print_url else None
                                 return vol if not return_full else (model, vol)
                 return resolve_missing_vol(
                         underlier = underlier,
@@ -177,6 +224,7 @@ def resolve_missing_vol(
                         **kwargs
                 )
         
-        save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'INTERPOLATED'))
+        save_thread = Thread(target = save_vol_resolve, args = (opt_tick, datetime, 'INTERPOLATED', agg))
         save_thread.start()
+        print("Interpolated Vol Resolved for ", opt_tick, " on ", datetime) if print_url else None
         return (contracts_filtered.reset_index(drop = True), tgt_strike_vol) if return_full else tgt_strike_vol

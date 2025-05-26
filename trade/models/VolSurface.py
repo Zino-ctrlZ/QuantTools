@@ -6,8 +6,8 @@
 import os, sys
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
+# sys.path.append(os.environ['WORK_DIR'])
+# sys.path.append(os.environ['DBASE_DIR'])
 import matplotlib.pyplot as plt 
 plt.style.use('ggplot')
 import math
@@ -15,7 +15,7 @@ from typing import Union
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-from trade.helpers.helper import IV_handler
+from trade.helpers.helper import IV_handler, binomial_implied_vol
 from trade.helpers.Logging import setup_logger
 from scipy.optimize import minimize 
 from py_vollib.black_scholes_merton import black_scholes_merton
@@ -54,7 +54,9 @@ def fit_svi_model(
                 r: float,
                 q: float,
                 spot: float,
-                return_model: bool = False,  
+                return_model: bool = False,
+                model = 'bs',
+                strike: float = 0,
                 **kwargs)-> float:
         """
         Simple function to interpolate a single Expiration date, at a time with SVI Model
@@ -77,16 +79,20 @@ def fit_svi_model(
         """
         print_url = kwargs.get('print_url', False)
         datetime = pd.to_datetime(datetime).strftime('%Y-%m-%d')
+        if pd.to_datetime(expiration).date() == pd.to_datetime(datetime).date():
+            logger.error('Expiration date is the same as the datetime. Returning 0')
+            return (0, 0) if return_model else 0
+            
 
         ## Retrieve the chain
+        end_time = kwargs.get('end_time', '16:00')
         data = retrieve_chain_bulk(
-        symbol = underlier,
-        exp = expiration,
-        start_date = datetime,
-        end_date = datetime,
-        end_time = '16:00',
-        print_url = print_url)
-
+                    symbol = underlier,
+                    exp = expiration,
+                    start_date = datetime,
+                    end_date = datetime,
+                    end_time = end_time,
+                    print_url = print_url)
 
         data['DTE'] = (pd.to_datetime(data.Expiration) - pd.to_datetime(data.index)).dt.days
         data['r'] = r
@@ -94,20 +100,33 @@ def fit_svi_model(
         data['right'] = data.Right
         data['Spot'] = spot
         data['price'] = data.Midpoint
-        data['vol'] = data.apply(lambda x: IV_handler(
-                price = x['price'],
-                S = x['Spot'],
-                K = x['Strike'],
-                t = time_distance_helper(exp = x['Expiration'].strftime('%Y-%m-%d'), strt = x.name.strftime('%Y-%m-%d')),
-                r = x['r'],
-                q = x['q'],
-                flag = x['right'].lower()), axis = 1)
+        if model == 'bs':
+            data['vol'] = data.apply(lambda x: IV_handler(
+                    price = x['price'],
+                    S = x['Spot'],
+                    K = x['Strike'],
+                    t = time_distance_helper(exp = x['Expiration'].strftime('%Y-%m-%d'), strt = x.name.strftime('%Y-%m-%d')),
+                    r = x['r'],
+                    q = x['q'],
+                    flag = x['right'].lower()), axis = 1)
+        elif model == 'binomial':
+            data['vol'] = data.apply(lambda x: binomial_implied_vol(
+                    price = x['price'],
+                    S = x['Spot'],
+                    K = x['Strike'],
+                    exp_date = x['Expiration'].strftime('%Y-%m-%d'),
+                    pricing_date = x.name.strftime('%Y-%m-%d'),
+                    r = x['r'],
+                    dividend_yield = x['q'],
+                    option_type = x['right'].lower()), axis = 1)
+        else:
+            raise ValueError(f'Invalid model type: {model}. Must be one of "bs" or "binomial"')
         data_filtered = data[data.vol != 0]
         call_data = data_filtered[data_filtered.right == 'C']
         call_data['strike'] = call_data.Strike
-        model = SVIModelBuilder(call_data, datetime, 49)
+        model = SVIModelBuilder(call_data, datetime, 1)
         model.build_model()
-        return (model.predict(kwargs['Strike'])[0], model) if return_model else model.predict(kwargs['Strike'])[0]
+        return (model.predict(strike)[0], model) if return_model else model.predict(strike)[0]
         
 
 

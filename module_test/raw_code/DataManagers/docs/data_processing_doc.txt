@@ -1,0 +1,3 @@
+- Any EOD resampled to Intra day will fill foward T-1 EOD values into T-0 Intra day, up to 16:00:00 which then becomes T-0 EOD
+- option_chain table is EOD Table, therefore, it will have the EOD timestamp
+- Moneyness will be K/S

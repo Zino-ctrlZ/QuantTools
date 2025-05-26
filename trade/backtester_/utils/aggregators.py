@@ -6,8 +6,8 @@
 
 import sys
 import os
-sys.path.append(
-    os.environ.get('WORK_DIR'))
+# sys.path.append(
+#     os.environ.get('WORK_DIR'))
 from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
