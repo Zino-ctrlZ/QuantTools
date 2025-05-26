@@ -6,6 +6,7 @@ class RMAction(ABC):
     def __init__(self, trade_id: str, action: str|dict):
         self.trade_id = trade_id
         self.action = action
+        self.event = None
 
 class HOLD(RMAction):
     def __init__(self, trade_id: str, action: str = 'hold'):

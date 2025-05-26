@@ -6,7 +6,9 @@ aiosqlite==0.20.0
 annotated-types==0.7.0
 anthropic==0.37.1
 anyio==4.6.2.post1
+appnope @ file:///home/conda/feedstock_root/build_artifacts/appnope_1707233003401/work
 arrow==1.3.0
+asttokens @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1698341106958/work
 async-lru==2.0.5
 attrs==24.2.0
 babel==2.17.0
@@ -28,6 +30,7 @@ clarabel==0.9.0
 cleo==2.1.0
 click==8.1.7
 cloudpickle==3.1.0
+comm @ file:///home/conda/feedstock_root/build_artifacts/comm_1710320294760/work
 contourpy==1.2.1
 courlan==1.3.2
 crashtest==0.4.1
@@ -40,6 +43,7 @@ dask==2024.12.1
 dask-expr==1.1.21
 dateparser==1.2.1
 debugpy==1.8.5
+decorator @ file:///home/conda/feedstock_root/build_artifacts/decorator_1641555617451/work
 deepdiff==8.4.2
 defusedxml==0.8.0rc2
 dill==0.3.8
@@ -51,7 +55,9 @@ dulwich==0.21.7
 ecos==2.0.14
 email_validator==2.2.0
 et-xmlfile==1.1.0
+exceptiongroup @ file:///home/conda/feedstock_root/build_artifacts/exceptiongroup_1720869315914/work
 exchange_calendars==4.5.7
+executing @ file:///home/conda/feedstock_root/build_artifacts/executing_1725214404607/work
 fastapi==0.115.12
 fastapi-cli==0.0.5
 fastjsonschema==2.20.0
@@ -89,16 +95,22 @@ idna==3.10
 importlib-metadata==6.11.0
 inscriptis==2.6.0
 installer==0.7.0
+ipykernel @ file:///Users/runner/miniforge3/conda-bld/ipykernel_1719845458456/work
+ipython @ file:///home/conda/feedstock_root/build_artifacts/ipython_1727944696411/work
 ipython-genutils==0.2.0
+ipywidgets @ file:///home/conda/feedstock_root/build_artifacts/ipywidgets_1724334859652/work
 itsdangerous==2.2.0
 jaraco.classes==3.4.0
+jedi @ file:///home/conda/feedstock_root/build_artifacts/jedi_1696326070614/work
 Jinja2==3.1.4
 jiter==0.6.1
 joblib==1.4.2
 jsonschema==4.23.0
 jsonschema-specifications==2023.12.1
 jupyter_client==8.6.2
+jupyter_core @ file:///home/conda/feedstock_root/build_artifacts/jupyter_core_1727163409502/work
 jupyterlab_pygments==0.3.0
+jupyterlab_widgets @ file:///home/conda/feedstock_root/build_artifacts/jupyterlab_widgets_1724331334887/work
 jusText==3.0.2
 keyring==24.3.1
 kiwisolver==1.4.5
@@ -111,6 +123,7 @@ lxml_html_clean==0.4.1
 markdown-it-py==3.0.0
 MarkupSafe==2.1.5
 matplotlib==3.9.2
+matplotlib-inline @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_1713250518406/work
 mdurl==0.1.2
 mistune==3.0.2
 monotonic==1.6
@@ -123,6 +136,7 @@ mysql-connector-python==9.0.0
 nbclient==0.10.0
 nbconvert==7.16.4
 nbformat==5.10.4
+nest_asyncio @ file:///home/conda/feedstock_root/build_artifacts/nest-asyncio_1705850609492/work
 numba==0.61.2
 numpy==1.26.3
 openai==1.52.2
@@ -159,17 +173,22 @@ openbb-yfinance==1.4.4
 openpyxl==3.1.5
 orderly-set==5.3.0
 osqp==0.6.7.post3
+packaging @ file:///home/conda/feedstock_root/build_artifacts/packaging_1718189413536/work
 pandas==2.2.2
 pandas-datareader==0.10.0
 pandas-ta==0.3.14b0
 pandas_market_calendars==4.4.1
 pandocfilters==1.5.1
+parso @ file:///home/conda/feedstock_root/build_artifacts/parso_1712320355065/work
 partd==1.4.2
 pathos==0.3.2
 patsy==1.0.1
 peewee==3.17.6
+pexpect @ file:///home/conda/feedstock_root/build_artifacts/pexpect_1706113125309/work
+pickleshare @ file:///home/conda/feedstock_root/build_artifacts/pickleshare_1602536217715/work
 pillow==10.4.0
 pkginfo==1.11.1
+platformdirs @ file:///home/conda/feedstock_root/build_artifacts/platformdirs_1726613481435/work
 plotly==5.23.0
 poetry==1.8.3
 poetry-core==1.9.0
@@ -183,6 +202,9 @@ prompt_toolkit==3.0.47
 propcache==0.2.0
 proto-plus==1.25.0
 protobuf==5.28.3
+psutil @ file:///Users/ec2-user/ci_py311_2/psutil_1679337242143/work
+ptyprocess @ file:///home/conda/feedstock_root/build_artifacts/ptyprocess_1609419310487/work/dist/ptyprocess-0.7.0-py2.py3-none-any.whl
+pure_eval @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1721585709575/work
 py-lets-be-rational==1.0.1
 py-vollib==1.0.1
 pyarrow==18.1.0
@@ -194,6 +216,7 @@ pydantic==2.9.2
 pydantic-extra-types==2.9.0
 pydantic-settings==2.6.0
 pydantic_core==2.23.4
+Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1714846767233/work
 PyJWT==2.10.1
 pyluach==2.2.0
 PyMySQL==1.1.1
@@ -230,11 +253,13 @@ seaborn==0.13.2
 shellingham==1.5.4
 shortuuid==1.0.13
 simplejson==3.19.3
+six @ file:///home/conda/feedstock_root/build_artifacts/six_1620240208055/work
 smmap==5.0.1
 sniffio==1.3.1
 soupsieve==2.6
 SQLAlchemy==2.0.32
 sqlitedict==2.1.0
+stack-data @ file:///home/conda/feedstock_root/build_artifacts/stack_data_1669632077133/work
 starlette==0.46.1
 statsmodels==0.14.4
 structlog==24.4.0
@@ -248,11 +273,14 @@ tokenizers==0.20.1
 toml==0.10.2
 tomlkit==0.13.2
 toolz==1.0.0
+tornado @ file:///private/var/folders/c_/qfmhj66j0tn016nkx_th4hxm0000gp/T/abs_7e0ruwlfee/croot/tornado_1718740118099/work
 tqdm==4.66.5
 trafilatura==2.0.0
+traitlets @ file:///home/conda/feedstock_root/build_artifacts/traitlets_1713535121073/work
 trove-classifiers==2024.7.2
 typer==0.12.5
 types-python-dateutil==2.9.0.20240906
+typing_extensions @ file:///home/conda/feedstock_root/build_artifacts/typing_extensions_1717802530399/work
 tzdata==2024.1
 tzlocal==5.3.1
 uritemplate==4.1.1
@@ -263,12 +291,15 @@ uvicorn==0.34.2
 uvloop==0.20.0
 virtualenv==20.26.3
 watchfiles==0.23.0
+wcwidth @ file:///home/conda/feedstock_root/build_artifacts/wcwidth_1704731205417/work
 webencodings==0.5.1
 websocket-client==1.8.0
 websockets==15.0.1
+widgetsnbextension @ file:///home/conda/feedstock_root/build_artifacts/widgetsnbextension_1724331337528/work
 xattr==1.1.0
 xlrd==2.0.1
 xmltodict==0.13.0
 xyzservices==2024.9.0
 yarl==1.18.3
 yfinance==0.2.58
+zipp @ file:///home/conda/feedstock_root/build_artifacts/zipp_1726248574750/work

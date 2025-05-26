@@ -1,14 +1,25 @@
 ## NOTE:
-## 1) If a split happens during a backtest window, the trade id won't be updated.
+## 1) If a split happens during a backtest window, the trade id won't be updated. The dataframe will simply be uploaded with a the split adjusted strike.
+## 2) All Greeks &  Midpoint with Zero values will be FFWD'ed
 
 
 from .utils import *
+from .utils import (logger, 
+                    get_timeseries_start_end,
+                    set_deleted_keys)
 from .actions import *
-from trade.helpers.helper import printmd, CustomCache
+from trade.helpers.helper import printmd, CustomCache, date_inbetween
+from EventDriven.event import (
+    RollEvent,
+    ExerciseEvent,
+    OrderEvent
+)
+import numpy as np
+import os
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
-logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
+# logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
 order_cache = CustomCache(BASE, fname = "order")
 
 
@@ -173,9 +184,7 @@ class OrderPicker:
                     }
                     order_cache[date][tick] = return_item
                     return return_item
-                
-                # print("After Available Close Check")
-                # print(data)
+            
                 order_candidates[direction][i] = data
 
 
@@ -213,7 +222,6 @@ class OrderPicker:
         cols = return_dataframe.columns.tolist()
         cols[-1] = 'close'
         return_dataframe.columns= cols
-        # print(return_dataframe)
         return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
 
 
@@ -284,14 +292,19 @@ class RiskManager:
         
         assert sizing_type in ['delta', 'vega', 'gamma', 'price'], f"Sizing Type {sizing_type} not recognized, expected 'delta', 'vega', 'gamma', or 'price'"
         order_cache.clear()
+        global DELETED_KEYS
+        set_deleted_keys([]) ## Set the deletion keys for the cache
+        start, end = get_timeseries_start_end()
         self.bars = bars
         self.events = events
         self.initial_capital = initial_capital
         self.__pm = portfolio_manager
-        self.start_date = start_date
-        self.end_date = end_date
+        self.start_date = start
+        self.pm_start_date = start_date
+        self.pm_end_date = end_date
+        self.end_date = end
         self.symbol_list = self.bars.symbol_list
-        self.OrderPicker = OrderPicker(start_date, end_date)
+        self.OrderPicker = OrderPicker(start, end)
         self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries")
         self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries") ## This is used for pricing, to account option strikes for splits
         self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data")
@@ -321,8 +334,9 @@ class RiskManager:
         self.max_moneyness = max_moneyness
         self.option_price = option_price
         self._actions = {}
-        self.splits = CustomCache(HOME_BASE, fname = "split_names_dates", expiry = 1000)
-        self.clear_caches()
+        self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expiry = 1000)
+        self.splits = self.set_splits(self.splits_raw)
+        # self.clear_caches()
         
 
 
@@ -337,7 +351,7 @@ class RiskManager:
         """
         self.spot_timeseries.clear()
         self.chain_spot_timeseries.clear()
-        self.position_data.clear()
+        # self.position_data.clear()
         self.dividend_timeseries.clear()
 
     
@@ -352,6 +366,19 @@ class RiskManager:
     @property
     def actions(self):
         return pd.DataFrame(self._actions).T
+
+
+    def set_splits(self, d):
+        """
+        Setter for splits
+        """
+        splits_dict = {}
+        for k, v in d.items():
+            splits_dict[k] = []
+            for d in v:
+                if date_inbetween(d[0], self.start_date, self.end_date):
+                    splits_dict[k].append(d)
+        return splits_dict
 
 
     def print_settings(self):
@@ -375,27 +402,29 @@ Quanitity Sizing Type: {self.sizing_type}
 
     def get_order(self, *args, **kwargs):
         signalID = kwargs.pop('signal_id')
-        printmd(f"## ***Signal ID: {signalID}***")
+        logger.info(f"## ***Signal ID: {signalID}***")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
         order = self.OrderPicker.get_order(*args, **kwargs)     
-        print(f"Order Produced: {order}")
+        logger.info(f"Order Produced: {order}")
 
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
             position_id = order['data']['trade_id']
+            
         else:
+            logger.info(f"Signal ID: {signalID}, Unable to produce order, returning None")
             return order
         
-        print(f"Position ID: {position_id}")
-        print("Calculating Position Greeks")
+        logger.info(f"Position ID: {position_id}")
+        logger.info("Calculating Position Greeks")
         self.calculate_position_greeks(position_id, kwargs['date'])
-        print('Updating Signal Limits')
+        logger.info('Updating Signal Limits')
         self.update_greek_limits(signalID, position_id)
-        print("Calculating Quantity")
+        logger.info("Calculating Quantity")
         quantity = self.calculate_quantity(position_id, signalID, kwargs['date'])
-        print(f"Quantity for Position ({position_id}): {quantity}")
+        logger.info(f"Quantity for Position ({position_id}): {quantity}")
         order['data']['quantity'] = quantity
-        print(order)
+        logger.info(order)
         return order
 
 
@@ -409,7 +438,14 @@ Quanitity Sizing Type: {self.sizing_type}
         date: Evaluation Date for the greeks (PS: This is not the pricing date)
         positionID: str: position string. (PS: This function assumes ticker for position is the same)
         """
-
+        print(f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {positionID}, Date: {date}")
+        if positionID in self.position_data:
+            ## If the position data is already available, then we can skip this step
+            print(f"Position Data for {positionID} already available, skipping calculation")
+            logger.info(f"Position Data for {positionID} already available, skipping calculation")
+            return self.position_data[positionID]
+        else:
+            logger.critical(f"Position Data for {positionID} not available, calculating greeks. Load time ~2 minutes")
         ## Initialize the Long and Short Lists
         long = []
         short = []
@@ -434,55 +470,75 @@ Quanitity Sizing Type: {self.sizing_type}
         s0_close = self.spot_timeseries[ticker]
         r = self.rf_timeseries
         y = self.dividend_timeseries[ticker]
-        if positionID in self.position_data:
-            ## If the position data is already available, then we can skip this step
-            print(f"Position Data for {positionID} already available, skipping calculation")
-            logger.info(f"Position Data for {positionID} already available, skipping calculation")
-            return self.position_data[positionID]
 
         @log_time(time_logger)
-        def get_timeseries(data_manager, s, r, y, s0_close, direction):
-            print("Calculate Greeks dates")
-            print(f"Start Date: {self.start_date}")
-            print(f"End Date: {self.end_date}")
-            greeks = data_manager.get_timeseries(start = self.start_date,
+        def get_timeseries(ids, s, r, y, s0_close, direction):
+            logger.info("Calculate Greeks dates")
+            logger.info(f"Start Date: {self.start_date}")
+            logger.info(f"End Date: {self.end_date}")
+            full_data = pd.DataFrame()
+            for id in ids:
+                data_manager = OptionDataManager(opttick = id)
+                greeks = data_manager.get_timeseries(start = self.start_date,
+                                                        end = self.end_date,
+                                                        interval = '1d',
+                                                        type_ = 'greeks',).post_processed_data
+                greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+                greeks = greeks[greeks_cols]
+                greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+                greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+                spot = data_manager.get_timeseries(start = self.start_date,
                                                     end = self.end_date,
                                                     interval = '1d',
-                                                    type_ = 'greeks',).post_processed_data
-            greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
-            greeks = greeks[greeks_cols]
-            greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
-
-            spot = data_manager.get_timeseries(start = self.start_date,
-                                                end = self.end_date,
-                                                interval = '1d',
-                                                type_ = 'spot',).post_processed_data ## Using chain spot data to account for splits
-            spot = spot[[self.option_price.capitalize()]]
-            # data[['symbol', 'put_call', 'exp_date', 'strike']] = data_manager.symbol, data_manager.put_call, data_manager.exp_date, data_manager.strike
-            data = greeks.join(spot)
-            data['s'] = s
-            data['r'] = r
-            data['y'] = y
-            data['s0_close'] = s0_close
-            self.processed_option_data[data_manager.opttick] = data
+                                                    type_ = 'spot',).post_processed_data ## Using chain spot data to account for splits
+                spot = spot[[self.option_price.capitalize()]]
+                data = greeks.join(spot)
+                full_data = pd.concat([full_data, data], axis = 0)
+            full_data = full_data[~full_data.index.duplicated(keep = 'last')]
+            full_data['s'] = s
+            full_data['r'] = r
+            full_data['y'] = y
+            full_data['s0_close'] = s0_close
+            self.processed_option_data[data_manager.opttick] = full_data
             if direction == 'L':
-                long.append(data)
+                long.append(full_data)
             elif direction == 'S':
-                short.append(data)
+                short.append(full_data)
             else:
                 raise ValueError(f"Position Type {_set[0]} not recognized")
             
             return data
-        
+
+    
+        ## Check for splits
+        split = self.splits.get(ticker, [])
+
         ## Calculating IVs & Greeks for the options
         for _set in positon_meta:
             # To-do: Thread thisto speed up the process
-            id = _set[1]
-            data_manager = OptionDataManager(opttick = id)
-            for input, list_ in zip([data_manager, s, r, y, s0_close, _set[0]], thread_input_list):
+            ids = [_set[1]]
+            if len(split) > 0:
+                for i in split:
+                    split_date = i[0]
+                    print(f"Split Date: {split_date}, Current Date: {date}")
+                    print(pd.to_datetime(split_date) < pd.to_datetime(date))
+                    if pd.to_datetime(split_date) < pd.to_datetime(date): ## Strike is already adjusted for the split
+                        continue
+                    shift = i[1]
+                    id = _set[1]
+                    meta = parse_option_tick(id)
+                    meta['strike'] = meta['strike'] / shift
+                    ids.append(generate_option_tick_new(*meta.values()))
+            # data_manager = OptionDataManager(opttick = id)
+
+
+            for input, list_ in zip([ids, s, r, y, s0_close, _set[0]], thread_input_list):
                 list_.append(input)
         
+        
         runThreads(get_timeseries, thread_input_list)
+        # return long
             
         position_data = sum(long) - sum(short)
         position_data = position_data[~position_data.index.duplicated(keep = 'first')]
@@ -507,23 +563,23 @@ Quanitity Sizing Type: {self.sizing_type}
         ## This should be based on the SignalID.
         ## I will use The date from Signal ID To create the limit
         ## Goal is to enfore the limit on the signal, not the position
-
+        logger.info(f"Updating Greek Limits for Signal ID: {signal_id} and Position ID: {position_id}")
         id_details = parse_signal_id(signal_id)
         cash_available = self.pm.allocated_cash_map[id_details['ticker']]
         delta_at_purchase = self.position_data[position_id]['Delta'][id_details['date']] 
         s0_at_purchase = self.position_data[position_id]['s'][id_details['date']] ## As always, we use the chain spot data to account for splits
         equivalent_delta_size = (math.floor(cash_available/s0_at_purchase)/100) * self.sizing_lev
         self.greek_limits['delta'][signal_id] = abs(equivalent_delta_size)
-        print(f"Spot Price at Purchase: {s0_at_purchase} at time {id_details['date']}")
-        print(f"Delta at Purchase: {delta_at_purchase}")
-        print(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {cash_available}, and Leverage: {self.sizing_lev}")
-        print(f"Equivalent Delta Size: {equivalent_delta_size}")
+        logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {id_details['date']}")
+        logger.info(f"Delta at Purchase: {delta_at_purchase}")
+        logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {cash_available}, and Leverage: {self.sizing_lev}")
+        logger.info(f"Equivalent Delta Size: {equivalent_delta_size}")
 
     def calculate_quantity(self, positionID, signalID, date) -> int:
         """
         Returns the quantity of the position that can be bought based on the sizing type
         """
-
+        logger.info(f"Calculating Quantity for Position ID: {positionID} and Signal ID: {signalID} on Date: {date}")
         if positionID not in self.position_data: ## If the position data isn't available, calculate the greeks
             self.calculate_position_greeks(positionID, date)
         
@@ -536,9 +592,9 @@ Quanitity Sizing Type: {self.sizing_type}
         cash_available = self.pm.allocated_cash_map[ticker]
         purchase_date = pd.to_datetime(date)
         s0_at_purchase = self.position_data[positionID]['s'][purchase_date]  ## s -> chain spot, s0_close -> adjusted close
-        print(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
+        logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
         opt_price = self.position_data[positionID]['Midpoint'][purchase_date]
-        print(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
+        logger.info(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
         max_size_cash_can_buy = abs(math.floor(cash_available/(opt_price*100))) ## Assuming Allocated Cash map is already in 100s
 
         if self.sizing_type == 'price':
@@ -549,10 +605,10 @@ Quanitity Sizing Type: {self.sizing_type}
             if signalID not in self.greek_limits['delta']:
                 self.update_greek_limits(signalID,positionID )
             target_delta = self.greek_limits['delta'][signalID]
-            print(f"Target Delta: {target_delta}")
+            logger.info(f"Target Delta: {target_delta}")
             delta_size = (math.floor(target_delta/abs(delta)))
-            print(f"Delta from Full Cash Spend: {max_size_cash_can_buy * delta}, Size: {max_size_cash_can_buy}")
-            print(f"Delta with Size Limit: {delta_size * delta}, Size: {delta_size}")
+            logger.info(f"Delta from Full Cash Spend: {max_size_cash_can_buy * delta}, Size: {max_size_cash_can_buy}")
+            logger.info(f"Delta with Size Limit: {delta_size * delta}, Size: {delta_size}")
             return delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy
         
         elif self.sizing_type.capitalize() in ['Gamma', 'Vega']:
@@ -568,18 +624,18 @@ Quanitity Sizing Type: {self.sizing_type}
         
         position_action_dict = {} ## This will be used to store the actions for each position
         date = pd.to_datetime(self.pm.events.current_date)
-        print(f"Analyzing Positions on {date}")
+        logger.info(f"Analyzing Positions on {date}")
         is_holiday = is_USholiday(date)
         if is_holiday:
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
-            print(f"Market is closed on {date}, skipping")
+            logger.info(f"Market is closed on {date}, skipping")
             return "IS_HOLIDAY"
 
         ## First check if the position needs to be rolled
         if self.limits['dte']:
             roll_dict = self.dte_check()
         else:
-            print("Roll Check Not Enabled")
+            logger.info("Roll Check Not Enabled")
             roll_dict = {}
             for sym in self.pm.symbol_list:
                 current_position = self.pm.current_positions[sym]
@@ -588,13 +644,13 @@ Quanitity Sizing Type: {self.sizing_type}
                 # roll_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
                 roll_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
 
-        print("Roll Dict", roll_dict)
+        logger.info(f"Roll Dict {roll_dict}")
 
         ## Check if the position needs to be adjusted based on moneyness
         if self.limits['moneyness']:
             moneyness_dict = self.moneyness_check()
         else:
-            print("Moneyness Check Not Enabled")
+            logger.info("Moneyness Check Not Enabled")
             moneyness_dict = {}
             for sym in self.pm.symbol_list:
                 current_position = self.pm.current_positions[sym]
@@ -602,11 +658,11 @@ Quanitity Sizing Type: {self.sizing_type}
                     continue
                 # moneyness_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
                 moneyness_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
-        print("Moneyness Dict", moneyness_dict)
+        logger.info(f"Moneyness Dict: {moneyness_dict}")
 
         ## Check if the position needs to be adjusted based on greeks
         greek_dict = self.limits_check()
-        print("Greek Dict", greek_dict)
+        logger.info(f"Greek Dict {greek_dict}")
 
         check_dicts = [roll_dict, moneyness_dict, greek_dict]
         all_empty = all([len(x)==0 for x in check_dicts])
@@ -645,24 +701,46 @@ Quanitity Sizing Type: {self.sizing_type}
 
             ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
             if OpenPositionAction.ROLL.value in actions:
-                # sub_action_dict['action'] = OpenPositionAction.ROLL.value
                 pos_action = ROLL(k, {})
                 pos_action.reason = reasons[actions.index(OpenPositionAction.ROLL.value)]
+                
+                event = RollEvent(
+                    datetime = date,
+                    symbol = sym,
+                    signal_type = parse_signal_id(current_position['signal_id'])['direction'],
+                    position = current_position,
+                    signal_id = current_position['signal_id']
+
+                )
+                pos_action.event = event
                 position_action_dict[k] = pos_action
                 continue
 
             ## If exercise is needed, do that first, no need to check other actions or adjust quantity
             elif OpenPositionAction.EXERCISE.value in actions:
-                # position_action_dict['action'] = OpenPositionAction.EXERCISE.value
                 pos_action = EXERCISE(k, {})
                 pos_action.reason = reasons[actions.index(OpenPositionAction.EXERCISE.value)]
+                long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
+                
+                event = ExerciseEvent(
+                    datetime = date,
+                    symbol = sym,
+                    quantity = current_position['quantity'],
+                    entry_data = date,
+                    spot = self.chain_spot_timeseries[sym][date], ## Using chain spot because strikes are unadjusted for splits
+                    long_premiums = long_premiums,
+                    short_premiums = short_premiums,
+                    position = current_position,
+                    signal_id = current_position['signal_id']
+                    
+                )
+                pos_action.event = event
                 sub_action_dict[k] = pos_action
                 continue
 
         
             ## If the position is a hold, check if it needs to be adjusted based on greeks
             elif OpenPositionAction.HOLD.value in actions:
-                # sub_action_dict['action'] = OpenPositionAction.HOLD.value
                 pos_action = HOLD(k)
                 pos_action.reason = reasons[actions.index(OpenPositionAction.HOLD.value)]
                 position_action_dict[k] = pos_action
@@ -675,7 +753,16 @@ Quanitity Sizing Type: {self.sizing_type}
             if sub_action_dict['quantity_diff'] < 0: ## If the quantity needs to be reduced, set the action to adjust
                 pos_action = ADJUST(k, sub_action_dict)
                 pos_action.reason = "greek_limit"
-                # sub_action_dict['action'] = pos_action
+
+                event = OrderEvent(
+                    symbol = sym,
+                    datetime = date,
+                    order_type = 'MKT',
+                    quantity= sub_action_dict['quantity_diff'],
+                    direction = 'SELL' if sub_action_dict['quantity_diff'] < 0 else 'BUY',
+                    position = current_position['position'],
+                    signal_id = current_position['signal_id']
+                )
                 position_action_dict[k] = pos_action ## If adjust position, override HOLD.
         self._actions[date] = position_action_dict
 
@@ -693,7 +780,7 @@ Quanitity Sizing Type: {self.sizing_type}
         position_limit = {}
 
         date = pd.to_datetime(self.pm.events.current_date)
-        print(f"Checking Limits on {date}")
+        logger.info(f"Checking Limits on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return 
@@ -716,15 +803,15 @@ Quanitity Sizing Type: {self.sizing_type}
             if delta_limit:
                 quantity_diff = 0 ## Quantity difference to be used in case of limit breach, I want to return negative values
                 if current_delta < max_delta:
-                    print(f"Delta for Position {trade_id} is within limits")
+                    logger.info(f"Delta for Position {trade_id} is within limits")
                 else:
-                    print(f"Delta for Position {trade_id} is above limits")
+                    logger.info(f"Delta for Position {trade_id} is above limits")
                     while current_delta > max_delta:
                         ## Reduce the quantity of the position until it is within limits
                         quantity_diff -= 1
                         q = q -1
                         current_delta = abs(self.position_data[trade_id]['Delta'][date]) * q
-                        print(f"Current Delta: {current_delta}, Max Delta: {max_delta}, Quantity: {q}")
+                        logger.info(f"Current Delta: {current_delta}, Max Delta: {max_delta}, Quantity: {q}")
                     greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
                 position_limit[trade_id] = greek_limit_bool
         return position_limit
@@ -734,7 +821,7 @@ Quanitity Sizing Type: {self.sizing_type}
         Analyze the current positions and determine if any need to be rolled
         """
         date = pd.to_datetime(self.pm.events.current_date)
-        print(f"Checking DTE on {date}")
+        logger.info(f"Checking DTE on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return
@@ -777,7 +864,7 @@ Quanitity Sizing Type: {self.sizing_type}
         Analyze the current positions and determine if any need to be rolled based on moneyness
         """
         date = pd.to_datetime(self.pm.events.current_date)
-        print(f"Checking Moneyness on {date}")
+        logger.info(f"Checking Moneyness on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return

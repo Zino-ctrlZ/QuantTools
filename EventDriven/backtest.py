@@ -62,7 +62,8 @@ class OptionSignalBacktest():
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
                         ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
-                        actions = self.risk_manager.analyze_position() 
+                        actions = self.risk_manager.analyze_position()
+                        self.portfolio.analyze_positions(MarketEvent(pd.to_datetime(self.events.current_date)))
                         print("Risk Manager Actions: ", actions)
 
                     event = current_event_queue.get_nowait()

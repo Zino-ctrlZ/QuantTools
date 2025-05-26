@@ -5,7 +5,7 @@ from trade.assets.OptionStructure import OptionStructure
 from trade.assets.Calculate import Calculate
 # from trade.assets.helpers.DataManagers_new import OptionDataManager
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, SaveManager, BulkOptionDataManager
-print("Using Old DataManager")
+
 from trade.helpers.Context import Context, clear_context
 from trade.helpers.helper import (change_to_last_busday, 
                                   is_USholiday, 
@@ -16,6 +16,8 @@ from trade.helpers.helper import (change_to_last_busday,
                                   parse_option_tick,
                                   binomial_implied_vol,
                                   CustomCache,
+                                  check_missing_dates,
+                                  check_all_days_available,
                                   printmd)
 from dbase.DataAPI.ThetaData import (list_contracts, 
                                      retrieve_openInterest, 
@@ -68,11 +70,13 @@ from trade import HOLIDAY_SET
 import shelve
 from pathlib import Path
 import atexit
+from concurrent.futures import ThreadPoolExecutor
+
 
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager.utils')
 time_logger = setup_logger('QuantTools.EventDriven.riskmanager.time')
-
+logger.info("RISK MANAGER is Using Old DataManager")
 ## To-Do:
 ## 1. Filter out contracts that have already been queried. Saves time
 ## 2. Move cache to class attribute.
@@ -91,7 +95,7 @@ oi_cache    = CustomCache(BASE, fname="oi", expire_days=45)
 spot_cache  = CustomCache(BASE, fname="spot", expire_days=45)
 
 # 4) Create clear_cache function
-def clear_cache():
+def clear_cache() -> None:
     """
     clears the cache
     """
@@ -104,13 +108,13 @@ def clear_cache():
 
 LOOKBACKS = {}
 
-def _retrieve_openInterest(*args, **kwargs):
+def _retrieve_openInterest(*args, **kwargs) -> pd.DataFrame|None:
     try:
         return retrieve_openInterest(*args, **kwargs)
     except Exception as e:
         return None
     
-def _retrieve_eod_ohlc(*args, **kwargs):
+def _retrieve_eod_ohlc(*args, **kwargs) -> pd.DataFrame|None:
     try:
         return retrieve_eod_ohlc(*args, **kwargs)
     except Exception as e:
@@ -119,10 +123,60 @@ def _retrieve_eod_ohlc(*args, **kwargs):
         else:
             raise e
 
+## Keep track of deleted keys in the cache
+DELETED_KEYS = []
 
+def get_deleted_keys() -> List[str]:
+    """
+    Returns the list of deleted keys from the cache.
+    
+    Returns:
+        List[str]: A list of deleted keys.
+    """
+    global DELETED_KEYS
+    return DELETED_KEYS
+
+
+def set_deleted_keys(keys: List[str]) -> None:
+    """
+    Sets the deleted keys in the cache.
+    
+    Args:
+        keys (List[str]): A list of keys that were deleted from the cache.
+    """
+    global DELETED_KEYS
+    DELETED_KEYS = keys
+    logger.info(f"Deleted Keys: {DELETED_KEYS}")
+
+## There's no point loading only within strt, end. Load all to avoid 
+TIMESERIES_START = pd.to_datetime('2017-01-01')
+TIMESERIES_END = datetime.today()
+
+def set_timeseries_start_end(start: str|datetime, end: str|datetime) -> None:
+    """
+    Sets the start and end dates for the timeseries data.
+    
+    Args:
+        start (str|datetime): The start date for the timeseries data.
+        end (str|datetime): The end date for the timeseries data.
+    """
+    global TIMESERIES_START, TIMESERIES_END
+    TIMESERIES_START = pd.to_datetime(start)
+    TIMESERIES_END = pd.to_datetime(end)
+    logger.info(f"Timeseries Start: {TIMESERIES_START}, Timeseries End: {TIMESERIES_END}")
+
+def get_timeseries_start_end() -> Tuple[str, str]:
+    """
+    Returns the start and end dates for the timeseries data.
+    
+    Returns:
+        Tuple[str, str]: A tuple containing the start and end dates for the timeseries data.
+    """
+    global TIMESERIES_START, TIMESERIES_END
+    return TIMESERIES_START.strftime('%Y-%m-%d'), TIMESERIES_END.strftime('%Y-%m-%d')
 
 # Precompute BDay lookbacks to eliminate redundant calculations
-def precompute_lookbacks(start_date, end_date, _range = [10, 20, 30]):
+def precompute_lookbacks(start_date, end_date, _range = [10, 20, 30]) -> None:
 
     ## Extending to allow for multiple lookbacks
     global LOOKBACKS
@@ -139,10 +193,10 @@ def precompute_lookbacks(start_date, end_date, _range = [10, 20, 30]):
 precompute_lookbacks('2000-01-01', '2030-12-31')
 
 # Function to check if a date is a holiday
-def is_holiday(date):
+def is_holiday(date) -> bool:
     return date in HOLIDAY_SET
 
-def get_cache(name: str):
+def get_cache(name: str) -> CustomCache:
     """
     returns the cache for the given name
     """
@@ -159,7 +213,7 @@ def get_cache(name: str):
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-def refresh_cache():
+def refresh_cache() -> None:
     """
     Refreshes the cache for the order picker
     """
@@ -177,7 +231,7 @@ def assemble_bulk_data_request(self, start: str | datetime,
                        type_: str = 'spot',
                        strikes_right: List[Tuple] = [],
                        model: str = 'bs',
-                       extra_cols: list = []) :
+                       extra_cols: list = []) -> BulkOptionQueryRequestParameter:
     start = pd.to_datetime(start)
     end = pd.to_datetime(end)
     ivl_str, ivl_int = extract_numeric_value(interval)
@@ -232,22 +286,7 @@ def assemble_bulk_data_request(self, start: str | datetime,
     return data_request
 
 
-
-def check_all_days_available(x, _start, _end):
-    # print(x)
-    date_range = bus_range(_start, _end, freq = '1B')
-    dates_available = x.Datetime
-    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
-    return all(x in pd.DatetimeIndex(dates_available) for x in date_range)
-
-def check_missing_dates(x, _start, _end):
-    # print(x)
-    date_range = bus_range(_start, _end, freq = '1B')
-    dates_available = x.Datetime
-    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
-    return missing_dates_second_check
-
-def update_caches(x):
+def update_caches(x) -> None:
     refresh_cache()
     global oi_cache, close_cache, oi_cache, spot_cache
     key = f"{x.Optiontick.unique()[0]}"
@@ -355,24 +394,40 @@ def organize_data_for_query(missing_list: list,
         parsed_opts = pd.concat([parsed_opts, pd.DataFrame(opt_meta, index = [0])], axis=0)
     return parsed_opts
 
-def format_cache():
+def format_cache() -> None:
     """
     Drops duplicates from the cache & formats the columns to be capitalized.
     """
     global close_cache, oi_cache
-    for key in close_cache.keys():
-        close_cache[key] = close_cache[key][~close_cache[key].index.duplicated(keep = 'first')]
-        close_cache[key].columns = close_cache[key].columns.str.capitalize() ## This is to keep the original format
-    for key in oi_cache.keys():
-        oi_cache[key] = oi_cache[key][~oi_cache[key].index.duplicated(keep = 'first')]
-        oi_cache[key].columns = oi_cache[key].columns.str.capitalize()
 
+    def process_dataframe(df):
+        # Drop duplicates only if necessary
+        if not df.index.is_unique:
+            df = df.loc[~df.index.duplicated(keep='first')]
+        # Capitalize column names
+        df.columns = [col.capitalize() for col in df.columns]
+        return df
+
+    def process_cache(cache):
+        # Use ThreadPoolExecutor for parallel processing of DataFrames
+        with ThreadPoolExecutor() as executor:
+            keys = list(cache.keys())
+            dfs = list(cache.values())
+            # Process DataFrames in parallel
+            results = executor.map(process_dataframe, dfs)
+            # Update the cache with processed DataFrames
+            for key, result in zip(keys, results):
+                cache[key] = result
+
+    # Process both caches
+    process_cache(close_cache)
+    process_cache(oi_cache)
     return
 
 def merge_incomplete_data_in_cache(
     incomplete_dict: dict,
     pre_processed_data: pd.DataFrame,
-):
+) -> None:
     global close_cache, oi_cache, spot_cache
     ## Now we have updated cache, since incomplete date updates cache with the missing dates, we have to add the data we already have
     for tick, _list in incomplete_dict.items():
@@ -403,7 +458,7 @@ def update_spot_cache(opttick: list, target_date: str|datetime) -> None:
         spot_cache[cache_key] = spot
 
 
-def should_update_cache(key, start, end):
+def should_update_cache(key, start, end) -> bool:
 
     """
     Check if the cache should be updated based on the key and date range.
@@ -505,7 +560,7 @@ def populate_cache_v1(start_date,
         tick_results = (runThreads(generate_option_tick_new, tickOrderedList, 'map'))
 
         ## Save to Dictionary Cache
-        print("Updating Cache")
+        logger.info(f"Updating Cache for: {symbol}, {expiration}, {target_date}")
         for tick, eod, oi in zip(tick_results, eod_results, oi_results):
             cache_key = f"{tick}"
             close_cache[cache_key] = eod
@@ -524,7 +579,7 @@ def populate_cache_v2(
         end,
         candidates,
         target_date,
-):
+) -> str|None:
     """
     populates the cache with the necessary data for the order candidates
     This version will improve on the previous one by using the new BulkOptionDataManager
@@ -551,7 +606,6 @@ def populate_cache_v2(
     str|None: returns 'holiday' if the date is a holiday, 'theta_data_error' if there is an error in the theta data, None otherwise
     """
     
-    print(f"Looks like our young fellow is targetting: {target_date}")
     global oi_cache, close_cache, oi_cache, spot_cache
     start, end = pd.to_datetime(start), pd.to_datetime(end)
     full_data = pd.DataFrame()
@@ -582,15 +636,19 @@ def populate_cache_v2(
 
     cached_opttick = [x for x in opttick if x in close_cache.keys()]
     non_cached_opttick = [x for x in opttick if x not in close_cache.keys()]
+
+    if len(strikes_right) != 0:
+        logger.critical(f"Data needs to be queried for {len(strikes_right)} strikes_right. Load time ~1.5mins")
     
-    ## Updating strikes_right list with this keys once we have checked that they should be updated
-    if len(cached_opttick) != 0:
-        update_list = [(parse_option_tick(key)["strike"], parse_option_tick(key)["put_call"]) \
-                       for key in cached_opttick if should_update_cache(key, start, end)]
-        strikes_right.extend(update_list)
+    # ## Updating strikes_right list with this keys once we have checked that they should be updated
+    # if len(cached_opttick) != 0:
+    #     update_list = [(parse_option_tick(key)["strike"], parse_option_tick(key)["put_call"]) \
+    #                    for key in cached_opttick if should_update_cache(key, start, end)]
+    #     strikes_right.extend(update_list)
 
     strikes_right = list(set(strikes_right)) ## Removing duplicates
-    # return cached_opttick, non_cached_opttick, update_list, strikes_right
+    logger.info(f"Number of strikes_right: {len(strikes_right)}")
+    logger.info(f"Strike Rights: {strikes_right}")
 
     logger.info(f"Info on {tick}, for date: {target_date}")
 
@@ -599,7 +657,7 @@ def populate_cache_v2(
     ## If everything is in the cache, we don't need to do anything. Go straight to updating spot
     if len(strikes_right) != 0:
         manager = BulkOptionDataManager(symbol=tick, exp=exp)
-        print(f"Generating Data for {manager.symbol} {manager.exp}")
+        logger.info(f"Generating Data for {manager.symbol} {manager.exp}")
         data_request = assemble_bulk_data_request(
             self = manager,
             start = start,
@@ -622,6 +680,7 @@ def populate_cache_v2(
         logger.info(f"Number of expected days: {len(expected_days)}")
         logger.info(f"Expected Size of database data: {num_optticks * len(expected_days)}")
         logger.info(f"Amount discrepancy: {num_optticks * len(expected_days) - size_database_data}")
+        logger.info(f"Time taken to query database: {time.time()-query_time}")
 
         # ## Third: we pre_process the data request to see if it is complete
         BulkOptionDataManager.pre_process_data(data_request = data_request) 
@@ -632,7 +691,7 @@ def populate_cache_v2(
         is_complete_series = pre_processed_data.groupby('Optiontick').apply(check_all_days_available, _start = data_request.start_date, _end = data_request.end_date)
         logger.info(f"Is complete series: {is_complete_series.to_string()}")
         opttick = data_request.opttick
-        print(f"Data Is_complete bool: {is_complete}")
+        logger.info(f"Data Is_complete bool: {is_complete}")
 
         ## If complete, Fantastic! We re done, now update cache and get out
         if is_complete:
@@ -642,8 +701,8 @@ def populate_cache_v2(
         else:
             ## We first check for the requested ticks. Which one is not in database at all?
             missing_opttick = [x for x in data_request.opttick if x not in pre_processed_data.Optiontick.unique()]
-            print(f"In missing opttick but not in opttuick: ")
-            print([x for x in opttick if x not in missing_opttick])
+            logger.info(f"In missing opttick but not in opttick: ")
+            logger.info([x for x in opttick if x not in missing_opttick])
             
             ## Next we check to see if the requested opttick data is COMPELETE. 
             ## If incomplete, we perform runthreads
@@ -661,7 +720,6 @@ def populate_cache_v2(
             
             ## We want to update the cache with whatever we have. merge_incomplete_data_in_cache will take care of the rest
             pre_processed_data.groupby('Optiontick').apply(update_caches)
-            logger.info(f"Available: {available}")
             ## Produce the dataframe that stores names to update the cache
             to_update_cache_data = organize_data_for_query(
                 missing_list=missing_opttick,
@@ -675,16 +733,13 @@ def populate_cache_v2(
             start_time = time.time()
             pack = update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
             end_time = time.time()
-            print(f"Time taken to update cache: {end_time-start_time}")
+            logger.info(f"Time taken to update cache: {end_time-start_time}")
 
             ## Merge the data we have in cache with the data we just retrieved for the incomplete ticks
             merge_incomplete_data_in_cache(incomplete_dict = incomplete_dict, pre_processed_data = pre_processed_data)
-            logger.info("Incomplete Dict: {}".format(incomplete_dict))
             format_cache()
             refresh_cache()
-            print("I'm proud of you, we are finally done")
 
-        print("Actually! We are not done yet. We need to get the spot prices for the requested date")
         
         ## Now we update the spot cache
         update_spot_cache(opttick = opttick, target_date = target_date)
@@ -692,7 +747,6 @@ def populate_cache_v2(
         format_cache()
         update_spot_cache(opttick = opttick, target_date = target_date)
 
-    print("Now, my dear friend, we are done")
     BulkOptionDataManager.one_off_save(
         start=start,
         end=end,
@@ -705,13 +759,13 @@ def populate_cache_v2(
 
     
 @copy_doc(populate_cache_v2)
-def populate_cache(start_date, end_date, order_candidates, target_date, version = 2):
-
+def populate_cache(start_date, end_date, order_candidates, target_date, version = 2) -> str|None:
+    print(f"Populate Cache Dates: Start: {start_date}, End: {end_date}, Target: {target_date}")
     if version == 1:
-        print("Using V1")
+        logger.info("Using V1")
         return populate_cache_v1(start_date, end_date, order_candidates, target_date)
     elif version == 2:
-        print("Using V2")
+        logger.info("Using V2")
         return populate_cache_v2(start_date, end_date, order_candidates, target_date)
 
 
@@ -738,7 +792,10 @@ def return_closePrice(id: str,
         ## If the date is not in the close data, we remove that key from the cache
         ## There's no way to resolve this, so we remove the key from the cache
         try:
-            pass
+            logger.info(f"Removing {cache_key} from cache, since date {date} not in close data") 
+            DELETED_KEYS.append(cache_key)
+            # del close_cache[cache_key]
+            # del oi_cache[cache_key]
         except KeyError:
             pass
         return None
@@ -904,6 +961,10 @@ def available_close_check(id: str,
     bool: True if the close price is available, False otherwise
     """
     cache_key = f"{id}"  ## Close Uses only the id, not the date
+    if cache_key in DELETED_KEYS:
+        ## If the cache key is in the deleted keys, we return False
+        logger.info(f"Close Check: {id} is in DELETED_KEYS, returning False")
+        return False
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
     transfer_dict = {}
@@ -999,6 +1060,10 @@ def liquidity_check(id: str,
     returns:
     bool: True if the liquidity is greater than the pass_threshold, False otherwise
     """
+    if id in DELETED_KEYS:
+        ## If the cache key is in the deleted keys, we return False
+        logger.info(f"Liquidity Check: {id} is in DELETED_KEYS, returning False")
+        return False
     sample_id = deepcopy(get_option_specifics_from_key(id))
     new_dict_keys = {'ticker': 'symbol', 'exp_date': 'exp', 'strike': 'strike', 'put_call': 'right'}
     transfer_dict = {}
@@ -1029,8 +1094,6 @@ def liquidity_check(id: str,
     
     oi_data = oi_data[~oi_data.index.duplicated(keep = 'first')]
     oi_data = oi_data.iloc[:lookback]
-    # print(f'Open Interest > {pass_threshold} for {id}:', oi_data.Open_interest.mean() )
-    # return oi_data.Open_interest.mean() > pass_threshold if isinstance(oi_data, pd.DataFrame) else False
     return oi_data.Open_interest.sum()/lookback > pass_threshold if isinstance(oi_data, pd.DataFrame) else False
 
 
