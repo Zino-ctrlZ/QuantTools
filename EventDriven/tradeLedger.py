@@ -50,7 +50,7 @@ class TradeLedger:
             self.ledger[entry_time] = {
                 'datetime': fill_event.datetime,
                 'uid': uid, 
-                'price': normalize_dollar_amount(fill_event.fill_cost/ fill_event.quantity),
+                'price': normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity),
                 'quantity': fill_event.quantity,
                 'symbol': fill_event.symbol,
                 'commission': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.commission),
@@ -67,7 +67,7 @@ class TradeLedger:
                          (self.ledger[entry_time]['price'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
         self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
                                (self.ledger[entry_time]['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
-        self.aux_cost += self.ledger['entry_time']['aux_cost']
+        self.aux_cost += self.ledger[entry_time]['aux_cost']
         self.quantity += self.ledger[entry_time]['quantity']
         self.commission += self.ledger[entry_time]['commission']
         self.slippage += self.ledger[entry_time]['slippage']

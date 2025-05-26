@@ -20,6 +20,7 @@ class Trade:
         self.entry_date = None
         self.exit_date = None
         self.current_price = None
+        self.stats = None
     
     def update(self, fill_event: FillEvent):
         """
@@ -36,7 +37,7 @@ class Trade:
             if self.is_closed():
                 self.exit_date = fill_event.datetime
                 
-    
+        self.stats = pd.DataFrame([self.aggregate()])
             
             
     def is_closed(self):
@@ -66,7 +67,7 @@ class Trade:
         stats['entry_commission'] = self.buy_ledger.commission
         stats['entry_slippage'] = self.buy_ledger.slippage
         stats['entry_quantity'] = self.buy_ledger.quantity
-        stats['aux_entry_cost'] = self.buy_ledger.avg_aux_cost
+        stats['aux_entry_cost'] = self.buy_ledger.aux_cost
         stats['avg_entry_cost'] = self.buy_ledger.avg_total_cost
         
         # Calculate metrics for sell transactions
@@ -74,7 +75,7 @@ class Trade:
         stats['exit_commission'] = self.sell_ledger.commission
         stats['exit_slippage'] = self.sell_ledger.slippage
         stats['exit_quantity'] = self.sell_ledger.quantity
-        stats['aux_exit_cost'] = self.sell_ledger.avg_aux_cost
+        stats['aux_exit_cost'] = self.sell_ledger.aux_cost
         stats['avg_exit_cost'] = self.sell_ledger.avg_total_cost
         
         # Calculate PnL metrics if we have both buy and sell transactions
@@ -120,7 +121,7 @@ class Trade:
         """
         self.current_price = price
     
-    def to_dataframe(self):
+    def entries(self):
         """
         Return a combined dataframe of buy and sell transactions
         """
