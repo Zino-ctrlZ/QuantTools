@@ -6,7 +6,8 @@
 from .utils import *
 from .utils import (logger, 
                     get_timeseries_start_end,
-                    set_deleted_keys)
+                    set_deleted_keys,
+                    date_in_cache_index)
 from .actions import *
 from trade.helpers.helper import printmd, CustomCache, date_inbetween
 from EventDriven.event import (
@@ -165,6 +166,8 @@ class OrderPicker:
 
         for direction in order_candidates: ## Fix this to use .items()
             for i,data in enumerate(order_candidates[direction]):
+                data['date_available'] = data.apply(lambda x: date_in_cache_index( date, x.option_id), axis=1)
+                data = data[data.date_available == True] ## Filter out contracts that are not available on the date.
                 data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, pass_threshold=self.liquidity_threshold, lookback=self.lookback))
                 data = data[data.liquidity_check == True]
                 if data.empty:
@@ -345,6 +348,14 @@ class RiskManager:
         global close_cache
         return close_cache  
     
+    @property
+    def order_cache(self):
+        """
+        Returns the order cache
+        """
+        global order_cache
+        return order_cache
+    
     def clear_caches(self):
         """
         Clears the caches
@@ -402,13 +413,26 @@ Quanitity Sizing Type: {self.sizing_type}
 
     def get_order(self, *args, **kwargs):
         signalID = kwargs.pop('signal_id')
+        date = kwargs.get('date')
+        tick = kwargs.get('tick')
         logger.info(f"## ***Signal ID: {signalID}***")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
         order = self.OrderPicker.get_order(*args, **kwargs)     
         logger.info(f"Order Produced: {order}")
 
+        ## save the order in the cache
+        if date not in order_cache:
+            cache_dict = {tick: order}
+            order_cache[date] = cache_dict
+        else:
+            cache_dict = order_cache[date]
+            cache_dict[tick] = order
+            order_cache[date] = cache_dict
+
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
+            print(f"\nOrder Received: {order}\n")
+
             position_id = order['data']['trade_id']
             
         else:
@@ -521,8 +545,6 @@ Quanitity Sizing Type: {self.sizing_type}
             if len(split) > 0:
                 for i in split:
                     split_date = i[0]
-                    print(f"Split Date: {split_date}, Current Date: {date}")
-                    print(pd.to_datetime(split_date) < pd.to_datetime(date))
                     if pd.to_datetime(split_date) < pd.to_datetime(date): ## Strike is already adjusted for the split
                         continue
                     shift = i[1]
@@ -558,11 +580,15 @@ Quanitity Sizing Type: {self.sizing_type}
             Limits are saved in absolute values to account for both long and short positions
         
         """
-
+        
         ## We want to update delta limits for now.
         ## This should be based on the SignalID.
         ## I will use The date from Signal ID To create the limit
         ## Goal is to enfore the limit on the signal, not the position
+        
+        if signal_id in self.greek_limits['delta']: ## May consider to maximize cash on roll
+            logger.info(f"Greek Limits for Signal ID: {signal_id} already updated, skipping")
+            return
         logger.info(f"Updating Greek Limits for Signal ID: {signal_id} and Position ID: {position_id}")
         id_details = parse_signal_id(signal_id)
         cash_available = self.pm.allocated_cash_map[id_details['ticker']]

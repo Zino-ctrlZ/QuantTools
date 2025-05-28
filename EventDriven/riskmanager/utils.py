@@ -224,6 +224,17 @@ def refresh_cache() -> None:
     chain_cache = get_cache('chain')
 
 
+def date_in_cache_index(date, opttick) -> bool:
+    """
+    Check if a date is in the index of a cache for an option tick.
+    """
+    if opttick not in get_cache('close').keys():
+        return False
+    
+    if get_cache('close')[opttick] is None or get_cache('oi')[opttick] is None:
+        return False
+    
+    return date in get_cache('close')[opttick].index and date in get_cache('oi')[opttick].index
 
 def assemble_bulk_data_request(self, start: str | datetime, 
                        end: str | datetime,
@@ -402,6 +413,8 @@ def format_cache() -> None:
 
     def process_dataframe(df):
         # Drop duplicates only if necessary
+        if df is None or df.empty:
+            return df
         if not df.index.is_unique:
             df = df.loc[~df.index.duplicated(keep='first')]
         # Capitalize column names
@@ -613,8 +626,16 @@ def populate_cache_v2(
         for data in candidates[direction]:
             if isinstance(data, str) and data =='theta_data_error':
                 return 'theta_data_error'
-            if pd.to_datetime(target_date).weekday() >= 5:
+            
+            elif pd.to_datetime(target_date).weekday() >= 5:
                 return 'weekend'
+            
+            elif isinstance(data, str) and data =='holiday':
+                return 'holiday'
+
+            elif isinstance(data, str):
+                print(f"Data is a string: {data}, Error incoming...")
+                
             full_data = pd.concat([full_data, data], axis=0)
 
     full_data.index.name = 'Date'
