@@ -210,6 +210,7 @@ class SpotDataManager:
         self.symbol = symbol
 
     @log_error_with_stack(logger)
+    @DB_CACHE.memoize()
     def query_thetadata(self,
                         start: str | datetime,
                         end: str | datetime,
@@ -294,6 +295,7 @@ class VolDataManager:
         self.symbol = symbol
 
     @log_error_with_stack(logger)
+    @DB_CACHE.memoize()
     def calculate_iv(self, **kwargs):
         """
         Calculate the implied volatility using the model.
@@ -315,6 +317,7 @@ class GreeksDataManager:
         self.symbol = symbol
 
     @log_error_with_stack(logger)
+    @DB_CACHE.memoize()
     def calculate_greeks(self, type_, **kwargs):
        
         data_request = kwargs['data_request']
@@ -356,6 +359,7 @@ class ChainDataManager(_ManagerLazyLoader):
         self.db = DatabaseAdapter()
 
     @log_error_with_stack(logger)
+    @DB_CACHE.memoize()
     def get_at_time(self, date:str, organize:bool = False) -> pd.DataFrame:
         database, table = TABLES['eod']['chain'].split('.')
         self.exp = date
@@ -517,7 +521,8 @@ class BulkOptionDataManager(_ManagerLazyLoader):
 
         ## Prefer to use dicts to avoid having too many attributes
         self._eod = {}
-
+    
+    @DB_CACHE.memoize()
     def get_timeseries(self, 
                        start: str | datetime, 
                        end: str | datetime,
@@ -832,7 +837,8 @@ class OptionDataManager(_ManagerLazyLoader):
         Returns the requests for the class
         """
         return get_single_requests()
-
+    
+    @DB_CACHE.memoize()
     def get_timeseries(self, 
                        start: str | datetime, 
                        end: str | datetime,
@@ -946,6 +952,7 @@ class OptionDataManager(_ManagerLazyLoader):
             
         return data_request
     
+    @DB_CACHE.memoize()
     def get_at_time(self, 
                    date: str | datetime, 
                    type_: str = 'spot',
@@ -1679,10 +1686,9 @@ def init_query(**kwargs):
         ## 2.3) Update Cache
         
         key = f"{data_request.db_name}.{data_request.table_name}"
-        DB_CACHE[key] = pd.concat([
-            DB_CACHE[key],
-            database_data
-        ])
+        db_data = DB_CACHE.get(key, pd.DataFrame())
+        db_data = pd.concat([db_data, database_data]).drop_duplicates(inplace=False)
+        DB_CACHE[key] = db_data
         DB_CACHE[key] = DB_CACHE[key].drop_duplicates(inplace = False)
         return database_data
 

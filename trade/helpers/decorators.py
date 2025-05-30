@@ -5,6 +5,7 @@ import cProfile
 import pstats
 import io
 import traceback
+import pandas as pd
 
 def log_time(logger):
     def decorator(func):
@@ -13,6 +14,7 @@ def log_time(logger):
             start = time.time()
             result = func(*args, **kwargs)
             end = time.time()
+            args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
             logger.info(f'{func.__name__} took {end - start} seconds')
             logger.info(f'args {args}, kwargs: {kwargs}')
             return result

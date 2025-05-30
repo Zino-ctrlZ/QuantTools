@@ -93,6 +93,7 @@ chain_cache = CustomCache(BASE, fname="chain", expire_days=45)
 close_cache = CustomCache(BASE, fname="close", expire_days=45)
 oi_cache    = CustomCache(BASE, fname="oi", expire_days=45)
 spot_cache  = CustomCache(BASE, fname="spot", expire_days=45)
+formatted_flags = CustomCache(location = BASE, fname = 'formatted_flags', expire_days=45)
 
 # 4) Create clear_cache function
 def clear_cache() -> None:
@@ -337,9 +338,22 @@ def update_cache_with_missing_ticks(parsed_opts: pd.DataFrame, date: str|datetim
     tick_results = list(tick_results)
     parsed_opts['opttick'] = tick_results
     ## We get ticks first, then filter out the ones that are already in the cache
-    missing_ticks = [x for x in tick_results if x not in close_cache.keys() and x not in oi_cache.keys() and f"{x}_{date}" not in spot_cache.keys()]
+    missing_ticks = [x for x in tick_results if x not in close_cache.keys() and \
+                     x not in oi_cache.keys() \
+                        and f"{x}_{date}" not in spot_cache.keys()]
+    
+    data_list = []
+    for tick in tick_results:
+        data = close_cache.get(tick, None)
+        if data is not None and date not in data.index:
+            ## If the data is not None, but the date is not in the index, we add it to the list
+            data_list.append(tick)
+
+    missing_ticks.extend(data_list)   
     if len(missing_ticks) == 0:
-        ## If there are no missing ticks, we don't need to do anything
+        ## If there are no missing ticks, we check for each of their datetime completeness (SQL sometimes is incomplete)
+
+
         return
     else:
         ## We filter out the ones that are already in the cache to reduce the number of requests
@@ -405,37 +419,41 @@ def organize_data_for_query(missing_list: list,
         parsed_opts = pd.concat([parsed_opts, pd.DataFrame(opt_meta, index = [0])], axis=0)
     return parsed_opts
 
+
 def format_cache() -> None:
     """
-    Drops duplicates from the cache & formats the columns to be capitalized.
+    Drops duplicates from the cache & capitalizes column names,
+    but only for DataFrames we haven’t formatted yet.
     """
-    global close_cache, oi_cache
+    global close_cache, oi_cache, formatted_flags
 
     def process_dataframe(df):
-        # Drop duplicates only if necessary
+        # same as before…
         if df is None or df.empty:
             return df
         if not df.index.is_unique:
             df = df.loc[~df.index.duplicated(keep='first')]
-        # Capitalize column names
         df.columns = [col.capitalize() for col in df.columns]
         return df
 
     def process_cache(cache):
-        # Use ThreadPoolExecutor for parallel processing of DataFrames
-        with ThreadPoolExecutor() as executor:
-            keys = list(cache.keys())
-            dfs = list(cache.values())
-            # Process DataFrames in parallel
-            results = executor.map(process_dataframe, dfs)
-            # Update the cache with processed DataFrames
-            for key, result in zip(keys, results):
-                cache[key] = result
+        # 1) only keys not yet in formatted_flags
+        to_process = [k for k in cache if not formatted_flags.get(k, False)]
 
-    # Process both caches
-    process_cache(close_cache)
-    process_cache(oi_cache)
-    return
+        if not to_process:
+            return
+
+        with ThreadPoolExecutor() as executor:
+            dfs = [cache[k] for k in to_process]
+            results = executor.map(process_dataframe, dfs)
+
+            # 2) write them back & 3) mark formatted
+            for k, new_df in zip(to_process, results):
+                cache[k] = new_df
+                formatted_flags[k] = True
+
+    process_cache(get_cache('close'))
+    process_cache(get_cache('oi'))
 
 def merge_incomplete_data_in_cache(
     incomplete_dict: dict,
@@ -647,6 +665,7 @@ def populate_cache_v2(
     exp = full_data.Expiration.unique()[0]
     strikes_right = list(full_data[['Strike', 'Right']].itertuples(name=None, index=False))
     opttick = [generate_option_tick_new(tick, x[1], exp, x[0]) for x in strikes_right] 
+    update_spot = [x for x in opttick if f"{x}_{target_date}" not in spot_cache.keys()]
     
     ## 1) Goal: Ensuring we don't requery the database for data we already have. Saves time
     ## Filtering out the ones that are already in the cache
@@ -763,10 +782,10 @@ def populate_cache_v2(
 
         
         ## Now we update the spot cache
-        update_spot_cache(opttick = opttick, target_date = target_date)
+        update_spot_cache(opttick = update_spot, target_date = target_date)
     else:
         format_cache()
-        update_spot_cache(opttick = opttick, target_date = target_date)
+        update_spot_cache(opttick = update_spot, target_date = target_date)
 
     BulkOptionDataManager.one_off_save(
         start=start,
@@ -933,7 +952,7 @@ def chain_details(date: str,
                                                                    Option_Chain_Filtered.index.get_level_values('DTE').max()]
             
             if float(moneyness_width) == 0.0:
-                option_details = Option_Chain_Filtered.sort_values('moneyness_spread', ascending=False).head(1)
+                option_details = Option_Chain_Filtered.sort_values('moneyness_spread', ascending=True).head(1)
             else:
                 option_details = Option_Chain_Filtered[(Option_Chain_Filtered['relative_moneyness'] >= tgt_moneyness - moneyness_width) & 
                                                     (Option_Chain_Filtered['relative_moneyness'] <= tgt_moneyness + moneyness_width)]
@@ -1007,7 +1026,7 @@ def available_close_check(id: str,
     close_mask_series = close_data_sample.Close != 0
     return close_mask_series.sum()/len(close_mask_series) > threshold
 
-
+@log_time(time_logger)
 def produce_order_candidates(settings: dict, 
                              tick: str, 
                              date: str, 

@@ -114,6 +114,7 @@ class OrderPicker:
 
         ## Create necessary data structures
         direction_index = {}
+    
         str_direction_index = {}
         for indx, v in enumerate(order_settings['specifics']):
             if v['direction'] == 'long':
@@ -122,7 +123,6 @@ class OrderPicker:
             elif v['direction'] == 'short':
                 str_direction_index[indx] = 'short'
                 direction_index[indx] = -1
-
 
         order_candidates = produce_order_candidates(order_settings, tick, date, right)
         if any([x2 is None for x in order_candidates.values() for x2 in x]):
@@ -138,6 +138,7 @@ class OrderPicker:
                                   start_date=self.start_date, 
                                   end_date=self.end_date) 
         refresh_cache()
+    
         if returned == 'holiday':
             return_item = {
                 'result': "IS_HOLIDAY",
@@ -164,6 +165,32 @@ class OrderPicker:
             return return_item
     
 
+        SKIP_ORDER_CRITERIA = []
+        for s in order_settings['specifics']:
+            SKIP_ORDER_CRITERIA.append(s['moneyness_width'])
+            
+        SKIP_ORDER_CRITERIA = not all(SKIP_ORDER_CRITERIA)
+        if SKIP_ORDER_CRITERIA: ## We will return the order as is.
+
+            return_order = {
+                'result': ResultsEnum.SUCCESSFUL.value,
+                'data':{}
+            }
+            id = ''
+            close = 0
+            for direction in order_candidates.keys():
+                return_order['data'][direction] = []
+                for data in order_candidates[direction]:
+                    optid = data["option_id"].unique()[0]
+                    return_order['data'][direction].append(optid)
+                    id+= f'&{direction.upper()[0]}:{optid}'
+                    spot = get_cache('spot')[f'{optid}_{date}'] if direction == 'long' else -get_cache('spot')[f'{optid}_{date}']
+                    close += spot
+            return_order['data']['trade_id'] = id
+            return_order['data']['close'] = close
+            return return_order
+
+        
         for direction in order_candidates: ## Fix this to use .items()
             for i,data in enumerate(order_candidates[direction]):
                 data['date_available'] = data.apply(lambda x: date_in_cache_index( date, x.option_id), axis=1)
@@ -189,7 +216,6 @@ class OrderPicker:
                     return return_item
             
                 order_candidates[direction][i] = data
-
 
 
         ## Filter Unique Combinations per leg.

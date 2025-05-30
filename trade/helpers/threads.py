@@ -26,7 +26,7 @@ def runThreads(func, OrderedInputs: list[list],
 
     global shutdown_event
     try:
-        num_threads = min(len(OrderedInputs[0]), cpu_count())  # Limit threads to CPU cores or available inputs
+        num_threads = min(max(len(OrderedInputs[0]), 1), cpu_count())  # Limit threads to CPU cores or available inputs
         results = []
         if block:
             with ThreadPoolExecutor(max_workers=num_threads, thread_name_prefix=thread_name_prefix+'_thread') as executor:
@@ -45,5 +45,4 @@ def runThreads(func, OrderedInputs: list[list],
     except Exception as e:
         print('Error occurred: ', e)
         raise
-
     return list(results) if block else results
