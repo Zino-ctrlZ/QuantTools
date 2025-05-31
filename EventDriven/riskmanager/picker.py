@@ -205,7 +205,7 @@ def extract_order(obj):
     
     ## If contracts found, build the order
     order['result'] = ResultsEnum.SUCCESSFUL.value
-    order['data'] = {"id": "", "legs": dict(short=[], long=[]), "close": 0}
+    order['data'] = {"trade_id": "", "legs": dict(short=[], long=[]), "close": 0}
     for pack in obj:
         for direction, data in pack.items():
             if direction not in ('long', 'short'):
