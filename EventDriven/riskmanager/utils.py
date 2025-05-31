@@ -23,7 +23,8 @@ from dbase.DataAPI.ThetaData import (list_contracts,
                                      retrieve_openInterest, 
                                      retrieve_eod_ohlc, 
                                      retrieve_bulk_eod,
-                                     retrieve_bulk_open_interest
+                                     retrieve_bulk_open_interest,
+                                     retrieve_chain_bulk
                                      )
 from pandas.tseries.offsets import BDay
 from pandas.tseries.holiday import USFederalHolidayCalendar
@@ -77,30 +78,39 @@ from concurrent.futures import ThreadPoolExecutor
 logger = setup_logger('QuantTools.EventDriven.riskmanager.utils')
 time_logger = setup_logger('QuantTools.EventDriven.riskmanager.time')
 logger.info("RISK MANAGER is Using Old DataManager")
+
+
+## There's no point loading only within strt, end. Load all to avoid 
+TIMESERIES_START = pd.to_datetime('2017-01-01')
+TIMESERIES_END = datetime.today()
+
+
 ## To-Do:
 ## 1. Filter out contracts that have already been queried. Saves time
 ## 2. Move cache to class attribute.
 
-
-
 ##Test low memory cache
-# 2) pick a folder for your caches
+# 1) pick a folder for your caches
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 BASE.mkdir(exist_ok=True)
+location = Path(os.environ['GEN_CACHE_PATH'])
 
-# 3) swap your dicts for Cache instances
+# 2) swap your dicts for Cache instances
 chain_cache = CustomCache(BASE, fname="chain", expire_days=45)
 close_cache = CustomCache(BASE, fname="close", expire_days=45)
 oi_cache    = CustomCache(BASE, fname="oi", expire_days=45)
 spot_cache  = CustomCache(BASE, fname="spot", expire_days=45)
 formatted_flags = CustomCache(location = BASE, fname = 'formatted_flags', expire_days=45)
+PERSISTENT_CACHE = CustomCache(location,
+                               fname='persistent_cache',
+                               expire_days=30)
 
-# 4) Create clear_cache function
+# 3) Create clear_cache function
 def clear_cache() -> None:
     """
     clears the cache
     """
-    global chain_cache, close_cache, oi_cache, spot_cache
+    global chain_cache, close_cache, oi_cache, spot_cache, fullChain_cache
     chain_cache.clear()
     close_cache.clear()
     oi_cache.clear()
@@ -113,13 +123,19 @@ def _retrieve_openInterest(*args, **kwargs) -> pd.DataFrame|None:
     try:
         return retrieve_openInterest(*args, **kwargs)
     except Exception as e:
-        return None
+        if is_thetadata_exception(e):
+            print(f"Error retrieving open interest: {e}")
+            return None
+        else:
+            raise e
+
     
 def _retrieve_eod_ohlc(*args, **kwargs) -> pd.DataFrame|None:
     try:
         return retrieve_eod_ohlc(*args, **kwargs)
     except Exception as e:
         if is_thetadata_exception(e):
+            print(f"Error retrieving EOD OHLC data: {e}")
             return None
         else:
             raise e
@@ -149,9 +165,7 @@ def set_deleted_keys(keys: List[str]) -> None:
     DELETED_KEYS = keys
     logger.info(f"Deleted Keys: {DELETED_KEYS}")
 
-## There's no point loading only within strt, end. Load all to avoid 
-TIMESERIES_START = pd.to_datetime('2017-01-01')
-TIMESERIES_END = datetime.today()
+
 
 def set_timeseries_start_end(start: str|datetime, end: str|datetime) -> None:
     """
@@ -213,6 +227,48 @@ def get_cache(name: str) -> CustomCache:
 
     else:
         raise ValueError(f"Invalid cache name: {name}")
+
+@PERSISTENT_CACHE.memoize()
+def populate_cache_with_chain(tick, date, print_url = True):
+    """
+    Populate the cache with chain data.
+    """
+    chain = retrieve_chain_bulk(
+        tick,
+        '',
+        date,
+        date,
+        '16:00',
+        'C',
+        print_url = print_url
+    )
+    print(f"Retrieved chain for {tick} on {date}")
+
+
+    ## Clip Chain
+    chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+
+    ## Create ID
+    id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
+    ids = runThreads(
+        generate_option_tick_new, 
+        id_params)
+    chain_clipped['opttick'] = ids
+    chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
+    chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
+
+    ## Save to cache
+    def save_to_cache(id, date, spot):
+        date = pd.to_datetime(date).strftime('%Y-%m-%d')
+        save_id = f"{id}_{date}"
+        if save_id not in get_cache('spot'):
+            spot_cache[save_id] = spot
+    save_params = chain_clipped[['opttick', 'datetime', 'Midpoint']].T.to_numpy()
+    runThreads(
+        save_to_cache, 
+        save_params)
+    chain_clipped.columns = chain_clipped.columns.str.lower()
+    return chain_clipped
 
 def refresh_cache() -> None:
     """

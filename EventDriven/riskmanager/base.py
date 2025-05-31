@@ -7,8 +7,10 @@ from .utils import *
 from .utils import (logger, 
                     get_timeseries_start_end,
                     set_deleted_keys,
-                    date_in_cache_index)
+                    date_in_cache_index,
+                    PERSISTENT_CACHE)
 from .actions import *
+from .picker import *
 from trade.helpers.helper import printmd, CustomCache, date_inbetween
 from EventDriven.event import (
     RollEvent,
@@ -31,6 +33,7 @@ def get_order_cache():
     """
     global order_cache
     return order_cache
+
 def refresh_cache():
     """
     Refreshes the cache for the order picker
@@ -40,6 +43,7 @@ def refresh_cache():
     close_cache = get_cache('close')
     oi_cache = get_cache('oi')
     chain_cache = get_cache('chain')
+
 
 
 class OrderPicker:
@@ -75,7 +79,22 @@ class OrderPicker:
             precompute_lookbacks('2000-01-01', '2030-12-31', _range = [value])
         self.__lookback = value
 
+
+    def get_order_new(self,
+                      schema: OrderSchema, 
+                      date: str|datetime,
+                      spot,
+                      print_url: bool = False):
         
+        ### Get Chain
+        chain = populate_cache_with_chain(
+            schema['tick'], 
+            date, 
+            print_url = print_url
+        )
+        raw_order = build_strategy(chain, schema, spot, dict(get_cache('spot')))
+        return extract_order(raw_order)
+
     @log_error_with_stack(logger)
     def get_order(self, 
                   tick: str, 
@@ -441,10 +460,24 @@ Quanitity Sizing Type: {self.sizing_type}
         signalID = kwargs.pop('signal_id')
         date = kwargs.get('date')
         tick = kwargs.get('tick')
+        max_close = kwargs.get('max_close', 2.0)    
+        self.generate_data(tick)
+        spot = self.chain_spot_timeseries[tick][date] 
         logger.info(f"## ***Signal ID: {signalID}***")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
-        order = self.OrderPicker.get_order(*args, **kwargs)     
+        # order = self.OrderPicker.get_order(*args, **kwargs)    
+
+        ## Testing new order picker
+        schema = OrderSchema({
+            "strategy": "vertical", "option_type": "C", "tick": tick,
+            "target_dte": 365, "dte_tolerance": 60,
+            "structure_direction": "long", "max_total_price": max_close,
+            "spread_ticks":1, "min_moneyness": 0.75, "max_moneyness": 1.25, "increment": 0.5,
+            "min_total_price": max_close/2
+        })
+        order = self.OrderPicker.get_order_new(schema, date, spot, print_url = True)
+        signal_meta = parse_signal_id(signalID)
         logger.info(f"Order Produced: {order}")
 
         ## save the order in the cache
@@ -478,7 +511,7 @@ Quanitity Sizing Type: {self.sizing_type}
         return order
 
 
-        
+
 
     @log_time(time_logger)
     def calculate_position_greeks(self, positionID, date):

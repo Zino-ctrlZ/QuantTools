@@ -12,6 +12,7 @@ class ResultsEnum(Enum):
     TOO_ILLIQUID = 'TOO_ILLIQUID'
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
     IS_WEEKEND = 'IS_WEEKEND'
+    NO_CONTRACTS_FOUND = 'NO_CONTRACTS_FOUND'
     
 class EventTypes(Enum): 
   SIGNAL = 'SIGNAL'

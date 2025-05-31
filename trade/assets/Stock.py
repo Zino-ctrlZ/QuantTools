@@ -5,6 +5,7 @@
 ## Same as for next earnings
 ## Add unadjusted prices to the stock class - Chain price
 ## Add timer to each and log it
+## Taking too long to load Stock
 
 from openbb import obb
 import sys
