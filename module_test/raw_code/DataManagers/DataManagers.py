@@ -81,15 +81,16 @@ from functools import partial
 
 ## DM NEEDED IMPORTS
 from .utils import _ManagerLazyLoader
-from .Requests import (create_request_bulk,
-                       get_bulk_requests,
-                       get_chain_requests,
-                       get_single_requests,
+from .Requests import (
+    # create_request_bulk,
+                    #    get_bulk_requests,
+                    #    get_chain_requests,
+                    #    get_single_requests,
                        ChainDataRequest,
                        OptionQueryRequestParameter,
                        BulkOptionQueryRequestParameter)
 from .cache import get_cache
-from .shared_obj import (get_request_list)
+# from .shared_obj import (get_request_list)
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 import logging
 
@@ -437,13 +438,13 @@ class ChainDataManager(_ManagerLazyLoader):
         chain_v2['moneyness'] = chain_v2.apply(lambda x: x['spot'] / x['strike'], axis=1)
         data_request.post_processed_data = chain_v2
 
-    @classmethod
-    @property
-    def REQUESTS(cls):
-        """
-        Returns the requests for the class
-        """
-        return get_chain_requests()
+    # @classmethod
+    # @property
+    # def REQUESTS(cls):
+    #     """
+    #     Returns the requests for the class
+    #     """
+    #     return get_chain_requests()
 
     @staticmethod
     def one_off_save(date:str,
@@ -747,13 +748,13 @@ class BulkOptionDataManager(_ManagerLazyLoader):
         """
         bulk_one_off_save(start, end, tick, exp, print_info)
 
-    @classmethod
-    @property
-    def REQUESTS(cls):
-        """
-        Returns the requests for the class
-        """
-        return get_bulk_requests()
+    # @classmethod
+    # @property
+    # def REQUESTS(cls):
+    #     """
+    #     Returns the requests for the class
+    #     """
+    #     return get_bulk_requests()
 
 
 class OptionDataManager(_ManagerLazyLoader):
@@ -825,13 +826,13 @@ class OptionDataManager(_ManagerLazyLoader):
 
         ## Prefer to use dicts to avoid having too many attributes
 
-    @classmethod
-    @property
-    def REQUESTS(cls):
-        """
-        Returns the requests for the class
-        """
-        return get_single_requests()
+    # @classmethod
+    # @property
+    # def REQUESTS(cls):
+    #     """
+    #     Returns the requests for the class
+    #     """
+    #     return get_single_requests()
 
     def get_timeseries(self, 
                        start: str | datetime, 
