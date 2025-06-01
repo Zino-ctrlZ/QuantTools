@@ -7,6 +7,11 @@ TICK_CHANGE_ALIAS = TickerMap({
     'META': ('FB', 'META', '2022-06-09'),
 })
 
+def raise_tick_name_change(ticker, new_ticker):
+    raise ValueError(
+        f'Ticker {ticker} has changed to {new_ticker}. Please use the new ticker.'
+    )
+
 def verify_ticker(ticker):
     if ticker in INVALID_TICKERS:
         raise_tick_name_change(ticker, INVALID_TICKERS[ticker])

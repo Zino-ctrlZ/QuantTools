@@ -52,6 +52,7 @@ def construct_current_scheduled_names():
         ## Check if the request has all the keys
         json_list = [req for req in json_list if all(key in req for key in ['start', 'end', 'tick'])]
         _SCHEDULED_NAMES = [construct_request_name(**request) for request in json_list]
+        
 
 
     except FileNotFoundError:
@@ -328,9 +329,14 @@ def is_already_scheduled(kwargs):
     :return: True if the request is already scheduled, False otherwise.
     """
     
-    construct_current_scheduled_names() ## Update the scheduled names
+    # construct_current_scheduled_names() ## Update the scheduled names
     global _SCHEDULED_NAMES
     request_name = construct_request_name(**kwargs)
+    if request_name in _SCHEDULED_NAMES:
+        logger.info(f"[SaveManager] Request {request_name} is already scheduled.")
+    else:
+        logger.info(f"[SaveManager] Request {request_name} is not scheduled.")
+        _SCHEDULED_NAMES.append(request_name)
     return request_name in _SCHEDULED_NAMES
 
 def write_to_requests_jsonl(kwargs):
@@ -363,6 +369,7 @@ def _schedule(cls, kwargs):
     :param kwargs: Dictionary of parameters to pass to the save function.
         kwargs should contain both keyword arguments for the save function and the save function itself.
     """
+    global _SCHEDULED_NAMES
     print_attr = {x: y for x, y in kwargs.items() if x not in ['set_attributes', '_requests', 'save_func']}
     logger.info(f"[{cls.__name__}] is scheduling a request for {kwargs['tick']} on {print_attr}")
     if kwargs['type_'] in ['bulk', 'single']:

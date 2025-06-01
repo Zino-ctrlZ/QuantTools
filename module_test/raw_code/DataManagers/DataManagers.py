@@ -93,6 +93,8 @@ from .cache import get_cache
 # from .shared_obj import (get_request_list)
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 import logging
+from pathlib import Path
+from functools import wraps
 
                        
 
@@ -131,6 +133,46 @@ def get_pool_enabled_dm():
     return POOL_ENABLED
 
 
+def cached_get_timeseries(func):
+    """
+    Decorator to cache the entire return value (Request object) of get_timeseries(...)
+    in a CustomCache. The cache key is built from the OptionDataManager instance's identifying
+    attributes plus all get_timeseries arguments.
+    """
+    @wraps(func)
+    def wrapper(self, start, end, interval="1d", type_="spot", model="bs", extra_cols=None):
+        # 1) Normalize / stringify the inputs so the key is reproducible:
+        if extra_cols is None:
+            extra_cols = []
+        # Ensure start/end are strings (or ISO format), so the key is stable:
+        start_str = pd.to_datetime(start).strftime("%Y-%m-%d_%H:%M:%S")
+        end_str   = pd.to_datetime(end).strftime("%Y-%m-%d_%H:%M:%S")
+        # extra_cols as a comma‐separated string:
+        extra_str = ",".join(sorted(extra_cols))
+
+        # Build a unique cache key. We assume `self.opttick` uniquely identifies
+        # symbol/exp/right/strike internally; if you want to be more explicit you
+        # could do f"{self.symbol}|{self.exp}|{self.right}|{self.strike}|…"
+        key = "|".join([
+            str(self.opttick),
+            start_str,
+            end_str,
+            interval,
+            type_,
+            model,
+            extra_str
+        ])
+
+        # 2) Try to fetch from disk:
+        if key in DB_CACHE:
+            return DB_CACHE[key]
+
+        # 3) Not in cache? Call the real method and store its return value:
+        result = func(self, start, end, interval, type_, model, extra_cols)
+        DB_CACHE[key] = result
+        return result
+
+    return wrapper
 
 
 ## Set Save Manager 
@@ -518,7 +560,7 @@ class BulkOptionDataManager(_ManagerLazyLoader):
 
         ## Prefer to use dicts to avoid having too many attributes
         self._eod = {}
-
+    
     def get_timeseries(self, 
                        start: str | datetime, 
                        end: str | datetime,
@@ -1680,10 +1722,9 @@ def init_query(**kwargs):
         ## 2.3) Update Cache
         
         key = f"{data_request.db_name}.{data_request.table_name}"
-        DB_CACHE[key] = pd.concat([
-            DB_CACHE[key],
-            database_data
-        ])
+        db_data = DB_CACHE.get(key, pd.DataFrame())
+        db_data = pd.concat([db_data, database_data]).drop_duplicates(inplace=False)
+        DB_CACHE[key] = db_data
         DB_CACHE[key] = DB_CACHE[key].drop_duplicates(inplace = False)
         return database_data
 

@@ -208,14 +208,31 @@ class CustomCache(Cache):
 
 
 def check_all_days_available(x, _start, _end):
-    # print(x)
+    """
+    Check if all business days in the range are available in the DataFrame x.
+    Args:
+        x (pd.DataFrame): DataFrame with a 'Datetime' column.
+        _start (str or datetime): Start date of the range.
+        _end (str or datetime): End date of the range.
+        
+    Returns:
+        bool: True if all business days in the range are available, False otherwise.
+    """
     date_range = bus_range(_start, _end, freq = '1B')
     dates_available = x.Datetime
     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
     return all(x in pd.DatetimeIndex(dates_available) for x in date_range)
 
 def check_missing_dates(x, _start, _end):
-    # print(x)
+    """
+    Check for missing business days in the DataFrame x within the specified date range.
+    Args:
+        x (pd.DataFrame): DataFrame with a 'Datetime' column.
+        _start (str or datetime): Start date of the range.
+        _end (str or datetime): End date of the range.
+    Returns:
+        list: List of missing business days in the range.
+    """
     date_range = bus_range(_start, _end, freq = '1B')
     dates_available = x.Datetime
     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
@@ -388,6 +405,51 @@ def enforce_allowed_models(model: list) -> list:
     Ensures that the model is in the allowed models list.
     """
     assert model in PRICING_CONFIG['AVAILABLE_PRICING_MODELS'], f"Model {model} is not in the allowed models list. Expected {PRICING_CONFIG['AVAILABLE_PRICING_MODELS']}"
+
+
+
+def date_inbetween(date, start, end):
+    """
+    Check if a date is within a given range.
+    Args:
+        date (str or datetime): The date to check.
+        start (str or datetime): The start of the range.
+        end (str or datetime): The end of the range.
+    Returns:
+        bool: True if date is within the range, False otherwise.
+    """
+    start, end, date = pd.to_datetime(start), pd.to_datetime(end), pd.to_datetime(date)
+    return start <= date <= end
+
+class compare_dates:
+    """
+    A class to compare dates with various methods.
+    """
+    @staticmethod
+    def is_before(date1, date2):
+        return pd.to_datetime(date1) < pd.to_datetime(date2)
+
+    @staticmethod
+    def is_after(date1, date2):
+        return pd.to_datetime(date1) > pd.to_datetime(date2)
+
+    @staticmethod
+    def is_equal(date1, date2):
+        return pd.to_datetime(date1) == pd.to_datetime(date2)
+    
+    @staticmethod
+    def inbetween(date, start, end):
+        """
+        Check if a date is within a given range.
+        Args:
+            date (str or datetime): The date to check.
+            start (str or datetime): The start of the range.
+            end (str or datetime): The end of the range.
+        Returns:
+            bool: True if date is within the range, False otherwise.
+        """
+        return date_inbetween(date, start, end)
+
 
 
 def find_split_dates_within_range(tick: str, 
