@@ -64,33 +64,33 @@ class Trade:
         
         # Calculate metrics for buy transactions
         stats['avg_entry_price'] = self.buy_ledger.avg_price
-        stats['entry_commission'] = self.buy_ledger.commission
-        stats['entry_slippage'] = self.buy_ledger.slippage
-        stats['entry_quantity'] = self.buy_ledger.quantity
-        stats['aux_entry_cost'] = self.buy_ledger.aux_cost
+        stats['total_entry_commission'] = self.buy_ledger.commission
+        stats['total_entry_slippage'] = self.buy_ledger.slippage
+        stats['total_entry_quantity'] = self.buy_ledger.quantity
+        stats['total_aux_entry_cost'] = self.buy_ledger.aux_cost
         stats['avg_entry_cost'] = self.buy_ledger.avg_total_cost
         
         # Calculate metrics for sell transactions
         stats['avg_exit_price'] = self.sell_ledger.avg_price
-        stats['exit_commission'] = self.sell_ledger.commission
-        stats['exit_slippage'] = self.sell_ledger.slippage
-        stats['exit_quantity'] = self.sell_ledger.quantity
-        stats['aux_exit_cost'] = self.sell_ledger.aux_cost
+        stats['total_exit_commission'] = self.sell_ledger.commission
+        stats['total_exit_slippage'] = self.sell_ledger.slippage
+        stats['total_exit_quantity'] = self.sell_ledger.quantity
+        stats['total_aux_exit_cost'] = self.sell_ledger.aux_cost
         stats['avg_exit_cost'] = self.sell_ledger.avg_total_cost
         
         # Calculate PnL metrics if we have both buy and sell transactions
-        if stats['entry_quantity'] > 0 and stats['exit_quantity'] > 0:
+        if stats['total_entry_quantity'] > 0 and stats['total_exit_quantity'] > 0:
             # Calculate realized PnL for closed portion
-            stats['closed_quantity'] = stats['exit_quantity']
-            stats['closed_pnl'] = (stats['avg_exit_price'] - stats['avg_entry_price']) * stats['exit_quantity']
+            stats['closed_quantity'] = stats['total_exit_quantity']
+            stats['closed_pnl'] = (stats['avg_exit_price'] - stats['avg_entry_price']) * stats['total_exit_quantity']
             
             # Calculate commission and slippage impact
-            stats['total_commission'] = stats['entry_commission'] + stats['exit_commission']
-            stats['total_slippage'] = stats['entry_slippage'] + stats['exit_slippage']
+            stats['total_commission'] = stats['total_entry_commission'] + stats['total_exit_commission']
+            stats['total_slippage'] = stats['total_entry_slippage'] + stats['total_exit_slippage']
             stats['total_aux_cost'] = stats['total_commission'] + stats['total_slippage']
             
             # Calculate unrealized PnL for open position
-            open_quantity = stats['entry_quantity'] - stats['exit_quantity']
+            open_quantity = stats['total_entry_quantity'] - stats['total_exit_quantity']
             stats['open_quantity'] = open_quantity
             
             if open_quantity > 0 and self.current_price is not None:

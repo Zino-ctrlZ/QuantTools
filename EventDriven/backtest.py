@@ -89,7 +89,7 @@ class OptionSignalBacktest():
                     event_count += 1
                     if event.datetime == pd.to_datetime('2023-07-31') and not test_scheduled:
                         print("Enforcing order event injection for testing purposes")
-                        self.events.schedule_event('2023-08-01',OrderEvent(symbol="TSLA", datetime=event.datetime, order_type='MKT', direction='SELL', quantity=1, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
+                        self.events.schedule_event('2023-08-01',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-08-01'), order_type='MKT', direction='SELL', quantity=1, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
                         print("Order event injected for TSLA at 2023-08-01, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
                         test_scheduled = True
                     try:

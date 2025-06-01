@@ -11,6 +11,7 @@ from abc import ABCMeta, abstractmethod
 import pandas as pd
 import numpy as np
 from EventDriven.eventScheduler import EventScheduler
+from EventDriven.trade import Trade
 from trade.helpers.helper import parse_option_tick
 from EventDriven.types import ResultsEnum, SignalTypes
 from EventDriven.riskmanager import RiskManager
@@ -104,6 +105,7 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
         self.__construct_roll_map()
+        self.new_trades = {}
 
     @property
     def order_settings(self):
@@ -352,7 +354,7 @@ class OptionSignalPortfolio(Portfolio):
                 print(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
                 self.events.schedule_event(next_trading_day, new_signal)
                 return None
-            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=current_position['signal_id'])
+            order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal.signal_id)
             return order
         return None
     
@@ -689,6 +691,13 @@ class OptionSignalPortfolio(Portfolio):
         """
         # Check whether the fill is a buy or sell
         new_position_data = {}
+        
+        if fill_event.position['trade_id'] not in self.new_trades:
+            self.new_trades[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol)
+            self.new_trades[fill_event.position['trade_id']].update(fill_event)
+        else:
+            self.new_trades[fill_event.position['trade_id']].update(fill_event)
+        
         if fill_event.direction == 'BUY': 
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
@@ -722,17 +731,19 @@ class OptionSignalPortfolio(Portfolio):
         if fill_event.direction == 'SELL':
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
-                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
+                if (new_position_data['quantity']) == 0: 
+                   new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
                 self.update_trades_on_sell(fill_event)
 
         if fill_event.direction == 'EXERCISE':
             if fill_event.position is not None:
                 new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
-                new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
+                new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
+                if (new_position_data['quantity']) == 0: 
+                   new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
                 self.update_trades_on_exercise(fill_event)
                 
                 # open a new position after exercise
@@ -765,11 +776,6 @@ class OptionSignalPortfolio(Portfolio):
             transaction['cash_after'] = self.allocated_cash_map[fill_event.symbol]
         
         elif fill_event.direction == 'SELL':
-            # print(fill_event)
-            # print(fill_event.fill_cost)
-            # print(fill_event.position)
-            # print("Current Cash at Sell:", self.allocated_cash_map[fill_event.symbol])
-            # print("Cash at Sell if we add FillCost:", self.allocated_cash_map[fill_event.symbol] + self.__normalize_dollar_amount(fill_event.fill_cost))
             transaction['cash_before'] = self.allocated_cash_map[fill_event.symbol]
             self.allocated_cash_map[fill_event.symbol] += self.__normalize_dollar_amount(fill_event.fill_cost)
             transaction['cash_after'] = self.allocated_cash_map[fill_event.symbol] 
@@ -804,6 +810,8 @@ class OptionSignalPortfolio(Portfolio):
             for signal_id in self.current_positions[sym]:
                 current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym][signal_id]['quantity'] * current_close)
+                
+                self.new_trades[self.current_positions[sym][signal_id]['position']['trade_id']].update_current_price(self.__normalize_dollar_amount(current_close)) #update current price on trade
                 
                 self.current_positions[sym][signal_id]['position']['close'] = current_close ##Update close price for every iteration
                 self.current_positions[sym][signal_id]['market_value'] = market_value

@@ -20,7 +20,7 @@ class EventQueue(Queue):
     def put(self, item: Event):
         """Overrides put to ensure only Event objects are added."""
         if not isinstance(item, Event):
-            raise ValueError("Queue can only contain Event objects.")
+            raise ValueError("Queue can only contain Event objects. Received: {}".format(type(item)))
         super().put(item)
         self.events_dict.append(item)
         
