@@ -105,6 +105,7 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
         self.__construct_roll_map()
+        self.trades_df = None
         self.new_trades = {}
 
     @property
@@ -251,7 +252,10 @@ class OptionSignalPortfolio(Portfolio):
     
     @property
     def trades(self):
-        #NOTE: In the event of exercising, exit price will not be set, pnl will be calculated differently see todo  
+        print("We dey here")
+         #NOTE: In the event of exercising, exit price will not be set, pnl will be calculated differently see todo  
+        if self.trades_df is not None:
+            return self.trades_df
         trades_data = []
         for trade_id, data in self.__trades.items():
             trades_data.append({
@@ -278,12 +282,14 @@ class OptionSignalPortfolio(Portfolio):
                 'SignalID': data.get('signal_id', np.nan)
             }) 
 
-        trades = pd.DataFrame(trades_data)
-        return trades
+        self.trades_df = pd.DataFrame(trades_data)
+        return self.trades_df
 
     @property
     def _trades(self):
         ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
+        if self.trades_df is not None:
+            return self.trades_df
         return self.trades
     
     def get_port_stats(self):
@@ -701,7 +707,10 @@ class OptionSignalPortfolio(Portfolio):
         if fill_event.direction == 'BUY': 
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = fill_event.quantity
+                if self.current_positions[fill_event.symbol] is not None and fill_event.signal_id in self.current_positions[fill_event.symbol]:
+                    new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] + fill_event.quantity
+                else:
+                    new_position_data['quantity'] = fill_event.quantity
                 new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
@@ -731,7 +740,10 @@ class OptionSignalPortfolio(Portfolio):
         if fill_event.direction == 'SELL':
             if fill_event.position is not None: 
                 new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
+                if self.current_positions[fill_event.symbol] is not None and fill_event.signal_id in self.current_positions[fill_event.symbol]:
+                    new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
+                else:
+                    new_position_data['quantity'] = fill_event.quantity
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 if (new_position_data['quantity']) == 0: 
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
