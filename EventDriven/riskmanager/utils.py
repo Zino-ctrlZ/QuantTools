@@ -280,6 +280,39 @@ def refresh_cache() -> None:
     oi_cache = get_cache('oi')
     chain_cache = get_cache('chain')
 
+def _clean_data(df):
+    """
+    Cleans the data by removing rows with NaN values in specified columns.
+    
+    :param data: DataFrame to clean
+    :param columns: List of columns to check for NaN values
+    :return: Cleaned DataFrame
+    """
+    logger.info("Cleaning data...")
+    def fill_values(df):
+        """
+        Fills NaN values with the last valid observation.
+        """
+        return df.replace(0, np.nan).ffill()
+    df = df.copy()
+    return fill_values(df)
+    
+def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
+    """
+    Adds skip columns to the DataFrame.
+    """
+    for col in skip_columns:
+        ## EMA Smoothing + Zscore Fiter
+        logger.info(f"Adding skip column for {col} with window {window} and threshold {skip_threshold}")
+        if col not in df.columns:
+            logger.info(f"Column {col} not found in DataFrame. Skipping...")
+            continue
+        smooth = df[col].ewm(span=3).mean()
+        _zscore = (smooth - smooth.rolling(window).mean()) / smooth.rolling(window).std()
+        df[f'{col}_skip_day']= (_zscore.abs() > skip_threshold) 
+    return df
+
+
 
 def date_in_cache_index(date, opttick) -> bool:
     """

@@ -8,6 +8,8 @@ from .utils import (logger,
                     get_timeseries_start_end,
                     set_deleted_keys,
                     date_in_cache_index,
+                    add_skip_columns,
+                    _clean_data,
                     PERSISTENT_CACHE)
 from .actions import *
 from .picker import *
@@ -495,6 +497,7 @@ Quanitity Sizing Type: {self.sizing_type}
             position_id = order['data']['trade_id']
             
         else:
+            print(f"\nOrder Failed: {order}\n")
             logger.info(f"Signal ID: {signalID}, Unable to produce order, returning None")
             return order
         
@@ -578,6 +581,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 spot = spot[[self.option_price.capitalize()]]
                 data = greeks.join(spot)
                 full_data = pd.concat([full_data, data], axis = 0)
+            full_data = _clean_data(full_data)
             full_data = full_data[~full_data.index.duplicated(keep = 'last')]
             full_data['s'] = s
             full_data['r'] = r
@@ -629,6 +633,7 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['s'] = s
         position_data['r'] = r
         position_data['y'] = y
+        position_data = add_skip_columns(position_data, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'])
         self.position_data[positionID] = position_data
 
     @log_time(time_logger)
@@ -885,8 +890,14 @@ Quanitity Sizing Type: {self.sizing_type}
             date = pd.to_datetime(self.pm.events.current_date)
             current_delta = abs(self.position_data[trade_id]['Delta'][date] * quantity)
 
+
             if delta_limit:
+                skip = self.position_data[trade_id]['Delta_skip_day'][date] if 'Delta_skip_day' in self.position_data[trade_id].columns else False
                 quantity_diff = 0 ## Quantity difference to be used in case of limit breach, I want to return negative values
+                if skip:
+                    logger.info(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+                    print(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+                    continue
                 if current_delta < max_delta:
                     logger.info(f"Delta for Position {trade_id} is within limits")
                 else:
