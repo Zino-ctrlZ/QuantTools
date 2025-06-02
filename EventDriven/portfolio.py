@@ -118,17 +118,17 @@ class OptionSignalPortfolio(Portfolio):
         self.initial_capital = initial_capital
         self.logger = setup_logger('OptionSignalPortfolio')
         self.risk_manager = risk_manager
-        self.dte_reduction_factor = 60 #reduce dte by 60 days if contract is too illiquid
-        self.min_acceptable_dte_threshold = 90 #minimum dte to accept a contract
+        self.dte_reduction_factor = 60 
+        self.min_acceptable_dte_threshold = 90 
         self.moneyness_width_factor = 0.05 
-        self.min_moneyness_threshold = 5 #minimum number of times to adjust moneyness width before moving to next trading day
-        self.max_contract_price_factor = 1.2 #increase max price by 20%
+        self.min_moneyness_threshold = 5 
+        self.max_contract_price_factor = 1.2 
         self.options_data = {}
         self.underlier_list_data = {}
         self.moneyness_tracker = {}
         self.unprocessed_signals = []
-        self.resolve_orders = True #resolve orders if they are not processed
-        self.risk_manager.pm = self ## Would be better to pass this in the constructor. Only achievable if we initialize risk manager in portfolio constructor
+        self.resolve_orders = True 
+        self.risk_manager.pm = self #
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -137,7 +137,6 @@ class OptionSignalPortfolio(Portfolio):
             ],
             'name': 'vertical_spread'
         }
-        self.__trades = {}
         self.__equity = None
         self.__transactions = []
         # call internal functions to construct key portfolio data
@@ -148,7 +147,7 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_weighted_holdings()
         self.__construct_roll_map()
         self.trades_df = None
-        self.new_trades = {}
+        self.trades_map = {}
 
     @property
     def order_settings(self):
@@ -294,44 +293,24 @@ class OptionSignalPortfolio(Portfolio):
     
     @property
     def trades(self):
-        print("We dey here")
-         #NOTE: In the event of exercising, exit price will not be set, pnl will be calculated differently see todo  
+        """
+        Returns a DataFrame of trades executed in the portfolio.
+        """
         if self.trades_df is not None:
             return self.trades_df
-        trades_data = []
-        for trade_id, data in self.__trades.items():
-            trades_data.append({
-                'Ticker': data.get('symbol', np.nan),
-                'PnL': data.get('pnl', np.nan),
-                'ReturnPct': data.get('return_pct', np.nan),
-                'EntryPrice': data.get('entry_price', np.nan),
-                'EntryCommission': data.get('entry_commission', np.nan),
-                'EntrySlippage': data.get('entry_slippage', np.nan),
-                'EntryMarketValue': data.get('entry_market_value', np.nan),
-                'TotalEntryCost': data.get('total_entry_cost', np.nan),
-                'AuxilaryEntryCost': data.get('auxilary_entry_cost', np.nan),
-                'ExitPrice': data.get('exit_price', np.nan),
-                'ExitCommission': data.get('exit_commission', np.nan), 
-                'ExitSlippage': data.get('exit_slippage', np.nan),
-                'ExitMarketValue': data.get('exit_market_value', np.nan),
-                'TotalExitCost': data.get('total_exit_cost', np.nan),
-                'AuxilaryExitCost': data.get('auxilary_exit_cost', np.nan),
-                'Quantity': data.get('quantity', np.nan),
-                'EntryTime': data.get('entry_date', np.nan),
-                'ExitTime': data.get('exit_date', np.nan),
-                'Duration': data.get('duration_days', np.nan),
-                'Positions': data.get('trade_id', np.nan),
-                'SignalID': data.get('signal_id', np.nan)
-            }) 
-
-        self.trades_df = pd.DataFrame(trades_data)
+        
+        self.trades_df = self.aggregate_trades()
         return self.trades_df
-
+        
+        
+    def aggregate_trades(self): 
+        trades_data = [self.trades_map[trade_id].stats for trade_id in self.trades_map.keys()]
+        return pd.concat(trades_data, ignore_index=True) if trades_data else None
+    
+    
     @property
     def _trades(self):
         ## AggregatorParent uses _trades in some methods. See Expectancy in aggregator
-        if self.trades_df is not None:
-            return self.trades_df
         return self.trades
     
     def get_port_stats(self):
@@ -424,7 +403,6 @@ class OptionSignalPortfolio(Portfolio):
                                                                   signal_id = signal.signal_id)  
         
         position = None if position_result['result'] == ResultsEnum.NO_CONTRACTS_FOUND.value else position_result['data'] #if no contracts found, position is None
-        print('OMO WE DEY: ', position_result, max_contract_price)
         if position is None :
             if self.resolve_orders == True :
                 self.resolve_order_result(position_result['result'], signal)
@@ -600,7 +578,7 @@ class OptionSignalPortfolio(Portfolio):
 
                 elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                     position = current_position['position']
-                    trade_data = self.__trades[position['trade_id']]
+                    trade_data = self.trades_map[position['trade_id']]
                     quantity = position['quantity']
                     entry_date = trade_data['entry_date']
                     underlier = self.__get_underlier_data(symbol)
@@ -624,63 +602,6 @@ class OptionSignalPortfolio(Portfolio):
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
         self.events.put(buy_signal_event)
                 
-                
-    def update_trades_on_buy(self, fill_event: FillEvent):
-        """
-        Update trade data on open
-        """
-         #update trade data on successful buy
-        trade_id = fill_event.position['trade_id']
-        unique_id = f'{trade_id}_{fill_event.signal_id}'
-        self.__trades[unique_id] = {}
-        self.__trades[unique_id]['unique_id'] = unique_id
-        self.__trades[unique_id]['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
-        self.__trades[unique_id]['entry_date'] = fill_event.datetime
-        self.__trades[unique_id]['quantity'] = fill_event.quantity
-        self.__trades[unique_id]['symbol'] = fill_event.symbol
-        self.__trades[unique_id]['entry_commission'] = self.__normalize_dollar_amount(fill_event.commission)
-        self.__trades[unique_id]['entry_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-        self.__trades[unique_id]['entry_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
-        self.__trades[unique_id]['total_entry_cost'] = fill_event.fill_cost
-        self.__trades[unique_id]['auxilary_entry_cost'] = abs(self.__trades[unique_id]['entry_commission']) + abs(self.__trades[unique_id]['entry_slippage'])
-        self.__trades[unique_id]['signal_id'] = fill_event.signal_id
-        self.__trades[unique_id]['trade_id'] = trade_id
-
-    def update_trades_on_sell(self, fill_event: FillEvent):
-        """
-        Update trade data on successful sell
-        """
-        trade_id = fill_event.position['trade_id']
-        unique_id = f'{trade_id}_{fill_event.signal_id}'
-        trade_data = self.__trades[unique_id]
-        trade_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity)
-        trade_data['exit_date'] = fill_event.datetime
-        trade_data['exit_commission'] = self.__normalize_dollar_amount(fill_event.commission)
-        trade_data['exit_slippage'] = self.__normalize_dollar_amount(fill_event.slippage)
-        trade_data['exit_market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
-        trade_data['total_exit_cost'] = fill_event.fill_cost
-        trade_data['auxilary_exit_cost'] = abs(trade_data['exit_commission']) + abs(trade_data['exit_slippage'])
-        trade_data['pnl'] =  (trade_data['exit_price'] - trade_data['entry_price']) * trade_data['quantity']
-        trade_data['return_pct'] = (trade_data['pnl'] / (trade_data['entry_price']* trade_data['quantity'])) ## Added quantity because PnL is total contract, whereas entry price is per contract
-        trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
-        trade_data['exit_method'] = 'sell' 
-        
-    def update_trades_on_exercise(self, fill_event: FillEvent):
-        """
-        Update trade data on successful exercise
-        """
-        trade_data = self.__trades[fill_event.position['trade_id']]
-        trade_data['exit_price'] = 0.0
-        trade_data['exit_date'] = fill_event.datetime
-        trade_data['exit_commission'] = 0.0
-        trade_data['exit_slippage'] = 0.0 
-        trade_data['exit_market_value'] = 0.0
-        trade_data['total_exit_cost'] = 0.0
-        trade_data['auxilary_exit_cost'] = 0.0
-        trade_data['pnl'] = fill_event.fill_cost * fill_event.quantity
-        trade_data['return_pct'] = (trade_data['pnl'] / trade_data['entry_price'])
-        trade_data['duration_days'] = (fill_event.datetime - trade_data['entry_date']).days
-        trade_data['exit_method'] = 'exercise'
         
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
         """
@@ -743,11 +664,11 @@ class OptionSignalPortfolio(Portfolio):
         # Check whether the fill is a buy or sell
         new_position_data = {}
         
-        if fill_event.position['trade_id'] not in self.new_trades:
-            self.new_trades[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol)
-            self.new_trades[fill_event.position['trade_id']].update(fill_event)
+        if fill_event.position['trade_id'] not in self.trades_map:
+            self.trades_map[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol)
+            self.trades_map[fill_event.position['trade_id']].update(fill_event)
         else:
-            self.new_trades[fill_event.position['trade_id']].update(fill_event)
+            self.trades_map[fill_event.position['trade_id']].update(fill_event)
         
         if fill_event.direction == 'BUY': 
             if fill_event.position is not None: 
@@ -759,7 +680,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['entry_price'] = self.__normalize_dollar_amount(fill_event.fill_cost)
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
-                self.update_trades_on_buy(fill_event)
                 
                 #retain long legs options_data dictionary for future use 
                 if 'long' in fill_event.position: 
@@ -792,7 +712,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 if (new_position_data['quantity']) == 0: 
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
-                self.update_trades_on_sell(fill_event)
 
         if fill_event.direction == 'EXERCISE':
             if fill_event.position is not None:
@@ -801,7 +720,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
                 if (new_position_data['quantity']) == 0: 
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
-                self.update_trades_on_exercise(fill_event)
                 
                 # open a new position after exercise
                 new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.OPEN.value, signal_id=fill_event.signal_id)
@@ -868,7 +786,7 @@ class OptionSignalPortfolio(Portfolio):
                 current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym][signal_id]['quantity'] * current_close)
                 
-                self.new_trades[self.current_positions[sym][signal_id]['position']['trade_id']].update_current_price(self.__normalize_dollar_amount(current_close)) #update current price on trade
+                self.trades_map[self.current_positions[sym][signal_id]['position']['trade_id']].update_current_price(self.__normalize_dollar_amount(current_close)) #update current price on trade
                 
                 self.current_positions[sym][signal_id]['position']['close'] = current_close ##Update close price for every iteration
                 self.current_positions[sym][signal_id]['market_value'] = market_value
@@ -895,59 +813,6 @@ class OptionSignalPortfolio(Portfolio):
         #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
-        
-    # def update_timeindex(self): 
-    #     """
-    #     Adds a new record to the holdings and positions matrix based on the current market data bar. Runs at the end of the trading day (i.e all events for the day have been processed)
-    #     """
-        
-    #     current_date = pd.to_datetime(self.events.current_date)
-    #     # Check if the current date is a weekend (Saturday or Sunday)
-    #     if current_date.weekday() >= 5:
-    #         return
-                
-    #     #new positions dictionary
-    #     new_positions_entry = {s: {} for s in self.symbol_list} 
-    #     new_positions_entry['datetime'] = current_date
-        
-    #     #new weighted holdings dictionary
-    #     new_weighted_holdings_entry = {s: self.allocated_cash_map[s] for s in self.symbol_list}
-    #     new_weighted_holdings_entry['datetime'] = current_date
-    #     new_weighted_holdings_entry['cash'] = (1.0 - sum(self.__weight_map.values())) * self.initial_capital
-    #     new_weighted_holdings_entry['commission'] = self.current_weighted_holdings['commission']
-    #     new_weighted_holdings_entry['total'] = new_weighted_holdings_entry['cash']
-        
-    #     for sym in self.symbol_list:
-    #         if 'position' in self.current_positions[sym]:
-    #             current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
-    #             market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
-                
-    #             self.current_positions[sym]['position']['close'] = current_close ##Update close price for every iteration
-    #             self.current_positions[sym]['market_value'] = market_value
-                
-    #             #update holdings
-    #             if 'exit_price' in self.current_positions[sym]: 
-    #                 new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
-    #             else:
-    #                 new_weighted_holdings_entry[sym] = market_value + self.allocated_cash_map[sym] #update the holdings value to the market value of position + left over allocated cash
-                    
-
-    #             #update positions
-    #             if 'exit_price' in self.current_positions[sym]: #if position is closed, set current_positions to empty dict
-    #                 self.current_positions[sym] = {}
-    #                 new_positions_entry[sym] = {}
-    #             else: 
-    #                 new_positions_entry[sym] = deepcopy(self.current_positions[sym])
-                    
-    #             #update total weighted holdings
-    #             new_weighted_holdings_entry['total'] += new_weighted_holdings_entry[sym]
-    #         else: 
-    #             # if no position held for symbol, add the available cash to the symbol to the total equity 
-    #             new_weighted_holdings_entry['total'] += self.allocated_cash_map[sym]
-                
-    #     #append the new holdings and positions to the list of all holdings and positions
-    #     self.all_positions.append(new_positions_entry)
-    #     self.weighted_holdings.append(new_weighted_holdings_entry)
         
     def update_fill(self, event):
         """

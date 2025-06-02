@@ -22,6 +22,27 @@ class Trade:
         self.current_price = None
         self.stats = None
     
+    def __getitem__(self, key):
+        """
+        Allows access to the stats dictionary using the key.
+        """
+        if self.stats is not None and key in self.stats.columns:
+            return self.stats[key].iloc[0]
+        elif key in ['trade_id', 'symbol', 'entry_date', 'exit_date', 'current_price']:
+            return getattr(self, key)
+        else:
+            raise KeyError(f"Key '{key}' not found in stats.")
+        
+    def __setitem__(self, key, value):
+        """
+        Allows setting values in the stats dictionary using the key.
+        """
+        if  key in ['trade_id', 'symbol', 'entry_date', 'exit_date', 'current_price']:
+            setattr(self, key, value)
+        else:
+            raise KeyError(f"Key '{key}' not found in stats.")
+        
+        
     def update(self, fill_event: FillEvent):
         """
         Update the appropriate ledger based on the fill event direction
@@ -60,8 +81,8 @@ class Trade:
         stats = {}
         stats['TradeID'] = self.trade_id
         stats['Ticker'] = self.symbol
-        stats['EntryDate'] = self.entry_date
-        stats['ExitDate'] = self.exit_date
+        stats['EntryTime'] = self.entry_date
+        stats['ExitTime'] = self.exit_date
         
         # Calculate metrics for buy transactions
         stats['EntryPrice'] = self.buy_ledger.avg_price
