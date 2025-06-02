@@ -307,7 +307,7 @@ class HistoricTradeDataHandler(DataHandler):
             
             #schedule signals
             self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=generate_signal_id(ticker, entry_time, signal)))
-            self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, exit_time, signal)))
+            self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, entry_time, signal)))
         
         signal_columns = ['Date'].append(unique_tickers)
         self.latest_signal_df = pd.DataFrame(columns=signal_columns)

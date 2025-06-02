@@ -515,7 +515,7 @@ def holding_period(trades_df: pd.DataFrame, aggfunc: Callable, Type_: str = 'W')
     Returns:
     pd.Timedelta: Corresponding Value
     """
-    assert aggfunc.__name__.lower() in [
+    assert aggfunc.__name__.lower() in ['amax',
         'mean', 'max'], f"Function of type '{aggfunc.__name__}' cannot be used for this method. Please use a mean or max function"
     assert Type_.upper() in [
         'A', 'W', 'L'], f"Invalid type: {Type_}. Must be 'L', 'W' or 'A."
