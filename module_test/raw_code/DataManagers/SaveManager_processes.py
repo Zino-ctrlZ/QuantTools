@@ -21,13 +21,13 @@ from copy import deepcopy
 import pickle
 from copy import deepcopy
 from .Requests import create_request_bulk, construct_request_name
-from .shared_obj import (get_shared_queue, 
-                         get_shared_dict, 
-                         get_shared_list, 
-                         get_int_value,
-                         get_shared_lock, 
-                         get_request_list,
-                         )
+# from .shared_obj import (get_shared_queue, 
+#                          get_shared_dict, 
+#                          get_shared_list, 
+#                          get_int_value,
+#                          get_shared_lock, 
+#                          get_request_list,
+#                          )
 import multiprocessing as mp
 from functools import partial
 import traceback
@@ -41,7 +41,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 
 logger = setup_logger("DataManager.SaveManager_process")
 timer = setup_logger("DataManager.SaveManager_process.Timer")
-CTX = mp.get_context("fork")
+# CTX = mp.get_context("fork")
 JOB_TIMEOUT = 60 * 10  # 10 minutes
 JOB_TIMEOUTS = {
     'bulk': 60 * 60 * 3,  # 3 hours
@@ -286,19 +286,19 @@ class ProcessSaveManager:
             finally:
                 cls._queue.task_done()
 
-    @classmethod
-    def start_workers(cls):
-        if cls._started:
-            return
-        cls.initialize()
-        for i in range(cls.WORKER_COUNT):
-            t = CTX.Process(target=cls._worker, daemon=False, name =f"SaveWorker-{i}")
-            # t = Thread(target=cls._worker, daemon=True, name =f"SaveWorker-{i}")
-            t.start()
-            t.name = f"SaveWorker-{t.pid}"
-            cls._threads.append(t)
-        cls._started = True
-        logger.info(f"[ProcessSaveManager] Started {cls.WORKER_COUNT} save workers.")
+    # @classmethod
+    # def start_workers(cls):
+    #     if cls._started:
+    #         return
+    #     cls.initialize()
+    #     for i in range(cls.WORKER_COUNT):
+    #         t = CTX.Process(target=cls._worker, daemon=False, name =f"SaveWorker-{i}")
+    #         # t = Thread(target=cls._worker, daemon=True, name =f"SaveWorker-{i}")
+    #         t.start()
+    #         t.name = f"SaveWorker-{t.pid}"
+    #         cls._threads.append(t)
+    #     cls._started = True
+    #     logger.info(f"[ProcessSaveManager] Started {cls.WORKER_COUNT} save workers.")
 
 
     @classmethod

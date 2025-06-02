@@ -2,7 +2,7 @@
 ## 1) If a split happens during a backtest window, the trade id won't be updated. The dataframe will simply be uploaded with a the split adjusted strike.
 ## 2) All Greeks &  Midpoint with Zero values will be FFWD'ed
 
-
+from pprint import pprint
 from .utils import *
 from .utils import (logger, 
                     get_timeseries_start_end,
@@ -45,6 +45,56 @@ def refresh_cache():
     close_cache = get_cache('close')
     oi_cache = get_cache('oi')
     chain_cache = get_cache('chain')
+
+
+
+def resolve_schema(schema: OrderSchema, 
+                   tries: int, 
+                   max_dte_tolerance: int, 
+                   moneyness_width: float, 
+                   max_close: float, max_tries: int =6) -> (OrderSchema, int):
+    """
+    Resolving schema by order of importance
+    1. DTE Tolerance
+    2. Moneyness Width
+    3. Max Close Price
+    4. Max Schema Tries
+    If no schema is found after max tries, return False and the number of tries.
+
+    Args:
+        schema (OrderSchema): The schema to resolve.
+        tries (int): The number of tries already made.
+        max_dte_tolerance (int): The maximum DTE tolerance to allow.
+        moneyness_width (float): The moneyness width to allow.
+        max_close (float): The maximum close price to allow.
+        max_tries (int): The maximum number of tries allowed.
+
+    Returns:
+        tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
+    """
+
+    ##0). Max schema tries
+    if tries >= max_tries:
+        return False, tries
+
+    #1). DTE Resolve
+    tries +=1
+    if schema['dte_tolerance'] <= max_dte_tolerance:
+        schema['dte_tolerance'] += 10
+        return schema, tries
+    
+    ##2). Moneyness Resolve
+    elif schema['max_moneyness'] - 1 <= moneyness_width:
+        schema['max_moneyness'] += 0.1
+        schema['min_moneyness'] -= 0.1
+        return schema, tries
+    
+    ##3). Close Resolve
+    elif schema['max_total_price'] <= max_close:
+        schema['max_total_price'] += 0.05
+        return schema, tries
+
+
 
 
 
@@ -398,6 +448,7 @@ class RiskManager:
                  sizing_type = 'delta',
                  leverage = 5.0,
                  max_moneyness = 1.2,
+                 **kwargs
                  ):
         
         """
@@ -463,7 +514,10 @@ class RiskManager:
         self._actions = {}
         self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expiry = 1000)
         self.splits = self.set_splits(self.splits_raw)
-        # self.clear_caches()
+        self.schema_cache = {}
+        self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
+        self.moneyness_width = kwargs.get('moneyness_width', 0.45) ## Default is 0.45
+        self.max_tries = kwargs.get('max_tries', 20) ## Default is 20 tries to resolve schema
         
 
 
@@ -536,27 +590,86 @@ Quanitity Sizing Type: {self.sizing_type}
         
 
     def get_order(self, *args, **kwargs):
+        """
+        Compulsory variables for OrderSchema:
+        signal_id: str: Unique identifier for the signal
+        date: str|datetime: Date for which the order is to be placed
+        tick: str: Ticker for the option contract
+        max_close: float: Maximum close price for the order
+        strategy: str: Strategy type
+        option_type: str: Option type
+        target_dte: int: Target days to expiration
+        structure_direction: str: Direction of the structure
+        
+
+        Optional variables:
+        spread_ticks: int: Number of ticks for the spread, default is 1
+        dte_tolerance: int: Tolerance for days to expiration, default is 60
+        min_moneyness: float: Minimum moneyness for the order, default is 0.75
+        max_moneyness: float: Maximum moneyness for the order, default is 1.25
+        min_total_price: float: Minimum total price for the order, default is max_close/2
+
+        This function generates an order based on the provided parameters and returns it.
+        """
+        ## Initialize the order cache if it doesn't exist
         signalID = kwargs.pop('signal_id')
         date = kwargs.get('date')
         tick = kwargs.get('tick')
-        max_close = kwargs.get('max_close', 2.0)    
+        max_close = kwargs.get('max_close', 2.0) 
+        option_strategy = kwargs.pop('strategy')
+        option_type = kwargs.pop('option_type')
+        structure_direction = kwargs.pop('structure_direction')
+        spread_ticks = kwargs.pop('spread_ticks', 1)
+        dte_tolerance = kwargs.pop('dte_tolerance', 60)
+        min_moneyness = kwargs.pop('min_moneyness', 0.75)
+        max_moneyness = kwargs.pop('max_moneyness', 1.25)
+        target_dte = kwargs.pop('target_dte')
+        min_total_price = kwargs.pop('min_total_price', max_close/2)
+
+
+
         self.generate_data(tick)
         spot = self.chain_spot_timeseries[tick][date] 
         logger.info(f"## ***Signal ID: {signalID}***")
-        print(f"Max Close: {max_close}, Date: {date}, Ticker: {tick}, Spot: {spot}")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
         # order = self.OrderPicker.get_order(*args, **kwargs)    
 
         ## Testing new order picker
         schema = OrderSchema({
-            "strategy": "vertical", "option_type": "C", "tick": tick,
-            "target_dte": 365, "dte_tolerance": 60,
-            "structure_direction": "long", "max_total_price": max_close,
-            "spread_ticks":1, "min_moneyness": 0.75, "max_moneyness": 1.25, "increment": 0.5,
-            "min_total_price": max_close/2
+            "strategy": option_strategy, "option_type": option_type, "tick": tick,
+            "target_dte": target_dte, "dte_tolerance": dte_tolerance,
+            "structure_direction": structure_direction, "max_total_price": max_close,
+            "spread_ticks":spread_ticks, "min_moneyness": min_moneyness, "max_moneyness": max_moneyness, "increment": 0.5,
+            "min_total_price": min_total_price
         })
         order = self.OrderPicker.get_order_new(schema, date, spot, print_url = False)
+
+        ## Resolve the schema if the order is not successful
+        tries = 0
+        while order['result'] != ResultsEnum.SUCCESSFUL.value:
+            logger.info(f"Failed to produce order with schema: {schema}, trying to resolve schema, on try {tries}")
+            schema, tries = resolve_schema(schema,
+                                           tries = tries,
+                                            max_dte_tolerance = self.max_dte_tolerance,
+                                            moneyness_width = self.moneyness_width,
+                                            max_close = self.pm.allocated_cash_map[tick],
+                                            max_tries = self.max_tries)
+
+            if schema is False:
+                logger.info(f"Unable to resolve schema after {tries} tries, returning None")
+                self.schema_cache.setdefault(date, {}).update({signalID: schema})
+                return {
+                    'result': ResultsEnum.NO_CONTRACTS_FOUND.value,
+                    'data': None
+                }
+            logger.info(f"Resolved Schema: {schema}, tries: {tries}")
+            order = self.OrderPicker.get_order_new(schema, date, spot, print_url = False) ## Get the order from the OrderPicker
+
+            
+        self.schema_cache.setdefault(date, {}).update({signalID: schema}) ## Update the schema cache with the date and signalID
+
+        
         signal_meta = parse_signal_id(signalID)
         logger.info(f"Order Produced: {order}")
 
