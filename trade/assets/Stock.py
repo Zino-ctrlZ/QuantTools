@@ -125,7 +125,6 @@ class Stock:
                 """
                 self.prev_close()
                 self.div_yield()
-                self.__asset_type = self.__security_obj.info['quoteType']
             self.set_thread = Thread(target=set_variables, name=self.__repr__() + '_SetVariables')
             self.set_thread.start()
 
@@ -189,11 +188,10 @@ class Stock:
     
     @property
     def asset_type(self):
-        while self.set_thread.is_alive():
-            logger.info(f'Waiting for {self.ticker} to set asset type')
-            time.sleep(5)
         if self.__asset_type is not None:   
             return self.__asset_type
+        else:
+            self.__asset_type = self.__security_obj.info['quoteType']
     
     @classmethod
     def clear_instances(cls, pop_all = True):
