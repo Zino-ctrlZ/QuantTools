@@ -69,6 +69,48 @@ class OptionSignalPortfolio(Portfolio):
     """
     
     def __init__(self, bars : HistoricTradeDataHandler, events: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
+        """
+        Portfolio class for managing option trading strategies based on signals.
+        Handles position tracking, order generation, portfolio valuation, and trade management.
+
+        Attributes:
+        bars (HistoricTradeDataHandler): Data handler containing historical price data for all symbols.
+        events (EventScheduler): Event queue for processing market events, signals, orders, and fills.
+        symbol_list (list): List of symbols being tracked in the portfolio.
+        start_date (str): Start date of the backtest in YYYYMMDD format.
+        initial_capital (float): Initial capital for the portfolio, default 10000.
+        logger (Logger): Logger for portfolio activities.
+        risk_manager (RiskManager): Manages trade selection and risk constraints.
+        dte_reduction_factor (int): Days to reduce DTE by when a contract is illiquid (default: 60).
+        min_acceptable_dte_threshold (int): Minimum acceptable DTE for a contract (default: 90).
+        moneyness_width_factor (float): Factor to adjust moneyness width (default: 0.05).
+        min_moneyness_threshold (int): Minimum threshold for adjusting moneyness before moving to next trading day (default: 5).
+        max_contract_price_factor (float): Factor to increase max price (default: 1.2, 20% increase).
+        options_data (dict): Dictionary mapping option IDs to their historical data.
+        underlier_list_data (dict): Dictionary mapping symbols to their Stock objects.
+        moneyness_tracker (dict): Tracks moneyness adjustments for signals.
+        unprocessed_signals (list): List of signals that couldn't be processed.
+        resolve_orders (bool): Whether to resolve orders if they are not processed (default: True).
+        _order_settings (dict): Dictionary containing default order settings for trade strategy.
+        __trades (dict): Dictionary of all trades executed.
+        __equity (pd.DataFrame): DataFrame containing equity curve data.
+        __transactions (list): List of all transactions made.
+        __weight_map (dict): Dictionary mapping symbols to their portfolio weights.
+        allocated_cash_map (dict): Dictionary mapping symbols to allocated capital.
+        __max_contract_price (dict): Dictionary mapping symbols to maximum contract prices.
+        __roll_map (dict): Dictionary mapping symbols to days before expiration to roll.
+        all_positions (list): List of dictionaries containing position data snapshots.
+        current_positions (dict): Dictionary of current positions by symbol.
+        weighted_holdings (list): List of dictionaries containing portfolio valuation snapshots.
+        current_weighted_holdings (dict): Dictionary of current portfolio values.
+        trades_df (pd.DataFrame): DataFrame containing processed trade data.
+        new_trades (dict): Dictionary of Trade objects to track trade performance.
+
+        Methods:
+        analyze_signal(event): Processes signal events and generates orders.
+        update_fill(event): Updates portfolio positions and holdings from fill events.
+        [Additional methods documented in their definitions]
+        """
         self.bars = bars
         self.events = events
         self.symbol_list = self.bars.symbol_list
@@ -381,7 +423,8 @@ class OptionSignalPortfolio(Portfolio):
                                                                   order_settings= signal.order_settings if signal.order_settings is not None else self._order_settings,
                                                                   signal_id = signal.signal_id)  
         
-        position = position_result['data'] if position_result['data'] is not None else None
+        position = None if position_result['result'] == ResultsEnum.NO_CONTRACTS_FOUND.value else position_result['data'] #if no contracts found, position is None
+        print('OMO WE DEY: ', position_result, max_contract_price)
         if position is None :
             if self.resolve_orders == True :
                 self.resolve_order_result(position_result['result'], signal)
@@ -391,11 +434,13 @@ class OptionSignalPortfolio(Portfolio):
         
         self.moneyness_tracker[signal.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
         self.logger.info(f'Buying LONG contract for {signal.symbol} at {signal.datetime} Position: {position}')
+        print("===========================")
         print("Buy Details")
         print(f"Position: {position}, Date: {date_str}, Signal: {signal}")
         print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
         print("Cash at Hand", cash_at_hand, "Close", position['close'])
-        return OrderEvent(signal.symbol, signal.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal.signal_id)
+        print("===========================")
+        return OrderEvent(signal.symbol, signal.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal.signal_id, quantity=position['quantity'])
         
     def __reduce_order_settings_dte_by_factor(self, order_settings):
         new_order_settings = deepcopy(order_settings)

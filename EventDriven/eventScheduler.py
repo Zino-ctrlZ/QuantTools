@@ -118,21 +118,25 @@ class EventScheduler:
         Schedules an event for a specific future date.
         date: can be any date string format
         Event: Event object to be scheduled
+        
+        return boolean on successful 
         """
         event_date = pd.to_datetime(event_date)
         event_date_str = self.clean_date(event_date)
         current_date = pd.to_datetime(self.current_date)
         if event_date < pd.to_datetime(current_date):
             self.logger.error(f"Cannot schedule event to past date {event}.")
+            return False
         
         if event_date_str not in self.events_map:
             print(f"Event date {event_date_str} not found in backtest range.")
             self.logger.error(f"Event date {event_date_str} not found in backtest range")
-            return
+            return False
         
         self.logger.info(f"Scheduling event for {event_date_str} queue: {event}")
         self.events_map[event_date_str].put(event)
         self.store_event(event)
+        return True
         
     
     def clean_date(self, date):

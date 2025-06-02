@@ -54,67 +54,69 @@ class Trade:
     
     def aggregate(self):
         """
-        Generate aggregated statistics for the trade
+        Generate aggregated statistics for the trade with standardized key naming
+        that matches the trades_data objects.
         """
         stats = {}
-        stats['trade_id'] = self.trade_id
-        stats['symbol'] = self.symbol
-        stats['entry_date'] = self.entry_date
-        stats['exit_date'] = self.exit_date
+        stats['TradeID'] = self.trade_id
+        stats['Ticker'] = self.symbol
+        stats['EntryDate'] = self.entry_date
+        stats['ExitDate'] = self.exit_date
         
         # Calculate metrics for buy transactions
-        stats['avg_entry_price'] = self.buy_ledger.avg_price
-        stats['total_entry_commission'] = self.buy_ledger.commission
-        stats['total_entry_slippage'] = self.buy_ledger.slippage
-        stats['total_entry_quantity'] = self.buy_ledger.quantity
-        stats['total_aux_entry_cost'] = self.buy_ledger.aux_cost
-        stats['avg_entry_cost'] = self.buy_ledger.avg_total_cost
+        stats['EntryPrice'] = self.buy_ledger.avg_price
+        stats['EntryCommission'] = self.buy_ledger.commission
+        stats['EntrySlippage'] = self.buy_ledger.slippage
+        stats['EntryQuantity'] = self.buy_ledger.quantity
+        stats['EntryAuxilaryCost'] = self.buy_ledger.aux_cost
+        stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost
         
         # Calculate metrics for sell transactions
-        stats['avg_exit_price'] = self.sell_ledger.avg_price
-        stats['total_exit_commission'] = self.sell_ledger.commission
-        stats['total_exit_slippage'] = self.sell_ledger.slippage
-        stats['total_exit_quantity'] = self.sell_ledger.quantity
-        stats['total_aux_exit_cost'] = self.sell_ledger.aux_cost
-        stats['avg_exit_cost'] = self.sell_ledger.avg_total_cost
+        stats['ExitPrice'] = self.sell_ledger.avg_price
+        stats['ExitCommission'] = self.sell_ledger.commission
+        stats['ExitSlippage'] = self.sell_ledger.slippage
+        stats['ExitQuantity'] = self.sell_ledger.quantity
+        stats['ExitAuxilaryCost'] = self.sell_ledger.aux_cost
+        stats['TotalExitCost'] = self.sell_ledger.avg_total_cost
         
         # Calculate PnL metrics if we have both buy and sell transactions
-        if stats['total_entry_quantity'] > 0 and stats['total_exit_quantity'] > 0:
+        if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] > 0:
             # Calculate realized PnL for closed portion
-            stats['closed_quantity'] = stats['total_exit_quantity']
-            stats['closed_pnl'] = (stats['avg_exit_price'] - stats['avg_entry_price']) * stats['total_exit_quantity']
+            stats['ClosedQuantity'] = stats['ExitQuantity']
+            stats['ClosedPnL'] = (stats['ExitPrice'] - stats['EntryPrice']) * stats['ExitQuantity']
             
             # Calculate commission and slippage impact
-            stats['total_commission'] = stats['total_entry_commission'] + stats['total_exit_commission']
-            stats['total_slippage'] = stats['total_entry_slippage'] + stats['total_exit_slippage']
-            stats['total_aux_cost'] = stats['total_commission'] + stats['total_slippage']
+            stats['TotalCommission'] = stats['EntryCommission'] + stats['ExitCommission']
+            stats['TotalSlippage'] = stats['EntrySlippage'] + stats['ExitSlippage']
+            stats['TotalAuxilaryCost'] = stats['TotalCommission'] + stats['TotalSlippage']
             
             # Calculate unrealized PnL for open position
-            open_quantity = stats['total_entry_quantity'] - stats['total_exit_quantity']
-            stats['open_quantity'] = open_quantity
+            open_quantity = stats['EntryQuantity'] - stats['ExitQuantity']
+            stats['OpenQuantity'] = open_quantity
             
             if open_quantity > 0 and self.current_price is not None:
-                stats['unrealized_pnl'] = (self.current_price - stats['avg_entry_price']) * open_quantity
+                stats['UnrealizedPnL'] = (self.current_price - stats['EntryPrice']) * open_quantity
             else:
-                stats['unrealized_pnl'] = 0
+                stats['UnrealizedPnL'] = 0
                 
             # Calculate total PnL
-            stats['total_pnl'] = stats['closed_pnl'] + stats['unrealized_pnl']
+            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL']
             
             # Calculate return percentage
-            if stats['avg_entry_cost'] > 0:
-                stats['return_pct'] = (stats['total_pnl'] / stats['avg_entry_cost'])
+            if stats['TotalEntryCost'] > 0:
+                stats['ReturnPct'] = (stats['PnL'] / stats['TotalEntryCost'])
             else:
-                stats['return_pct'] = 0
+                stats['ReturnPct'] = 0
                 
             # Calculate duration in days if trade is closed
             if self.is_closed() and self.exit_date and self.entry_date:
-                stats['duration_days'] = (self.exit_date - self.entry_date).days
+                stats['Duration'] = (self.exit_date - self.entry_date).days
             else:
-                stats['duration_days'] = None
+                stats['Duration'] = None
         
         return stats
-    
+
+
     def update_current_price(self, price):
         """
         Update the current market price for calculating unrealized PnL
