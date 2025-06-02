@@ -372,7 +372,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
             #on the off case where close price is negative, move sell to next trading day
-            if position['close'] < 0:
+            if position['close'] <= 0:
                 # move signal to next day 
                 new_signal = deepcopy(signal)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
