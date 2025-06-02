@@ -543,6 +543,7 @@ Quanitity Sizing Type: {self.sizing_type}
         self.generate_data(tick)
         spot = self.chain_spot_timeseries[tick][date] 
         logger.info(f"## ***Signal ID: {signalID}***")
+        print(f"Max Close: {max_close}, Date: {date}, Ticker: {tick}, Spot: {spot}")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
         # order = self.OrderPicker.get_order(*args, **kwargs)    
@@ -646,13 +647,14 @@ Quanitity Sizing Type: {self.sizing_type}
             
             else:
                 logger.info(f"Data for {ids[-1]} not available, calculating greeks. Load time ~2 minutes")
-                for id in ids:
+                for id_set in ids:
+                    id, shift = id_set
                     data_manager = OptionDataManager(opttick = id)
                     self.data_managers[id] = data_manager ## Store the data manager for the option tick
                     greeks = data_manager.get_timeseries(start = self.start_date,
                                                             end = self.end_date,
                                                             interval = '1d',
-                                                            type_ = 'greeks',).post_processed_data
+                                                            type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
                     greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
                     greeks = greeks[greeks_cols]
                     greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
@@ -661,7 +663,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     spot = data_manager.get_timeseries(start = self.start_date,
                                                         end = self.end_date,
                                                         interval = '1d',
-                                                        type_ = 'spot',).post_processed_data ## Using chain spot data to account for splits
+                                                        type_ = 'spot',).post_processed_data * shift ## Using chain spot data to account for splits
                     spot = spot[[self.option_price.capitalize()]]
                     data = greeks.join(spot)
                     full_data = pd.concat([full_data, data], axis = 0)
@@ -688,7 +690,7 @@ Quanitity Sizing Type: {self.sizing_type}
         ## Calculating IVs & Greeks for the options
         for _set in positon_meta:
             # To-do: Thread thisto speed up the process
-            ids = [_set[1]]
+            ids = [(_set[1], 1)]
             if len(split) > 0:
                 for i in split:
                     split_date = i[0]
@@ -698,7 +700,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     id = _set[1]
                     meta = parse_option_tick(id)
                     meta['strike'] = meta['strike'] / shift
-                    ids.append(generate_option_tick_new(*meta.values()))
+                    ids.append((generate_option_tick_new(*meta.values()), shift))
             # data_manager = OptionDataManager(opttick = id)
 
 
@@ -947,57 +949,102 @@ Quanitity Sizing Type: {self.sizing_type}
                 
 
         
+    # def limits_check(self):
+    #     """
+    #     Checks if the order is within the limits of the portfolio
+    #     """
+    #     limits = self.limits
+    #     delta_limit = limits['delta']
+    #     position_limit = {}
+
+    #     date = pd.to_datetime(self.pm.events.current_date)
+    #     logger.info(f"Checking Limits on {date}")
+    #     if is_USholiday(date):
+    #         self.pm.logger.warning(f"Market is closed on {date}, skipping")
+    #         return 
+        
+
+    #     current_positions = self.pm.current_positions
+    #     for symbol, position in current_positions.items():
+    #         if 'position' not in position:
+    #             continue
+
+    #         ## Initialize the greeks limits to False and other essentials variables
+    #         status = {'status': False, 'quantity_diff': 0} ## Status is False by default
+    #         greek_limit_bool = dict(vega = status, gamma = status, delta = status, theta = status) ## Initialize the greek limits to False
+    #         max_delta = self.greek_limits['delta'][position['signal_id']]
+    #         quantity, q = position['quantity'], position['quantity']
+    #         trade_id = position['position']['trade_id']
+    #         date = pd.to_datetime(self.pm.events.current_date)
+    #         current_delta = abs(self.position_data[trade_id]['Delta'][date] * quantity)
+
+
+    #         if delta_limit:
+    #             skip = self.position_data[trade_id]['Delta_skip_day'][date] if 'Delta_skip_day' in self.position_data[trade_id].columns else False
+    #             quantity_diff = 0 ## Quantity difference to be used in case of limit breach, I want to return negative values
+    #             if skip:
+    #                 logger.info(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+    #                 print(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+    #                 continue
+    #             if current_delta < max_delta:
+    #                 logger.info(f"Delta for Position {trade_id} is within limits")
+    #             else:
+    #                 logger.info(f"Delta for Position {trade_id} is above limits")
+    #                 while current_delta > max_delta:
+    #                     ## Reduce the quantity of the position until it is within limits
+    #                     quantity_diff -= 1
+    #                     q = q -1
+    #                     current_delta = abs(self.position_data[trade_id]['Delta'][date]) * q
+    #                     logger.info(f"Current Delta: {current_delta}, Max Delta: {max_delta}, Quantity: {q}")
+    #                 greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
+    #             position_limit[trade_id] = greek_limit_bool
+    #     return position_limit
+    
+
     def limits_check(self):
-        """
-        Checks if the order is within the limits of the portfolio
-        """
         limits = self.limits
         delta_limit = limits['delta']
         position_limit = {}
 
         date = pd.to_datetime(self.pm.events.current_date)
-        logger.info(f"Checking Limits on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return 
-        
 
-        current_positions = self.pm.current_positions
-        for symbol, position in current_positions.items():
+        for symbol, position in self.pm.current_positions.items():
             if 'position' not in position:
                 continue
 
-            ## Initialize the greeks limits to False and other essentials variables
-            status = {'status': False, 'quantity_diff': 0} ## Status is False by default
-            greek_limit_bool = dict(vega = status, gamma = status, delta = status, theta = status) ## Initialize the greek limits to False
-            max_delta = self.greek_limits['delta'][position['signal_id']]
-            quantity, q = position['quantity'], position['quantity']
             trade_id = position['position']['trade_id']
-            date = pd.to_datetime(self.pm.events.current_date)
-            current_delta = abs(self.position_data[trade_id]['Delta'][date] * quantity)
+            quantity = position['quantity']
+            signal_id = position['signal_id']
+            max_delta = self.greek_limits['delta'][signal_id]
+            pos_data = self.position_data[trade_id]
 
+            status = {'status': False, 'quantity_diff': 0}
+            greek_limit_bool = dict(delta=status, gamma=status, vega=status, theta=status)
 
             if delta_limit:
-                skip = self.position_data[trade_id]['Delta_skip_day'][date] if 'Delta_skip_day' in self.position_data[trade_id].columns else False
-                quantity_diff = 0 ## Quantity difference to be used in case of limit breach, I want to return negative values
-                if skip:
-                    logger.info(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
-                    print(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+                delta_val = abs(pos_data.at[date, 'Delta'])
+                skip = pos_data.at[date, 'Delta_skip_day'] if 'Delta_skip_day' in pos_data.columns else False
+
+                if skip or delta_val == 0:
                     continue
-                if current_delta < max_delta:
-                    logger.info(f"Delta for Position {trade_id} is within limits")
-                else:
-                    logger.info(f"Delta for Position {trade_id} is above limits")
-                    while current_delta > max_delta:
-                        ## Reduce the quantity of the position until it is within limits
-                        quantity_diff -= 1
-                        q = q -1
-                        current_delta = abs(self.position_data[trade_id]['Delta'][date]) * q
-                        logger.info(f"Current Delta: {current_delta}, Max Delta: {max_delta}, Quantity: {q}")
+
+                current_delta = delta_val * quantity
+                if current_delta > max_delta:
+                    # Compute how many contracts to reduce
+                    required_quantity = int(max_delta // delta_val)
+                    quantity_diff = required_quantity - quantity
                     greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
+
                 position_limit[trade_id] = greek_limit_bool
+
         return position_limit
-    
+
+
+
+
     def dte_check(self):
         """
         Analyze the current positions and determine if any need to be rolled

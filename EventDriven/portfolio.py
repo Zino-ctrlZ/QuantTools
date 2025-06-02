@@ -335,8 +335,9 @@ class OptionSignalPortfolio(Portfolio):
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
+            skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal.datetime]
             #on the off case where close price is negative, move sell to next trading day
-            if position['close'] < 0:
+            if position['close'] < 0 or skip == True:
                 # move signal to next day 
                 new_signal = deepcopy(signal)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
@@ -807,6 +808,7 @@ class OptionSignalPortfolio(Portfolio):
         for sym in self.symbol_list:
             if 'position' in self.current_positions[sym]:
                 current_close = self.calculate_close_on_position(self.current_positions[sym]['position'])
+                # current_close = self.risk_manager.position_data[self.current_positions[sym]['position']['trade_id']]['Midpoint'][current_date]
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym]['quantity'] * current_close)
                 
                 self.current_positions[sym]['position']['close'] = current_close ##Update close price for every iteration
@@ -850,21 +852,8 @@ class OptionSignalPortfolio(Portfolio):
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position 
         """
-        long_legs_cost = 0.0
-        short_legs_cost = 0.0
-        if 'long' in position:
-            for option_id in position['long']: 
-                option_data = self.get_latest_option_data(option_id)
-                if option_data is not None: 
-                    long_legs_cost += option_data['Midpoint']
+        return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.events.current_date)]
 
-        if 'short'in position:
-            for option_id in position['short']: 
-                option_data = self.get_latest_option_data(option_id)
-                if option_data is not None: 
-                    short_legs_cost += option_data['Midpoint']
-
-        return long_legs_cost - short_legs_cost
     
     
     
