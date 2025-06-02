@@ -111,14 +111,24 @@ class Stock:
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__close = None
-            self.prev_close()
+            # self.prev_close()
             self.__y = None
-            self.div_yield()
+            # self.div_yield()
             self.__OptChain = None
             self.__chain = None
-            self.asset_type = self.__security_obj.info['quoteType']
+            self.__asset_type = None
             self.kwargs = kwargs
             
+            def set_variables():
+                """
+                Sets the variables for the Stock class
+                """
+                self.prev_close()
+                self.div_yield()
+                self.__asset_type = self.__security_obj.info['quoteType']
+            self.set_thread = Thread(target=set_variables, name=self.__repr__() + '_SetVariables')
+            self.set_thread.start()
+
             """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
             self.init_rfrate_ts()
             self.init_risk_free_rate()
@@ -159,6 +169,9 @@ class Stock:
 
     @property
     def y(self):
+        while self.set_thread.is_alive():
+            logger.info(f'Waiting for {self.ticker} to set yield')
+            time.sleep(5)
         return self.__y
 
     @property
@@ -173,6 +186,14 @@ class Stock:
     @property
     def chain(self):
         return self.__chain
+    
+    @property
+    def asset_type(self):
+        while self.set_thread.is_alive():
+            logger.info(f'Waiting for {self.ticker} to set asset type')
+            time.sleep(5)
+        if self.__asset_type is not None:   
+            return self.__asset_type
     
     @classmethod
     def clear_instances(cls, pop_all = True):

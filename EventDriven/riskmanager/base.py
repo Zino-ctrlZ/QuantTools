@@ -8,6 +8,8 @@ from .utils import (logger,
                     get_timeseries_start_end,
                     set_deleted_keys,
                     date_in_cache_index,
+                    add_skip_columns,
+                    _clean_data,
                     PERSISTENT_CACHE)
 from .actions import *
 from .picker import *
@@ -303,6 +305,87 @@ class OrderPicker:
         return return_dict
 
 class RiskManager:
+    """
+    RiskManager class for managing portfolio risk and executing strategies.
+
+    Attributes:
+    ----------
+    Core Attributes:
+    ----------------
+    bars : Bars
+        The Bars object containing historical price data for the symbols.
+    events : Events
+        The Events object used for event-driven backtesting.
+    initial_capital : float
+        The initial capital allocated for the portfolio.
+    start_date : str
+        The start date for the backtest, recommended to match the start date of the Bars object.
+    end_date : str
+        The end date for the backtest, recommended to match the end date of the Bars object.
+    pm_start_date : str
+        The start date for the portfolio manager.
+    pm_end_date : str
+        The end date for the portfolio manager.
+    symbol_list : list[str]
+        List of symbols available in the Bars object.
+    OrderPicker : OrderPicker
+        The OrderPicker object used for selecting orders based on criteria.
+
+    Cache Attributes:
+    -----------------
+    spot_timeseries : CustomCache
+        Cache for storing the spot price timeseries data.
+    chain_spot_timeseries : CustomCache
+        Cache for storing the chain spot price timeseries data, used for pricing and accounting for option strikes during splits.
+    processed_option_data : CustomCache
+        Cache for storing processed individual option data.
+    position_data : CustomCache
+        Cache for storing position data.
+    dividend_timeseries : CustomCache
+        Cache for storing dividend timeseries data.
+    splits_raw : CustomCache
+        Cache for storing raw split names and dates.
+    splits : dict
+        Processed split data derived from splits_raw.
+
+    Risk Management Attributes:
+    ---------------------------
+    sizing_type : str
+        Specifies the sizing type for calculating quantities (e.g., 'delta', 'vega', 'gamma', 'price').
+    sizing_lev : float
+        Multiplier for equity equivalent size (leverage). Default is 5.0.
+    limits : dict[str, bool]
+        Specifies which risk limits are enabled.
+    greek_limits : dict[str, dict]
+        Specifies the limits for individual Greeks (e.g., delta, gamma, vega, theta).
+    max_moneyness : float
+        Maximum moneyness before rolling positions. Default is 1.2.
+
+    Pricing and Data Attributes:
+    ----------------------------
+    price_on : str
+        Specifies the price type used for calculations (e.g., 'mkt_close'). Default is 'mkt_close'.
+    option_price : str
+        Specifies the option price used for pricing. Default is 'Midpoint'. Available options include:
+        'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint'.
+    rf_timeseries : pd.Series
+        Risk-free rate timeseries data, retrieved using get_risk_free_rate_helper().
+
+    Miscellaneous Attributes:
+    -------------------------
+    data_managers : dict
+        Dictionary for managing data-related objects.
+    _actions : dict
+        Internal dictionary for storing actions related to risk management.
+
+    Methods:
+    --------
+    __init__(self, bars: Bars, events: Events, initial_capital: float, start_date: str, end_date: str,
+             portfolio_manager: PortfolioManager = None, price_on: str = 'mkt_close',
+             option_price: str = 'Midpoint', sizing_type: str = 'delta', leverage: float = 5.0,
+             max_moneyness: float = 1.2):
+        Initializes the RiskManager class and sets up attributes for managing portfolio risk.
+    """
     def __init__(self,
                  bars: DataHandler,
                  events: EventScheduler,
@@ -332,10 +415,6 @@ class RiskManager:
         sizing_type: str: sizing type. This is what you want your quantity to be calculated on. Default is 'delta'. Available Options are 'delta', 'vega', 'gamma', 'price'
         leverage: float: Multiplier for Equity Equivalent Size. Default is 5.0. Eg (Cash Available/Spot Price) * Leverage = Equity Equivalent Size
         max_moneyness: float: Maximum Moneyness before rolling. Default is 1.2
-
-        Other Attributes:
-
-
         """
         
         assert sizing_type in ['delta', 'vega', 'gamma', 'price'], f"Sizing Type {sizing_type} not recognized, expected 'delta', 'vega', 'gamma', or 'price'"
@@ -476,7 +555,7 @@ Quanitity Sizing Type: {self.sizing_type}
             "spread_ticks":1, "min_moneyness": 0.75, "max_moneyness": 1.25, "increment": 0.5,
             "min_total_price": max_close/2
         })
-        order = self.OrderPicker.get_order_new(schema, date, spot, print_url = True)
+        order = self.OrderPicker.get_order_new(schema, date, spot, print_url = False)
         signal_meta = parse_signal_id(signalID)
         logger.info(f"Order Produced: {order}")
 
@@ -495,6 +574,7 @@ Quanitity Sizing Type: {self.sizing_type}
             position_id = order['data']['trade_id']
             
         else:
+            print(f"\nOrder Failed: {order}\n")
             logger.info(f"Signal ID: {signalID}, Unable to produce order, returning None")
             return order
         
@@ -509,9 +589,7 @@ Quanitity Sizing Type: {self.sizing_type}
         order['data']['quantity'] = quantity
         logger.info(order)
         return order
-
-
-
+    
 
     @log_time(time_logger)
     def calculate_position_greeks(self, positionID, date):
@@ -560,30 +638,40 @@ Quanitity Sizing Type: {self.sizing_type}
             logger.info(f"Start Date: {self.start_date}")
             logger.info(f"End Date: {self.end_date}")
             full_data = pd.DataFrame()
-            for id in ids:
-                data_manager = OptionDataManager(opttick = id)
-                greeks = data_manager.get_timeseries(start = self.start_date,
+
+            if ids[-1] in self.processed_option_data:
+                ## Using -1 index because incases of split, the last id is the one that is subscribed to in the cache
+                full_data = self.processed_option_data[ids[-1]] ## If the data is already available, then we can skip this step
+                logger.info(f"Data for {ids[-1]} already available, skipping calculation")
+            
+            else:
+                logger.info(f"Data for {ids[-1]} not available, calculating greeks. Load time ~2 minutes")
+                for id in ids:
+                    data_manager = OptionDataManager(opttick = id)
+                    self.data_managers[id] = data_manager ## Store the data manager for the option tick
+                    greeks = data_manager.get_timeseries(start = self.start_date,
+                                                            end = self.end_date,
+                                                            interval = '1d',
+                                                            type_ = 'greeks',).post_processed_data
+                    greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+                    greeks = greeks[greeks_cols]
+                    greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+                    greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+                    spot = data_manager.get_timeseries(start = self.start_date,
                                                         end = self.end_date,
                                                         interval = '1d',
-                                                        type_ = 'greeks',).post_processed_data
-                greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
-                greeks = greeks[greeks_cols]
-                greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
-                greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
-
-                spot = data_manager.get_timeseries(start = self.start_date,
-                                                    end = self.end_date,
-                                                    interval = '1d',
-                                                    type_ = 'spot',).post_processed_data ## Using chain spot data to account for splits
-                spot = spot[[self.option_price.capitalize()]]
-                data = greeks.join(spot)
-                full_data = pd.concat([full_data, data], axis = 0)
+                                                        type_ = 'spot',).post_processed_data ## Using chain spot data to account for splits
+                    spot = spot[[self.option_price.capitalize()]]
+                    data = greeks.join(spot)
+                    full_data = pd.concat([full_data, data], axis = 0)
+            full_data = _clean_data(full_data)
             full_data = full_data[~full_data.index.duplicated(keep = 'last')]
             full_data['s'] = s
             full_data['r'] = r
             full_data['y'] = y
             full_data['s0_close'] = s0_close
-            self.processed_option_data[data_manager.opttick] = full_data
+            self.processed_option_data[ids[-1]] = full_data
             if direction == 'L':
                 long.append(full_data)
             elif direction == 'S':
@@ -591,7 +679,7 @@ Quanitity Sizing Type: {self.sizing_type}
             else:
                 raise ValueError(f"Position Type {_set[0]} not recognized")
             
-            return data
+            return full_data
 
     
         ## Check for splits
@@ -629,6 +717,7 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['s'] = s
         position_data['r'] = r
         position_data['y'] = y
+        position_data = add_skip_columns(position_data, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'])
         self.position_data[positionID] = position_data
 
     @log_time(time_logger)
@@ -709,6 +798,7 @@ Quanitity Sizing Type: {self.sizing_type}
         
         position_action_dict = {} ## This will be used to store the actions for each position
         date = pd.to_datetime(self.pm.events.current_date)
+        event_date = pd.to_datetime(date) + BDay(1) ## Order date is the next business day after the current date
         logger.info(f"Analyzing Positions on {date}")
         is_holiday = is_USholiday(date)
         if is_holiday:
@@ -790,7 +880,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 pos_action.reason = reasons[actions.index(OpenPositionAction.ROLL.value)]
                 
                 event = RollEvent(
-                    datetime = date,
+                    datetime = event_date,
                     symbol = sym,
                     signal_type = parse_signal_id(current_position['signal_id'])['direction'],
                     position = current_position,
@@ -808,7 +898,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
                 
                 event = ExerciseEvent(
-                    datetime = date,
+                    datetime = event_date,
                     symbol = sym,
                     quantity = current_position['quantity'],
                     entry_data = date,
@@ -841,13 +931,14 @@ Quanitity Sizing Type: {self.sizing_type}
 
                 event = OrderEvent(
                     symbol = sym,
-                    datetime = date,
+                    datetime = event_date,
                     order_type = 'MKT',
                     quantity= sub_action_dict['quantity_diff'],
                     direction = 'SELL' if sub_action_dict['quantity_diff'] < 0 else 'BUY',
                     position = current_position['position'],
                     signal_id = current_position['signal_id']
                 )
+                pos_action.event = event
                 position_action_dict[k] = pos_action ## If adjust position, override HOLD.
         self._actions[date] = position_action_dict
 
@@ -885,8 +976,14 @@ Quanitity Sizing Type: {self.sizing_type}
             date = pd.to_datetime(self.pm.events.current_date)
             current_delta = abs(self.position_data[trade_id]['Delta'][date] * quantity)
 
+
             if delta_limit:
+                skip = self.position_data[trade_id]['Delta_skip_day'][date] if 'Delta_skip_day' in self.position_data[trade_id].columns else False
                 quantity_diff = 0 ## Quantity difference to be used in case of limit breach, I want to return negative values
+                if skip:
+                    logger.info(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+                    print(f"Skipping Delta Check for Position {trade_id} on {date} as skip flag is True")
+                    continue
                 if current_delta < max_delta:
                     logger.info(f"Delta for Position {trade_id} is within limits")
                 else:
