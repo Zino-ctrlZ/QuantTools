@@ -135,7 +135,15 @@ class OptionSignalPortfolio(Portfolio):
                 {'direction': 'long', 'rel_strike': 1.0, 'dte': 365, 'moneyness_width': 0.1},
                 {'direction': 'short', 'rel_strike': 0.85, 'dte': 365, 'moneyness_width': 0.1} 
             ],
-            'name': 'vertical_spread'
+            'name': 'vertical_spread',
+            'strategy': 'vertical',
+            'target_dte': 365,
+            'structure_direction': 'long',
+            'spread_ticks': 1,
+            'dte_tolerance': 60,
+            'min_moneyness': 0.75,
+            'max_moneyness': 1.25,
+            'min_total_price': 0.5
         }
         self.__equity = None
         self.__transactions = []
@@ -174,9 +182,30 @@ class OptionSignalPortfolio(Portfolio):
         assert 'type' in settings.keys() and 'specifics' in settings.keys() and 'name' in settings.keys(), f'Expected both of `type`, `name` and `specifics` in settings keys'
         assert settings['type'] in available_types, f'`type` must be one of {available_types}'
         assert isinstance(settings['specifics'], list), f'Order Specifics should be a list'
+        
+        necessary_keys = {
+            'strategy': str,
+            'target_dte': int,
+            'structure_direction': str,
+        }
 
-        if settings['type'] == 'spread' and len(settings['specific']) < 2:
+        optional_keys = {
+            'spread_ticks': int,
+            'dte_tolerance': int,
+            'min_moneyness': float,
+            'max_moneyness': float,
+            'min_total_price': float,
+        }
+        if settings['type'] == 'spread' and len(settings['specifics']) < 2:
                 raise ValueError(f'Expected 2 legs for spreads')
+
+        for key, value_type in necessary_keys.items():
+            assert key in settings.keys(), f'Expected `{key}` in order settings'
+            assert isinstance(settings[key], value_type), f'Expected `{key}` to be of type {value_type}, got {type(settings[key])}'
+        
+        for key, value_type in optional_keys.items():
+            if key in settings.keys():
+                assert isinstance(settings[key], value_type), f'Expected `{key}` to be of type {value_type}, got {type(settings[key])}'
             
     
     # if weight map is set externally, recalculate the allocated cash map
@@ -398,10 +427,12 @@ class OptionSignalPortfolio(Portfolio):
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
         position_result = self.risk_manager.get_order(tick = signal.symbol, 
                                                                   date = date_str, 
-                                                                  right = position_type,  
+                                                                  right = position_type, 
+                                                                  option_type = position_type, 
                                                                   max_close = max_contract_price, 
                                                                   order_settings= signal.order_settings if signal.order_settings is not None else self._order_settings,
-                                                                  signal_id = signal.signal_id)  
+                                                                  signal_id = signal.signal_id,
+                                                                  **self.order_settings)  
         
         position = None if position_result['result'] == ResultsEnum.NO_CONTRACTS_FOUND.value else position_result['data'] #if no contracts found, position is None
         if position is None :
@@ -666,7 +697,7 @@ class OptionSignalPortfolio(Portfolio):
         new_position_data = {}
         
         if fill_event.position['trade_id'] not in self.trades_map:
-            self.trades_map[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol)
+            self.trades_map[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol, fill_event.signal_id)
             self.trades_map[fill_event.position['trade_id']].update(fill_event)
         else:
             self.trades_map[fill_event.position['trade_id']].update(fill_event)
