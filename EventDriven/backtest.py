@@ -36,27 +36,28 @@ class OptionSignalBacktest():
         self.initial_capital = initial_capital
         
         #initialize critical components 
-        self.events = EventScheduler(self.start_date, self.end_date); 
-        self.bars = HistoricTradeDataHandler(self.events, trades)
-        self.strategy = OptionSignalStrategy(self.bars, self.events)
-        self.risk_manager = RiskManager(self.bars, self.events, initial_capital, self.start_date, self.end_date)
-        self.portfolio = OptionSignalPortfolio(self.bars, self.events, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
-        self.executor =  SimulatedExecutionHandler(self.events)
+        self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
+        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades)
+        self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
+        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date)
+        self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
+        self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
+        self.events = []
         
         
     def run(self):
         test_scheduled = False
         while True: ##Loop through the dates
             # Get current event queue
-            if self.events.current_date is None: 
+            if self.eventScheduler.current_date is None: 
                 self.logger.info("No more dates left.")
                 print("No more dates left.")
                 break
             
-            self.logger.info(f"Processing events for {self.events.current_date}")
-            current_event_queue = self.events.get_current_queue()
+            self.logger.info(f"Processing events for {self.eventScheduler.current_date}")
+            current_event_queue = self.eventScheduler.get_current_queue()
             event_count = 0
 
             # Process events for the current bar
@@ -78,7 +79,7 @@ class OptionSignalBacktest():
                     self.portfolio.update_timeindex()
                     
                     #advance scheduler queue to next date 
-                    self.events.advance_date()
+                    self.eventScheduler.advance_date()
                     break
                 except Exception as e:
                     self.logger.error(f"Error fetching event: {e}\n{traceback.format_exc()}")
@@ -86,10 +87,11 @@ class OptionSignalBacktest():
                     break
 
                 if event:
+                    self.store_event(event)  # Store the event in the events list
                     event_count += 1
                     if event.datetime == pd.to_datetime('2023-07-17') and not test_scheduled:
                         print("Enforcing order event injection for testing purposes")
-                        self.events.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
+                        self.eventScheduler.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
                         print("Order event injected for TSLA at2023-07-18, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
                         test_scheduled = True
                     try:
@@ -187,3 +189,20 @@ class OptionSignalBacktest():
         return pos_df
 
 
+    def store_event(self,event: Event):
+        """
+        Store an event in the events list
+        """
+        self.events.append(event.__dict__)
+
+    def get_events(self) -> pd.DataFrame:
+        """
+        Returns a DataFrame of all events that have been processed during the backtest.
+        """
+        if not self.events:
+            return pd.DataFrame()
+        
+        events_df = pd.DataFrame(self.events)
+        events_df['datetime'] = pd.to_datetime(events_df['datetime'])
+        events_df.set_index('datetime', inplace=True)
+        return events_df

@@ -68,7 +68,7 @@ class OptionSignalPortfolio(Portfolio):
     initial_capital: int
     """
     
-    def __init__(self, bars : HistoricTradeDataHandler, events: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
+    def __init__(self, bars : HistoricTradeDataHandler, eventScheduler: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
         """
         Portfolio class for managing option trading strategies based on signals.
         Handles position tracking, order generation, portfolio valuation, and trade management.
@@ -112,7 +112,7 @@ class OptionSignalPortfolio(Portfolio):
         [Additional methods documented in their definitions]
         """
         self.bars = bars
-        self.events = events
+        self.eventScheduler = eventScheduler
         self.symbol_list = self.bars.symbol_list
         self.start_date = bars.start_date.strftime("%Y%m%d")
         self.initial_capital = initial_capital
@@ -316,7 +316,7 @@ class OptionSignalPortfolio(Portfolio):
     def get_port_stats(self):
         ## NOTE: I want to pass false if backtest is not run. How?
         ## if the latest date on the bars is equal to the start date, backtest has yet to run
-        current_date = pd.to_datetime(self.events.current_date)
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         if pd.to_datetime(self.start_date) == pd.to_datetime(current_date):
             return False
         return True
@@ -380,7 +380,7 @@ class OptionSignalPortfolio(Portfolio):
                 new_signal.datetime = next_trading_day
                 self.logger.warning(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
                 print(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
-                self.events.schedule_event(next_trading_day, new_signal)
+                self.eventScheduler.schedule_event(next_trading_day, new_signal)
                 return None
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal.signal_id)
             return order
@@ -469,7 +469,7 @@ class OptionSignalPortfolio(Portfolio):
 
             self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
-            self.events.put(new_signal)
+            self.eventScheduler.put(new_signal)
            
             
                 
@@ -479,7 +479,7 @@ class OptionSignalPortfolio(Portfolio):
             new_signal.datetime = next_trading_day
             self.logger.warning(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
             print(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
-            self.events.schedule_event(next_trading_day, new_signal)
+            self.eventScheduler.schedule_event(next_trading_day, new_signal)
             
                 
         elif position_result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
@@ -501,7 +501,7 @@ class OptionSignalPortfolio(Portfolio):
             new_signal.max_contract_price = new_max_price
             self.logger.warning(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             print(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
-            self.events.put(new_signal)
+            self.eventScheduler.put(new_signal)
     
             
         elif position_result == ResultsEnum.TOO_ILLIQUID.value or position_result == ResultsEnum.NO_ORDERS.value:
@@ -521,7 +521,7 @@ class OptionSignalPortfolio(Portfolio):
             new_signal.order_settings = order_settings
             self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
-            self.events.put(new_signal)
+            self.eventScheduler.put(new_signal)
         else:
             self.logger.warning(f'Not generating order because:{position_result} {signal}')
             print(f'Not generating order because:{position_result} {signal}')
@@ -539,7 +539,7 @@ class OptionSignalPortfolio(Portfolio):
         assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
         order_event = self.generate_order(event)
         if order_event is not None:
-            self.events.put(order_event)
+            self.eventScheduler.put(order_event)
                 
     def analyze_positions(self, market_event: MarketEvent): 
         """
@@ -575,7 +575,7 @@ class OptionSignalPortfolio(Portfolio):
                     self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
                     direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
                     rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=signal_id)
-                    self.events.put(rollEvent)
+                    self.eventScheduler.put(rollEvent)
 
                 elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                     position = current_position['position']
@@ -587,7 +587,7 @@ class OptionSignalPortfolio(Portfolio):
                     long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
                     self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
                     print(f'Exercising contract for {symbol} at {market_event.datetime}')
-                    self.events.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
+                    self.eventScheduler.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
                     ## if exercising, open new position if trade not closed yet.
                     continue
             
@@ -599,9 +599,9 @@ class OptionSignalPortfolio(Portfolio):
         self.logger.info(f'Rolling contract for {roll_event}')
         print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
-        self.events.put(sell_signal_event)
+        self.eventScheduler.put(sell_signal_event)
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
-        self.events.put(buy_signal_event)
+        self.eventScheduler.put(buy_signal_event)
                 
         
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
@@ -724,7 +724,7 @@ class OptionSignalPortfolio(Portfolio):
                 
                 # open a new position after exercise
                 new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.OPEN.value, signal_id=fill_event.signal_id)
-                self.events.put(new_signal)
+                self.eventScheduler.put(new_signal)
             
             
         # update current_Positions with new position data
@@ -764,7 +764,7 @@ class OptionSignalPortfolio(Portfolio):
         Adds a new record to the holdings and positions matrix based on the current market data bar. Runs at the end of the trading day (i.e all events for the day have been processed)
         """
         
-        current_date = pd.to_datetime(self.events.current_date)
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         # Check if the current date is a weekend (Saturday or Sunday)
         if current_date.weekday() >= 5:
             return
@@ -829,7 +829,7 @@ class OptionSignalPortfolio(Portfolio):
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position 
         """
-        return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.events.current_date)]
+        return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.eventScheduler.current_date)]
 
     
     
@@ -899,7 +899,7 @@ class OptionSignalPortfolio(Portfolio):
         returns: a series with columns: ms_of_day,open,high,low,close,volume,count,date
         """
         
-        current_date = pd.to_datetime(self.events.current_date)
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         option_data_df = self.get_option_data(option_id)
         if option_data_df is None:
             return None

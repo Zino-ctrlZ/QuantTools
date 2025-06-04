@@ -100,6 +100,8 @@ class Trade:
         stats['ExitAuxilaryCost'] = self.sell_ledger.aux_cost
         stats['TotalExitCost'] = self.sell_ledger.avg_total_cost
         
+        stats['Quantity'] = stats['ExitQuantity']
+        
         # Calculate PnL metrics if we have both buy and sell transactions
         if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] > 0:
             # Calculate realized PnL for closed portion
