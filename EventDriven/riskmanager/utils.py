@@ -307,9 +307,22 @@ def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
         if col not in df.columns:
             logger.info(f"Column {col} not found in DataFrame. Skipping...")
             continue
+
+        ##ABS Zscore
         smooth = df[col].ewm(span=3).mean()
         _zscore = (smooth - smooth.rolling(window).mean()) / smooth.rolling(window).std()
-        df[f'{col}_skip_day']= (_zscore.abs() > skip_threshold) 
+        _thresh = _zscore.abs() > skip_threshold
+
+        ## Percentage change
+        smooth_pct = df[col].pct_change()
+        _zscore_pct = (smooth_pct - smooth_pct.rolling(window).mean()) / smooth_pct.rolling(window).std()
+        _thresh_pct = _zscore_pct.abs() > skip_threshold
+        
+        ## Combine both boolean masks
+        _combined = _thresh | _thresh_pct
+
+        df[f'{col}_skip_day']= _combined
+        df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
     return df
 
 

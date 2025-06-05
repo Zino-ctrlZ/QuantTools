@@ -105,15 +105,47 @@ class SimulatedExecutionHandler(ExecutionHandler):
         #slippage may increase or decrease intended price
         price = event.position['close'] * (1 + slippage_pct)          
         
-        quantity = event.quantity if event.quantity is not None else math.floor(event.cash/(price+self.commission_rate))
+        # Ensuring cash doesn't go below zero
+        raw_quantity = event.quantity
+        
+        try:
+            if raw_quantity is not None:
+                # Recompute quantity downward if cost exceeds available cash
+                unit_cost = price + self.commission_rate
+                logger.info(f"Unit cost: {unit_cost}, Cash available: {event.cash}, Direction: {event.direction}, Signal ID: {event.signal_id}")
+                if event.direction == 'BUY':
+                    max_affordable_quantity = math.floor(event.cash / unit_cost)
+
+                    # Ensure we never exceed max affordable quantity
+                    quantity = min(raw_quantity, max_affordable_quantity)
+                    logger.info(f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {event.signal_id}")
+
+                elif event.direction == 'SELL':
+                    # For SELL, we can only sell what we have in the position
+                    quantity = raw_quantity
+            else:
+                # Fall back to normal logic
+                quantity = math.floor(event.cash / (price + self.commission_rate))
+        except:
+            pass
+
+        # quantity = event.quantity if event.quantity is not None else math.floor(event.cash/(price+self.commission_rate))
         commission = self.commission_rate * quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
 
-        market_value = (price * quantity) # cost before commission
+        # market_value = (price * quantity) # cost before commission less slippage
+        market_value = (event.position['close'] * quantity) # market value is based on the position's close price, not the slippage adjusted price
+                                                            # This is to ensure that the market value is not affected by slippage, as slippage is a cost incurred after the market value is determined.
+
         # Adjust price based on order direction
         if event.direction == 'BUY':
-            fill_cost = market_value + commission
+            fill_cost = (price * quantity) + commission ## Total Cost for BUY includes commission and slippage
         elif event.direction == 'SELL':
-            fill_cost = market_value - commission
+            fill_cost = (price * quantity) - commission
+
+        ##NOTE:
+        # - Market value is based on the position's close price, not the slippage adjusted price. This serves as entry market value
+        # - Fill cost is based on the slippage adjusted price and commission. This serves as entry cost
+        # - Market value != fill cost, as market value is based on the position's close price, not the slippage adjusted price.
 
         slippage_diff = (price - event.position['close'] ) * quantity
         fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)

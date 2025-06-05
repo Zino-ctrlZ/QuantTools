@@ -673,14 +673,6 @@ Quanitity Sizing Type: {self.sizing_type}
         signal_meta = parse_signal_id(signalID)
         logger.info(f"Order Produced: {order}")
 
-        ## save the order in the cache
-        if date not in order_cache:
-            cache_dict = {tick: order}
-            order_cache[date] = cache_dict
-        else:
-            cache_dict = order_cache[date]
-            cache_dict[tick] = order
-            order_cache[date] = cache_dict
 
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
             print(f"\nOrder Received: {order}\n")
@@ -701,7 +693,18 @@ Quanitity Sizing Type: {self.sizing_type}
         quantity = self.calculate_quantity(position_id, signalID, kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}): {quantity}")
         order['data']['quantity'] = quantity
+        order['data']['cash_equivalent_qty'] = self.pm.allocated_cash_map[tick] // (order['data']['close'] * 100)
         logger.info(order)
+
+        ## save the order in the cache
+        if date not in order_cache:
+            cache_dict = {tick: order}
+            order_cache[date] = cache_dict
+        else:
+            cache_dict = order_cache[date]
+            cache_dict[tick] = order
+            order_cache[date] = cache_dict
+
         return order
     
 
@@ -910,7 +913,6 @@ Quanitity Sizing Type: {self.sizing_type}
         """
         Analyze the current positions and determine if any need to be rolled, closed, or adjusted
         """
-        
         position_action_dict = {} ## This will be used to store the actions for each position
         date = pd.to_datetime(self.pm.events.current_date)
         event_date = pd.to_datetime(date) + BDay(1) ## Order date is the next business day after the current date
@@ -968,94 +970,105 @@ Quanitity Sizing Type: {self.sizing_type}
             'greeks': greek_dict
         }
         ## Aggregate the results
-        for sym in self.pm.symbol_list:
-            current_position = self.pm.current_positions[sym]
-            if 'position' not in current_position:
-                continue
-            k = current_position['position']['trade_id']
-
-
-            ## There are 4 possible actions: roll, Hold, Exercise, Adjust
-            ## Roll happens on DTE & Moneyness. Exercise happens on DTE. Adjust happens on Greeks
-            actions = []
-            reasons = []
-            for action in actions_dicts:
-                if k in actions_dicts[action]:
-                    actions.append(actions_dicts[action][k])
-                    reasons.append(action)
-                else:
-                    actions.append(OpenPositionAction.HOLD.value)
-                    reasons.append('hold')
-            
-            sub_action_dict = {'action': '', 'quantity_diff': 0}
-
-            ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
-            if OpenPositionAction.ROLL.value in actions:
-                pos_action = ROLL(k, {})
-                pos_action.reason = reasons[actions.index(OpenPositionAction.ROLL.value)]
-                
-                event = RollEvent(
-                    datetime = event_date,
-                    symbol = sym,
-                    signal_type = parse_signal_id(current_position['signal_id'])['direction'],
-                    position = current_position,
-                    signal_id = current_position['signal_id']
-
-                )
-                pos_action.event = event
-                position_action_dict[k] = pos_action
-                continue
-
-            ## If exercise is needed, do that first, no need to check other actions or adjust quantity
-            elif OpenPositionAction.EXERCISE.value in actions:
-                pos_action = EXERCISE(k, {})
-                pos_action.reason = reasons[actions.index(OpenPositionAction.EXERCISE.value)]
-                long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
-                
-                event = ExerciseEvent(
-                    datetime = event_date,
-                    symbol = sym,
-                    quantity = current_position['quantity'],
-                    entry_data = date,
-                    spot = self.chain_spot_timeseries[sym][date], ## Using chain spot because strikes are unadjusted for splits
-                    long_premiums = long_premiums,
-                    short_premiums = short_premiums,
-                    position = current_position,
-                    signal_id = current_position['signal_id']
-                    
-                )
-                pos_action.event = event
-                sub_action_dict[k] = pos_action
-                continue
-
         
-            ## If the position is a hold, check if it needs to be adjusted based on greeks
-            elif OpenPositionAction.HOLD.value in actions:
-                pos_action = HOLD(k)
-                pos_action.reason = reasons[actions.index(OpenPositionAction.HOLD.value)]
-                position_action_dict[k] = pos_action
+        for sym in self.pm.symbol_list:
+            position = self.pm.current_positions[sym]
+            for signal_id, current_position in position.items():
+                if 'position' not in current_position:
+                    continue
+                k = current_position['position']['trade_id']
 
-            quantity_change_list = [0] ## Initialize the quantity change list with 0
-            value = greek_dict.get(k, {}) ## Get the greek dict for each position
-            for greek, res in value.items(): ## Looping through each greek adjustments
-                quantity_change_list.append(res['quantity_diff'])
-            sub_action_dict['quantity_diff'] = min(quantity_change_list) ## Ultimate adjustment would be the minimum reduction factor
-            if sub_action_dict['quantity_diff'] < 0: ## If the quantity needs to be reduced, set the action to adjust
-                pos_action = ADJUST(k, sub_action_dict)
-                pos_action.reason = "greek_limit"
 
-                event = OrderEvent(
-                    symbol = sym,
-                    datetime = event_date,
-                    order_type = 'MKT',
-                    quantity= sub_action_dict['quantity_diff'],
-                    direction = 'SELL' if sub_action_dict['quantity_diff'] < 0 else 'BUY',
-                    position = current_position['position'],
-                    signal_id = current_position['signal_id']
-                )
-                pos_action.event = event
-                position_action_dict[k] = pos_action ## If adjust position, override HOLD.
+
+                ## There are 4 possible actions: roll, Hold, Exercise, Adjust
+                ## Roll happens on DTE & Moneyness. Exercise happens on DTE. Adjust happens on Greeks
+                actions = []
+                reasons = []
+                for action in actions_dicts:
+                    if k in actions_dicts[action]:
+                        actions.append(actions_dicts[action][k])
+                        reasons.append(action)
+                    else:
+                        actions.append(OpenPositionAction.HOLD.value)
+                        reasons.append('hold')
+                
+                sub_action_dict = {'action': '', 'quantity_diff': 0}
+
+                ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
+                if OpenPositionAction.ROLL.value in actions:
+                    pos_action = ROLL(k, {})
+                    pos_action.reason = reasons[actions.index(OpenPositionAction.ROLL.value)]
+                    
+                    event = RollEvent(
+                        datetime = event_date,
+                        symbol = sym,
+                        signal_type = parse_signal_id(signal_id)['direction'],
+                        position = current_position,
+                        signal_id = signal_id
+
+                    )
+                    pos_action.event = event
+                    position_action_dict[k] = pos_action
+                    continue
+
+                ## If exercise is needed, do that first, no need to check other actions or adjust quantity
+                elif OpenPositionAction.EXERCISE.value in actions:
+                    pos_action = EXERCISE(k, {})
+                    pos_action.reason = reasons[actions.index(OpenPositionAction.EXERCISE.value)]
+                    long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
+                    
+                    event = ExerciseEvent(
+                        datetime = event_date,
+                        symbol = sym,
+                        quantity = current_position['quantity'],
+                        entry_data = date,
+                        spot = self.chain_spot_timeseries[sym][date], ## Using chain spot because strikes are unadjusted for splits
+                        long_premiums = long_premiums,
+                        short_premiums = short_premiums,
+                        position = current_position,
+                        signal_id = signal_id
+                        
+                    )
+                    pos_action.event = event
+                    sub_action_dict[k] = pos_action
+                    
+                    continue
+
+            
+                ## If the position is a hold, check if it needs to be adjusted based on greeks
+                elif OpenPositionAction.HOLD.value in actions:
+                    pos_action = HOLD(k)
+                    pos_action.reason = None
+                    position_action_dict[k] = pos_action
+
+                quantity_change_list = [0] ## Initialize the quantity change list with 0
+                value = greek_dict.get(k, {}) ## Get the greek dict for each position
+                for greek, res in value.items(): ## Looping through each greek adjustments
+                    quantity_change_list.append(res['quantity_diff'])
+                sub_action_dict['quantity_diff'] = min(quantity_change_list) ## Ultimate adjustment would be the minimum reduction factor
+                if sub_action_dict['quantity_diff'] < 0: ## If the quantity needs to be reduced, set the action to adjust
+                    pos_action = ADJUST(k, sub_action_dict)
+                    pos_action.reason = "greek_limit"
+
+                    event = OrderEvent(
+                        symbol = sym,
+                        datetime = event_date,
+                        order_type = 'MKT',
+                        quantity= abs(sub_action_dict['quantity_diff']),
+                        direction = 'SELL' if sub_action_dict['quantity_diff'] < 0 else 'BUY',
+                        position = current_position['position'],
+                        signal_id = signal_id
+                    )
+                    pos_action.event = event
+                    position_action_dict[k] = pos_action ## If adjust position, override HOLD.
         self._actions[date] = position_action_dict
+        logger.info(f"Position Action Dict: {position_action_dict}")
+        for id, action in position_action_dict.items():
+            logger.info(f"Position ID: {id}, Action: {action}, Reason: {action.reason}")
+            if not isinstance(action, HOLD):
+                logger.info(f"Event: {action.event}")
+                print((f"Risk Manager Scheduling Action: Position ID: {id}, Action: {action}, Reason: {action.reason}"))
+                self.pm.events.schedule_event(event_date, action.event)
 
         return position_action_dict
 
@@ -1124,34 +1137,37 @@ Quanitity Sizing Type: {self.sizing_type}
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return 
 
-        for symbol, position in self.pm.current_positions.items():
-            if 'position' not in position:
-                continue
-
-            trade_id = position['position']['trade_id']
-            quantity = position['quantity']
-            signal_id = position['signal_id']
-            max_delta = self.greek_limits['delta'][signal_id]
-            pos_data = self.position_data[trade_id]
-
-            status = {'status': False, 'quantity_diff': 0}
-            greek_limit_bool = dict(delta=status, gamma=status, vega=status, theta=status)
-
-            if delta_limit:
-                delta_val = abs(pos_data.at[date, 'Delta'])
-                skip = pos_data.at[date, 'Delta_skip_day'] if 'Delta_skip_day' in pos_data.columns else False
-
-                if skip or delta_val == 0:
+        for symbol in self.pm.symbol_list:
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if 'position' not in current_position:
                     continue
 
-                current_delta = delta_val * quantity
-                if current_delta > max_delta:
-                    # Compute how many contracts to reduce
-                    required_quantity = int(max_delta // delta_val)
-                    quantity_diff = required_quantity - quantity
-                    greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
+                trade_id = current_position['position']['trade_id']
+                quantity = current_position['quantity']
+                signal_id = signal_id
+                max_delta = self.greek_limits['delta'][signal_id]
+                pos_data = self.position_data[trade_id]
 
-                position_limit[trade_id] = greek_limit_bool
+                status = {'status': False, 'quantity_diff': 0}
+                greek_limit_bool = dict(delta=status, gamma=status, vega=status, theta=status)
+
+                if delta_limit:
+                    delta_val = abs(pos_data.at[date, 'Delta'])
+                    skip = pos_data.at[date, 'Delta_skip_day'] if 'Delta_skip_day' in pos_data.columns else False
+
+                    if skip or delta_val == 0:
+                        continue
+
+                    current_delta = delta_val * quantity
+                    if current_delta > max_delta:
+                        # Compute how many contracts to reduce
+                        required_quantity = int(max_delta // delta_val)
+                        quantity_diff = required_quantity - quantity
+                        print(f"Position {trade_id} exceeds delta limit. Current Delta: {current_delta}, Max Delta: {max_delta}, Required Quantity: {required_quantity}, Current Quantity: {quantity}")
+                        greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
+
+                    position_limit[trade_id] = greek_limit_bool
 
         return position_limit
 
@@ -1170,35 +1186,35 @@ Quanitity Sizing Type: {self.sizing_type}
         
         roll_dict = {}
         for symbol in self.pm.symbol_list:
-            current_position = self.pm.current_positions[symbol] 
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if 'position' not in current_position:
+                    continue
             
-            if 'position' not in current_position:
-                continue
 
-            id = current_position['position']['trade_id']
-            expiry_date = ''
-            
-            if 'long' in current_position['position']:
-                for option_id in current_position['position']['long']:
-                    option_meta = parse_option_tick(option_id)
-                    expiry_date = option_meta['exp_date']
-                    break
-            elif 'short' in current_position['position']:
-                for option_id in current_position['position']['short']:
-                    option_meta = parse_option_tick(option_id)
-                    expiry_date = option_meta['exp_date']
-                    break
+                id = current_position['position']['trade_id']
+                expiry_date = ''
+                
+                if 'long' in current_position['position']:
+                    for option_id in current_position['position']['long']:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta['exp_date']
+                        break
+                elif 'short' in current_position['position']:
+                    for option_id in current_position['position']['short']:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta['exp_date']
+                        break
 
 
-            dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
+                dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
 
-            
-            if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
-                roll_dict[id] = OpenPositionAction.ROLL.value
-            elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                roll_dict[id] = OpenPositionAction.EXERCISE.value
-            else:
-                roll_dict[id] = OpenPositionAction.HOLD.value
+                if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
+                    roll_dict[id] = OpenPositionAction.ROLL.value
+                elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
+                    roll_dict[id] = OpenPositionAction.EXERCISE.value
+                else:
+                    roll_dict[id] = OpenPositionAction.HOLD.value
         return roll_dict
     
     def moneyness_check(self):
@@ -1214,24 +1230,25 @@ Quanitity Sizing Type: {self.sizing_type}
         strike_list = []
         roll_dict = {}
         for symbol in self.pm.symbol_list:
-            current_position = self.pm.current_positions[symbol] 
-            if 'position' not in current_position:
-                continue
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if 'position' not in current_position:
+                    continue
 
-            id = current_position['position']['trade_id']
-            spot = self.chain_spot_timeseries[symbol][date] ## Use the spot price on the date (from chain cause of splits)
-            
-            if 'long' in current_position['position']:
-                for option_id in current_position['position']['long']:
-                    option_meta = parse_option_tick(option_id)
-                    strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
+                id = current_position['position']['trade_id']
+                spot = self.chain_spot_timeseries[symbol][date] ## Use the spot price on the date (from chain cause of splits)
+                
+                if 'long' in current_position['position']:
+                    for option_id in current_position['position']['long']:
+                        option_meta = parse_option_tick(option_id)
+                        strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
 
-            if 'short' in current_position['position']:
-                for option_id in current_position['position']['short']:
-                    option_meta = parse_option_tick(option_id)
-                    strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
-            
-            roll_dict[id] = OpenPositionAction.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else OpenPositionAction.HOLD.value
+                if 'short' in current_position['position']:
+                    for option_id in current_position['position']['short']:
+                        option_meta = parse_option_tick(option_id)
+                        strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
+                
+                roll_dict[id] = OpenPositionAction.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else OpenPositionAction.HOLD.value
         return roll_dict
 
     def hedge_check(self,

@@ -65,8 +65,9 @@ class TradeLedger:
         # Update aggregated metrics
         self.avg_price = ((self.avg_price * self.quantity) + 
                          (self.ledger[entry_time]['price'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
-        self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
-                               (self.ledger[entry_time]['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
+        # self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
+        #                        (self.ledger[entry_time]['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
+        self.avg_total_cost = self.avg_total_cost + (self.ledger[entry_time]['total_cost'] ) ## Assuming fill_cost is the total cost for the fill event
         self.aux_cost += self.ledger[entry_time]['aux_cost']
         self.quantity += self.ledger[entry_time]['quantity']
         self.commission += self.ledger[entry_time]['commission']

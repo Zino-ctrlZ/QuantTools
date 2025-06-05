@@ -324,6 +324,9 @@ class Stock:
             if 'Results not found'.lower() in e.__str__().lower():
                 close = float(obb.equity.price.quote(symbol=self.ticker, provider='fmp').to_dataframe()['prev_close'].values[0])
                 self.__set_close(close)
+            else:
+                logger.error(f"Error getting previous close for {self.ticker} from yfinance: {e}")
+                return None
         return close
 
     @backoff.on_exception(backoff.expo, IndexError, max_tries=5, logger=logger)

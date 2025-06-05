@@ -92,7 +92,7 @@ class Trade:
         stats['EntrySlippage'] = self.buy_ledger.slippage
         stats['EntryQuantity'] = self.buy_ledger.quantity
         stats['EntryAuxilaryCost'] = self.buy_ledger.aux_cost
-        stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost
+        stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost# * self.buy_ledger.quantity ## Patch fix for now
         
         # Calculate metrics for sell transactions
         stats['ExitPrice'] = self.sell_ledger.avg_price
@@ -100,7 +100,7 @@ class Trade:
         stats['ExitSlippage'] = self.sell_ledger.slippage
         stats['ExitQuantity'] = self.sell_ledger.quantity
         stats['ExitAuxilaryCost'] = self.sell_ledger.aux_cost
-        stats['TotalExitCost'] = self.sell_ledger.avg_total_cost
+        stats['TotalExitCost'] = self.sell_ledger.avg_total_cost# * self.sell_ledger.quantity ## Patch fix for now
         
         stats['Quantity']  = stats['ExitQuantity']
 
@@ -125,7 +125,7 @@ class Trade:
                 stats['UnrealizedPnL'] = 0
                 
             # Calculate total PnL
-            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] - abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
+            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] #- abs(stats['TotalSlippage']) - abs(stats['TotalCommission']) ## Exit & Entry Price already includes slippage and commission
             
             # Calculate return percentage
             if stats['TotalEntryCost'] > 0:
