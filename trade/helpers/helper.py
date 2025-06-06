@@ -6,6 +6,7 @@ import backoff
 from dotenv import load_dotenv
 load_dotenv()
 import sys
+import pstats
 # sys.path.append(
 #     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
@@ -450,6 +451,62 @@ class compare_dates:
         """
         return date_inbetween(date, start, end)
 
+
+
+def print_cprofile_internal_time_share(_stats, top_n=20, sort_by='tottime', full_name=False):
+    """
+    Print top n functions by internal (self) time, with their share of total self time.
+    """
+    _stats = deepcopy(_stats)
+    _stats.sort_stats(sort_by)
+    
+    all_stats = _stats.stats.items()
+    total_self_time = sum(stat[2] for _, stat in all_stats)  # stat[2] = tottime (internal time)
+
+    top_list = sorted(all_stats, key=lambda x: x[1][2], reverse=True)[:top_n]
+
+    print(f"{'Function':<70} {'SelfTime':>10} {'ShareOfTotal':>12}")
+    print('-' * 95)
+
+    for func, stat in top_list:
+        filename, line, funcname = func
+        label = f"{filename}:{line} {funcname}" if full_name else funcname
+        self_time = stat[2]
+        ratio = self_time / total_self_time if total_self_time else 0
+        print(f"{label:<70} {self_time:>10.4f} {ratio:>12.2%}")
+
+def print_top_cprofile_stats(_stats, top_n=20, sort_by='cumulative', full_name=False):
+    """
+    Display the top n functions from a cProfile stats file,
+    showing cumulative time and ratio to the top function.
+
+    :param stats: pstats.Stats object
+    :param top_n: Number of functions to display
+    :param sort_by: 'cumulative', 'time', etc.
+    :param full_name: If True, show full path:line:function_name
+    """
+    _stats = deepcopy(_stats)
+    _stats.sort_stats(sort_by)
+    top_stats = _stats.stats.items()
+    top_list = sorted(top_stats, key=lambda x: x[1][3], reverse=True)[:top_n]
+
+    top_cum_time = top_list[0][1][3]
+
+    # Header
+    print(f"{'Function':<80} {'CumTime':>10} {'RatioToTop':>12}")
+    print('-' * 105)
+
+    for func, stat in top_list:
+        filename, line, funcname = func
+        cum_time = stat[3]
+        ratio = cum_time / top_cum_time if top_cum_time else 0
+
+        if full_name:
+            label = f"{filename}:{line} {funcname}"
+        else:
+            label = funcname
+
+        print(f"{label:<80} {cum_time:>10.4f} {ratio:>12.2f}")
 
 
 def find_split_dates_within_range(tick: str, 

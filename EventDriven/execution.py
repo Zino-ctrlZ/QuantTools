@@ -118,6 +118,11 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
                     # Ensure we never exceed max affordable quantity
                     quantity = min(raw_quantity, max_affordable_quantity)
+                    total_cost = quantity * price + self.commission_rate
+
+                    ## Clamp quantity to ensure we don't exceed available cash
+                    if total_cost > event.cash:
+                        quantity = math.floor((event.cash - self.commission_rate) / price)
                     logger.info(f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {event.signal_id}")
 
                 elif event.direction == 'SELL':

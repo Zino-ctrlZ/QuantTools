@@ -72,7 +72,7 @@ import shelve
 from pathlib import Path
 import atexit
 from concurrent.futures import ThreadPoolExecutor
-
+import matplotlib.pyplot as plt
 
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager.utils')
@@ -297,7 +297,7 @@ def _clean_data(df):
     df = df.copy()
     return fill_values(df)
     
-def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
+def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
     """
     Adds skip columns to the DataFrame.
     """
@@ -309,6 +309,7 @@ def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
             continue
 
         ##ABS Zscore
+        df.loc[df[col] < 0 , col] = 0 ## NOTE: This is one time fix. Take it out
         smooth = df[col].ewm(span=3).mean()
         _zscore = (smooth - smooth.rolling(window).mean()) / smooth.rolling(window).std()
         _thresh = _zscore.abs() > skip_threshold

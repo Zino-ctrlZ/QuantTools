@@ -179,7 +179,8 @@ class OrderPicker:
         returns:
         dict: order
         """
-        global order_cache, spot_cache, close_cache, oi_cache, chain_cache
+        global spot_cache, close_cache, oi_cache, chain_cache
+        order_cache = self.order_cache
         order_cache.setdefault(date, {})
         order_cache[date].setdefault(tick, {})
 
@@ -518,6 +519,8 @@ class RiskManager:
         self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
         self.moneyness_width = kwargs.get('moneyness_width', 0.45) ## Default is 0.45
         self.max_tries = kwargs.get('max_tries', 20) ## Default is 20 tries to resolve schema
+        self.__analyzed_date_list = [] ## List of dates that have been analyzed for actions
+        self._order_cache = {}
         
 
 
@@ -531,8 +534,7 @@ class RiskManager:
         """
         Returns the order cache
         """
-        global order_cache
-        return order_cache
+        return self._order_cache
     
     def clear_caches(self):
         """
@@ -612,6 +614,7 @@ Quanitity Sizing Type: {self.sizing_type}
         This function generates an order based on the provided parameters and returns it.
         """
         ## Initialize the order cache if it doesn't exist
+        order_cache = self.order_cache
         signalID = kwargs.pop('signal_id')
         date = kwargs.get('date')
         tick = kwargs.get('tick')
@@ -755,10 +758,11 @@ Quanitity Sizing Type: {self.sizing_type}
             logger.info(f"Start Date: {self.start_date}")
             logger.info(f"End Date: {self.end_date}")
             full_data = pd.DataFrame()
-
-            if ids[-1] in self.processed_option_data:
+            print(f"Searching for {ids[-1][0]} in processed_option_data")
+            ##ids are a list of tuples, where each tuple is (option_id, shift)
+            if ids[-1][0] in self.processed_option_data:
                 ## Using -1 index because incases of split, the last id is the one that is subscribed to in the cache
-                full_data = self.processed_option_data[ids[-1]] ## If the data is already available, then we can skip this step
+                full_data = self.processed_option_data[ids[-1][0]] ## If the data is already available, then we can skip this step
                 logger.info(f"Data for {ids[-1]} already available, skipping calculation")
             
             else:
@@ -789,7 +793,7 @@ Quanitity Sizing Type: {self.sizing_type}
             full_data['r'] = r
             full_data['y'] = y
             full_data['s0_close'] = s0_close
-            self.processed_option_data[ids[-1]] = full_data
+            self.processed_option_data[ids[-1][0]] = full_data
             if direction == 'L':
                 long.append(full_data)
             elif direction == 'S':
@@ -915,6 +919,11 @@ Quanitity Sizing Type: {self.sizing_type}
         """
         position_action_dict = {} ## This will be used to store the actions for each position
         date = pd.to_datetime(self.pm.events.current_date)
+        if date in self.__analyzed_date_list: ## If the date has already been analyzed, return
+            logger.info(f"Positions already analyzed on {date}, skipping")
+            return "ALREADY_ANALYZED"
+        
+        self.__analyzed_date_list.append(date) ## Add the date to the analyzed list
         event_date = pd.to_datetime(date) + BDay(1) ## Order date is the next business day after the current date
         logger.info(f"Analyzing Positions on {date}")
         is_holiday = is_USholiday(date)

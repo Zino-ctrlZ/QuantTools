@@ -156,6 +156,8 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_roll_map()
         self.trades_df = None
         self.trades_map = {}
+        self.roll_tracker = {}
+        self.analyzed_date_list = [] # list of dates that have been analyzed
 
     @property
     def order_settings(self):
@@ -333,8 +335,8 @@ class OptionSignalPortfolio(Portfolio):
         
         
     def aggregate_trades(self): 
-        trades_data = [self.trades_map[trade_id].stats for trade_id in self.trades_map.keys()]
-        return pd.concat(trades_data, ignore_index=True) if trades_data else None
+        trades_data = pd.DataFrame([self.trades_map[trade_id].aggregate() for trade_id in self.trades_map.keys()])
+        return trades_data if not trades_data.empty else None
     
     
     @property
@@ -378,6 +380,22 @@ class OptionSignalPortfolio(Portfolio):
         order_type = 'MKT'
         
         if signal_type != 'CLOSE': #generate order for LONG or SHORT
+            print(f'Generating order for {symbol} at {signal.datetime}, Signal_ID: {signal.signal_id}, Signal Type: {signal_type}')
+            if signal.signal_id in self.roll_tracker: ## We can't open position if we haven't closed previous roll
+                if not self.roll_tracker[signal.signal_id]['CLOSED']:
+                    self.logger.warning(f'Cannot generate order for {symbol} at {signal.datetime}, Inputs {locals()}')
+                    ## Schedule to next trading day
+                    new_signal = deepcopy(signal)
+                    next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
+                    new_signal.datetime = next_trading_day
+                    self.logger.warning(f'Not generating corresponding open order for {signal.signal_id} because sell position of roll is not closed')
+                    print(f'Not generating corresponding open order for {signal.signal_id} because sell position of roll is not closed')
+                    print("Also not placing order. analyze_position will try roll again next day")
+                    return None
+                else:
+                    self.roll_tracker[signal.signal_id]['OPENED'] = True ## We are able to open position now. If it hasn't returned previously, order must be generated
+                    print(f'Generating order for {symbol} at {signal.datetime}, with CLOSED bool: {self.roll_tracker[signal.signal_id]["CLOSED"]}')
+
             return self.create_order( signal, order_type)
         elif signal_type == 'CLOSE':
             if signal.signal_id not in self.current_positions[symbol]:
@@ -389,20 +407,23 @@ class OptionSignalPortfolio(Portfolio):
             
             current_position = self.current_positions[symbol][signal.signal_id]
             if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
-                self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal)
+                self.resolve_order_result(ResultsEnum.IS_HOLIDAY.value, signal)
                 return None
             
             if 'position' not in current_position:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal.datetime}, Inputs {locals()}')
                 return None
             
-            
+
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal.datetime]
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
+                if signal.signal_id in self.roll_tracker:
+                    print("Ignoring the close end of the Roll entirely and letting analyze_position resend the next day")
+                    return None ## Ignoring the close end of the Roll entirely and letting analyze_position resend the next day
                 # move signal to next day 
                 new_signal = deepcopy(signal)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
@@ -411,6 +432,10 @@ class OptionSignalPortfolio(Portfolio):
                 print(f'Not generating order because: CLOSE price is negative {signal}, moving event to {next_trading_day}')
                 self.events.schedule_event(next_trading_day, new_signal)
                 return None
+            
+            if signal.signal_id in self.roll_tracker: ## We are able to close position now. If it hasn't returned previously, order must be generated
+                print(f"Setting roll_tracker for CLOSING LEG of {signal.signal_id} to CLOSED on {signal.datetime}")
+                del self.roll_tracker[signal.signal_id] ## remove the roll tracker for this signal, as we are closing the position.
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal.signal_id)
             return order
         return None
@@ -580,6 +605,14 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f"Market is closed on {market_event.datetime}, skipping")
             return
         
+        if market_event.datetime in self.analyzed_date_list:
+            self.logger.warning(f"Already analyzed positions on {market_event.datetime}, skipping")
+            print(f"Already analyzed positions on {market_event.datetime}, skipping")
+            return
+        else:
+            self.analyzed_date_list.append(market_event.datetime)
+
+
         for symbol in self.symbol_list:
             for signal_id in self.current_positions[symbol]: 
                 current_position = self.current_positions[symbol][signal_id]
@@ -629,9 +662,11 @@ class OptionSignalPortfolio(Portfolio):
         """
         self.logger.info(f'Rolling contract for {roll_event}')
         print(f'Rolling contract for {roll_event.symbol} at {roll_event.datetime}')
+        self.roll_tracker[roll_event.signal_id] = {'CLOSED': False, 'OPENED': False}
         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id)
         self.events.put(sell_signal_event)
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
+        buy_signal_event.sell_pair = sell_signal_event
         self.events.put(buy_signal_event)
                 
         
@@ -777,6 +812,8 @@ class OptionSignalPortfolio(Portfolio):
         transaction['symbol'] = fill_event.symbol
         transaction['direction'] = fill_event.direction
         if fill_event.direction == 'BUY': 
+            if fill_event.fill_cost > self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[fill_event.symbol]):
+                print(f'Not enough cash to buy {fill_event.symbol} at {fill_event.datetime}, fill cost: {fill_event.fill_cost}, allocated cash: {self.allocated_cash_map[fill_event.symbol]}')
             # available cash for the symbol is the left over cash after buying the contract
             transaction['cash_before'] = self.allocated_cash_map[fill_event.symbol]
             self.allocated_cash_map[fill_event.symbol] -= self.__normalize_dollar_amount(fill_event.fill_cost)
