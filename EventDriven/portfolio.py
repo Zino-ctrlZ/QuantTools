@@ -158,6 +158,8 @@ class OptionSignalPortfolio(Portfolio):
         self.trades_map = {}
         self.roll_tracker = {}
         self.analyzed_date_list = [] # list of dates that have been analyzed
+        self.skip_log = {}
+        self.current_cash = []
 
     @property
     def order_settings(self):
@@ -421,6 +423,12 @@ class OptionSignalPortfolio(Portfolio):
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal.datetime]
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
+                
+                ## Tracking skip days for the position
+                if skip:
+                    skip_num = self.skip_log.get(position['trade_id'], 0)
+                    self.skip_log[position['trade_id']] = skip_num + 1
+
                 if signal.signal_id in self.roll_tracker:
                     print("Ignoring the close end of the Roll entirely and letting analyze_position resend the next day")
                     return None ## Ignoring the close end of the Roll entirely and letting analyze_position resend the next day

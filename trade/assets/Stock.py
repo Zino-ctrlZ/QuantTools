@@ -460,6 +460,7 @@ class Stock:
                 df.index = pd.to_datetime(df.index)
                 df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
                 df['close'] = df['chain_price']
+                df['cum_split_from_start'] = df['split_ratio'].cumprod()
         else:
             # print(ts_start, ts_end, interval, provider)
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)

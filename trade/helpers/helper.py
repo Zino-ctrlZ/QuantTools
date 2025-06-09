@@ -183,6 +183,16 @@ class CustomCache(Cache):
                 self[key] = value
         else:
             raise ValueError("Other must be a dictionary or CustomCache instance.")
+        
+    def filter_keys(self, x):
+        """
+        Filter the cache keys based on a condition.
+        Args:
+            x (function): A function that takes a key and returns True or False.
+        Returns:
+            list: A list of keys that satisfy the condition.
+        """
+        return [key for key in self.keys() if x(key)]
     
     
     def __repr__(self):
@@ -428,10 +438,12 @@ class compare_dates:
     """
     @staticmethod
     def is_before(date1, date2):
+        """ Check if date1 is before date2."""
         return pd.to_datetime(date1) < pd.to_datetime(date2)
 
     @staticmethod
     def is_after(date1, date2):
+        """ Check if date1 is after date2."""
         return pd.to_datetime(date1) > pd.to_datetime(date2)
 
     @staticmethod

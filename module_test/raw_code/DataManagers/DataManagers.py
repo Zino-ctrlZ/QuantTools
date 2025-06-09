@@ -82,15 +82,15 @@ from functools import partial
 ## DM NEEDED IMPORTS
 from .utils import _ManagerLazyLoader
 from .Requests import (
-    # create_request_bulk,
-                    #    get_bulk_requests,
-                    #    get_chain_requests,
-                    #    get_single_requests,
+    create_request_bulk,
+                       get_bulk_requests,
+                       get_chain_requests,
+                       get_single_requests,
                        ChainDataRequest,
                        OptionQueryRequestParameter,
                        BulkOptionQueryRequestParameter)
 from .cache import get_cache
-# from .shared_obj import (get_request_list)
+from .shared_obj import (get_request_list)
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 import logging
 from pathlib import Path

@@ -15,12 +15,12 @@ from trade.helpers.helper import check_all_days_available
 from .Requests import create_request_bulk,construct_request_name, OptionQueryRequestParameter, BulkOptionQueryRequestParameter
 from dbase.database.SQLHelpers import DatabaseAdapter
 from functools import partial
-# from .shared_obj import (get_shared_queue, 
-#                          get_shared_dict, 
-#                          get_shared_list, 
-#                          get_int_value,
-#                          get_shared_lock, 
-#                          get_request_list)
+from .shared_obj import (get_shared_queue, 
+                         get_shared_dict, 
+                         get_shared_list, 
+                         get_int_value,
+                         get_shared_lock, 
+                         get_request_list)
 import time
 print('\n')
 print("Scheduled Data Requests will be saved to:", f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler/requests.jsonl")

@@ -43,8 +43,6 @@ class OrderSchema:
             if key not in self.data:
                 self.data[key] = default
 
-        
-
     def __getitem__(self, key):
         return self.data[key]
 

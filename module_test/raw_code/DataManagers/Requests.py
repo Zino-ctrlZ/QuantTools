@@ -3,36 +3,36 @@ import numpy as np
 from datetime import datetime
 from trade.helpers.Logging import setup_logger
 from .utils import _ManagerLazyLoader
-# from .shared_obj import get_request_list, setup_shared_objects
+from .shared_obj import get_request_list, setup_shared_objects
 from trade.helpers.helper import generate_option_tick_new
 from typing import List, Union
 
 logger = setup_logger('DataManagers.Request.py')
-# setup_shared_objects()
+setup_shared_objects()
 
 
 
-# def get_bulk_requests():
-#     """
-#     Returns the name of requests.
-#     """
-#     reqs = list(get_request_list())
-#     return [x for x in reqs if 'BULK' in x]
+def get_bulk_requests():
+    """
+    Returns the name of requests.
+    """
+    reqs = list(get_request_list())
+    return [x for x in reqs if 'BULK' in x]
 
-# def get_chain_requests():
-#     """
-#     Returns the name of requests.
-#     """
-#     reqs = list(get_request_list())
-#     return [x for x in reqs if 'CHAIN' in x]
+def get_chain_requests():
+    """
+    Returns the name of requests.
+    """
+    reqs = list(get_request_list())
+    return [x for x in reqs if 'CHAIN' in x]
 
 
-# def get_single_requests():
-#     """
-#     Returns the name of requests.
-#     """
-#     reqs = list(get_request_list())
-    # return [x for x in reqs if 'SINGLE' in x]
+def get_single_requests():
+    """
+    Returns the name of requests.
+    """
+    reqs = list(get_request_list())
+    return [x for x in reqs if 'SINGLE' in x]
 
 
 

@@ -296,6 +296,36 @@ def _clean_data(df):
         return df.replace(0, np.nan).ffill()
     df = df.copy()
     return fill_values(df)
+
+
+def mad_zscore_spike_flag(df, threshold=10, window=10, col ='Midpoint'):
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    median = df[col].rolling(window).median()
+    mad = lambda x: np.median(np.abs(x - np.median(x))) ## lambda function that calculates median absolute deviation. x is a series, therefore x - median(x)
+    rolling_mad = df[col].rolling(window).apply(mad) ## Apply function
+    zscore_like = (df[col] - median) / rolling_mad ## Z-score like calculation
+    return zscore_like.abs() > threshold
+
+def mad_band_spike_flag(df, threshold=2, window=20, col='Midpoint'):    
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    median = df[col].rolling(window).median()
+    mad = df[col].rolling(window).apply(lambda x: np.median(np.abs(x - np.median(x))))
+    return (df[col] - median).abs() > threshold * mad
+
+def quantile_band_spike_flag(df, window=20, upper_quantile=0.90, lower_quantile=0.10, col='Midpoint'):
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    quantile = df[col].rolling(window).quantile(upper_quantile)
+    quantile_down = df[col].rolling(window).quantile(lower_quantile)
+    return (df[col] > quantile) | (df[col] < quantile_down)
     
 def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
     """
@@ -318,9 +348,18 @@ def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
         smooth_pct = df[col].pct_change()
         _zscore_pct = (smooth_pct - smooth_pct.rolling(window).mean()) / smooth_pct.rolling(window).std()
         _thresh_pct = _zscore_pct.abs() > skip_threshold
+
+        ## Spike Detection
+        spike_flag = mad_band_spike_flag(df, threshold=skip_threshold, window = window, col=col)
+
+        ## Window 
+        shortened = df[col][:window]
+        pct_change = shortened.pct_change()
+        window_bool = pct_change.abs() > 1.5
+
         
         ## Combine both boolean masks
-        _combined = _thresh | _thresh_pct
+        _combined = _thresh | _thresh_pct | spike_flag | window_bool
 
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
@@ -874,7 +913,7 @@ def populate_cache_v2(
 
             # Now my dear friends, we update cache of unavailable ticks
             start_time = time.time()
-            pack = update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
+            update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
             end_time = time.time()
             logger.info(f"Time taken to update cache: {end_time-start_time}")
 
