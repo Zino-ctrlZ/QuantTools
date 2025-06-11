@@ -13,6 +13,7 @@ from trade.helpers.Logging import setup_logger
 from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
+from pandas.tseries.offsets import BDay
 
 
 class OptionSignalBacktest():
@@ -20,13 +21,22 @@ class OptionSignalBacktest():
     Encapsulates the settings and components for carrying out an event-driven backtest
     """
     
-    def __init__(self, trades: pd.DataFrame, initial_capital: int | float =100000 ) -> None:
+    def __init__(self, trades: pd.DataFrame, 
+                 initial_capital: int | float =100000, 
+                 t_plus_n: float = 0 ) -> None:
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
             initial_capital: int
                 Initial capital to be used for backtesting
+            t_plus_n: int
+                Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
+        self.t_plus_n = t_plus_n
+        trades = trades.copy()
+        if trades.empty:
+            raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
+        trades = self.__handle_t_plus_n(trades)
         self.__construct_data(trades, initial_capital)
         
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int) -> None: 
@@ -39,13 +49,21 @@ class OptionSignalBacktest():
         self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.eventScheduler, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
-        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date)
+        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, t_plus_n= self.t_plus_n)
         self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         self.events = []
-        
+    
+    def __handle_t_plus_n(self, trades: pd.DataFrame) -> pd.DataFrame:
+        """
+        Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
+        """
+        if self.t_plus_n > 0:
+            trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
+            trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
+        return trades
         
     def run(self):
         test_scheduled = False
@@ -90,11 +108,11 @@ class OptionSignalBacktest():
                 if event:
                     self.store_event(event)  # Store the event in the events list
                     event_count += 1
-                    if event.datetime == pd.to_datetime('2023-07-17') and not test_scheduled:
-                        print("Enforcing order event injection for testing purposes")
-                        self.eventScheduler.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
-                        print("Order event injected for TSLA at2023-07-18, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
-                        test_scheduled = True
+                    # if event.datetime == pd.to_datetime('2023-07-17') and not test_scheduled:
+                    #     print("Enforcing order event injection for testing purposes")
+                    #     self.eventScheduler.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
+                    #     print("Order event injected for TSLA at2023-07-18, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
+                    #     test_scheduled = True
                     try:
                         self.logger.info(f"Processing event: {event}")
                         print(f"Processing event: {event.type} {event.datetime}")

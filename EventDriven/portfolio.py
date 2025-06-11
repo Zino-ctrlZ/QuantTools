@@ -159,7 +159,7 @@ class OptionSignalPortfolio(Portfolio):
         self.roll_tracker = {}
         self.analyzed_date_list = [] # list of dates that have been analyzed
         self.skip_log = {}
-        self.current_cash = []
+        self.current_cash = {}
 
     @property
     def order_settings(self):
@@ -445,6 +445,7 @@ class OptionSignalPortfolio(Portfolio):
                 print(f"Setting roll_tracker for CLOSING LEG of {signal.signal_id} to CLOSED on {signal.datetime}")
                 del self.roll_tracker[signal.signal_id] ## remove the roll tracker for this signal, as we are closing the position.
             order = OrderEvent(symbol, signal.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal.signal_id)
+            self.logger.info(f'Closing position for {symbol} at {signal.datetime} Position: {position}, Quantity: {current_position["quantity"]}, Order: {order}')
             return order
         return None
     
@@ -848,6 +849,7 @@ class OptionSignalPortfolio(Portfolio):
         #new positions dictionary
         new_positions_entry = {s: {} for s in self.symbol_list} 
         new_positions_entry['datetime'] = current_date
+        current_cash = {'datetime': current_date}
         
         #new weighted holdings dictionary
         new_weighted_holdings_entry = {s: self.allocated_cash_map[s] for s in self.symbol_list}
@@ -858,8 +860,10 @@ class OptionSignalPortfolio(Portfolio):
         
         for sym in self.symbol_list:
             new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
+            current_cash[sym] = self.allocated_cash_map[sym] #update the current cash for the symbol
             remove_signals = []
             for signal_id in self.current_positions[sym]:
+                
                 current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]['position'])
                 market_value = self.__normalize_dollar_amount(self.current_positions[sym][signal_id]['quantity'] * current_close)
                 
@@ -871,6 +875,7 @@ class OptionSignalPortfolio(Portfolio):
                 #update holdings
                 if 'exit_price' not in self.current_positions[sym][signal_id]: 
                      new_weighted_holdings_entry[sym] += market_value #update the holdings value to the market value of position + left over allocated cash
+                     
                     
 
                 #update positions
@@ -890,6 +895,7 @@ class OptionSignalPortfolio(Portfolio):
         #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
+        self.current_cash[current_date] = current_cash
         
     def update_fill(self, event):
         """

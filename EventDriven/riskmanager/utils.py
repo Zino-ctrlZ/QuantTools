@@ -242,7 +242,7 @@ def populate_cache_with_chain(tick, date, print_url = True):
         'C',
         print_url = print_url
     )
-    print(f"Retrieved chain for {tick} on {date}")
+    logger.info(f"Retrieved chain for {tick} on {date}")
 
 
     ## Clip Chain
@@ -357,9 +357,12 @@ def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
         pct_change = shortened.pct_change()
         window_bool = pct_change.abs() > 1.5
 
+        ## Zero Values
+        zero_bool = df[col] == 0
+
         
         ## Combine both boolean masks
-        _combined = _thresh | _thresh_pct | spike_flag | window_bool
+        _combined = _thresh | _thresh_pct | spike_flag | window_bool| zero_bool
 
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()

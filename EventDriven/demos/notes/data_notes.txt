@@ -1,0 +1,8 @@
+Per leg data cleans by ffilling 0 values
+Trade data adds skips based on 5 criteria's:
+    - Rolling Z-Score of absolute value
+    - Rolling Z-score of 1day change
+    - Median Absolute Deviation band
+    - abs 50% change in first n {window} days
+    - Zero values
+Skips are used to skip a trade on a specific date

@@ -466,6 +466,7 @@ class RiskManager:
                  sizing_type = 'delta',
                  leverage = 5.0,
                  max_moneyness = 1.2,
+                 t_plus_n = 0,
                  **kwargs
                  ):
         
@@ -539,6 +540,7 @@ class RiskManager:
         self.__analyzed_date_list = [] ## List of dates that have been analyzed for actions
         self._order_cache = {}
         self.id_meta = {}
+        self.t_plus_n = t_plus_n ## T+N settlement for the orders, default is 0, meaning no settlement delay. Orders will be placed on the same day.
         
 
 
@@ -903,7 +905,7 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['s'] = s
         position_data['r'] = r
         position_data['y'] = y
-        position_data = add_skip_columns(position_data, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'])
+        position_data = add_skip_columns(position_data, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
         self.position_data[positionID] = position_data
 
     @log_time(time_logger)
@@ -988,7 +990,7 @@ Quanitity Sizing Type: {self.sizing_type}
             return "ALREADY_ANALYZED"
         
         self.__analyzed_date_list.append(date) ## Add the date to the analyzed list
-        event_date = pd.to_datetime(date) + BDay(1) ## Order date is the next business day after the current date
+        event_date = pd.to_datetime(date) + BDay(self.t_plus_n) ## Order date is the next business day after the current date
         logger.info(f"Analyzing Positions on {date}")
         is_holiday = is_USholiday(date)
         if is_holiday:
@@ -1091,7 +1093,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
                     
                     event = ExerciseEvent(
-                        datetime = event_date,
+                        datetime = date, ## Exercise happens on the same day as the action.
                         symbol = sym,
                         quantity = current_position['quantity'],
                         entry_date = date,
@@ -1230,12 +1232,16 @@ Quanitity Sizing Type: {self.sizing_type}
 
 
                 dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
+                # logger.info(f"ID: {id}, DTE: {dte}, Expiry: {expiry_date}, Date: {date}")
 
                 if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
+                    # logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
                     roll_dict[id] = OpenPositionAction.ROLL.value
                 elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
+                    # logger.info(f"{id} exercising because {dte} == 0")
                     roll_dict[id] = OpenPositionAction.EXERCISE.value
                 else:
+                    # logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
                     roll_dict[id] = OpenPositionAction.HOLD.value
         return roll_dict
     
@@ -1259,21 +1265,26 @@ Quanitity Sizing Type: {self.sizing_type}
                     continue
 
                 id = current_position['position']['trade_id']
+                try:
+                    entry_date = self.pm.trades_map[id].entry_date
+                except Exception as e:
+                    print(f"Error getting entry date for position {id}: {e}")
+                    entry_date = date
                 spot = self.chain_spot_timeseries[symbol][date] ## Use the spot price on the date (from chain cause of splits)
                 
                 if 'long' in current_position['position']:
                     for option_id in current_position['position']['long']:
-                        option_meta = self.adjust_for_events(self.pm_start_date, date, parse_option_tick(option_id))
+                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
                         # option_meta =  parse_option_tick(option_id)
                         strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
 
                 if 'short' in current_position['position']:
                     for option_id in current_position['position']['short']:
-                        option_meta = self.adjust_for_events(self.pm_start_date, date, parse_option_tick(option_id))
+                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
                         # option_meta =  parse_option_tick(option_id)
                         strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
                 
-                logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}")
+                logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}, entry_date: {entry_date}")
                 logger.info(f"{id} moneyness bool list {[x > self.max_moneyness for x in strike_list]}")
                 
                 roll_dict[id] = OpenPositionAction.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else OpenPositionAction.HOLD.value
