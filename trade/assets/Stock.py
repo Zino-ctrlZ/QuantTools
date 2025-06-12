@@ -328,6 +328,20 @@ class Stock:
                 logger.error(f"Error getting previous close for {self.ticker} from yfinance: {e}")
                 return None
         return close
+    
+    def div_schedule(self):
+        """
+        Returns the dividend schedule for the stock
+        """
+        try:
+            div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider='yfinance').to_df()
+            div_history.set_index('ex_dividend_date', inplace = True)
+        except:
+            logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
+            logger.error(f"Probably due to no dividends history")
+            return pd.Series({x: 0 for x in bus_range(start = start_date, end = datetime.today(), freq = 'B')})
+        
+        return div_history['amount']
 
     @backoff.on_exception(backoff.expo, IndexError, max_tries=5, logger=logger)
     def div_yield(self, div_type = 'yield'):
@@ -381,7 +395,7 @@ class Stock:
         if div_type == 'value':
             dates = pd.date_range(start = div_history.index.min(), end = datetime.today() ,freq = 'B')
             div_history = div_history.reindex(dates, method = 'ffill')
-            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})['yearly_dividend']
+            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})#['yearly_dividend']
         elif div_type == 'yield':
             pass
         else:

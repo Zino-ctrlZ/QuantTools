@@ -95,7 +95,8 @@ class Trade:
         stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost# * self.buy_ledger.quantity ## Patch fix for now
         
         # Calculate metrics for sell transactions
-        stats['ExitPrice'] = self.sell_ledger.avg_price
+        # stats['ExitPrice'] = self.sell_ledger.avg_price
+        stats['ExitPrice'] = self.sell_ledger.avg_price #if self.sell_ledger.avg_price else self.current_price
         stats['ExitCommission'] = self.sell_ledger.commission
         stats['ExitSlippage'] = self.sell_ledger.slippage
         stats['ExitQuantity'] = self.sell_ledger.quantity
@@ -118,7 +119,6 @@ class Trade:
             # Calculate unrealized PnL for open position
             open_quantity = stats['EntryQuantity'] - stats['ExitQuantity']
             stats['OpenQuantity'] = open_quantity
-            
             if open_quantity > 0 and self.current_price is not None:
                 stats['UnrealizedPnL'] = (self.current_price - stats['EntryPrice']) * open_quantity
             else:

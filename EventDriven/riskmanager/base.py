@@ -781,10 +781,9 @@ Quanitity Sizing Type: {self.sizing_type}
         date: Evaluation Date for the greeks (PS: This is not the pricing date)
         positionID: str: position string. (PS: This function assumes ticker for position is the same)
         """
-        print(f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {positionID}, Date: {date}")
+        logger.info(f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {positionID}, Date: {date}")
         if positionID in self.position_data:
             ## If the position data is already available, then we can skip this step
-            print(f"Position Data for {positionID} already available, skipping calculation")
             logger.info(f"Position Data for {positionID} already available, skipping calculation")
             return self.position_data[positionID]
         else:
@@ -1232,16 +1231,16 @@ Quanitity Sizing Type: {self.sizing_type}
 
 
                 dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
-                # logger.info(f"ID: {id}, DTE: {dte}, Expiry: {expiry_date}, Date: {date}")
+                logger.info(f"ID: {id}, DTE: {dte}, Expiry: {expiry_date}, Date: {date}")
 
                 if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
-                    # logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
+                    logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
                     roll_dict[id] = OpenPositionAction.ROLL.value
                 elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                    # logger.info(f"{id} exercising because {dte} == 0")
+                    logger.info(f"{id} exercising because {dte} == 0")
                     roll_dict[id] = OpenPositionAction.EXERCISE.value
                 else:
-                    # logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
+                    logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
                     roll_dict[id] = OpenPositionAction.HOLD.value
         return roll_dict
     

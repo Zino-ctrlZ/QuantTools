@@ -61,8 +61,11 @@ class OptionSignalBacktest():
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
         if self.t_plus_n > 0:
+            logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
             trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
             trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
+        elif self.t_plus_n > 1:
+            raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
         
     def run(self):

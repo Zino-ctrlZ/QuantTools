@@ -6,3 +6,6 @@ Trade data adds skips based on 5 criteria's:
     - abs 50% change in first n {window} days
     - Zero values
 Skips are used to skip a trade on a specific date
+Splits:
+    - Position Data is labeled with pre-split option ID
+    - Leg Data is labeled with post splits.

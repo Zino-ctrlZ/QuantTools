@@ -345,8 +345,10 @@ def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
         _thresh = _zscore.abs() > skip_threshold
 
         ## Percentage change
-        smooth_pct = df[col].pct_change()
+        smooth_pct = df[col].pct_change().fillna(0)
         _zscore_pct = (smooth_pct - smooth_pct.rolling(window).mean()) / smooth_pct.rolling(window).std()
+        _zscore_pct = _zscore_pct.fillna(0)
+        _zscore_pct.replace([np.inf, -np.inf], 0, inplace=True) ## Replace inf values with 0
         _thresh_pct = _zscore_pct.abs() > skip_threshold
 
         ## Spike Detection
@@ -362,7 +364,7 @@ def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
 
         
         ## Combine both boolean masks
-        _combined = _thresh | _thresh_pct | spike_flag | window_bool| zero_bool
+        _combined = _thresh  | spike_flag | window_bool| zero_bool | _thresh_pct
 
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
