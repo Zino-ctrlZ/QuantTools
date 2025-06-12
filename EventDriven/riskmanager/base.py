@@ -1044,13 +1044,20 @@ Quanitity Sizing Type: {self.sizing_type}
             'greeks': greek_dict
         }
         ## Aggregate the results
-        
+        trades_df = self.bars.trades_df
         for sym in self.pm.symbol_list:
             position = self.pm.current_positions[sym]
             for signal_id, current_position in position.items():
                 if 'position' not in current_position:
                     continue
                 k = current_position['position']['trade_id']
+                exit_date = trades_df[trades_df['signal_id'] == signal_id].ExitTime.values[0]
+                if compare_dates.is_on_or_after(date, exit_date):
+                    print(f"Position {k} has already exited on {exit_date}, skipping")
+                    logger.info(f"Position {k} has already exited on {exit_date}, skipping")
+                    continue
+                
+
 
 
 

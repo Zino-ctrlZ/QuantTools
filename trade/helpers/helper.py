@@ -445,6 +445,16 @@ class compare_dates:
     def is_after(date1, date2):
         """ Check if date1 is after date2."""
         return pd.to_datetime(date1) > pd.to_datetime(date2)
+    
+    @staticmethod
+    def is_on_or_before(date1, date2):
+        """ Check if date1 is on or before date2."""
+        return pd.to_datetime(date1) <= pd.to_datetime(date2)
+    
+    @staticmethod
+    def is_on_or_after(date1, date2):
+        """ Check if date1 is on or after date2."""
+        return pd.to_datetime(date1) >= pd.to_datetime(date2)
 
     @staticmethod
     def is_equal(date1, date2):

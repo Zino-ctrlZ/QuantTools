@@ -161,6 +161,7 @@ def save_info_stack():
     - IDS: List of dictionaries containing position information.
     - id_save_file: Path to the CSV file where the information will be saved.
     """
+    global IDS, ID_SAVE_FILE, ID_SAVE_FOLDER
     if not IDS:
         print("No data to save.")
         return
@@ -170,6 +171,7 @@ def save_info_stack():
     full_data.to_csv(ID_SAVE_FILE, index=False)
     with open(ID_SAVE_FOLDER/'ids.txt', 'a') as f:
         f.write(f"Total IDs saved: {len(IDS)} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    IDS = []  # Clear the IDS list after saving
     return
 
 ## Register the save_info_stack function to be called on exit
@@ -443,7 +445,11 @@ def add_skip_columns(df, id, skip_columns, window=15, skip_threshold=2.75):
         
         ## Combine both boolean masks
         _combined = _thresh  | spike_flag | window_bool| zero_bool# | _thresh_pct
-
+        df[f'{col}_abs_zscore'] = _thresh
+        df[f'{col}_pct_zscore'] = _thresh_pct
+        df[f'{col}_spike_flag'] = spike_flag
+        df[f'{col}_window'] = window_bool
+        df[f'{col}_zero'] = zero_bool
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
     register_info_stack(id, df, skip_columns, update_kwargs={'window': window, 'skip_threshold': skip_threshold})

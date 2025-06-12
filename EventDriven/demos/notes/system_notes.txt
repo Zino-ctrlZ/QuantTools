@@ -1,0 +1,8 @@
+- Due to added skips:
+    - In real trading, since we can't close position on close price, we will opt for close to close price.
+    - This will lead to event discrepancy in situations where "close-eod" price doesn't generate a skip, but eod price generates a skip bool.
+
+- Adding checks for ExitDate in RiskManager.analyze_position isn't lookahead bias.
+    - This is because we are first checking if position is meant to be closed. If yes, no analysis need. Close takes priority
+    - Since we are checking for this bool on a day to day basis. The underlying assumption is we are carrying out this operation on each specific day.
+    - In cases where t_plus_n is set to 1, we get a roll on ExitDate - 1, and placed for ExitDate, the roll will still enter queue. We need to enforce priortization at signal level

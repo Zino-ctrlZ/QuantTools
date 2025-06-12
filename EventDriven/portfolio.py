@@ -393,6 +393,7 @@ class OptionSignalPortfolio(Portfolio):
                     self.logger.warning(f'Not generating corresponding open order for {signal.signal_id} because sell position of roll is not closed')
                     print(f'Not generating corresponding open order for {signal.signal_id} because sell position of roll is not closed')
                     print("Also not placing order. analyze_position will try roll again next day")
+                    del self.roll_tracker[signal.signal_id] ## remove the roll tracker for this signal. To allow other operations. Full check is complete, if another roll comes next day it will be re-populated
                     return None
                 else:
                     self.roll_tracker[signal.signal_id]['OPENED'] = True ## We are able to open position now. If it hasn't returned previously, order must be generated
@@ -421,6 +422,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal.datetime]
+            print(f"Skip: {skip}, Position: {position}, Close Price: {position['close']}, Datetime: {signal.datetime}")
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
                 
