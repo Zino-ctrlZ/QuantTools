@@ -48,7 +48,7 @@ from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.types import FillTypes, OpenPositionAction, ResultsEnum, SignalTypes
 from threading import Thread, Lock
-from trade import POOL_ENABLED
+from trade import POOL_ENABLED, register_signal
 import multiprocessing as mp
 from module_test.raw_code.DataManagers.DataManagers import (
     BulkOptionQueryRequestParameter,
@@ -73,6 +73,8 @@ from pathlib import Path
 import atexit
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
+import signal
+
 
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager.utils')
@@ -110,11 +112,86 @@ def clear_cache() -> None:
     """
     clears the cache
     """
-    global chain_cache, close_cache, oi_cache, spot_cache, fullChain_cache
+    global chain_cache, close_cache, oi_cache, spot_cache
     chain_cache.clear()
     close_cache.clear()
     oi_cache.clear()
     spot_cache.clear()
+
+## Register info on `skips` from add_skip_columns
+IDS = []
+ID_SAVE_FOLDER = Path(os.environ['WORK_DIR']) / '.cache'
+ID_SAVE_FILE = ID_SAVE_FOLDER / 'position_data.csv'
+
+## Function to register information about skips in the position data to a list
+def register_info_stack(id, data, data_col, update_kwargs = {}):
+    """
+    Register the information stack for a given position ID.
+    
+    Parameters:
+    - id: The position ID.
+    - data: The DataFrame containing position data.
+    
+    Returns:
+    - info: A dictionary containing the registered information.
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise ValueError("Data must be a pandas DataFrame.")
+    
+
+    info = {}
+    info['ID'] = id
+    for k in data_col:
+        info[f'{k.upper()}_SKIP'] = data[f"{k}_skip_day"].sum()
+        copy_cat = data[f"{k}_skip_day"].copy().to_frame()
+        copy_cat['streak_id'] = copy_cat[f"{k}_skip_day"].ne(copy_cat[f"{k}_skip_day"].shift()).cumsum()
+        copy_cat['streak'] = copy_cat.groupby('streak_id').cumcount() + 1
+        info[f'{k.upper()}_MAX_STREAK'] = copy_cat[copy_cat[f"{k}_skip_day"] ==True].streak.max() if not copy_cat[copy_cat[f"{k}_skip_day"] ==True].streak.empty else 0
+    info['DATA_LEN'] = len(data)
+    info['DATETIME'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    info.update(update_kwargs)
+    IDS.append(info)
+
+## Function to save the information stack to a CSV file
+def save_info_stack():
+    """
+    Save the information stack to a CSV file.
+    
+    Parameters:
+    - IDS: List of dictionaries containing position information.
+    - id_save_file: Path to the CSV file where the information will be saved.
+    """
+    if not IDS:
+        print("No data to save.")
+        return
+    full_data = pd.read_csv(ID_SAVE_FILE) if ID_SAVE_FILE.exists() else pd.DataFrame()
+    df = pd.DataFrame(IDS)
+    full_data = pd.concat([full_data, df], ignore_index=True)
+    full_data.to_csv(ID_SAVE_FILE, index=False)
+    with open(ID_SAVE_FOLDER/'ids.txt', 'a') as f:
+        f.write(f"Total IDs saved: {len(IDS)} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    return
+
+## Register the save_info_stack function to be called on exit
+register_signal(signal.SIGTERM, save_info_stack)
+
+def get_current_saved_ids() -> pd.DataFrame:
+    """
+    Returns the current saved IDs as a DataFrame.
+    
+    Returns:
+        pd.DataFrame: A DataFrame containing the saved IDs.
+    """
+    return IDS
+
+def clear_info_stack() -> None:
+    """
+    Clears the information stack.
+    """
+    global IDS
+    IDS = []
+    logger.info("Cleared info stack.")
+
 
 
 LOOKBACKS = {}
@@ -327,7 +404,8 @@ def quantile_band_spike_flag(df, window=20, upper_quantile=0.90, lower_quantile=
     quantile_down = df[col].rolling(window).quantile(lower_quantile)
     return (df[col] > quantile) | (df[col] < quantile_down)
     
-def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
+    
+def add_skip_columns(df, id, skip_columns, window=15, skip_threshold=2.75):
     """
     Adds skip columns to the DataFrame.
     """
@@ -364,10 +442,11 @@ def add_skip_columns(df, skip_columns, window=15, skip_threshold=2.75):
 
         
         ## Combine both boolean masks
-        _combined = _thresh  | spike_flag | window_bool| zero_bool | _thresh_pct
+        _combined = _thresh  | spike_flag | window_bool| zero_bool# | _thresh_pct
 
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
+    register_info_stack(id, df, skip_columns, update_kwargs={'window': window, 'skip_threshold': skip_threshold})
     return df
 
 

@@ -904,7 +904,7 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['s'] = s
         position_data['r'] = r
         position_data['y'] = y
-        position_data = add_skip_columns(position_data, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
+        position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
         self.position_data[positionID] = position_data
 
     @log_time(time_logger)

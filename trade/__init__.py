@@ -6,11 +6,13 @@ import json
 import pandas_market_calendars as mcal
 import pandas as pd
 from datetime import datetime
+from .helpers.Logging import setup_logger
 sys.path.append(os.environ.get('DBASE_DIR', ''))
 sys.path.append(os.environ.get('WORK_DIR', ''))
 import signal
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
+logger = setup_logger('trade.__init__')
 
 
 def register_signal(signum, signal_func):
@@ -27,26 +29,26 @@ def register_signal(signum, signal_func):
     if signum not in SIGNALS_TO_RUN:
         SIGNALS_TO_RUN[signum] = []
         signal.signal(signum, run_signals)
-        print(f"Registered signal number {signum}.")
+        logger.info(f"Registered signal number {signum}.")
     if not callable(signal_func):
         raise ValueError(f"Signal function {signal_func} is not callable.")
     
-    SIGNALS_TO_RUN[signum].append((signum, signal_func))
-    print(f"Signal function for `{signal_func.__name__}` added to signal number {signum}.")
+    SIGNALS_TO_RUN[signum].append( signal_func)
+    logger.info(f"Signal function for `{signal_func.__name__}` added to signal number {signum}.")
 
 def run_signals(signum, frame):
     """
     Run all registered signals.
     """
     if signum in SIGNALS_TO_RUN:
-        for _, signal_func in SIGNALS_TO_RUN[signum]:
+        for signal_func in SIGNALS_TO_RUN[signum]:
             try:
-                print(f"Running signal function {signal_func.__name__} for signal {signum}.")
+                logger.info(f"Running signal function {signal_func.__name__} for signal {signum}.")
                 signal_func()
             except Exception as e:
-                print(f"Error running signal function {signal_func.__name__}: {e}")
+                logger.info(f"Error running signal function {signal_func.__name__}: {e}")
     else:
-        print(f"No registered signals for signal number {signum}.")
+        logger.info(f"No registered signals for signal number {signum}.")
             
 def get_signals_to_run():
     """
