@@ -6,7 +6,7 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 from queue import Queue
 from typing import Dict, Optional
 
-from EventDriven.event import Event, FillEvent, OrderEvent, SignalEvent
+from EventDriven.event import Event, ExerciseEvent, FillEvent, OrderEvent, SignalEvent
 from trade.helpers.Logging import setup_logger
 
 class EventQueue(Queue):
@@ -15,28 +15,59 @@ class EventQueue(Queue):
     """
     def __init__(self, maxsize=0):
         super().__init__(maxsize)
-        self.events_dict = []
+        self.events_list = []
+        self.logger = setup_logger('OptionSignalEventQueue')
     
     def put(self, item: Event):
         """Overrides put to ensure only Event objects are added."""
         if not isinstance(item, Event):
             raise ValueError("Queue can only contain Event objects. Received: {}".format(type(item)))
         super().put(item)
-        self.events_dict.append(item)
-        
+        self.events_list.append(item)
+    
     def get_nowait(self) -> Event:
         """Overrides get_nowait to ensure only Event objects are consumed."""
         item = super().get_nowait()
-        if isinstance(item, SignalEvent):
-            if item.signal_type != 'CLOSE': #if the signal is not a close event, check for a close signal event in the queue with the same signal id, or an order or fill event, if there is, push this event to the back of the queue, we do this so that buying power on that signal is established before a buy signal is processed. Its applicable in this use case as we do not support intraday trading
-                conflict_events = [e for e in self.events_dict if (isinstance(e, SignalEvent) and e.symbol == item.symbol and e.signal_type == 'CLOSE') or (isinstance(e, OrderEvent) and e.symbol == item.symbol ) or (isinstance(e, FillEvent) and e.symbol == item.symbol)] 
-                if len(conflict_events) > 0:
-                    print(f"Pushing {item} to back of queue because conflicting events were found: {[str(e) for e in conflict_events]}")
-                    self.put(item)
-                    return self.get_nowait()
+        self.events_list.pop(self.events_list.index(item))
+        conflict_events = self.conflicts(item)
+        if len(conflict_events) > 0:
+            self.logger.warning(f"Pushing {item} to back of queue because conflicting events were found: {[str(e) for e in conflict_events]}")
+            print(f"Pushing {item} to back of queue because conflicting events were found: {[str(e) for e in conflict_events]}")
+            self.put(item)
+            return self.get_nowait()
         
-        self.events_dict.pop(self.events_dict.index(item))
         return item
+    
+    def conflicts(self, event: Event) -> list: 
+        """
+        List of conflicting events within the same queue.
+        Cases: 
+        - SignalEvent to close a name should take precedence over SignalEvent to open the same name, this is to make sure cash and position update before opening.
+        - Before a signalEvent, any orderEvent/FillEvent/ExerciseEvent already in the queue for the same symbol should take precedence.
+        - Before an OrderEvent or ExerciseEvent, any FillEvent already in the queue for the same symbol,should take precedence. 
+        
+        OrderEvents & ExerciseEvents go straight to the execution handler, affecting position and cash, so they must take precedence over SignalEvents.
+        FillEvents affect position and cash, so they must take precedence over SignalEvents and OrderEvents and ExerciseEvents.
+        """
+        
+        if not isinstance(event, Event):
+            raise ValueError("Queue can only check for Event objects. Received: {}".format(type(event)))
+        
+        events_list_copy = self.events_list.copy()
+        if event in events_list_copy:
+            events_list_copy.remove(event)
+        
+
+        if isinstance(event, SignalEvent):
+            if event.signal_type == 'OPEN':
+                return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, SignalEvent) and e.signal_type == 'CLOSE' or isinstance(e, OrderEvent) or isinstance(e, FillEvent) or isinstance(e, ExerciseEvent))]
+            elif event.signal_type == 'CLOSE':
+                return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, OrderEvent) or isinstance(e,FillEvent) or isinstance(e, ExerciseEvent))]   
+        
+        elif isinstance(event, OrderEvent) or isinstance(event, ExerciseEvent):
+            return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, FillEvent))]
+        
+        return []
 
 class EventScheduler:
     def __init__(self, start_date, end_date ):

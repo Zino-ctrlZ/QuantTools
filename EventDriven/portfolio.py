@@ -740,7 +740,7 @@ class OptionSignalPortfolio(Portfolio):
                 if self.current_positions[fill_event.symbol] is not None and fill_event.signal_id in self.current_positions[fill_event.symbol]:
                     new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
                 else:
-                    new_position_data['quantity'] = fill_event.quantity
+                    return ValueError(f'No position found for {fill_event.symbol} with signal_id {fill_event.signal_id}')
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 if (new_position_data['quantity']) == 0: 
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
