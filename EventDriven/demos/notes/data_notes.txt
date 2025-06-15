@@ -9,3 +9,6 @@ Skips are used to skip a trade on a specific date
 Splits:
     - Position Data is labeled with pre-split option ID
     - Leg Data is labeled with post splits.
+
+Limits Calculation: Eg Spot 3326.0198974609375, Cash 1095.4378642132353
+    - This yields a limit of very close to 0

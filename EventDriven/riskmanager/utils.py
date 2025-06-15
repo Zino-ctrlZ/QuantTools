@@ -4,6 +4,7 @@ from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
 from trade.assets.Calculate import Calculate
 # from trade.assets.helpers.DataManagers_new import OptionDataManager
+from trade.assets.helpers.utils import (swap_ticker)
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, SaveManager, BulkOptionDataManager
 
 from trade.helpers.Context import Context, clear_context
@@ -86,6 +87,15 @@ logger.info("RISK MANAGER is Using Old DataManager")
 TIMESERIES_START = pd.to_datetime('2017-01-01')
 TIMESERIES_END = datetime.today()
 
+## Patch tickers to swap old tickers with new ones
+PATCH_TICKERS = True
+
+def get_patch_tickers():
+    return PATCH_TICKERS
+
+def set_patch_tickers(patch_tickers):
+    global PATCH_TICKERS
+    PATCH_TICKERS = patch_tickers
 
 ## To-Do:
 ## 1. Filter out contracts that have already been queried. Saves time
@@ -326,6 +336,8 @@ def populate_cache_with_chain(tick, date, print_url = True):
 
     ## Clip Chain
     chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    if PATCH_TICKERS:
+        chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
 
     ## Create ID
     id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
@@ -347,6 +359,7 @@ def populate_cache_with_chain(tick, date, print_url = True):
         save_to_cache, 
         save_params)
     chain_clipped.columns = chain_clipped.columns.str.lower()
+
     return chain_clipped
 
 def refresh_cache() -> None:

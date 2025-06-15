@@ -41,7 +41,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
-from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker
+from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker, swap_ticker
 from trade.helpers.types import OptionModelAttributes
 from dbase.utils import bus_range
 logger = setup_logger('trade.asset.Stock')
@@ -64,7 +64,9 @@ class Stock:
         ## I can update the end_date in __init__ if I need to
 
         end_date = Configuration.end_date or _end_date
-        key = (verify_ticker(ticker).upper(), end_date)
+        ticker = swap_ticker(ticker).upper()
+        key = (ticker, end_date)
+
         if key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[key] = instance
@@ -96,6 +98,7 @@ class Stock:
         ## Chaning to last business day, so far, there's no need to create Stock for. 
         ## Temp: Changing to last business day ensures that the data is available, +  avoids the missing error
         ## Note: Monitor if this is the best approach
+        ticker = swap_ticker(ticker).upper()
         end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
 

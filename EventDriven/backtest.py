@@ -10,6 +10,8 @@ from EventDriven.execution import SimulatedExecutionHandler
 from EventDriven.riskmanager import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import change_to_last_busday
+from EventDriven.helpers import generate_signal_id
 from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
@@ -34,9 +36,12 @@ class OptionSignalBacktest():
         """
         self.t_plus_n = t_plus_n
         trades = trades.copy()
+        unadjusted = trades.copy() ## Store unadjusted trades for reference
         if trades.empty:
             raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
         trades = self.__handle_t_plus_n(trades)
+        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
         self.__construct_data(trades, initial_capital)
         
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int) -> None: 
@@ -49,9 +54,9 @@ class OptionSignalBacktest():
         self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.eventScheduler, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
-        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, t_plus_n= self.t_plus_n)
-        self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
+        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
+        self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         self.events = []
@@ -62,8 +67,10 @@ class OptionSignalBacktest():
         """
         if self.t_plus_n > 0:
             logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
-            trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
-            trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
+            # trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
+            # trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
+            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
+            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
         elif self.t_plus_n > 1:
             raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
@@ -111,11 +118,6 @@ class OptionSignalBacktest():
                 if event:
                     self.store_event(event)  # Store the event in the events list
                     event_count += 1
-                    # if event.datetime == pd.to_datetime('2023-07-17') and not test_scheduled:
-                    #     print("Enforcing order event injection for testing purposes")
-                    #     self.eventScheduler.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
-                    #     print("Order event injected for TSLA at2023-07-18, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
-                    #     test_scheduled = True
                     try:
                         self.logger.info(f"Processing event: {event}")
                         print(f"Processing event: {event.type} {event.datetime}")

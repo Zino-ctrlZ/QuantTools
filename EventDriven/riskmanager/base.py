@@ -22,10 +22,12 @@ from EventDriven.event import (
 import numpy as np
 import os
 from cachetools import cached, LRUCache
+from EventDriven.execution import ExecutionHandler
 from cachetools.keys import hashkey
 import time
 from cachetools import cachedmethod
 from functools import lru_cache
+from trade.assets.helpers.utils import (swap_ticker)
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
@@ -52,9 +54,10 @@ def resolve_schema(schema: OrderSchema,
     """
     Resolving schema by order of importance
     1. DTE Tolerance
-    2. Moneyness Width
-    3. Max Close Price
-    4. Max Schema Tries
+    2. Min Moneyness width
+    3. Max Moneyness width
+    4. Max Close Price
+    5. Max Schema Tries
     If no schema is found after max tries, return False and the number of tries.
 
     Args:
@@ -76,17 +79,25 @@ def resolve_schema(schema: OrderSchema,
     #1). DTE Resolve
     tries +=1
     if schema['dte_tolerance'] <= max_dte_tolerance:
+        logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
         schema['dte_tolerance'] += 10
         return schema, tries
     
-    ##2). Moneyness Resolve
-    elif schema['max_moneyness'] - 1 <= moneyness_width:
-        schema['max_moneyness'] += 0.1
+    #2). Min Moneyness Resolve
+    elif 1 - schema['min_moneyness'] <= moneyness_width:
+        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {moneyness_width}, decreasing Min Moneyness by 0.1")
         schema['min_moneyness'] -= 0.1
+        return schema, tries    
+
+    #3). Max Moneyness Resolve
+    elif schema['max_moneyness'] - 1 <= moneyness_width:
+        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {moneyness_width}, increasing Max Moneyness by 0.1")
+        schema['max_moneyness'] += 0.1
         return schema, tries
     
-    ##3). Close Resolve
+    #4). Close Resolve
     elif schema['max_total_price'] <= max_close:
+        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.05")
         schema['max_total_price'] += 0.05
         return schema, tries
 
@@ -128,19 +139,14 @@ class OrderPicker:
             precompute_lookbacks('2000-01-01', '2030-12-31', _range = [value])
         self.__lookback = value
 
-    # @cachedmethod(
-    #     lambda self: self._cache,
-    #     key=lambda self, schema, date, spot, print_url=False: hashkey(schema, date, spot, print_url)
-    # )
     def get_order_new(self,
                       schema: OrderSchema, 
                       date: str|datetime,
                       spot,
                       print_url: bool = False):
         
-        
         schema = tuple(schema.data.items())
-
+        
         return self.__get_order(schema, date, spot, print_url=print_url)
     
     
@@ -154,7 +160,12 @@ class OrderPicker:
         """
         Get the order for the given schema, date, and spot price.
         """
+
         schema = OrderSchema(dict(schema))
+        if schema['option_type'] =='C': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+            schema['min_moneyness'] = 2 - schema['min_moneyness'] ## For Calls, we want the min moneyness to be 2 - min_moneyness
+            schema['max_moneyness'] = 2 - schema['max_moneyness'] ## For Calls, we want the max moneyness to be 2 - max_moneyness
+            print(f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
         chain = populate_cache_with_chain(
             schema['tick'], 
             date, 
@@ -386,13 +397,13 @@ class RiskManager:
         The Events object used for event-driven backtesting.
     initial_capital : float
         The initial capital allocated for the portfolio.
-    start_date : str
+    start_date : str | datetime
         The start date for the backtest, recommended to match the start date of the Bars object.
-    end_date : str
+    end_date : str | datetime
         The end date for the backtest, recommended to match the end date of the Bars object.
-    pm_start_date : str
+    pm_start_date : str | datetime
         The start date for the portfolio manager.
-    pm_end_date : str
+    pm_end_date : str | datetime
         The end date for the portfolio manager.
     symbol_list : list[str]
         List of symbols available in the Bars object.
@@ -415,6 +426,14 @@ class RiskManager:
         Cache for storing raw split names and dates.
     splits : dict
         Processed split data derived from splits_raw.
+    schema_cache : dict
+        Cache for storing schema-related data.
+    _order_cache : dict
+        Cache for storing order-related data.
+    id_meta : dict
+        Metadata for tracking IDs.
+    __analyzed_date_list : list
+        List of dates that have been analyzed for actions.
 
     Risk Management Attributes:
     ---------------------------
@@ -428,6 +447,14 @@ class RiskManager:
         Specifies the limits for individual Greeks (e.g., delta, gamma, vega, theta).
     max_moneyness : float
         Maximum moneyness before rolling positions. Default is 1.2.
+    max_dte_tolerance : int
+        Maximum days-to-expiration tolerance for options. Default is 90 days.
+    moneyness_width : float
+        Width of moneyness for filtering options. Default is 0.45.
+    max_slippage : float
+        Maximum allowable slippage for trades. Default is 0.25.
+    re_update_on_roll : bool
+        If True, the limits will be re-evaluated on roll events. Default is False.
 
     Pricing and Data Attributes:
     ----------------------------
@@ -438,6 +465,8 @@ class RiskManager:
         'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint'.
     rf_timeseries : pd.Series
         Risk-free rate timeseries data, retrieved using get_risk_free_rate_helper().
+    unadjusted_signals : pd.DataFrame
+        Unadjusted signals for the risk manager, used for analysis and actions.
 
     Miscellaneous Attributes:
     -------------------------
@@ -445,21 +474,20 @@ class RiskManager:
         Dictionary for managing data-related objects.
     _actions : dict
         Internal dictionary for storing actions related to risk management.
-
-    Methods:
-    --------
-    __init__(self, bars: Bars, events: Events, initial_capital: float, start_date: str, end_date: str,
-             portfolio_manager: PortfolioManager = None, price_on: str = 'mkt_close',
-             option_price: str = 'Midpoint', sizing_type: str = 'delta', leverage: float = 5.0,
-             max_moneyness: float = 1.2):
-        Initializes the RiskManager class and sets up attributes for managing portfolio risk.
+    executor : ExecutionHandler
+        The execution handler responsible for executing trades.
+    t_plus_n : int
+        Settlement delay for orders (T+N). Default is 0, meaning no settlement delay.
     """
+
     def __init__(self,
                  bars: DataHandler,
                  events: EventScheduler,
                  initial_capital: int|float,
                  start_date: str|datetime,
                  end_date: str|datetime,
+                 executor: ExecutionHandler,
+                 unadjusted_signals: pd.DataFrame,
                  portfolio_manager: 'Portfolio' = None,
                  price_on = 'close',
                  option_price = 'Midpoint',
@@ -469,22 +497,52 @@ class RiskManager:
                  t_plus_n = 0,
                  **kwargs
                  ):
-        
         """
-        initializes the RiskManager class
+        Methods:
+            --------
+            __init__(self, bars: Bars, events: Events, initial_capital: float, start_date: str | datetime, end_date: str | datetime,
+                    executor: ExecutionHandler, unadjusted_signals: pd.DataFrame, portfolio_manager: PortfolioManager = None,
+                    price_on: str = 'mkt_close', option_price: str = 'Midpoint', sizing_type: str = 'delta', leverage: float = 5.0,
+                    max_moneyness: float = 1.2, t_plus_n: int = 0, **kwargs):
+                Initializes the RiskManager class and sets up attributes for managing portfolio risk.
 
-        params:
-        bars: Bars: bars
-        events: Events: events
-        initial_capital: float: initial capital
-        start_date: str: start date, recommended to match with the start date of the bars
-        end_date: str: end date, recommended to match with the end date of the bars
-        portfolio_manager: PortfolioManager: portfolio manager. Default is None
-        price_on: str: price on. Default is 'mkt_close'
-        option_price: str: option price. The Option Price used for pricing. Default is 'Midpoint'. Available Options are 'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint'
-        sizing_type: str: sizing type. This is what you want your quantity to be calculated on. Default is 'delta'. Available Options are 'delta', 'vega', 'gamma', 'price'
-        leverage: float: Multiplier for Equity Equivalent Size. Default is 5.0. Eg (Cash Available/Spot Price) * Leverage = Equity Equivalent Size
-        max_moneyness: float: Maximum Moneyness before rolling. Default is 1.2
+                Parameters:
+                ----------
+                bars : Bars
+                    The Bars object containing historical price data for the symbols.
+                events : Events
+                    The Events object used for event-driven backtesting.
+                initial_capital : float
+                    The initial capital allocated for the portfolio.
+                start_date : str | datetime
+                    The start date for the backtest, recommended to match the start date of the Bars object.
+                end_date : str | datetime
+                    The end date for the backtest, recommended to match the end date of the Bars object.
+                executor : ExecutionHandler
+                    The execution handler responsible for executing trades.
+                unadjusted_signals : pd.DataFrame
+                    Unadjusted signals for the risk manager, used for analysis and actions.
+                portfolio_manager : PortfolioManager, optional
+                    The PortfolioManager object for managing portfolio positions and orders. Default is None.
+                price_on : str, optional
+                    Specifies the price type used for calculations (e.g., 'mkt_close'). Default is 'mkt_close'.
+                option_price : str, optional
+                    Specifies the option price used for pricing. Default is 'Midpoint'. Available options include:
+                    'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint'.
+                sizing_type : str, optional
+                    Specifies the sizing type for calculating quantities (e.g., 'delta', 'vega', 'gamma', 'price'). Default is 'delta'.
+                leverage : float, optional
+                    Multiplier for equity equivalent size (leverage). Default is 5.0.
+                    Example: (Cash Available / Spot Price) * Leverage = Equity Equivalent Size.
+                max_moneyness : float, optional
+                    Maximum moneyness before rolling positions. Default is 1.2.
+                t_plus_n : int, optional
+                    Settlement delay for orders (T+N). Default is 0, meaning no settlement delay.
+                **kwargs : dict, optional
+                    Additional keyword arguments for customization. Expected keys include:
+                    - `max_dte_tolerance` (int): Maximum days-to-expiration tolerance for options. Default is 90 days.
+                    - `moneyness_width` (float): Width of moneyness for filtering options. Default is 0.45.
+                    - `max_tries` (int): Maximum number of tries to resolve schema. Default is 20.
         """
         
         assert sizing_type in ['delta', 'vega', 'gamma', 'price'], f"Sizing Type {sizing_type} not recognized, expected 'delta', 'vega', 'gamma', or 'price'"
@@ -541,6 +599,10 @@ class RiskManager:
         self._order_cache = {}
         self.id_meta = {}
         self.t_plus_n = t_plus_n ## T+N settlement for the orders, default is 0, meaning no settlement delay. Orders will be placed on the same day.
+        self.max_slippage = 0.25
+        self.executor = executor
+        self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
+        self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
         
 
 
@@ -648,7 +710,13 @@ Quanitity Sizing Type: {self.sizing_type}
         max_moneyness = kwargs.pop('max_moneyness', 1.25)
         target_dte = kwargs.pop('target_dte')
         min_total_price = kwargs.pop('min_total_price', max_close/2)
-
+        
+        if is_USholiday(date):
+            logger.info(f"Date {date} is a US Holiday, skipping order generation")
+            return {
+                'result': ResultsEnum.IS_HOLIDAY.value,
+                'data': None
+            }
 
 
         self.generate_data(tick)
@@ -715,7 +783,7 @@ Quanitity Sizing Type: {self.sizing_type}
         self.update_greek_limits(signalID, position_id)
         logger.info("Calculating Quantity")
         quantity = self.calculate_quantity(position_id, signalID, kwargs['date'])
-        logger.info(f"Quantity for Position ({position_id}): {quantity}")
+        logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
         order['data']['quantity'] = quantity
         order['data']['cash_equivalent_qty'] = self.pm.allocated_cash_map[tick] // (order['data']['close'] * 100)
         logger.info(order)
@@ -728,9 +796,24 @@ Quanitity Sizing Type: {self.sizing_type}
             cache_dict = order_cache[date]
             cache_dict[tick] = order
             order_cache[date] = cache_dict
+        
+        self.adjust_slippage(position_id, date) ## Adjust the slippage for the position based on the position data
 
         return order
     
+    def adjust_slippage(self, position_id, date):
+        position_data = self.position_data.get(position_id, None)
+        if position_data is None:
+            logger.error(f"Position Data for {position_id} not available, cannot adjust slippage")
+            return None
+        
+        if 'spread_ratio' in position_data:  
+            spread_ratio = position_data['spread_ratio'][date] if position_data['spread_ratio'][date] else self.max_slippage
+            logger.info(f"Adjusting slippage for position {position_id} on date {date} with spread ratio {spread_ratio} from current max slippage {self.executor.max_slippage_pct}. Set spread_ratio: {min(spread_ratio, self.max_slippage)}")  
+            self.executor.max_slippage_pct = min(spread_ratio, self.max_slippage)
+        else:
+            logger.warning(f"Spread Ratio not available for position {position_id}, using default max slippage of {self.max_slippage}")
+            self.executor.max_slippage_pct = self.max_slippage
 
     def register_option_meta_frame(
             self,
@@ -804,8 +887,8 @@ Quanitity Sizing Type: {self.sizing_type}
         ## Now ensure that the spot and dividend data is available
         for p in position_dict.values():
             for s in p:
-                self.generate_data(s['ticker'])
-        ticker = s['ticker']
+                self.generate_data(swap_ticker(s['ticker']))
+        ticker = swap_ticker(s['ticker'])
 
         ## Get the spot, risk free rate, and dividend yield for the date
         s = self.chain_spot_timeseries[ticker]
@@ -850,7 +933,7 @@ Quanitity Sizing Type: {self.sizing_type}
                                                         type_ = 'spot',
                                                         extra_cols=['bid', 'ask']).post_processed_data * shift ## Using chain spot data to account for splits
                     spot = spot[spot.index >= start_date] ## Filter the data to only include data after the start date
-                    spot = spot[[self.option_price.capitalize()]]
+                    spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
                     data = greeks.join(spot)
                     full_data = pd.concat([full_data, data], axis = 0)
             full_data = _clean_data(full_data)
@@ -904,6 +987,8 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['s'] = s
         position_data['r'] = r
         position_data['y'] = y
+        position_data['spread'] = position_data['Closeask'] - position_data['Closebid'] ## Spread is the difference between the ask and bid prices
+        position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
         position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
         self.position_data[positionID] = position_data
 
@@ -921,15 +1006,16 @@ Quanitity Sizing Type: {self.sizing_type}
         ## I will use The date from Signal ID To create the limit
         ## Goal is to enfore the limit on the signal, not the position
         
-        if signal_id in self.greek_limits['delta']: ## May consider to maximize cash on roll
+        if signal_id in self.greek_limits['delta'] and not self.re_update_on_roll: ## May consider to maximize cash on roll
             logger.info(f"Greek Limits for Signal ID: {signal_id} already updated, skipping")
             return
         logger.info(f"Updating Greek Limits for Signal ID: {signal_id} and Position ID: {position_id}")
         id_details = parse_signal_id(signal_id)
-        cash_available = self.pm.allocated_cash_map[id_details['ticker']]
+        cash_available = self.pm.allocated_cash_map[swap_ticker(id_details['ticker'])]
         delta_at_purchase = self.position_data[position_id]['Delta'][id_details['date']] 
         s0_at_purchase = self.position_data[position_id]['s'][id_details['date']] ## As always, we use the chain spot data to account for splits
-        equivalent_delta_size = (math.floor(cash_available/s0_at_purchase)/100) * self.sizing_lev
+        # equivalent_delta_size = (math.floor(cash_available/s0_at_purchase)/100) * self.sizing_lev
+        equivalent_delta_size = ((cash_available/s0_at_purchase)/100) * self.sizing_lev
         self.greek_limits['delta'][signal_id] = abs(equivalent_delta_size)
         logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {id_details['date']}")
         logger.info(f"Delta at Purchase: {delta_at_purchase}")
@@ -947,7 +1033,7 @@ Quanitity Sizing Type: {self.sizing_type}
         ## First get position info and ticker
         position_dict, _ = self.parse_position_id(positionID)
         key = list(position_dict.keys())[0]
-        ticker = position_dict[key][0]['ticker']
+        ticker = swap_ticker(position_dict[key][0]['ticker'])
 
         ## Now calculate the max size cash can buy
         cash_available = self.pm.allocated_cash_map[ticker]
@@ -1044,17 +1130,19 @@ Quanitity Sizing Type: {self.sizing_type}
             'greeks': greek_dict
         }
         ## Aggregate the results
-        trades_df = self.bars.trades_df
+        trades_df = self.unadjusted_signals
+        bars_trade = self.bars.trades_df
         for sym in self.pm.symbol_list:
             position = self.pm.current_positions[sym]
             for signal_id, current_position in position.items():
                 if 'position' not in current_position:
                     continue
                 k = current_position['position']['trade_id']
-                exit_date = trades_df[trades_df['signal_id'] == signal_id].ExitTime.values[0]
-                if compare_dates.is_on_or_after(date, exit_date):
-                    print(f"Position {k} has already exited on {exit_date}, skipping")
-                    logger.info(f"Position {k} has already exited on {exit_date}, skipping")
+                exit_signal_date = trades_df[trades_df['signal_id'] == signal_id].ExitTime.values[0] ## This is not look ahead because Signal is gotten on bars_df - t_plus_n
+                entry_signal_date = trades_df[trades_df['signal_id'] == signal_id].EntryTime.values[0] ## This is not look ahead because Signal is gotten on bars_df - t_plus_n        
+                exit_date, entry_date = bars_trade[bars_trade['signal_id'] == signal_id].ExitTime.values[0], bars_trade[bars_trade['signal_id'] == signal_id].EntryTime.values[0]
+                if compare_dates.is_on_or_after(date, exit_signal_date) or compare_dates.is_on_or_before(date, entry_date):
+                    logger.info(f"Position has exited on {exit_signal_date} or not yet entered on {entry_date}, skipping")
                     continue
                 
 
@@ -1375,7 +1463,7 @@ Quanitity Sizing Type: {self.sizing_type}
             meta = option
         else:
             raise ValueError("Option must be a string or a dictionary.")
-        split = self.splits.get(meta['ticker'], None)
+        split = self.splits.get(swap_ticker(meta['ticker']), None)
         if split is None:
             return meta
         for pack in split:

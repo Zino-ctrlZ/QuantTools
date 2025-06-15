@@ -96,7 +96,8 @@ class Trade:
         
         # Calculate metrics for sell transactions
         # stats['ExitPrice'] = self.sell_ledger.avg_price
-        stats['ExitPrice'] = self.sell_ledger.avg_price #if self.sell_ledger.avg_price else self.current_price
+    
+        stats['ExitPrice'] = self.sell_ledger.avg_price if self.sell_ledger.avg_price else self.current_price
         stats['ExitCommission'] = self.sell_ledger.commission
         stats['ExitSlippage'] = self.sell_ledger.slippage
         stats['ExitQuantity'] = self.sell_ledger.quantity
@@ -106,7 +107,7 @@ class Trade:
         stats['Quantity']  = stats['ExitQuantity']
 
         # Calculate PnL metrics if we have both buy and sell transactions
-        if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] > 0:
+        if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] >= 0:
             # Calculate realized PnL for closed portion
             stats['ClosedQuantity'] = stats['ExitQuantity']
             stats['ClosedPnL'] = (stats['ExitPrice'] - stats['EntryPrice']) * stats['ExitQuantity']

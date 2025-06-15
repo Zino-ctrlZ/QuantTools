@@ -1141,7 +1141,7 @@ def is_USholiday(date):
     return date.date().strftime('%Y-%m-%d') in HOLIDAY_SET
 
 
-def change_to_last_busday(end):
+def change_to_last_busday(end, offset = 1):
     from pandas.tseries.offsets import BDay
     
     #Enfore time is passed
@@ -1158,17 +1158,17 @@ def change_to_last_busday(end):
     while not isBiz:
 
         end_dt = pd.to_datetime(end)
-        end = (end_dt - BDay( 1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay( offset)).strftime('%Y-%m-%d %H:%M:%S')
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
-        end = pd.to_datetime(end)-BDay(1)
+        end = pd.to_datetime(end)-BDay(offset)
 
     # Make End Comparison prev day if holiday
     while is_USholiday(end):
         end_dt = pd.to_datetime(end)
-        end = (end_dt - BDay(1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay(offset)).strftime('%Y-%m-%d %H:%M:%S')
 
     return pd.to_datetime(end)
 

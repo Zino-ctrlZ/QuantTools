@@ -18,7 +18,7 @@ from EventDriven.riskmanager import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
-
+from pandas.tseries.offsets import BDay
 from EventDriven.event import  ExerciseEvent, FillEvent, MarketEvent, OrderEvent, RollEvent, SignalEvent
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.riskmanager import RiskManager
@@ -410,6 +410,9 @@ class OptionSignalPortfolio(Portfolio):
             
             current_position = self.current_positions[symbol][signal.signal_id]
             if is_USholiday(signal.datetime): # check if trading day is holdiay before selling
+                if signal.signal_id in self.roll_tracker:
+                    print(f"is_USholiday is True for ROLL {signal.signal_id} at {signal.datetime}, returning none and avoiding resolve")
+                    return None
                 self.resolve_order_result(ResultsEnum.IS_HOLIDAY.value, signal)
                 return None
             
@@ -422,7 +425,6 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.info(f'Selling contract for {symbol} at {signal.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal.datetime]
-            print(f"Skip: {skip}, Position: {position}, Close Price: {position['close']}, Datetime: {signal.datetime}")
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
                 
@@ -744,8 +746,10 @@ class OptionSignalPortfolio(Portfolio):
         
         if fill_event.position['trade_id'] not in self.trades_map:
             self.trades_map[fill_event.position['trade_id']] = Trade(fill_event.position['trade_id'], fill_event.symbol, fill_event.signal_id)
+            self.trades_map[fill_event.position['trade_id']].current_price = fill_event.position['close'] ## Added to allow aggregate
             self.trades_map[fill_event.position['trade_id']].update(fill_event)
         else:
+            self.trades_map[fill_event.position['trade_id']].current_price = fill_event.position['close'] ## Added to allow aggregate
             self.trades_map[fill_event.position['trade_id']].update(fill_event)
         
         if fill_event.direction == 'BUY': 
