@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
 from pandas import DatetimeIndex
-from pandas.tseries.holiday import USFederalHolidayCalendar
 from queue import Queue
 from typing import Dict, Optional
 
 from EventDriven.event import Event, ExerciseEvent, FillEvent, OrderEvent, SignalEvent
+from EventDriven.types import SignalTypes
 from trade.helpers.Logging import setup_logger
 
 class EventQueue(Queue):
@@ -24,6 +24,7 @@ class EventQueue(Queue):
             raise ValueError("Queue can only contain Event objects. Received: {}".format(type(item)))
         super().put(item)
         self.events_list.append(item)
+
     
     def get_nowait(self) -> Event:
         """Overrides get_nowait to ensure only Event objects are consumed."""
@@ -59,9 +60,9 @@ class EventQueue(Queue):
         
 
         if isinstance(event, SignalEvent):
-            if event.signal_type == 'OPEN':
-                return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, SignalEvent) and e.signal_type == 'CLOSE' or isinstance(e, OrderEvent) or isinstance(e, FillEvent) or isinstance(e, ExerciseEvent))]
-            elif event.signal_type == 'CLOSE':
+            if event.signal_type != SignalTypes.CLOSE.value:
+                return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, SignalEvent) and e.signal_type == SignalTypes.CLOSE.value or isinstance(e, OrderEvent) or isinstance(e, FillEvent) or isinstance(e, ExerciseEvent))]
+            else:
                 return [e for e in events_list_copy if e.symbol == event.symbol and (isinstance(e, OrderEvent) or isinstance(e,FillEvent) or isinstance(e, ExerciseEvent))]   
         
         elif isinstance(event, OrderEvent) or isinstance(event, ExerciseEvent):
