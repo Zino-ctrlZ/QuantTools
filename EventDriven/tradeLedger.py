@@ -30,7 +30,7 @@ class TradeLedger:
         self.quantity = 0
         self.commission= 0.0
         self.slippage= 0.0
-        self.ledger = {}
+        self.ledger = []
         self.ledger_df = None
         self.market_value = 0.0
         self.avg_total_cost = 0.0
@@ -43,35 +43,34 @@ class TradeLedger:
         """
         # Use the datetime as key for the ledger
         entry_time = fill_event.datetime
-        
-        if entry_time not in self.ledger:
-            trade_id = fill_event.position['trade_id']
-            uid = f'{trade_id}_{fill_event.signal_id}_{entry_time}'
-            self.ledger[entry_time] = {
-                'datetime': fill_event.datetime,
-                'uid': uid, 
-                'price': normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity),
-                'quantity': fill_event.quantity,
-                'symbol': fill_event.symbol,
-                'commission': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.commission),
-                'market_value': normalize_dollar_amount(fill_event.market_value),
-                'slippage': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.slippage),
-                'total_cost': normalize_dollar_amount(fill_event.fill_cost),
-                'aux_cost': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(abs(fill_event.commission) + abs(fill_event.slippage)),
-                'direction': fill_event.direction
-            }
+        entry = {}
+        trade_id = fill_event.position['trade_id']
+        uid = f'{trade_id}_{fill_event.signal_id}_{entry_time}'
+        entry = {
+            'datetime': fill_event.datetime,
+            'uid': uid, 
+            'price': normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity),
+            'quantity': fill_event.quantity,
+            'symbol': fill_event.symbol,
+            'commission': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.commission),
+            'market_value': normalize_dollar_amount(fill_event.market_value),
+            'slippage': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.slippage),
+            'total_cost': normalize_dollar_amount(fill_event.fill_cost),
+            'aux_cost': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(abs(fill_event.commission) + abs(fill_event.slippage)),
+            'direction': fill_event.direction
+        }
             
         
         # Update aggregated metrics
         self.avg_price = ((self.avg_price * self.quantity) + 
-                         (self.ledger[entry_time]['price'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
-        # self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
-        #                        (self.ledger[entry_time]['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
-        self.avg_total_cost = self.avg_total_cost + (self.ledger[entry_time]['total_cost'] ) ## Assuming fill_cost is the total cost for the fill event
-        self.aux_cost += self.ledger[entry_time]['aux_cost']
-        self.quantity += self.ledger[entry_time]['quantity']
-        self.commission += self.ledger[entry_time]['commission']
-        self.slippage += self.ledger[entry_time]['slippage']
-        self.market_value += self.ledger[entry_time]['market_value']
+                         (entry['price'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
+        self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
+                               (entry['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
+        self.aux_cost += entry['aux_cost']
+        self.quantity += entry['quantity']
+        self.commission += entry['commission']
+        self.slippage += entry['slippage']
+        self.market_value += entry['market_value']
         
-        self.ledger_df = pd.DataFrame(self.ledger.values())
+        self.ledger.append(entry)
+        self.ledger_df = pd.DataFrame(self.ledger)

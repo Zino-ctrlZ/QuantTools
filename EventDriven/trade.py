@@ -92,22 +92,20 @@ class Trade:
         stats['EntrySlippage'] = self.buy_ledger.slippage
         stats['EntryQuantity'] = self.buy_ledger.quantity
         stats['EntryAuxilaryCost'] = self.buy_ledger.aux_cost
-        stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost# * self.buy_ledger.quantity ## Patch fix for now
+        stats['TotalEntryCost'] = self.buy_ledger.avg_total_cost
         
         # Calculate metrics for sell transactions
-        # stats['ExitPrice'] = self.sell_ledger.avg_price
-    
-        stats['ExitPrice'] = self.sell_ledger.avg_price if self.sell_ledger.avg_price else self.current_price
+        stats['ExitPrice'] = self.sell_ledger.avg_price
         stats['ExitCommission'] = self.sell_ledger.commission
         stats['ExitSlippage'] = self.sell_ledger.slippage
         stats['ExitQuantity'] = self.sell_ledger.quantity
         stats['ExitAuxilaryCost'] = self.sell_ledger.aux_cost
-        stats['TotalExitCost'] = self.sell_ledger.avg_total_cost# * self.sell_ledger.quantity ## Patch fix for now
+        stats['TotalExitCost'] = self.sell_ledger.avg_total_cost
         
         stats['Quantity']  = stats['ExitQuantity']
 
         # Calculate PnL metrics if we have both buy and sell transactions
-        if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] >= 0:
+        if stats['EntryQuantity'] > 0 and stats['ExitQuantity'] > 0:
             # Calculate realized PnL for closed portion
             stats['ClosedQuantity'] = stats['ExitQuantity']
             stats['ClosedPnL'] = (stats['ExitPrice'] - stats['EntryPrice']) * stats['ExitQuantity']
@@ -120,13 +118,14 @@ class Trade:
             # Calculate unrealized PnL for open position
             open_quantity = stats['EntryQuantity'] - stats['ExitQuantity']
             stats['OpenQuantity'] = open_quantity
+            
             if open_quantity > 0 and self.current_price is not None:
                 stats['UnrealizedPnL'] = (self.current_price - stats['EntryPrice']) * open_quantity
             else:
                 stats['UnrealizedPnL'] = 0
                 
             # Calculate total PnL
-            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] #- abs(stats['TotalSlippage']) - abs(stats['TotalCommission']) ## Exit & Entry Price already includes slippage and commission
+            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] - abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
             
             # Calculate return percentage
             if stats['TotalEntryCost'] > 0:
