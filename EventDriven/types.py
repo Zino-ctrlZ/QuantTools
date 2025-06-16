@@ -27,9 +27,9 @@ class SignalTypes(Enum):
   SHORT = 'SHORT'
   CLOSE = 'CLOSE'
   
-class FillTypes(Enum):
-  OPEN = 'BUY'
-  CLOSE = 'SELL'
+class FillDirection(Enum):
+  BUY = 'BUY'
+  SELL = 'SELL'
   EXERCISE = 'EXERCISE'
 
 class OpenPositionAction(Enum):

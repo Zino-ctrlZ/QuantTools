@@ -14,6 +14,7 @@ from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
 from trade.helpers.helper import parse_option_tick
 from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
+from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
 from EventDriven.riskmanager import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
@@ -69,6 +70,7 @@ class OptionSignalPortfolio(Portfolio):
     """
     
     def __init__(self, bars : HistoricTradeDataHandler, eventScheduler: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
+    def __init__(self, bars : HistoricTradeDataHandler, eventScheduler: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
         """
         Portfolio class for managing option trading strategies based on signals.
         Handles position tracking, order generation, portfolio valuation, and trade management.
@@ -112,6 +114,7 @@ class OptionSignalPortfolio(Portfolio):
         [Additional methods documented in their definitions]
         """
         self.bars = bars
+        self.eventScheduler = eventScheduler
         self.eventScheduler = eventScheduler
         self.symbol_list = self.bars.symbol_list
         self.start_date = bars.start_date.strftime("%Y%m%d")
@@ -346,6 +349,7 @@ class OptionSignalPortfolio(Portfolio):
         ## NOTE: I want to pass false if backtest is not run. How?
         ## if the latest date on the bars is equal to the start date, backtest has yet to run
         current_date = pd.to_datetime(self.eventScheduler.current_date)
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         if pd.to_datetime(self.start_date) == pd.to_datetime(current_date):
             return False
         return True
@@ -368,6 +372,7 @@ class OptionSignalPortfolio(Portfolio):
     
 
     def generate_order(self, signal_event : SignalEvent):
+    def generate_order(self, signal_event : SignalEvent):
         """
         Takes a signal event and creates an order event based on the signal parameters
         Interacts with RiskManager to get order based on settings and signal
@@ -375,11 +380,17 @@ class OptionSignalPortfolio(Portfolio):
         """
         symbol = signal_event.symbol
         signal_type = signal_event.signal_type
+        symbol = signal_event.symbol
+        signal_type = signal_event.signal_type
         order_type = 'MKT'
         
         if signal_type != 'CLOSE': #generate order for LONG or SHORT
             return self.create_order( signal_event, order_type)
+            return self.create_order( signal_event, order_type)
         elif signal_type == 'CLOSE':
+            if signal_event.signal_id not in self.current_positions[symbol]:
+                self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
+                unprocess_dict = signal_event.__dict__
             if signal_event.signal_id not in self.current_positions[symbol]:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
                 unprocess_dict = signal_event.__dict__
@@ -390,31 +401,43 @@ class OptionSignalPortfolio(Portfolio):
             current_position = self.current_positions[symbol][signal_event.signal_id]
             if is_USholiday(signal_event.datetime): # check if trading day is holdiay before selling
                 self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal_event)
+            current_position = self.current_positions[symbol][signal_event.signal_id]
+            if is_USholiday(signal_event.datetime): # check if trading day is holdiay before selling
+                self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal_event)
                 return None
             
             if 'position' not in current_position:
+                self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
                 return None
             
             
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}')
+            self.logger.info(f'Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position) #calculate close price on position
+            skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal_event.datetime]
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal_event.datetime]
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
                 # move signal to next day 
+                new_signal = deepcopy(signal_event)
                 new_signal = deepcopy(signal_event)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
                 new_signal.datetime = next_trading_day
                 self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
                 print(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
                 self.eventScheduler.schedule_event(next_trading_day, new_signal)
+                self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
+                print(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
+                self.eventScheduler.schedule_event(next_trading_day, new_signal)
                 return None
+            order = OrderEvent(symbol, signal_event.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal_event.signal_id, parent_event=signal_event)
             order = OrderEvent(symbol, signal_event.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal_event.signal_id, parent_event=signal_event)
             return order
         return None
     
+    def create_order(self, signal_event : SignalEvent, position_type: str, order_type: str = 'MKT'):
     def create_order(self, signal_event : SignalEvent, position_type: str, order_type: str = 'MKT'):
         """
         Takes a signal event and creates an order event based on the signal parameters
@@ -424,12 +447,19 @@ class OptionSignalPortfolio(Portfolio):
         position_type = 'C' if signal_event.signal_type == 'LONG' else 'P'
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1) #use 90% of cash to buy contracts, leaving room for slippage and commission
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
+        date_str = signal_event.datetime.strftime('%Y-%m-%d')
+        position_type = 'C' if signal_event.signal_type == 'LONG' else 'P'
+        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1) #use 90% of cash to buy contracts, leaving room for slippage and commission
+        max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
+        position_result = self.risk_manager.get_order(tick = signal_event.symbol, 
         position_result = self.risk_manager.get_order(tick = signal_event.symbol, 
                                                                   date = date_str, 
                                                                   right = position_type, 
                                                                   option_type = position_type, 
                                                                   max_close = max_contract_price, 
+                                                                  order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
+                                                                  signal_id = signal_event.signal_id,
                                                                   order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
                                                                   signal_id = signal_event.signal_id,
                                                                   **self.order_settings)  
@@ -438,18 +468,24 @@ class OptionSignalPortfolio(Portfolio):
         if position is None :
             if self.resolve_orders == True :
                 self.resolve_order_result(position_result['result'], signal_event)
+                self.resolve_order_result(position_result['result'], signal_event)
             else:
+                self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal_event}')
                 self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal_event}')
             return None
         
         self.moneyness_tracker[signal_event.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
         self.logger.info(f'Buying LONG contract for {signal_event.symbol} at {signal_event.datetime} Position: {position}')
+        self.moneyness_tracker[signal_event.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
+        self.logger.info(f'Buying LONG contract for {signal_event.symbol} at {signal_event.datetime} Position: {position}')
         print("===========================")
         print("Buy Details")
+        print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
         print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
         print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
         print("Cash at Hand", cash_at_hand, "Close", position['close'])
         print("===========================")
+        return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
         return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
         
     def __reduce_order_settings_dte_by_factor(self, order_settings):
@@ -501,6 +537,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
             self.eventScheduler.put(new_signal)
+            self.eventScheduler.put(new_signal)
            
             
                 
@@ -510,6 +547,7 @@ class OptionSignalPortfolio(Portfolio):
             new_signal.datetime = next_trading_day
             self.logger.warning(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
             print(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
+            self.eventScheduler.schedule_event(next_trading_day, new_signal)
             self.eventScheduler.schedule_event(next_trading_day, new_signal)
             
                 
@@ -533,6 +571,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             print(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
             self.eventScheduler.put(new_signal)
+            self.eventScheduler.put(new_signal)
     
             
         elif position_result == ResultsEnum.TOO_ILLIQUID.value or position_result == ResultsEnum.NO_ORDERS.value:
@@ -553,6 +592,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
             print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
             self.eventScheduler.put(new_signal)
+            self.eventScheduler.put(new_signal)
         else:
             self.logger.warning(f'Not generating order because:{position_result} {signal}')
             print(f'Not generating order because:{position_result} {signal}')
@@ -570,6 +610,7 @@ class OptionSignalPortfolio(Portfolio):
         assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
         order_event = self.generate_order(event)
         if order_event is not None:
+            self.eventScheduler.put(order_event)
             self.eventScheduler.put(order_event)
                 
     def analyze_positions(self, market_event: MarketEvent): 
@@ -607,6 +648,7 @@ class OptionSignalPortfolio(Portfolio):
                     direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
                     rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=signal_id)
                     self.eventScheduler.put(rollEvent)
+                    self.eventScheduler.put(rollEvent)
 
                 elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                     position = current_position['position']
@@ -618,6 +660,7 @@ class OptionSignalPortfolio(Portfolio):
                     long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
                     self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
                     print(f'Exercising contract for {symbol} at {market_event.datetime}')
+                    self.eventScheduler.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
                     self.eventScheduler.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
                     ## if exercising, open new position if trade not closed yet.
                     continue
@@ -639,7 +682,19 @@ class OptionSignalPortfolio(Portfolio):
         """
         self.logger.info(f'Rolling contract for {roll_event}')
         print(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
+        print(f'Rolling contract (sell side) for {roll_event.symbol} at {roll_event.datetime}')
+        sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id, parent_event=roll_event)
+        self.eventScheduler.put(sell_signal_event)
+        
+    def execute_roll_buy(self, roll_event: RollEvent):
+        """
+        Run after a successful fill on the sell side of the roll event 
+        rollEvent: RollEvent
+        """
+        self.logger.info(f'Rolling contract for {roll_event}')
+        print(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
+        self.eventScheduler.put(buy_signal_event)    
         self.eventScheduler.put(buy_signal_event)    
         
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
@@ -750,6 +805,7 @@ class OptionSignalPortfolio(Portfolio):
                     new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
                 else:
                     return ValueError(f'No position found for {fill_event.symbol} with signal_id {fill_event.signal_id}')
+                    return ValueError(f'No position found for {fill_event.symbol} with signal_id {fill_event.signal_id}')
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 if (new_position_data['quantity']) == 0: 
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
@@ -764,6 +820,7 @@ class OptionSignalPortfolio(Portfolio):
                 
                 # open a new position after exercise
                 new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.OPEN.value, signal_id=fill_event.signal_id)
+                self.eventScheduler.put(new_signal)
                 self.eventScheduler.put(new_signal)
             
             
@@ -804,6 +861,7 @@ class OptionSignalPortfolio(Portfolio):
         Adds a new record to the holdings and positions matrix based on the current market data bar. Runs at the end of the trading day (i.e all events for the day have been processed)
         """
         
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         current_date = pd.to_datetime(self.eventScheduler.current_date)
         # Check if the current date is a weekend (Saturday or Sunday)
         if current_date.weekday() >= 5:
@@ -859,10 +917,19 @@ class OptionSignalPortfolio(Portfolio):
         self.current_cash[current_date] = current_cash
         
     def update_fill(self, fill_event: FillEvent):
+    def update_fill(self, fill_event: FillEvent):
         """
         Updates the portfolio current positions and holdings 
         from a FillEvent.
         """
+        if fill_event.type == 'FILL': 
+            self.update_positions_on_fill(fill_event)
+            self.update_holdings_on_fill(fill_event)
+            # check if fill_event has roll event ancestor. if so execute roll buy side
+            if fill_event.direction == FillDirection.SELL.value and fill_event.position is not None: 
+                roll_event = get_event_ancestor(fill_event, EventTypes.ROLL.value)
+                if roll_event is not None:
+                    self.execute_roll_buy(roll_event)
         if fill_event.type == 'FILL': 
             self.update_positions_on_fill(fill_event)
             self.update_holdings_on_fill(fill_event)
@@ -877,6 +944,7 @@ class OptionSignalPortfolio(Portfolio):
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position 
         """
+        return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.eventScheduler.current_date)]
         return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.eventScheduler.current_date)]
 
     
@@ -947,6 +1015,7 @@ class OptionSignalPortfolio(Portfolio):
         returns: a series with columns: ms_of_day,open,high,low,close,volume,count,date
         """
         
+        current_date = pd.to_datetime(self.eventScheduler.current_date)
         current_date = pd.to_datetime(self.eventScheduler.current_date)
         option_data_df = self.get_option_data(option_id)
         if option_data_df is None:

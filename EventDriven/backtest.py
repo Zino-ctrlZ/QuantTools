@@ -230,3 +230,8 @@ class OptionSignalBacktest():
         events_df['datetime'] = pd.to_datetime(events_df['datetime'])
         events_df.set_index('datetime', inplace=True)
         return events_df
+    def store_event(self,event: Event):
+        """
+        Store an event in the events list
+        """
+        self.events.append(event.__dict__)

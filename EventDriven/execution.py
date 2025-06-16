@@ -68,7 +68,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         self.max_slippage_pct = max_slippage_pct
         self.commission_rate = commission_rate
         
-    def execute_order_naively(self, event: OrderEvent):
+    def execute_order_naively(self, order_event: OrderEvent):
         """
         Simply converts Order objects into Fill objects naively,
         i.e. without any latency, slippage or fill ratio problems.
@@ -78,32 +78,32 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
 
         ## Need to add market_value here
-        if event.type == 'ORDER':
-            fill_event = FillEvent(event.datetime, event.symbol,
-                                   'ARCA', event.quantity, event.direction, fill_cost=0, commission=None, option=event.option)
+        if order_event.type == 'ORDER':
+            fill_event = FillEvent(order_event.datetime, order_event.symbol,
+                                   'ARCA', order_event.quantity, order_event.direction, fill_cost=0, commission=None, option=order_event.option, parent_event=order_event)
             self.events.put(fill_event)
             
-    def execute_order_randomized_slippage(self, event: OrderEvent):
+    def execute_order_randomized_slippage(self, order_event: OrderEvent):
         """
         This method will execute an order with a random slippage
         based on the max_slippage_pct attribute of the class.
         Note: Quantity takes precedence if both quantity and cash are provided, else quantity is determined by cash / price_of_contract
         """
-        assert event.type == 'ORDER', f"Event type must be 'ORDER' received {event.type}"
-        assert event.direction == 'BUY' or event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {event.direction}"
-        exec_cache['order'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(event)
+        assert order_event.type == 'ORDER', f"Event type must be 'ORDER' received {order_event.type}"
+        assert order_event.direction == 'BUY' or order_event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {order_event.direction}"
+        exec_cache['order'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(order_event)
 
         # Generate slippage as a percentage
         ## Slippage improvement
-        if event.direction == 'BUY':
+        if order_event.direction == 'BUY':
             ## We want to increase the price for buys by slippage
             slippage_pct = np.random.uniform(self.max_slippage_pct * 0.25, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
-        elif event.direction == 'SELL':
+        elif order_event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
             slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
         
         #slippage may increase or decrease intended price
-        price = event.position['close'] * (1 + slippage_pct)          
+        price = order_event.position['close'] * (1 + slippage_pct)          
         
         # Ensuring cash doesn't go below zero
         raw_quantity = event.quantity
@@ -153,37 +153,37 @@ class SimulatedExecutionHandler(ExecutionHandler):
         # - Fill cost is based on the slippage adjusted price and commission. This serves as entry cost
         # - Market value != fill cost, as market value is based on the position's close price, not the slippage adjusted price.
 
-        slippage_diff = (price - event.position['close'] ) * quantity
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', quantity, event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=event.position, slippage=slippage_diff, signal_id=event.signal_id)
-        exec_cache['fill'][f'{event.signal_id}_{event.datetime.strftime("%Y-%m-%d")}_{event.direction}'] = deepcopy(fill_event)
+        slippage_diff = (price - order_event.position['close'] ) * quantity
+        fill_event = FillEvent(order_event.datetime, order_event.symbol, 'ARCA', quantity, order_event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=order_event.position, slippage=slippage_diff, signal_id=order_event.signal_id, parent_event=order_event)
+        exec_cache['fill'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}_{order_event.direction}'] = deepcopy(fill_event)
         self.events.put(fill_event)
         
-    def execute_exercise(self, event: ExerciseEvent):
+    def execute_exercise(self, exercise_event: ExerciseEvent):
         """
         This method will execute an exercise event, calculate the pnl of the exercise and put a fill event on the queue
         """
-        assert event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {event.type}"
+        assert exercise_event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {exercise_event.type}"
         ##
         long_pnl = 0.0
         short_pnl = 0.0
-        if event.long_premiums and 'long' in event.position:
-            assert all(option in event.position['long'] for option in event.long_premiums.keys()), f"option_id in premiums must be present in position. long_premium: {event.long_premiums.keys()}  long position: {event.position['long']}"
-            assert len(event.long_premiums) == len(event.position['long']), f"number of options in long_premiums must be equal to number of options in long position. long_premium: {len(event.long_premiums)}  long position: {len(event.position['long'])}"
-            for option_id, premium in event.long_premiums.items():
+        if exercise_event.long_premiums and 'long' in exercise_event.position:
+            assert all(option in exercise_event.position['long'] for option in exercise_event.long_premiums.keys()), f"option_id in premiums must be present in position. long_premium: {exercise_event.long_premiums.keys()}  long position: {exercise_event.position['long']}"
+            assert len(exercise_event.long_premiums) == len(exercise_event.position['long']), f"number of options in long_premiums must be equal to number of options in long position. long_premium: {len(exercise_event.long_premiums)}  long position: {len(exercise_event.position['long'])}"
+            for option_id, premium in exercise_event.long_premiums.items():
                 option_meta = parse_option_tick(option_id)
-                long_pnl += self.__calculate_premium_pnl(option_meta, event.spot, premium)
+                long_pnl += self.__calculate_premium_pnl(option_meta, exercise_event.spot, premium)
         
-        if event.short_premiums and 'short' in event.position:
-            assert all(option in event.position['short'] for option in event.short_premiums.keys()), f"option_id in premiums must be present in position. short_premium: {event.short_premiums.keys()}  short position: {event.position['short']}"
-            assert len(event.short_premiums) == len(event.position['short']), f"number of options in short_premiums must be equal to number of options in short position. short_premium: {len(event.short_premiums)}  short position: {len(event.position['short'])}"
-            for option_id, premium in event.short_premiums.items():
+        if exercise_event.short_premiums and 'short' in exercise_event.position:
+            assert all(option in exercise_event.position['short'] for option in exercise_event.short_premiums.keys()), f"option_id in premiums must be present in position. short_premium: {exercise_event.short_premiums.keys()}  short position: {exercise_event.position['short']}"
+            assert len(exercise_event.short_premiums) == len(exercise_event.position['short']), f"number of options in short_premiums must be equal to number of options in short position. short_premium: {len(exercise_event.short_premiums)}  short position: {len(exercise_event.position['short'])}"
+            for option_id, premium in exercise_event.short_premiums.items():
                 option_meta = parse_option_tick(option_id)
-                short_pnl += self.__calculate_premium_pnl(option_meta, event.spot, premium)
+                short_pnl += self.__calculate_premium_pnl(option_meta, exercise_event.spot, premium)
                 
         total_pnl = long_pnl + short_pnl
-        market_value = event.spot * event.quantity
+        market_value = exercise_event.spot * exercise_event.quantity
         
-        fill_event = FillEvent(event.datetime, event.symbol, 'ARCA', event.quantity, 'EXERCISE', fill_cost=total_pnl, position=event.position,market_value=market_value, signal_id=event.signal_id)
+        fill_event = FillEvent(exercise_event.datetime, exercise_event.symbol, 'ARCA', exercise_event.quantity, 'EXERCISE', fill_cost=total_pnl, position=exercise_event.position,market_value=market_value, signal_id=exercise_event.signal_id, parent_event=exercise_event)
         self.events.put(fill_event)
         
     def __calculate_premium_pnl(self, option_meta, spot, premium):
