@@ -35,7 +35,11 @@ BASE.mkdir(exist_ok=True)
 # logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
 order_cache = CustomCache(BASE, fname = "order")
 
-
+special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
+special_dividend['COST'] = {
+    '2020-12-01': 10,
+    '2023-12-27': 15
+}
 
 def get_order_cache():
     """
@@ -563,7 +567,7 @@ class RiskManager:
         self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries")
         self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries") ## This is used for pricing, to account option strikes for splits
         self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data")
-        self.position_data = CustomCache(BASE, fname = "rm_position_data")
+        self.position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
         self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries")
         self.sizing_type = sizing_type
         self.sizing_lev = leverage
@@ -589,7 +593,7 @@ class RiskManager:
         self.max_moneyness = max_moneyness
         self.option_price = option_price
         self._actions = {}
-        self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expiry = 1000)
+        self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
         self.splits = self.set_splits(self.splits_raw)
         self.schema_cache = {}
         self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
@@ -603,8 +607,7 @@ class RiskManager:
         self.executor = executor
         self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
-        
-
+        self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
 
     @property 
     def option_data(self):
@@ -856,7 +859,143 @@ Quanitity Sizing Type: {self.sizing_type}
                     direction_frame.loc[split_start:, i] = generate_option_tick_new(*new_details.values())
 
 
-    @log_time(time_logger)
+    # @log_time(time_logger)
+    # def calculate_position_greeks(self, positionID, date):
+    #     """
+    #     Calculate the greeks of a position
+
+    #     date: Evaluation Date for the greeks (PS: This is not the pricing date)
+    #     positionID: str: position string. (PS: This function assumes ticker for position is the same)
+    #     """
+    #     logger.info(f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {positionID}, Date: {date}")
+    #     if positionID in self.position_data:
+    #         ## If the position data is already available, then we can skip this step
+    #         logger.info(f"Position Data for {positionID} already available, skipping calculation")
+    #         return self.position_data[positionID]
+    #     else:
+    #         logger.critical(f"Position Data for {positionID} not available, calculating greeks. Load time ~2 minutes")
+    #     ## Initialize the Long and Short Lists
+    #     long = []
+    #     short = []
+    #     threads = []
+    #     thread_input_list = [
+    #         [], [], [], [], [], []
+    #     ]
+
+    #     date = pd.to_datetime(date) ## Ensure date is in datetime format
+        
+    #     ## First get position info
+    #     position_dict, positon_meta = self.parse_position_id(positionID)
+
+    #     ## Now ensure that the spot and dividend data is available
+    #     for p in position_dict.values():
+    #         for s in p:
+    #             self.generate_data(swap_ticker(s['ticker']))
+    #     ticker = swap_ticker(s['ticker'])
+
+    #     ## Get the spot, risk free rate, and dividend yield for the date
+    #     s = self.chain_spot_timeseries[ticker]
+    #     s0_close = self.spot_timeseries[ticker]
+    #     r = self.rf_timeseries
+    #     y = self.dividend_timeseries[ticker]
+
+            
+
+    #     @log_time(time_logger)
+    #     def get_timeseries(ids, s, r, y, s0_close, direction):
+    #         logger.info("Calculate Greeks dates")
+    #         logger.info(f"Start Date: {self.start_date}")
+    #         logger.info(f"End Date: {self.end_date}")
+    #         full_data = pd.DataFrame()
+
+    #         ##ids are a list of tuples, where each tuple is (option_id, shift)
+    #         if ids[-1][0] in self.processed_option_data:
+    #             ## Using -1 index because incases of split, the last id is the one that is subscribed to in the cache
+    #             full_data = self.processed_option_data[ids[-1][0]] ## If the data is already available, then we can skip this step
+    #             logger.info(f"Data for {ids[-1]} already available, skipping calculation")
+            
+    #         else:
+    #             logger.info(f"Data for {ids[-1]} not available, calculating greeks. Load time ~2 minutes")
+    #             for id_set in ids:
+    #                 id, shift, start_date = id_set
+    #                 data_manager = OptionDataManager(opttick = id)
+    #                 self.data_managers[id] = data_manager ## Store the data manager for the option tick
+    #                 greeks = data_manager.get_timeseries(start = self.start_date,
+    #                                                         end = self.end_date,
+    #                                                         interval = '1d',
+    #                                                         type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
+    #                 greeks = greeks[greeks.index >= start_date] ## Filter the data to only include data after the start date
+    #                 greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+    #                 greeks = greeks[greeks_cols]
+    #                 greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+    #                 greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+    #                 spot = data_manager.get_timeseries(start = self.start_date,
+    #                                                     end = self.end_date,
+    #                                                     interval = '1d',
+    #                                                     type_ = 'spot',
+    #                                                     extra_cols=['bid', 'ask']).post_processed_data * shift ## Using chain spot data to account for splits
+    #                 spot = spot[spot.index >= start_date] ## Filter the data to only include data after the start date
+    #                 spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
+    #                 data = greeks.join(spot)
+    #                 full_data = pd.concat([full_data, data], axis = 0)
+    #         full_data = _clean_data(full_data)
+    #         full_data = full_data[~full_data.index.duplicated(keep = 'last')]
+    #         full_data['s'] = s
+    #         full_data['r'] = r
+    #         full_data['y'] = y
+    #         full_data['s0_close'] = s0_close
+    #         self.processed_option_data[ids[-1][0]] = full_data
+    #         if direction == 'L':
+    #             long.append(full_data)
+    #         elif direction == 'S':
+    #             short.append(full_data)
+    #         else:
+    #             raise ValueError(f"Position Type {_set[0]} not recognized")
+            
+    #         return full_data
+
+    
+    #     ## Check for splits
+    #     split = self.splits.get(ticker, [])
+
+    #     ## Calculating IVs & Greeks for the options
+    #     for _set in positon_meta:
+    #         # To-do: Thread thisto speed up the process
+    #         ids = [(_set[1], 1, self.start_date)]
+    #         if len(split) > 0:
+    #             for i in split:
+    #                 split_date = i[0]
+    #                 if pd.to_datetime(split_date) < pd.to_datetime(date): ## Strike is already adjusted for the split
+    #                     continue
+    #                 shift = i[1]
+    #                 id = _set[1]
+    #                 meta = parse_option_tick(id)
+    #                 meta['strike'] = meta['strike'] / shift
+    #                 ids.append((generate_option_tick_new(*meta.values()), shift, split_date))
+    #         # data_manager = OptionDataManager(opttick = id)
+
+    #         for input, list_ in zip([ids, s, r, y, s0_close, _set[0]], thread_input_list):
+    #             list_.append(input)
+        
+        
+    #     runThreads(get_timeseries, thread_input_list)
+    #     # return long
+            
+    #     position_data = sum(long) - sum(short)
+    #     position_data = position_data[~position_data.index.duplicated(keep = 'first')]
+    #     position_data.columns = [x.capitalize() for x in position_data.columns]
+    #     ## Retain the spot, risk free rate, and dividend yield for the position, after the greeks have been calculated & spread values subtracted
+    #     position_data['s0_close'] = s0_close
+    #     position_data['s'] = s
+    #     position_data['r'] = r
+    #     position_data['y'] = y
+    #     position_data['spread'] = position_data['Closeask'] - position_data['Closebid'] ## Spread is the difference between the ask and bid prices
+    #     position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
+    #     position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
+    #     self.position_data[positionID] = position_data
+
+
     def calculate_position_greeks(self, positionID, date):
         """
         Calculate the greeks of a position
@@ -870,13 +1009,13 @@ Quanitity Sizing Type: {self.sizing_type}
             logger.info(f"Position Data for {positionID} already available, skipping calculation")
             return self.position_data[positionID]
         else:
-            logger.critical(f"Position Data for {positionID} not available, calculating greeks. Load time ~2 minutes")
+            logger.critical(f"Position Data for {positionID} not available, calculating greeks. Load time ~5 minutes")
         ## Initialize the Long and Short Lists
         long = []
         short = []
         threads = []
         thread_input_list = [
-            [], [], [], [], [], []
+            [], []
         ]
 
         date = pd.to_datetime(date) ## Ensure date is in datetime format
@@ -890,107 +1029,218 @@ Quanitity Sizing Type: {self.sizing_type}
                 self.generate_data(swap_ticker(s['ticker']))
         ticker = swap_ticker(s['ticker'])
 
-        ## Get the spot, risk free rate, and dividend yield for the date
-        s = self.chain_spot_timeseries[ticker]
-        s0_close = self.spot_timeseries[ticker]
-        r = self.rf_timeseries
-        y = self.dividend_timeseries[ticker]
-
-            
-
-        @log_time(time_logger)
-        def get_timeseries(ids, s, r, y, s0_close, direction):
+        # @log_time(time_logger)
+        def get_timeseries(_id, direction):
             logger.info("Calculate Greeks dates")
             logger.info(f"Start Date: {self.start_date}")
             logger.info(f"End Date: {self.end_date}")
-            full_data = pd.DataFrame()
-
-            ##ids are a list of tuples, where each tuple is (option_id, shift)
-            if ids[-1][0] in self.processed_option_data:
-                ## Using -1 index because incases of split, the last id is the one that is subscribed to in the cache
-                full_data = self.processed_option_data[ids[-1][0]] ## If the data is already available, then we can skip this step
-                logger.info(f"Data for {ids[-1]} already available, skipping calculation")
             
-            else:
-                logger.info(f"Data for {ids[-1]} not available, calculating greeks. Load time ~2 minutes")
-                for id_set in ids:
-                    id, shift, start_date = id_set
-                    data_manager = OptionDataManager(opttick = id)
-                    self.data_managers[id] = data_manager ## Store the data manager for the option tick
-                    greeks = data_manager.get_timeseries(start = self.start_date,
-                                                            end = self.end_date,
-                                                            interval = '1d',
-                                                            type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
-                    greeks = greeks[greeks.index >= start_date] ## Filter the data to only include data after the start date
-                    greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
-                    greeks = greeks[greeks_cols]
-                    greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
-                    greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+            print(f"Calculating Greeks for {_id} on {date} in {direction} direction")
+            data = self.generate_option_data_for_trade(_id, date) ## Generate the option data for the trade
 
-                    spot = data_manager.get_timeseries(start = self.start_date,
-                                                        end = self.end_date,
-                                                        interval = '1d',
-                                                        type_ = 'spot',
-                                                        extra_cols=['bid', 'ask']).post_processed_data * shift ## Using chain spot data to account for splits
-                    spot = spot[spot.index >= start_date] ## Filter the data to only include data after the start date
-                    spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
-                    data = greeks.join(spot)
-                    full_data = pd.concat([full_data, data], axis = 0)
-            full_data = _clean_data(full_data)
-            full_data = full_data[~full_data.index.duplicated(keep = 'last')]
-            full_data['s'] = s
-            full_data['r'] = r
-            full_data['y'] = y
-            full_data['s0_close'] = s0_close
-            self.processed_option_data[ids[-1][0]] = full_data
             if direction == 'L':
-                long.append(full_data)
+                long.append(data)
             elif direction == 'S':
-                short.append(full_data)
+                short.append(data)
             else:
                 raise ValueError(f"Position Type {_set[0]} not recognized")
             
-            return full_data
-
-    
-        ## Check for splits
-        split = self.splits.get(ticker, [])
+            return data
 
         ## Calculating IVs & Greeks for the options
         for _set in positon_meta:
-            # To-do: Thread thisto speed up the process
-            ids = [(_set[1], 1, self.start_date)]
-            if len(split) > 0:
-                for i in split:
-                    split_date = i[0]
-                    if pd.to_datetime(split_date) < pd.to_datetime(date): ## Strike is already adjusted for the split
-                        continue
-                    shift = i[1]
-                    id = _set[1]
-                    meta = parse_option_tick(id)
-                    meta['strike'] = meta['strike'] / shift
-                    ids.append((generate_option_tick_new(*meta.values()), shift, split_date))
-            # data_manager = OptionDataManager(opttick = id)
-
-            for input, list_ in zip([ids, s, r, y, s0_close, _set[0]], thread_input_list):
-                list_.append(input)
-        
-        
-        runThreads(get_timeseries, thread_input_list)
-        # return long
+            thread_input_list[0].append(_set[1]) ## Append the option id to the thread input list
+            thread_input_list[1].append(_set[0]) ## Append the direction to the thread input list
+        runThreads(get_timeseries, thread_input_list, block=True) ## Run the threads to get the timeseries data for the options
             
         position_data = sum(long) - sum(short)
         position_data = position_data[~position_data.index.duplicated(keep = 'first')]
         position_data.columns = [x.capitalize() for x in position_data.columns]
         ## Retain the spot, risk free rate, and dividend yield for the position, after the greeks have been calculated & spread values subtracted
-        position_data['s0_close'] = s0_close
-        position_data['s'] = s
-        position_data['r'] = r
-        position_data['y'] = y
+        position_data['s0_close'] = self.spot_timeseries[ticker] ## Spot price at the time of the position
+        position_data['s'] = self.chain_spot_timeseries[ticker] ## Chain spot price at the time of the position
+        position_data['r'] = self.rf_timeseries ## Risk free rate at the time of the position
+        position_data['y'] = self.dividend_timeseries[ticker] ## Dividend yield at the time of the position
         position_data['spread'] = position_data['Closeask'] - position_data['Closebid'] ## Spread is the difference between the ask and bid prices
         position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
         position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
         self.position_data[positionID] = position_data
+        return position_data
+
+
+    def load_position_data(self, opttick):
+        """
+        Load position data for a given option tick.
+
+        This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
+        This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
+        """
+        ## Check if the option tick is already processed
+        if opttick in self.processed_option_data:
+            return self.processed_option_data[opttick]
+
+        ## Get Meta
+        meta = parse_option_tick(opttick)
+
+        ## Generate data
+        data = self.generate_spot_greeks( opttick)
+        data = self.enrich_data(data, meta['ticker'])
+        self.processed_option_data[opttick] = data
+        return data
+
+    def enrich_data(self, data, ticker):
+        """
+        Enrich the data with additional information.
+        """
+        data = _clean_data(data)
+        data = data[~data.index.duplicated(keep = 'last')]
+        data['s'] = self.chain_spot_timeseries[ticker]
+        data['r'] = self.rf_timeseries
+        data['y'] = self.dividend_timeseries[ticker]
+        data['s0_close'] = self.spot_timeseries[ticker]
+        return data
+        
+    def generate_spot_greeks(self, opttick):
+        """
+        Generate spot greeks for a given option tick.
+        """
+        meta = parse_option_tick(opttick)
+        data_manager = OptionDataManager(opttick=opttick)
+        greeks = data_manager.get_timeseries(start = self.start_date,
+                                                end = self.end_date,
+                                                interval = '1d',
+                                                type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
+        greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+        greeks = greeks[greeks_cols]
+        greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+        greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+        spot = data_manager.get_timeseries(start = self.start_date,
+                                            end = self.end_date,
+                                            interval = '1d',
+                                            type_ = 'spot',
+                                            extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
+        spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
+        data = greeks.join(spot)
+        return data
+
+
+    def generate_option_data_for_trade(self, opttick, check_date):
+        """
+        Generate option data for a given trade.
+        This function retrieve the option data to backtest on. Data will not be saved, as it will be applying splits and adjustments.
+        This function is written with the assumption that there is no cummulative splits. Expectation is only one split per option tick.
+            Obviously, this might not be the case if the option was alive for ~5 years or more. But most options are not alive for that long.
+        """
+
+        meta = parse_option_tick(opttick)
+
+        ## Check if there's any split/special dividend
+        splits = self.splits.get(meta['ticker'], [])
+        dividends = self.special_dividends.get(meta['ticker'], {})
+        to_adjust_split = []
+
+        ## To avoid loading multiple data to account for splits everytime, we check if the PM_date range includes the split date  
+        for pack in splits:
+            if compare_dates.inbetween(
+                pack[0], 
+                self.pm_start_date, 
+                self.pm_end_date,
+            ):
+                pack = list(pack)  ## Convert to list to append later
+                pack.append('SPLIT')
+                to_adjust_split.append(pack)
+
+        for pack in dividends.items():
+            if compare_dates.inbetween(
+                pack[0], 
+                self.pm_start_date, 
+                self.pm_end_date,
+            ):
+                pack = list(pack)
+                pack.append('DIVIDEND')
+                to_adjust_split.append(pack)
+
+        ## Sort the splits by date
+        to_adjust_split.sort(key=lambda x: x[0])  ## Sort by date
+
+        ## If there are no splits, we can just load the data
+        if not to_adjust_split:
+            data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
+            return data[(data.index >= self.pm_start_date) & (data.index <= self.pm_end_date)]
+
+        # If there are splits, we need to load the data for each tick after adjusting strikes
+        else:
+            adj_meta = meta.copy()
+            adj_strike = meta['strike']
+            logger.info(f"Generating data for {opttick} with splits: {to_adjust_split}")
+            ## Load the data for picked option first
+            first_set_data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
+            if compare_dates.is_before(check_date, to_adjust_split[0][0]):
+                first_set_data = first_set_data[first_set_data.index < to_adjust_split[0][0]]
+            else:
+                first_set_data = first_set_data[first_set_data.index >= to_adjust_split[0][0]]
+
+            segments = []
+
+            for event_date, factor, event_type in to_adjust_split:
+                if compare_dates.is_before(check_date, event_date):
+                    # You're in the PRE-event regime
+                    if event_type == 'SPLIT':
+                        adj_strike /= factor
+                    elif event_type == 'DIVIDEND':
+                        adj_strike -= factor
+                else:
+                    # You're in the POST-event regime
+                    if event_type == 'SPLIT':
+                        adj_strike *= factor
+                    elif event_type == 'DIVIDEND':
+                        adj_strike += factor
+
+                adj_opttick = generate_option_tick_new(
+                    symbol=adj_meta['ticker'],
+                    strike=adj_strike,
+                    right=adj_meta['put_call'],
+                    exp=adj_meta['exp_date']
+                )
+                logger.info(f"Adjusted option tick: {adj_opttick} for event {event_type} on {event_date} with factor {factor}")
+
+                # Load adjusted data
+                if adj_opttick not in self.processed_option_data:
+                    adj_data = self.load_position_data(adj_opttick).copy()
+                else:
+                    adj_data = self.processed_option_data[adj_opttick]
+
+                # Slice around the event
+                if compare_dates.is_before(check_date, event_date):
+                    adj_data = adj_data[adj_data.index >= event_date]
+                else:
+                    adj_data = adj_data[adj_data.index < event_date]
+
+                # Apply price transformation if SPLIT
+                if event_type == 'SPLIT':
+                    cols = ['Midpoint', 'Closeask', 'Closebid']
+                    if compare_dates.is_before(check_date, event_date):
+                        adj_data[cols] *= factor
+                    else:
+                        adj_data[cols] /= factor
+                    
+                segments.append(adj_data)
+
+        
+        base_data = self.load_position_data(opttick).copy()
+        first_event_date = to_adjust_split[0][0] if to_adjust_split else self.pm_start_date
+        if compare_dates.is_before(check_date, first_event_date):
+            base_data = base_data[base_data.index < first_event_date]
+            
+        else:
+            base_data = base_data[base_data.index >= first_event_date]
+        
+        segments.insert(0, base_data)
+        final_data = pd.concat(segments).sort_index()
+        final_data = final_data[~final_data.index.duplicated(keep='last')]
+        final_data = final_data[(final_data.index >= self.pm_start_date) & (final_data.index <= self.pm_end_date)]
+        return final_data
 
     @log_time(time_logger)
     def update_greek_limits(self, signal_id, position_id):
