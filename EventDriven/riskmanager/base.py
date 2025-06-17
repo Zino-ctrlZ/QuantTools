@@ -28,6 +28,7 @@ import time
 from cachetools import cachedmethod
 from functools import lru_cache
 from trade.assets.helpers.utils import (swap_ticker)
+from dateutil.relativedelta import relativedelta
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
@@ -101,8 +102,8 @@ def resolve_schema(schema: OrderSchema,
     
     #4). Close Resolve
     elif schema['max_total_price'] <= max_close:
-        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.05")
-        schema['max_total_price'] += 0.05
+        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
+        schema['max_total_price'] += 0.5
         return schema, tries
 
 
@@ -167,9 +168,14 @@ class OrderPicker:
 
         schema = OrderSchema(dict(schema))
         if schema['option_type'] =='C': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            schema['min_moneyness'] = 2 - schema['min_moneyness'] ## For Calls, we want the min moneyness to be 2 - min_moneyness
-            schema['max_moneyness'] = 2 - schema['max_moneyness'] ## For Calls, we want the max moneyness to be 2 - max_moneyness
-            print(f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
+            logger.info(f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
+            min_m, max_m = 2-schema['min_moneyness'], 2 - schema['max_moneyness']
+            schema['min_moneyness'] = min(min_m, max_m) ## For Calls, we want the min moneyness to be 2 - min_moneyness
+            schema['max_moneyness'] = max(min_m, max_m) ## For Calls, we want the max moneyness to be 2 - max_moneyness
+            logger.info(f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
+        elif schema['option_type'] == 'P': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+            logger.info(f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
+
         chain = populate_cache_with_chain(
             schema['tick'], 
             date, 
@@ -436,8 +442,9 @@ class RiskManager:
         Cache for storing order-related data.
     id_meta : dict
         Metadata for tracking IDs.
-    __analyzed_date_list : list
+    _analyzed_date_list : list
         List of dates that have been analyzed for actions.
+        To re-analyze a date, it must be removed from this list.
 
     Risk Management Attributes:
     ---------------------------
@@ -747,7 +754,7 @@ Quanitity Sizing Type: {self.sizing_type}
                                            tries = tries,
                                             max_dte_tolerance = self.max_dte_tolerance,
                                             moneyness_width = self.moneyness_width,
-                                            max_close = self.pm.allocated_cash_map[tick],
+                                            max_close = self.pm.allocated_cash_map[tick]/100,
                                             max_tries = self.max_tries)
 
             if schema is False:
@@ -785,7 +792,7 @@ Quanitity Sizing Type: {self.sizing_type}
         logger.info('Updating Signal Limits')
         self.update_greek_limits(signalID, position_id)
         logger.info("Calculating Quantity")
-        quantity = self.calculate_quantity(position_id, signalID, kwargs['date'])
+        quantity = self.calculate_quantity(position_id, signalID, kwargs['date'], order['data']['close'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
         order['data']['quantity'] = quantity
         order['data']['cash_equivalent_qty'] = self.pm.allocated_cash_map[tick] // (order['data']['close'] * 100)
@@ -1167,7 +1174,8 @@ Quanitity Sizing Type: {self.sizing_type}
         ## If there are no splits, we can just load the data
         if not to_adjust_split:
             data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
-            return data[(data.index >= self.pm_start_date) & (data.index <= self.pm_end_date)]
+            return data[(data.index >= pd.to_datetime(self.pm_start_date) - relativedelta(months = 3))\
+                         & (data.index<= pd.to_datetime(self.pm_end_date) + relativedelta(months = 3))]
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
         else:
@@ -1239,7 +1247,10 @@ Quanitity Sizing Type: {self.sizing_type}
         segments.insert(0, base_data)
         final_data = pd.concat(segments).sort_index()
         final_data = final_data[~final_data.index.duplicated(keep='last')]
-        final_data = final_data[(final_data.index >= self.pm_start_date) & (final_data.index <= self.pm_end_date)]
+        
+        ## Leave residual data outside the PM date range
+        final_data = final_data[(final_data.index >= pd.to_datetime(self.pm_start_date) - relativedelta(months = 3)) & \
+                                (final_data.index <= pd.to_datetime(self.pm_end_date) + relativedelta(months = 3))]
         return final_data
 
     @log_time(time_logger)
@@ -1272,7 +1283,7 @@ Quanitity Sizing Type: {self.sizing_type}
         logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {cash_available}, and Leverage: {self.sizing_lev}")
         logger.info(f"Equivalent Delta Size: {equivalent_delta_size}")
 
-    def calculate_quantity(self, positionID, signalID, date) -> int:
+    def calculate_quantity(self, positionID, signalID, date, opt_price) -> int:
         """
         Returns the quantity of the position that can be bought based on the sizing type
         """
@@ -1290,7 +1301,7 @@ Quanitity Sizing Type: {self.sizing_type}
         purchase_date = pd.to_datetime(date)
         s0_at_purchase = self.position_data[positionID]['s'][purchase_date]  ## s -> chain spot, s0_close -> adjusted close
         logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
-        opt_price = self.position_data[positionID]['Midpoint'][purchase_date]
+        # opt_price = self.position_data[positionID]['Midpoint'][purchase_date]
         logger.info(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
         max_size_cash_can_buy = abs(math.floor(cash_available/(opt_price*100))) ## Assuming Allocated Cash map is already in 100s
 
@@ -1319,7 +1330,7 @@ Quanitity Sizing Type: {self.sizing_type}
         Analyze the current positions and determine if any need to be rolled, closed, or adjusted
         """
         position_action_dict = {} ## This will be used to store the actions for each position
-        date = pd.to_datetime(self.pm.events.current_date)
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
         if date in self.__analyzed_date_list: ## If the date has already been analyzed, return
             logger.info(f"Positions already analyzed on {date}, skipping")
             return "ALREADY_ANALYZED"
@@ -1487,7 +1498,7 @@ Quanitity Sizing Type: {self.sizing_type}
             if not isinstance(action, HOLD):
                 logger.info(f"Event: {action.event}")
                 logger.info((f"Risk Manager Scheduling Action: Position ID: {id}, Action: {action}, Reason: {action.reason}"))
-                self.pm.events.schedule_event(event_date, action.event)
+                self.pm.eventScheduler.schedule_event(event_date, action.event)
 
         return position_action_dict
 
@@ -1500,7 +1511,7 @@ Quanitity Sizing Type: {self.sizing_type}
         delta_limit = limits['delta']
         position_limit = {}
 
-        date = pd.to_datetime(self.pm.events.current_date)
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
             return 
@@ -1546,7 +1557,7 @@ Quanitity Sizing Type: {self.sizing_type}
         """
         Analyze the current positions and determine if any need to be rolled
         """
-        date = pd.to_datetime(self.pm.events.current_date)
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
         logger.info(f"Checking DTE on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")
@@ -1593,7 +1604,7 @@ Quanitity Sizing Type: {self.sizing_type}
         """
         Analyze the current positions and determine if any need to be rolled based on moneyness
         """
-        date = pd.to_datetime(self.pm.events.current_date)
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
         logger.info(f"Checking Moneyness on {date}")
         if is_USholiday(date):
             self.pm.logger.warning(f"Market is closed on {date}, skipping")

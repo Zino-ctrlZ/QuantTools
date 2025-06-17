@@ -47,7 +47,7 @@ from EventDriven.event import FillEvent
 from EventDriven.helpers import parse_signal_id
 from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
-from EventDriven.types import FillTypes, OpenPositionAction, ResultsEnum, SignalTypes
+from EventDriven.types import FillDirection, OpenPositionAction, ResultsEnum, SignalTypes
 from threading import Thread, Lock
 from trade import POOL_ENABLED, register_signal
 import multiprocessing as mp
@@ -450,7 +450,7 @@ def add_skip_columns(df, id, skip_columns, window=15, skip_threshold=2.75):
         ## Window 
         shortened = df[col][:window]
         pct_change = shortened.pct_change()
-        window_bool = pct_change.abs() > 1.5
+        window_bool = pct_change.abs() > 0.5
 
         ## Zero Values
         zero_bool = df[col] == 0
@@ -465,7 +465,7 @@ def add_skip_columns(df, id, skip_columns, window=15, skip_threshold=2.75):
         df[f'{col}_zero'] = zero_bool
         df[f'{col}_skip_day']= _combined
         df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
-    register_info_stack(id, df, skip_columns, update_kwargs={'window': window, 'skip_threshold': skip_threshold})
+    register_info_stack(id, df, skip_columns, update_kwargs={'window': window, 'skip_threshold': skip_threshold, 'window_bool_threshold': 0.5})
     return df
 
 

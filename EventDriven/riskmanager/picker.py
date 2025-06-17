@@ -78,8 +78,8 @@ def filter_contracts(df: pd.DataFrame, schema: OrderSchema, spot: float, min_mon
     max_moneyness = schema.get("max_moneyness", max_moneyness)
     increment = schema.get("increment", increment)
     while filtered.empty and attempt < max_attempts:
-        lower_strike = spot * (min_moneyness * factor)
-        upper_strike = spot * (max_moneyness * factor)
+        lower_strike = spot * (min(min_moneyness, max_moneyness) * factor)
+        upper_strike = spot * (max(min_moneyness, max_moneyness)* factor)
         filtered = df[
             (df["dte"].between(target_dte - dte_tol, target_dte + dte_tol)) &
             (df["strike"].between(lower_strike, upper_strike))

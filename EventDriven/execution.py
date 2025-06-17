@@ -106,46 +106,46 @@ class SimulatedExecutionHandler(ExecutionHandler):
         price = order_event.position['close'] * (1 + slippage_pct)          
         
         # Ensuring cash doesn't go below zero
-        raw_quantity = event.quantity
+        raw_quantity = order_event.quantity
         
         try:
             if raw_quantity is not None:
                 # Recompute quantity downward if cost exceeds available cash
                 unit_cost = price + self.commission_rate
-                logger.info(f"Unit cost: {unit_cost}, Cash available: {event.cash}, Direction: {event.direction}, Signal ID: {event.signal_id}")
-                if event.direction == 'BUY':
-                    max_affordable_quantity = math.floor(event.cash / unit_cost)
+                logger.info(f"Unit cost: {unit_cost}, Cash available: {order_event.cash}, Direction: {order_event.direction}, Signal ID: {order_event.signal_id}")
+                if order_event.direction == 'BUY':
+                    max_affordable_quantity = math.floor(order_event.cash / unit_cost)
 
                     # Ensure we never exceed max affordable quantity
                     quantity = min(raw_quantity, max_affordable_quantity)
                     total_cost = quantity * price + self.commission_rate
 
                     ## Clamp quantity to ensure we don't exceed available cash
-                    while total_cost > event.cash:
+                    while total_cost > order_event.cash:
                         quantity -= 1
                         total_cost = quantity * price + self.commission_rate
-                    logger.info(f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {event.signal_id}, Total Cost: {quantity * price + self.commission_rate}, Cash: {event.cash}")
+                    logger.info(f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {order_event.signal_id}, Total Cost: {quantity * price + self.commission_rate}, Cash: {order_event.cash}")
 
-                elif event.direction == 'SELL':
+                elif order_event.direction == 'SELL':
                     # For SELL, we can only sell what we have in the position
                     quantity = raw_quantity
             else:
                 # Fall back to normal logic
-                quantity = math.floor(event.cash / (price + self.commission_rate))
+                quantity = math.floor(order_event.cash / (price + self.commission_rate))
         except:
             pass
 
-        # quantity = event.quantity if event.quantity is not None else math.floor(event.cash/(price+self.commission_rate))
-        commission = self.commission_rate * quantity * (len(event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
+        # quantity = order_event.quantity if order_event.quantity is not None else math.floor(order_event.cash/(price+self.commission_rate))
+        commission = self.commission_rate * quantity * (len(order_event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
 
         # market_value = (price * quantity) # cost before commission less slippage
-        market_value = (event.position['close'] * quantity) # market value is based on the position's close price, not the slippage adjusted price
+        market_value = (order_event.position['close'] * quantity) # market value is based on the position's close price, not the slippage adjusted price
                                                             # This is to ensure that the market value is not affected by slippage, as slippage is a cost incurred after the market value is determined.
 
         # Adjust price based on order direction
-        if event.direction == 'BUY':
+        if order_event.direction == 'BUY':
             fill_cost = (price * quantity) + commission ## Total Cost for BUY includes commission and slippage
-        elif event.direction == 'SELL':
+        elif order_event.direction == 'SELL':
             fill_cost = (price * quantity) - commission
 
         ##NOTE:

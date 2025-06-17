@@ -156,6 +156,7 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_roll_map()
         self.trades_df = None
         self.trades_map = {}
+        self.current_cash = {}
 
     @property
     def order_settings(self):
@@ -403,6 +404,10 @@ class OptionSignalPortfolio(Portfolio):
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal_event.datetime]
             #on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
+                if isinstance(signal_event.parent_event, RollEvent): ## If rolling, do not move to next trading day
+                    self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, skipping sell for roll event')
+                    print(f'Not generating ROLL order because: CLOSE price is negative {signal_event}, skipping sell for roll event')
+                    return None
                 # move signal to next day 
                 new_signal = deepcopy(signal_event)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
@@ -422,6 +427,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         date_str = signal_event.datetime.strftime('%Y-%m-%d')
         position_type = 'C' if signal_event.signal_type == 'LONG' else 'P'
+        # position_type = 'P'
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1) #use 90% of cash to buy contracts, leaving room for slippage and commission
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
@@ -810,6 +816,7 @@ class OptionSignalPortfolio(Portfolio):
         #new positions dictionary
         new_positions_entry = {s: {} for s in self.symbol_list} 
         new_positions_entry['datetime'] = current_date
+        current_cash = {'datetime': current_date}
         
         #new weighted holdings dictionary
         new_weighted_holdings_entry = {s: self.allocated_cash_map[s] for s in self.symbol_list}
@@ -820,6 +827,7 @@ class OptionSignalPortfolio(Portfolio):
         
         for sym in self.symbol_list:
             new_weighted_holdings_entry[sym] = self.allocated_cash_map[sym] 
+            current_cash[sym] = self.allocated_cash_map[sym] #update current cash for the symbol
             remove_signals = []
             for signal_id in self.current_positions[sym]:
                 current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]['position'])
@@ -852,6 +860,7 @@ class OptionSignalPortfolio(Portfolio):
         #append the new holdings and positions to the list of all holdings and positions
         self.all_positions.append(new_positions_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
+        self.current_cash[current_date] = current_cash
         
     def update_fill(self, fill_event: FillEvent):
         """
