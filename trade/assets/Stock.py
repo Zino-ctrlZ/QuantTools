@@ -520,7 +520,7 @@ class Stock:
 
 
 
-    def returns(self, freq = '1B', ts_start = None, ts_end = None,  periods = None, log = False):
+    def returns(self, freq = None, ts_start = None, ts_end = None,  periods = 1, log = False):
         """
         Calculates the daily, weekly, monthly and cumulative returns at any given timeframe. 
         Returns a dataframe with spot and return
@@ -562,7 +562,7 @@ class Stock:
         Returns a dataframe with specified realized vol
         """
 
-        df = self.returns('1B', **kwargs)
+        df = self.returns( **kwargs)
         rolling_std = df.returns.rolling(window).std()
         annualized_std = rolling_std * np.sqrt(252)
         df[f'rvol_{window}D'] = annualized_std

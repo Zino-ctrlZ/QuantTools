@@ -13,6 +13,7 @@ from .utils import (logger,
                     PERSISTENT_CACHE)
 from .actions import *
 from .picker import *
+from .sizer import BaseSizer, DefaultSizer, ZscoreRVolSizer
 from trade.helpers.helper import printmd, CustomCache, date_inbetween, compare_dates
 from EventDriven.event import (
     RollEvent,
@@ -29,6 +30,7 @@ from cachetools import cachedmethod
 from functools import lru_cache
 from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
+
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
@@ -571,11 +573,11 @@ class RiskManager:
         self.end_date = end
         self.symbol_list = self.bars.symbol_list
         self.OrderPicker = OrderPicker(start, end)
-        self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries")
-        self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries") ## This is used for pricing, to account option strikes for splits
-        self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data")
+        self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
+        self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
+        self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
         self.position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
-        self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries")
+        self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
         self.sizing_type = sizing_type
         self.sizing_lev = leverage
         self.limits = {
@@ -615,6 +617,7 @@ class RiskManager:
         self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
         self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
+        self.__sizer = None
 
     @property 
     def option_data(self):
@@ -627,6 +630,29 @@ class RiskManager:
         Returns the order cache
         """
         return self._order_cache
+    
+    @property
+    def sizer(self):
+        """
+        Getter for the sizer
+        """
+        if isinstance(self.__sizer, (BaseSizer, DefaultSizer, ZscoreRVolSizer)):
+            return self.__sizer
+        elif self.__sizer is None:
+            self.__sizer = DefaultSizer(pm=self.__pm, rm=self, sizing_lev=self.sizing_lev)
+            return self.__sizer
+        else:
+            raise TypeError("Sizer must be an instance of BaseSizer or its subclasses. Reset with None to use DefaultSizer.")
+
+    @sizer.setter
+    def sizer(self, value):
+        """
+        Setter for the sizer
+        """
+        if isinstance(value, (BaseSizer, DefaultSizer, ZscoreRVolSizer)) or value is None:
+            self.__sizer = value
+        else:
+            raise TypeError("Sizer must be an instance of BaseSizer or its subclasses.")
     
     def clear_caches(self):
         """
@@ -790,9 +816,11 @@ Quanitity Sizing Type: {self.sizing_type}
         logger.info("Calculating Position Greeks")
         self.calculate_position_greeks(position_id, kwargs['date'])
         logger.info('Updating Signal Limits')
-        self.update_greek_limits(signalID, position_id)
+        # self.update_greek_limits(signalID, position_id)
+        self.sizer.update_delta_limit(signalID, position_id, date)
         logger.info("Calculating Quantity")
-        quantity = self.calculate_quantity(position_id, signalID, kwargs['date'], order['data']['close'])
+        # quantity = self.calculate_quantity(position_id, signalID, kwargs['date'], order['data']['close'])
+        quantity = self.sizer.calculate_position_size(signalID, position_id, order['data']['close'], kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
         order['data']['quantity'] = quantity
         order['data']['cash_equivalent_qty'] = self.pm.allocated_cash_map[tick] // (order['data']['close'] * 100)
@@ -819,8 +847,9 @@ Quanitity Sizing Type: {self.sizing_type}
         
         if 'spread_ratio' in position_data:  
             spread_ratio = position_data['spread_ratio'][date] if position_data['spread_ratio'][date] else self.max_slippage
-            logger.info(f"Adjusting slippage for position {position_id} on date {date} with spread ratio {spread_ratio} from current max slippage {self.executor.max_slippage_pct}. Set spread_ratio: {min(spread_ratio, self.max_slippage)}")  
-            self.executor.max_slippage_pct = min(spread_ratio, self.max_slippage)
+            decided_slippage = min(spread_ratio, self.max_slippage)
+            logger.info(f"Position {position_id} on date {date} has spread ratio {spread_ratio}, adjusting slippage to {decided_slippage}")
+            self.executor.max_slippage_pct = decided_slippage
         else:
             logger.warning(f"Spread Ratio not available for position {position_id}, using default max slippage of {self.max_slippage}")
             self.executor.max_slippage_pct = self.max_slippage
@@ -1541,7 +1570,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     current_delta = delta_val * quantity
                     if current_delta > max_delta:
                         # Compute how many contracts to reduce
-                        required_quantity = int(max_delta // delta_val)
+                        required_quantity = max(int(max_delta // delta_val), 1) ## Ensure at least 1 contract is required. If last contract exceeds delta limit, we will still hold it.
                         quantity_diff = required_quantity - quantity
                         logger.info(f"Position {trade_id} exceeds delta limit. Current Delta: {current_delta}, Max Delta: {max_delta}, Required Quantity: {required_quantity}, Current Quantity: {quantity}")
                         greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
