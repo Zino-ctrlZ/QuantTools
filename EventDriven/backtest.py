@@ -66,7 +66,7 @@ class OptionSignalBacktest():
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
         if self.t_plus_n > 0:
-            logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
+            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
             # trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
             # trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
             trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
@@ -76,7 +76,6 @@ class OptionSignalBacktest():
         return trades
         
     def run(self):
-        test_scheduled = False
         while True: ##Loop through the dates
             # Get current event queue
             if self.eventScheduler.current_date is None: 
@@ -118,11 +117,6 @@ class OptionSignalBacktest():
                 if event:
                     self.store_event(event)  # Store the event in the events list
                     event_count += 1
-                    if event.datetime == pd.to_datetime('2023-07-17') and not test_scheduled:
-                        print("Enforcing order event injection for testing purposes")
-                        self.eventScheduler.schedule_event('2023-07-18',OrderEvent(symbol="TSLA", datetime=pd.to_datetime('2023-07-18'), order_type='MKT', direction='SELL', quantity=33, signal_id='TSLA20230705LONG', position=self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position']))
-                        print("Order event injected for TSLA at2023-07-18, position: ", self.portfolio.current_positions['TSLA']['TSLA20230705LONG']['position'])
-                        test_scheduled = True
                     try:
                         self.logger.info(f"Processing event: {event}")
                         print(f"Processing event: {event.type} {event.datetime}")
