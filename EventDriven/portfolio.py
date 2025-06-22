@@ -128,6 +128,7 @@ class OptionSignalPortfolio(Portfolio):
         self.moneyness_tracker = {}
         self.unprocessed_signals = []
         self.resolve_orders = True 
+        self.allow_multiple_trades = True # allow multiple trades for the same signal_id
         self.risk_manager.pm = self #
         self._order_settings =  {
             'type': 'spread',
@@ -574,6 +575,20 @@ class OptionSignalPortfolio(Portfolio):
         throws: AssertionError if event type is not 'SIGNAL'
         """
         assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
+        
+        # if multiple trades on a tick are not allowed, check if a position already exists for the symbol and if position is still open
+        if not self.allow_multiple_trades and event.signal_type != SignalTypes.CLOSE.value:
+            if len(self.current_positions[event.symbol].keys()) > 0: 
+                for signal_id in self.current_positions[event.symbol]:
+                   if 'exit_price' not in self.current_positions[event.symbol][signal_id]: 
+                        self.logger.warning(f'Pushing signal {event} to next trading day because a position already exists for {event.symbol} with signal_id {signal_id}')
+                        print(f'Pushing signal {event.signal_id} to next trading day because a position already exists for {event.symbol} with signal_id {signal_id}')
+                        next_trading_day = event.datetime + pd.offsets.BusinessDay(1)
+                        new_signal = deepcopy(event)
+                        new_signal.datetime = next_trading_day
+                        self.eventScheduler.schedule_event(next_trading_day, new_signal)
+                        return None
+                    
         order_event = self.generate_order(event)
         if order_event is not None:
             self.eventScheduler.put(order_event)
