@@ -1,0 +1,4 @@
+LONG_BBANDS:
+- EQ Signal: `On Close` ie strategy EQ Signal is made on close.
+- Option Signal: Made on EQ Signal Close. Therefore, expectation is it should be the same day
+                - Will begin to test with an offset max T+1

@@ -6,6 +6,7 @@ import backoff
 from dotenv import load_dotenv
 load_dotenv()
 import sys
+import pstats
 # sys.path.append(
 #     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
@@ -182,6 +183,16 @@ class CustomCache(Cache):
                 self[key] = value
         else:
             raise ValueError("Other must be a dictionary or CustomCache instance.")
+        
+    def filter_keys(self, x):
+        """
+        Filter the cache keys based on a condition.
+        Args:
+            x (function): A function that takes a key and returns True or False.
+        Returns:
+            list: A list of keys that satisfy the condition.
+        """
+        return [key for key in self.keys() if x(key)]
     
     
     def __repr__(self):
@@ -427,11 +438,23 @@ class compare_dates:
     """
     @staticmethod
     def is_before(date1, date2):
+        """ Check if date1 is before date2."""
         return pd.to_datetime(date1) < pd.to_datetime(date2)
 
     @staticmethod
     def is_after(date1, date2):
+        """ Check if date1 is after date2."""
         return pd.to_datetime(date1) > pd.to_datetime(date2)
+    
+    @staticmethod
+    def is_on_or_before(date1, date2):
+        """ Check if date1 is on or before date2."""
+        return pd.to_datetime(date1) <= pd.to_datetime(date2)
+    
+    @staticmethod
+    def is_on_or_after(date1, date2):
+        """ Check if date1 is on or after date2."""
+        return pd.to_datetime(date1) >= pd.to_datetime(date2)
 
     @staticmethod
     def is_equal(date1, date2):
@@ -450,6 +473,62 @@ class compare_dates:
         """
         return date_inbetween(date, start, end)
 
+
+
+def print_cprofile_internal_time_share(_stats, top_n=20, sort_by='tottime', full_name=False):
+    """
+    Print top n functions by internal (self) time, with their share of total self time.
+    """
+    _stats = deepcopy(_stats)
+    _stats.sort_stats(sort_by)
+    
+    all_stats = _stats.stats.items()
+    total_self_time = sum(stat[2] for _, stat in all_stats)  # stat[2] = tottime (internal time)
+
+    top_list = sorted(all_stats, key=lambda x: x[1][2], reverse=True)[:top_n]
+
+    print(f"{'Function':<70} {'SelfTime':>10} {'ShareOfTotal':>12}")
+    print('-' * 95)
+
+    for func, stat in top_list:
+        filename, line, funcname = func
+        label = f"{filename}:{line} {funcname}" if full_name else funcname
+        self_time = stat[2]
+        ratio = self_time / total_self_time if total_self_time else 0
+        print(f"{label:<70} {self_time:>10.4f} {ratio:>12.2%}")
+
+def print_top_cprofile_stats(_stats, top_n=20, sort_by='cumulative', full_name=False):
+    """
+    Display the top n functions from a cProfile stats file,
+    showing cumulative time and ratio to the top function.
+
+    :param stats: pstats.Stats object
+    :param top_n: Number of functions to display
+    :param sort_by: 'cumulative', 'time', etc.
+    :param full_name: If True, show full path:line:function_name
+    """
+    _stats = deepcopy(_stats)
+    _stats.sort_stats(sort_by)
+    top_stats = _stats.stats.items()
+    top_list = sorted(top_stats, key=lambda x: x[1][3], reverse=True)[:top_n]
+
+    top_cum_time = top_list[0][1][3]
+
+    # Header
+    print(f"{'Function':<80} {'CumTime':>10} {'RatioToTop':>12}")
+    print('-' * 105)
+
+    for func, stat in top_list:
+        filename, line, funcname = func
+        cum_time = stat[3]
+        ratio = cum_time / top_cum_time if top_cum_time else 0
+
+        if full_name:
+            label = f"{filename}:{line} {funcname}"
+        else:
+            label = funcname
+
+        print(f"{label:<80} {cum_time:>10.4f} {ratio:>12.2f}")
 
 
 def find_split_dates_within_range(tick: str, 
@@ -1062,7 +1141,7 @@ def is_USholiday(date):
     return date.date().strftime('%Y-%m-%d') in HOLIDAY_SET
 
 
-def change_to_last_busday(end):
+def change_to_last_busday(end, offset = 1):
     from pandas.tseries.offsets import BDay
     
     #Enfore time is passed
@@ -1079,17 +1158,17 @@ def change_to_last_busday(end):
     while not isBiz:
 
         end_dt = pd.to_datetime(end)
-        end = (end_dt - BDay( 1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay( offset)).strftime('%Y-%m-%d %H:%M:%S')
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
-        end = pd.to_datetime(end)-BDay(1)
+        end = pd.to_datetime(end)-BDay(offset)
 
     # Make End Comparison prev day if holiday
     while is_USholiday(end):
         end_dt = pd.to_datetime(end)
-        end = (end_dt - BDay(1)).strftime('%Y-%m-%d %H:%M:%S')
+        end = (end_dt - BDay(offset)).strftime('%Y-%m-%d %H:%M:%S')
 
     return pd.to_datetime(end)
 

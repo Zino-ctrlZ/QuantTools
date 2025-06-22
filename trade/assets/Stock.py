@@ -41,7 +41,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock
-from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker
+from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker, swap_ticker
 from trade.helpers.types import OptionModelAttributes
 from dbase.utils import bus_range
 logger = setup_logger('trade.asset.Stock')
@@ -64,7 +64,9 @@ class Stock:
         ## I can update the end_date in __init__ if I need to
 
         end_date = Configuration.end_date or _end_date
-        key = (verify_ticker(ticker).upper(), end_date)
+        ticker = swap_ticker(ticker).upper()
+        key = (ticker, end_date)
+
         if key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[key] = instance
@@ -96,6 +98,7 @@ class Stock:
         ## Chaning to last business day, so far, there's no need to create Stock for. 
         ## Temp: Changing to last business day ensures that the data is available, +  avoids the missing error
         ## Note: Monitor if this is the best approach
+        ticker = swap_ticker(ticker).upper()
         end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
 
@@ -324,7 +327,24 @@ class Stock:
             if 'Results not found'.lower() in e.__str__().lower():
                 close = float(obb.equity.price.quote(symbol=self.ticker, provider='fmp').to_dataframe()['prev_close'].values[0])
                 self.__set_close(close)
+            else:
+                logger.error(f"Error getting previous close for {self.ticker} from yfinance: {e}")
+                return None
         return close
+    
+    def div_schedule(self):
+        """
+        Returns the dividend schedule for the stock
+        """
+        try:
+            div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider='yfinance').to_df()
+            div_history.set_index('ex_dividend_date', inplace = True)
+        except:
+            logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
+            logger.error(f"Probably due to no dividends history")
+            return pd.Series({x: 0 for x in bus_range(start = start_date, end = datetime.today(), freq = 'B')})
+        
+        return div_history['amount']
 
     @backoff.on_exception(backoff.expo, IndexError, max_tries=5, logger=logger)
     def div_yield(self, div_type = 'yield'):
@@ -378,7 +398,7 @@ class Stock:
         if div_type == 'value':
             dates = pd.date_range(start = div_history.index.min(), end = datetime.today() ,freq = 'B')
             div_history = div_history.reindex(dates, method = 'ffill')
-            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})['yearly_dividend']
+            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})#['yearly_dividend']
         elif div_type == 'yield':
             pass
         else:
@@ -457,6 +477,7 @@ class Stock:
                 df.index = pd.to_datetime(df.index)
                 df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
                 df['close'] = df['chain_price']
+                df['cum_split_from_start'] = df['split_ratio'].cumprod()
         else:
             # print(ts_start, ts_end, interval, provider)
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
@@ -499,7 +520,7 @@ class Stock:
 
 
 
-    def returns(self, freq = '1B', ts_start = None, ts_end = None,  periods = None, log = False):
+    def returns(self, freq = None, ts_start = None, ts_end = None,  periods = 1, log = False):
         """
         Calculates the daily, weekly, monthly and cumulative returns at any given timeframe. 
         Returns a dataframe with spot and return
@@ -541,7 +562,7 @@ class Stock:
         Returns a dataframe with specified realized vol
         """
 
-        df = self.returns('1B', **kwargs)
+        df = self.returns( **kwargs)
         rolling_std = df.returns.rolling(window).std()
         annualized_std = rolling_std * np.sqrt(252)
         df[f'rvol_{window}D'] = annualized_std

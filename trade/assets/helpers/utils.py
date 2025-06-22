@@ -17,3 +17,10 @@ def verify_ticker(ticker):
         raise_tick_name_change(ticker, INVALID_TICKERS[ticker])
     return ticker
 
+def swap_ticker(ticker):
+    """
+    Swap ticker if it is in the TICK_CHANGE_ALIAS map.
+    """
+    if ticker in TickerMap.invalid_tickers:
+        return TickerMap.invalid_tickers[ticker]
+    return ticker

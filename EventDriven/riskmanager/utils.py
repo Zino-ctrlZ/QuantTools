@@ -4,6 +4,7 @@ from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
 from trade.assets.Calculate import Calculate
 # from trade.assets.helpers.DataManagers_new import OptionDataManager
+from trade.assets.helpers.utils import (swap_ticker)
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, SaveManager, BulkOptionDataManager
 
 from trade.helpers.Context import Context, clear_context
@@ -46,8 +47,9 @@ from EventDriven.event import FillEvent
 from EventDriven.helpers import parse_signal_id
 from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
+from EventDriven.types import FillDirection, OpenPositionAction, ResultsEnum, SignalTypes
 from threading import Thread, Lock
-from trade import POOL_ENABLED
+from trade import POOL_ENABLED, register_signal
 import multiprocessing as mp
 from module_test.raw_code.DataManagers.DataManagers import (
     BulkOptionQueryRequestParameter,
@@ -71,6 +73,8 @@ import shelve
 from pathlib import Path
 import atexit
 from concurrent.futures import ThreadPoolExecutor
+import matplotlib.pyplot as plt
+import signal
 
 
 
@@ -83,6 +87,15 @@ logger.info("RISK MANAGER is Using Old DataManager")
 TIMESERIES_START = pd.to_datetime('2017-01-01')
 TIMESERIES_END = datetime.today()
 
+## Patch tickers to swap old tickers with new ones
+PATCH_TICKERS = True
+
+def get_patch_tickers():
+    return PATCH_TICKERS
+
+def set_patch_tickers(patch_tickers):
+    global PATCH_TICKERS
+    PATCH_TICKERS = patch_tickers
 
 ## To-Do:
 ## 1. Filter out contracts that have already been queried. Saves time
@@ -109,11 +122,88 @@ def clear_cache() -> None:
     """
     clears the cache
     """
-    global chain_cache, close_cache, oi_cache, spot_cache, fullChain_cache
+    global chain_cache, close_cache, oi_cache, spot_cache
     chain_cache.clear()
     close_cache.clear()
     oi_cache.clear()
     spot_cache.clear()
+
+## Register info on `skips` from add_skip_columns
+IDS = []
+ID_SAVE_FOLDER = Path(os.environ['WORK_DIR']) / '.cache'
+ID_SAVE_FILE = ID_SAVE_FOLDER / 'position_data.csv'
+
+## Function to register information about skips in the position data to a list
+def register_info_stack(id, data, data_col, update_kwargs = {}):
+    """
+    Register the information stack for a given position ID.
+    
+    Parameters:
+    - id: The position ID.
+    - data: The DataFrame containing position data.
+    
+    Returns:
+    - info: A dictionary containing the registered information.
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise ValueError("Data must be a pandas DataFrame.")
+    
+
+    info = {}
+    info['ID'] = id
+    for k in data_col:
+        info[f'{k.upper()}_SKIP'] = data[f"{k}_skip_day"].sum()
+        copy_cat = data[f"{k}_skip_day"].copy().to_frame()
+        copy_cat['streak_id'] = copy_cat[f"{k}_skip_day"].ne(copy_cat[f"{k}_skip_day"].shift()).cumsum()
+        copy_cat['streak'] = copy_cat.groupby('streak_id').cumcount() + 1
+        info[f'{k.upper()}_MAX_STREAK'] = copy_cat[copy_cat[f"{k}_skip_day"] ==True].streak.max() if not copy_cat[copy_cat[f"{k}_skip_day"] ==True].streak.empty else 0
+    info['DATA_LEN'] = len(data)
+    info['DATETIME'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    info.update(update_kwargs)
+    IDS.append(info)
+
+## Function to save the information stack to a CSV file
+def save_info_stack():
+    """
+    Save the information stack to a CSV file.
+    
+    Parameters:
+    - IDS: List of dictionaries containing position information.
+    - id_save_file: Path to the CSV file where the information will be saved.
+    """
+    global IDS, ID_SAVE_FILE, ID_SAVE_FOLDER
+    if not IDS:
+        print("No data to save.")
+        return
+    full_data = pd.read_csv(ID_SAVE_FILE) if ID_SAVE_FILE.exists() else pd.DataFrame()
+    df = pd.DataFrame(IDS)
+    full_data = pd.concat([full_data, df], ignore_index=True)
+    full_data.to_csv(ID_SAVE_FILE, index=False)
+    with open(ID_SAVE_FOLDER/'ids.txt', 'a') as f:
+        f.write(f"Total IDs saved: {len(IDS)} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    IDS = []  # Clear the IDS list after saving
+    return
+
+## Register the save_info_stack function to be called on exit
+register_signal(signal.SIGTERM, save_info_stack)
+
+def get_current_saved_ids() -> pd.DataFrame:
+    """
+    Returns the current saved IDs as a DataFrame.
+    
+    Returns:
+        pd.DataFrame: A DataFrame containing the saved IDs.
+    """
+    return IDS
+
+def clear_info_stack() -> None:
+    """
+    Clears the information stack.
+    """
+    global IDS
+    IDS = []
+    logger.info("Cleared info stack.")
+
 
 
 LOOKBACKS = {}
@@ -241,11 +331,13 @@ def populate_cache_with_chain(tick, date, print_url = True):
         'C',
         print_url = print_url
     )
-    print(f"Retrieved chain for {tick} on {date}")
+    logger.info(f"Retrieved chain for {tick} on {date}")
 
 
     ## Clip Chain
     chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    if PATCH_TICKERS:
+        chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
 
     ## Create ID
     id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
@@ -267,6 +359,7 @@ def populate_cache_with_chain(tick, date, print_url = True):
         save_to_cache, 
         save_params)
     chain_clipped.columns = chain_clipped.columns.str.lower()
+
     return chain_clipped
 
 def refresh_cache() -> None:
@@ -295,8 +388,39 @@ def _clean_data(df):
         return df.replace(0, np.nan).ffill()
     df = df.copy()
     return fill_values(df)
+
+
+def mad_zscore_spike_flag(df, threshold=10, window=10, col ='Midpoint'):
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    median = df[col].rolling(window).median()
+    mad = lambda x: np.median(np.abs(x - np.median(x))) ## lambda function that calculates median absolute deviation. x is a series, therefore x - median(x)
+    rolling_mad = df[col].rolling(window).apply(mad) ## Apply function
+    zscore_like = (df[col] - median) / rolling_mad ## Z-score like calculation
+    return zscore_like.abs() > threshold
+
+def mad_band_spike_flag(df, threshold=2, window=20, col='Midpoint'):    
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    median = df[col].rolling(window).median()
+    mad = df[col].rolling(window).apply(lambda x: np.median(np.abs(x - np.median(x))))
+    return (df[col] - median).abs() > threshold * mad
+
+def quantile_band_spike_flag(df, window=20, upper_quantile=0.90, lower_quantile=0.10, col='Midpoint'):
+    """
+    Add a flag to the DataFrame indicating if the change in 'Midpoint' exceeds the threshold.
+    """
+    df = df.copy()
+    quantile = df[col].rolling(window).quantile(upper_quantile)
+    quantile_down = df[col].rolling(window).quantile(lower_quantile)
+    return (df[col] > quantile) | (df[col] < quantile_down)
     
-def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
+    
+def add_skip_columns(df, id, skip_columns, window=15, skip_threshold=2.75):
     """
     Adds skip columns to the DataFrame.
     """
@@ -306,9 +430,42 @@ def add_skip_columns(df, skip_columns, window=20, skip_threshold=3):
         if col not in df.columns:
             logger.info(f"Column {col} not found in DataFrame. Skipping...")
             continue
+
+        ##ABS Zscore
+        df.loc[df[col] < 0 , col] = 0 ## NOTE: This is one time fix. Take it out
         smooth = df[col].ewm(span=3).mean()
         _zscore = (smooth - smooth.rolling(window).mean()) / smooth.rolling(window).std()
-        df[f'{col}_skip_day']= (_zscore.abs() > skip_threshold) 
+        _thresh = _zscore.abs() > skip_threshold
+
+        ## Percentage change
+        smooth_pct = df[col].pct_change().fillna(0)
+        _zscore_pct = (smooth_pct - smooth_pct.rolling(window).mean()) / smooth_pct.rolling(window).std()
+        _zscore_pct = _zscore_pct.fillna(0)
+        _zscore_pct.replace([np.inf, -np.inf], 0, inplace=True) ## Replace inf values with 0
+        _thresh_pct = _zscore_pct.abs() > skip_threshold
+
+        ## Spike Detection
+        spike_flag = mad_band_spike_flag(df, threshold=skip_threshold, window = window, col=col)
+
+        ## Window 
+        shortened = df[col][:window]
+        pct_change = shortened.pct_change()
+        window_bool = pct_change.abs() > 0.5
+
+        ## Zero Values
+        zero_bool = df[col] == 0
+
+        
+        ## Combine both boolean masks
+        _combined = _thresh  | spike_flag | window_bool| zero_bool# | _thresh_pct
+        df[f'{col}_abs_zscore'] = _thresh
+        df[f'{col}_pct_zscore'] = _thresh_pct
+        df[f'{col}_spike_flag'] = spike_flag
+        df[f'{col}_window'] = window_bool
+        df[f'{col}_zero'] = zero_bool
+        df[f'{col}_skip_day']= _combined
+        df[f'{col}_skip_day_count'] = _combined.rolling(60).sum()
+    register_info_stack(id, df, skip_columns, update_kwargs={'window': window, 'skip_threshold': skip_threshold, 'window_bool_threshold': 0.5})
     return df
 
 
@@ -859,7 +1016,7 @@ def populate_cache_v2(
 
             # Now my dear friends, we update cache of unavailable ticks
             start_time = time.time()
-            pack = update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
+            update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
             end_time = time.time()
             logger.info(f"Time taken to update cache: {end_time-start_time}")
 

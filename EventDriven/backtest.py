@@ -10,9 +10,12 @@ from EventDriven.execution import SimulatedExecutionHandler
 from EventDriven.riskmanager import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import change_to_last_busday
+from EventDriven.helpers import generate_signal_id
 from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
+from pandas.tseries.offsets import BDay
 
 
 class OptionSignalBacktest():
@@ -20,13 +23,25 @@ class OptionSignalBacktest():
     Encapsulates the settings and components for carrying out an event-driven backtest
     """
     
-    def __init__(self, trades: pd.DataFrame, initial_capital: int | float =100000 ) -> None:
+    def __init__(self, trades: pd.DataFrame, 
+                 initial_capital: int | float =100000, 
+                 t_plus_n: float = 0 ) -> None:
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
             initial_capital: int
                 Initial capital to be used for backtesting
+            t_plus_n: int
+                Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
+        self.t_plus_n = t_plus_n
+        trades = trades.copy()
+        unadjusted = trades.copy() ## Store unadjusted trades for reference
+        if trades.empty:
+            raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
+        trades = self.__handle_t_plus_n(trades)
+        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
         self.__construct_data(trades, initial_capital)
         
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int) -> None: 
@@ -39,13 +54,26 @@ class OptionSignalBacktest():
         self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
         self.bars = HistoricTradeDataHandler(self.eventScheduler, trades)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
-        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date)
-        self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
+        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
+        self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         self.events = []
-        
+    
+    def __handle_t_plus_n(self, trades: pd.DataFrame) -> pd.DataFrame:
+        """
+        Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
+        """
+        if self.t_plus_n > 0:
+            logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
+            # trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
+            # trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
+            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
+            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
+        elif self.t_plus_n > 1:
+            raise ValueError("t_plus_n must be either 0 or 1.")
+        return trades
         
     def run(self):
         test_scheduled = False
@@ -65,9 +93,9 @@ class OptionSignalBacktest():
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
                         ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
-                        # actions = self.risk_manager.analyze_position() 
-                        self.portfolio.analyze_positions(MarketEvent(pd.to_datetime(self.eventScheduler.current_date)))
-                        # print("Risk Manager Actions: ", actions)
+                        actions = self.risk_manager.analyze_position() 
+                        # self.portfolio.analyze_positions(MarketEvent(pd.to_datetime(self.eventScheduler.current_date)))
+                        print("Risk Manager Actions: ", actions)
 
                     event = current_event_queue.get_nowait()
 

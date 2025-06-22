@@ -265,6 +265,8 @@ class HistoricTradeDataHandler(DataHandler):
             events: EventScheduler
                 Event scheduler to push events to the event queue
         """
+        trades_df = trades_df.copy()
+        trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
         self.trades_df = trades_df
         self.continue_backtest = True 
         self.events = events

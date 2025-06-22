@@ -26,5 +26,7 @@
         "rho"
     ],
     "UPPER_BOUND_MONEYNESS": 1.2,
-    "LOWER_BOUND_MONEYNESS": 0.8
+    "LOWER_BOUND_MONEYNESS": 0.8,
+    "DAYS_IN_MONTH": 30,
+    "DAYS_IN_YEAR": 360
 }
