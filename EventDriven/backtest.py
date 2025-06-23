@@ -66,7 +66,7 @@ class OptionSignalBacktest():
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
         if self.t_plus_n > 0:
-            logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
+            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
             # trades['EntryTime'] = pd.to_datetime(trades['EntryTime']) + BDay(self.t_plus_n)
             # trades['ExitTime'] = pd.to_datetime(trades['ExitTime']) + BDay(self.t_plus_n)
             trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
@@ -76,7 +76,6 @@ class OptionSignalBacktest():
         return trades
         
     def run(self):
-        test_scheduled = False
         while True: ##Loop through the dates
             # Get current event queue
             if self.eventScheduler.current_date is None: 
