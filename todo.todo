@@ -177,3 +177,43 @@ Backtest:
 
 Zino Convo 5/31/25:
     - Add mkdir to custom cache
+
+
+
+import hashlib
+
+class DictCache:
+    def __init__(self):
+        self.cache = {}
+
+    def _generate_key(self, func, args, kwargs):
+        # Serialize function name
+        func_name = func.__name__
+
+        # Serialize arguments
+        args_repr = str(args)  # Convert positional arguments to string
+        kwargs_repr = str(sorted(kwargs.items()))  # Sort and convert keyword arguments to string
+
+        # Combine function name and arguments
+        key = f"{func_name}:{args_repr}:{kwargs_repr}"
+
+        # Hash the key for compactness
+        hashed_key = hashlib.md5(key.encode()).hexdigest()
+        return hashed_key
+
+    def memoize(self, func):
+        def wrapper(*args, **kwargs):
+            # Generate cache key
+            key = self._generate_key(func, args, kwargs)
+
+            # Check if result is in cache
+            if key in self.cache:
+                print("Cache hit")
+                return self.cache[key]
+
+            # Compute result and store in cache
+            result = func(*args, **kwargs)
+            self.cache[key] = result
+            return result
+
+        return wrapper

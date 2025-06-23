@@ -34,6 +34,7 @@ class OptionSignalBacktest():
             t_plus_n: int
                 Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
+        self.logger = setup_logger('OptionSignalBacktest')
         self.t_plus_n = t_plus_n
         trades = trades.copy()
         unadjusted = trades.copy() ## Store unadjusted trades for reference
@@ -57,7 +58,6 @@ class OptionSignalBacktest():
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
         self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
-        self.logger = setup_logger('OptionSignalBacktest')
         self.risk_free_rate = 0.055
         self.events = []
     

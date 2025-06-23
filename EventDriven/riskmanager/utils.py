@@ -1,4 +1,5 @@
 import os, sys
+from .config import get_avoid_opticks
 from trade.assets.Stock import Stock
 from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
@@ -332,6 +333,7 @@ def populate_cache_with_chain(tick, date, print_url = True):
         print_url = print_url
     )
     logger.info(f"Retrieved chain for {tick} on {date}")
+    print(f"Retrieved chain for {tick} on {date}")
 
 
     ## Clip Chain
@@ -345,6 +347,8 @@ def populate_cache_with_chain(tick, date, print_url = True):
         generate_option_tick_new, 
         id_params)
     chain_clipped['opttick'] = ids
+    filter_opt = get_avoid_opticks(tick)
+    chain_clipped = chain_clipped[~chain_clipped['opttick'].isin(filter_opt)] ## Optticks to avoid
     chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
     chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
 

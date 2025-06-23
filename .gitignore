@@ -183,3 +183,6 @@ trade/helpers/clear_dirs.txt
 
 ## Only relevant for me since I do the scheduling
 trade/helpers/*vol_resolve*.json
+
+## Pickle files
+*.pkl
