@@ -1438,7 +1438,7 @@ Quanitity Sizing Type: {self.sizing_type}
             for signal_id, current_position in position.items():
                 if 'position' not in current_position:
                     continue
-
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for Greek Limits on {date}")
                 trade_id = current_position['position']['trade_id']
                 quantity = current_position['quantity']
                 signal_id = signal_id
@@ -1487,7 +1487,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 if 'position' not in current_position:
                     continue
             
-
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for DTE on {date}")
                 id = current_position['position']['trade_id']
                 expiry_date = ''
                 
@@ -1535,7 +1535,8 @@ Quanitity Sizing Type: {self.sizing_type}
             for signal_id, current_position in position.items():
                 if 'position' not in current_position:
                     continue
-
+                
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for Moneyness on {date}")
                 id = current_position['position']['trade_id']
                 try:
                     entry_date = self.pm.trades_map[id].entry_date

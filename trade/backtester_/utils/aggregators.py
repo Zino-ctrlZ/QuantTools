@@ -910,6 +910,7 @@ class AggregatorParent(ABC):
             'Sharpe Ratio': self.sharpe(risk_free_rate),
             'Sortino Ratio': self.sortino(risk_free_rate, MAR),
             'Skew': self._equity.Total.pct_change().skew(),
+            'Log Return Skew': np.log(self._equity.Total/self._equity.Total.shift(1)).skew(),
             'Calmar Ratio': self.calmar(),
             'Max. Drawdown [%]': self.mdd(),
             'Max. Drawdown Value [$]': self.mdd_value(),
