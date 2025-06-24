@@ -562,7 +562,7 @@ class AggregatorParent(ABC):
         self.__port_stats = None
         self._trades = None
 
-    @copy_doc_from(dates_)
+    # @copy_doc_from(dates_)
     def dates_(self, start: bool):
         try:
             overwrite = pd.to_datetime(getattr(self, 'start_overwrite')).date()

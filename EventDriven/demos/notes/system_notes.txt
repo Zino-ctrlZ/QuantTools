@@ -15,3 +15,7 @@
 - Exit Date used in RiskManager:
     - We are opting to use unadjusted t_plus_n date for risk manager when evaluating current date is and/or after exit signal date.
     - This isn't look ahead because the trades dataframe acts as a signal dataframe. Therefore in real life. If we got Exit on T, even though we place trades on T+1, we stop evaluating on T not T+1
+
+- Conflict with contract search:
+    - There are situations when the current option chain isn't as enriched enough. This leads to picking an option that is above the max_moneyness limit. 
+    - This then creates a persistent roll situation. A situation where the only spread that works is already in the money and leads to continous rolls.

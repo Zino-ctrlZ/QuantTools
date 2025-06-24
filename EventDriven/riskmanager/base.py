@@ -57,7 +57,8 @@ def get_order_cache():
 def resolve_schema(schema: OrderSchema, 
                    tries: int, 
                    max_dte_tolerance: int, 
-                   moneyness_width: float, 
+                   otm_moneyness_width: float, 
+                   itm_moneyness_width: float,
                    max_close: float, max_tries: int =6) -> (OrderSchema, int):
     """
     Resolving schema by order of importance
@@ -88,26 +89,28 @@ def resolve_schema(schema: OrderSchema,
     tries +=1
     if schema['dte_tolerance'] <= max_dte_tolerance:
         logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
-        schema['dte_tolerance'] += 10
+        schema['dte_tolerance'] += 20
         return schema, tries
     
     #2). Min Moneyness Resolve
-    elif 1 - schema['min_moneyness'] <= moneyness_width:
-        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {moneyness_width}, decreasing Min Moneyness by 0.1")
+    elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
+        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
         schema['min_moneyness'] -= 0.1
         return schema, tries    
 
     #3). Max Moneyness Resolve
-    elif schema['max_moneyness'] - 1 <= moneyness_width:
-        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {moneyness_width}, increasing Max Moneyness by 0.1")
+    elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
+        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
         schema['max_moneyness'] += 0.1
         return schema, tries
     
     #4). Close Resolve
     elif schema['max_total_price'] <= max_close:
         logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
-        schema['max_total_price'] += 0.5
+        schema['max_total_price'] += 1
         return schema, tries
+    
+    return False, tries
 
 
 
@@ -607,7 +610,8 @@ class RiskManager:
         self.splits = self.set_splits(self.splits_raw)
         self.schema_cache = {}
         self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
-        self.moneyness_width = kwargs.get('moneyness_width', 0.45) ## Default is 0.45
+        self.otm_moneyness_width = kwargs.get('moneyness_width', 0.45) ## Default is 0.45
+        self.itm_moneyness_width = kwargs.get('itm_moneyness_width', 0.45) ## Default is 0.45
         self.max_tries = kwargs.get('max_tries', 20) ## Default is 20 tries to resolve schema
         self.__analyzed_date_list = [] ## List of dates that have been analyzed for actions
         self._order_cache = {}
@@ -694,8 +698,8 @@ class RiskManager:
     def print_settings(self):
         msg = f"""
 Risk Manager Settings:
-Start Date: {self.start_date}
-End Date: {self.end_date}
+Start Date: {self.pm_start_date}
+End Date: {self.pm_end_date}
 Current Limits State (Position Adjusted when these thresholds are reached):
     Delta: {self.limits['delta']}
     Gamma: {self.limits['gamma']}
@@ -777,12 +781,14 @@ Quanitity Sizing Type: {self.sizing_type}
         tries = 0
         while order['result'] != ResultsEnum.SUCCESSFUL.value:
             logger.info(f"Failed to produce order with schema: {schema}, trying to resolve schema, on try {tries}")
-            schema, tries = resolve_schema(schema,
+            pack = resolve_schema(schema,
                                            tries = tries,
                                             max_dte_tolerance = self.max_dte_tolerance,
-                                            moneyness_width = self.moneyness_width,
                                             max_close = self.pm.allocated_cash_map[tick]/100,
-                                            max_tries = self.max_tries)
+                                            max_tries = self.max_tries,
+                                            otm_moneyness_width = self.otm_moneyness_width,
+                                            itm_moneyness_width = self.itm_moneyness_width)
+            schema, tries = pack
 
             if schema is False:
                 logger.info(f"Unable to resolve schema after {tries} tries, returning None")

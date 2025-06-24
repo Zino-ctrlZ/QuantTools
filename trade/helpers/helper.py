@@ -110,14 +110,23 @@ class CustomCache(Cache):
         """
         
         #1. Check dir & create cache
-        fname = fname if fname else shortuuid.random(length=8)
+        fname = str(fname) if fname else shortuuid.random(length=8)
         dir = Path(location) / fname if location else Path(os.environ.get('WORK_DIR'))/'.cache'/fname
         self.dir = dir
         self.fname = fname
         self.expiry_date = (datetime.today() + relativedelta(days=expire_days)).date().strftime('%Y-%m-%d')
-        self.__register_location = f'{os.environ["WORK_DIR"]}/trade/helpers/clear_dirs.json'
-        log_path = Path(log_path) if log_path else Path(os.environ.get('WORK_DIR'))/'trade'/'helpers'/'cache_clear_log.txt'
-        self.log_path = log_path
+        self._register_location = f'{os.environ["WORK_DIR"]}/trade/helpers/clear_dirs.json'
+        
+        ## Avoid non path like objects
+        if isinstance(log_path, (str, os.PathLike)):
+            log_path = Path(log_path)
+        elif log_path is None:
+            log_path = Path(os.environ.get('WORK_DIR'))/'trade'/'helpers'/'cache_clear_log.txt'
+        else:
+            logger.error(f"log_path must be str, Path or None, not {type(log_path)}, recieved {log_path}")
+            log_path = str(Path(os.environ.get('WORK_DIR'))/'trade'/'helpers'/'cache_clear_log.txt')
+
+        self.__log_path = log_path
         os.makedirs(dir, exist_ok=True)
         
         #2. Create cache
@@ -133,6 +142,34 @@ class CustomCache(Cache):
             for key, value in data.items():
                 self[key] = value
 
+    def __getstate__(self):
+        """
+        Custom serialization to avoid pickling the cache directory.
+        """
+        return dict(
+            location=str(self.dir),
+            fname=self.fname,
+            log_path=str(self.log_path),
+            clear_on_exit=self.clear_on_exit,
+            expire_days=(pd.to_datetime(self.expiry_date).date() - datetime.today().date()).days,
+            data=dict(self.items())
+        )
+    
+    def __setstate__(self, state):
+        """
+        Custom deserialization to restore the cache state.
+        """
+        self.__init__(
+            location=state['location'],
+            fname=state['fname'],
+            log_path=state['log_path'],
+            clear_on_exit=state['clear_on_exit'],
+            expire_days=state['expire_days'],
+            data=state['data']
+        )
+
+
+
     @property
     def clear_on_exit(self):
         return self._clear_on_exit
@@ -143,10 +180,23 @@ class CustomCache(Cache):
             raise ValueError("clear_on_exit must be a boolean value.")
         self._clear_on_exit = value
         self._install_handlers()
+    
+    @property
+    def log_path(self):
+        return self.__log_path
+    
+    @log_path.setter
+    def log_path(self, value):
+        if not isinstance(value, (str, Path)):
+            raise TypeError(f"log_path must be a str or Path, not {type(value)}")
+        self.__log_path = Path(value) if isinstance(value, str) else value
+        if not self.__log_path.exists():
+            self.__log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.__log_path.touch()
 
     @property
     def register_location(self):
-        return self.__register_location
+        return self._register_location
     
     def _install_handlers(self):
         """

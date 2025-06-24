@@ -12,3 +12,6 @@ Splits:
 
 Limits Calculation: Eg Spot 3326.0198974609375, Cash 1095.4378642132353
     - This yields a limit of very close to 0
+
+Problematic dates for specific ticks are ffwd. This is for every child option from underlying
+Specific contracts from AAPL are causing issues with pulling data. We have filtered these ticks out and provided an avenue to handle this effortlessly in the future.
