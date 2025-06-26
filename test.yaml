@@ -1,0 +1,18 @@
+person:
+  name: John Doe
+  age: 30
+  is_student: false
+  scores:
+    math: 95
+    science: 90
+    history: 85
+cities:
+  - New York
+  - Los Angeles
+  - Chicago
+hobbies: >
+  Reading, hiking,
+  and playing chess.
+pets: |
+  I like cats 
+  and dogs.

@@ -45,6 +45,23 @@ special_dividend['COST'] = {
     '2023-12-27': 15
 }
 
+def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
+    """
+    Apply an exponential weighted moving average to a series.
+    """
+    return series.ewm(span=window).mean()
+
+ADD_COLUMNS_FACTORY = {'ewm_smooth': ewm_smooth_data}
+
+def add_columns(series:pd.Series, col_to_add:int, factory=ADD_COLUMNS_FACTORY):
+    """
+    Add new columns to a DataFrame using a factory function.
+    """
+    return factory[col_to_add](series)
+
+
+
+
 def get_order_cache():
     """
     Returns the order cache
@@ -623,11 +640,13 @@ class RiskManager:
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
         self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
         self.__sizer = None
+        self.add_columns = []
 
     @property 
     def option_data(self):
         global close_cache
         return close_cache  
+    
     
     @property
     def order_cache(self):
@@ -681,6 +700,17 @@ class RiskManager:
     def actions(self):
         return pd.DataFrame(self._actions).T
 
+    def submit_add_columns(self, columns: Tuple[str, str]):
+        """
+        Submits additional columns to be added to the risk manager's data.
+        Args:
+            columns (Tuple[str, str]): A tuple containing the column names to be added.
+        Raises:
+            AssertionError: If the first column is not one of the recognized columns or if the second column is not in the ADD_COLUMNS_FACTORY.
+        """
+        assert columns[0] in ['Midpoint', 'Delta', 'Open', 'Close', 'Closeask', 'Closebid'], f"Column {columns[0]} not recognized, expected 'Midpoint', 'Delta', 'Open', 'Close', 'Closeask', or 'Closebid'"
+        assert columns[1] in ADD_COLUMNS_FACTORY.keys(), f"Column {columns[1]} not recognized, expected {ADD_COLUMNS_FACTORY.keys()}"
+        self.add_columns.append(columns)
 
     def set_splits(self, d):
         """
@@ -985,9 +1015,16 @@ Quanitity Sizing Type: {self.sizing_type}
         position_data['r'] = self.rf_timeseries ## Risk free rate at the time of the position
         position_data['y'] = self.dividend_timeseries[ticker] ## Dividend yield at the time of the position
         position_data['spread'] = position_data['Closeask'] - position_data['Closebid'] ## Spread is the difference between the ask and bid prices
+
+        ## PRICE_ON_TO_DO: No need to change
+        ## Add the additional columns to the position data
         position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
         position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
+        if self.add_columns:
+            for col in self.add_columns:
+                position_data[f"{col[0]}_{col[1]}".capitalize()] = ADD_COLUMNS_FACTORY[col[1]](position_data[col[0]])
         self.position_data[positionID] = position_data
+
         return position_data
 
 
@@ -1028,6 +1065,7 @@ Quanitity Sizing Type: {self.sizing_type}
         """
         Generate spot greeks for a given option tick.
         """
+        ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
         meta = parse_option_tick(opttick)
         data_manager = OptionDataManager(opttick=opttick)
         greeks = data_manager.get_timeseries(start = self.start_date,
@@ -1143,6 +1181,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     adj_data = adj_data[adj_data.index < event_date]
 
                 # Apply price transformation if SPLIT
+                ## PRICE_ON_TO_DO: No need to change this. These are necessary columns
                 if event_type == 'SPLIT':
                     cols = ['Midpoint', 'Closeask', 'Closebid']
                     if compare_dates.is_before(check_date, event_date):
