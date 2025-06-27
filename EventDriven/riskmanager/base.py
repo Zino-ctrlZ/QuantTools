@@ -31,11 +31,14 @@ from cachetools import cachedmethod
 from functools import lru_cache
 from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
-
+import yaml
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
+
+with open(f'{os.environ["WORK_DIR"]}/EventDriven/riskmanager/config.yaml', 'r') as f:
+    CONFIG = yaml.safe_load(f)
 # logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
 order_cache = CustomCache(BASE, fname = "order")
 
@@ -49,6 +52,7 @@ def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
     """
     Apply an exponential weighted moving average to a series.
     """
+    window = CONFIG.get('smooth_ewn_span', window)
     return series.ewm(span=window).mean()
 
 ADD_COLUMNS_FACTORY = {'ewm_smooth': ewm_smooth_data}
@@ -641,6 +645,7 @@ class RiskManager:
         self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
         self.__sizer = None
         self.add_columns = []
+        self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
 
     @property 
     def option_data(self):
@@ -708,8 +713,13 @@ class RiskManager:
         Raises:
             AssertionError: If the first column is not one of the recognized columns or if the second column is not in the ADD_COLUMNS_FACTORY.
         """
+        assert isinstance(columns, tuple) and len(columns) == 2, "columns must be a tuple of two strings"
         assert columns[0] in ['Midpoint', 'Delta', 'Open', 'Close', 'Closeask', 'Closebid'], f"Column {columns[0]} not recognized, expected 'Midpoint', 'Delta', 'Open', 'Close', 'Closeask', or 'Closebid'"
         assert columns[1] in ADD_COLUMNS_FACTORY.keys(), f"Column {columns[1]} not recognized, expected {ADD_COLUMNS_FACTORY.keys()}"
+        ## Check if the columns already exist in the add_columns list
+        if columns in self.add_columns:
+            logger.info(f"Column {columns} already exists in add_columns, skipping addition")
+            return
         self.add_columns.append(columns)
 
     def set_splits(self, d):
@@ -903,7 +913,16 @@ Quanitity Sizing Type: {self.sizing_type}
         dict: Updated order dictionary with the close price
         """
 
-        close = self.position_data[position_id][self.option_price.capitalize()][date]
+        skip = self.position_data[position_id]['Midpoint_skip_day'][date]
+        if skip:
+            self.skip_adj_count += 1
+            
+            close = self.position_data[position_id]['Midpoint'].ewm(span = 3).mean()[date] if self.option_price == 'Midpoint' \
+                else self.position_data[position_id][self.option_price.capitalize()][date]
+            logger.info(f"***TESTING WITH EWM PRICE*** Position ID: {position_id}, Date: {date} - Skipping Day, using EWM Price")
+            logger.info(f"OLD CLOSE: {order['data']['close']}, NEW CLOSE: {close}, PCT_CHANGE: {(close - order['data']['close'])/order['data']['close']*100:.2f}%")
+        else:
+            close = self.position_data[position_id][self.option_price.capitalize()][date]
         order['data']['close'] = close
         return order
     
@@ -1082,7 +1101,8 @@ Quanitity Sizing Type: {self.sizing_type}
                                             interval = '1d',
                                             type_ = 'spot',
                                             extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
-        spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
+        # spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
+        spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
         data = greeks.join(spot)
         return data
 
