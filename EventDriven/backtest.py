@@ -25,7 +25,8 @@ class OptionSignalBacktest():
     
     def __init__(self, trades: pd.DataFrame, 
                  initial_capital: int | float =100000, 
-                 t_plus_n: float = 0 ) -> None:
+                 t_plus_n: float = 0,
+                  symbol_list = None ) -> None:
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -43,9 +44,9 @@ class OptionSignalBacktest():
         trades = self.__handle_t_plus_n(trades)
         unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
         self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
-        self.__construct_data(trades, initial_capital)
+        self.__construct_data(trades, initial_capital, symbol_list)
         
-    def __construct_data(self, trades: pd.DataFrame, initial_capital: int) -> None: 
+    def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
         self.start_date = pd.to_datetime(trades['EntryTime']).min()
         self.end_date = pd.to_datetime(trades['ExitTime']).max()
         self.bars_trades = trades
@@ -53,7 +54,7 @@ class OptionSignalBacktest():
         
         #initialize critical components 
         self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
-        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades)
+        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)

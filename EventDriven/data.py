@@ -258,7 +258,7 @@ class HistoricTradeDataHandler(DataHandler):
     convert that to signals of 1 (for buy), -1 (for sell), 0 (for do nothing)
     """
     
-    def __init__(self, events: EventScheduler, trades_df: pd.DataFrame): 
+    def __init__(self, events: EventScheduler, trades_df: pd.DataFrame, symbol_list: Optional[list] = None): 
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -272,6 +272,7 @@ class HistoricTradeDataHandler(DataHandler):
         self.events = events
         self._open_trade_data()
         self.options_data = {}
+        self.symbol_list = symbol_list if symbol_list is not None else self.trades_df['Ticker'].unique().tolist()
         
     def _open_trade_data(self): 
         """
@@ -279,7 +280,7 @@ class HistoricTradeDataHandler(DataHandler):
         1 for LONG, 2 for SHORT, -1 for EXIT
         """
         unique_tickers = self.trades_df['Ticker'].unique()
-        self.symbol_list = unique_tickers
+        # self.symbol_list = unique_tickers
         self.trades_df['EntryTime'] = pd.to_datetime(self.trades_df['EntryTime'])
         self.trades_df['ExitTime'] = pd.to_datetime(self.trades_df['ExitTime'])
         
