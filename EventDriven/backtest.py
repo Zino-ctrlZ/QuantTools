@@ -47,7 +47,7 @@ class OptionSignalBacktest():
         self.__construct_data(trades, initial_capital, symbol_list)
         
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
-        self.start_date = pd.to_datetime(trades['EntryTime']).min()
+        self.start_date = pd.to_datetime(trades['EntryTime']).min() - BDay(1)
         self.end_date = pd.to_datetime(trades['ExitTime']).max()
         self.bars_trades = trades
         self.initial_capital = initial_capital
