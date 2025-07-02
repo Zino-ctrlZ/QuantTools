@@ -186,3 +186,5 @@ trade/helpers/*vol_resolve*.json
 
 ## Pickle files
 *.pkl
+
+\qtenv

@@ -6,7 +6,7 @@ import http.client
 import json
 
 # {'end_date': 20250619, 'root': 'AAPL', 'use_csv': 'true', 'exp': 20241220, 'right': 'C', 'start_date': 20170101, 'strike': 220000, 'url': 'http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20170101&strike=220000'}
-conn = http.client.HTTPConnection("34.235.162.150", 5500)
+conn = http.client.HTTPConnection("54.144.4.219", 5500)
 payload = json.dumps({
   "method": "GET",
   "url": 'http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20240101&strike=220000'
