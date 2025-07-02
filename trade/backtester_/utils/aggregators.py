@@ -877,7 +877,7 @@ class AggregatorParent(ABC):
         except AttributeError:
             equity = self._equity
         except Exception:
-            raise Exception('Either implement pf_value_ts method or self.equity')
+            raise Exception('Either implement pf_value_ts method or self._equity')
 
         try:
             ## Function call for trades
@@ -905,6 +905,9 @@ class AggregatorParent(ABC):
             'Equity Peak [$]': self.peak_value_func(),
             'Return [%]': rtrn_,
             'Buy & Hold Return [%]': self.buyNhold(),
+            'Median Daily Return [%]': f"{self.daily_rtrns().median(): .4%}",
+            'VaR 95% [%]': f"{self.daily_rtrns().quantile(0.05): .2%}",
+            'VaR 05% [%]': f"{self.daily_rtrns().quantile(0.95): .2%}",
             'CAGR [%]':  self.cagr(),
             'Volatility Ann. [%]': self.vol_annualized(),
             'Sharpe Ratio': self.sharpe(risk_free_rate),

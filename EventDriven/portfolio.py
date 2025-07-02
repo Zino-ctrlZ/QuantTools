@@ -162,6 +162,13 @@ class OptionSignalPortfolio(Portfolio):
     @property
     def order_settings(self):
         return self._order_settings
+
+    @property
+    def option_price(self):
+        """
+        Getter for Option Price. Option price is the price trades will be executed at.
+        """
+        return self.risk_manager.option_price
     
     @order_settings.setter
     def order_settings(self, settings, *args, **kwargs):
@@ -662,7 +669,9 @@ class OptionSignalPortfolio(Portfolio):
         print(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
         self.eventScheduler.put(buy_signal_event)    
-        
+    
+    ## FIXME: Make this better. It is for premiums when expiring
+    ## PRICE_ON_TO_DO: Adjust this to use `option_price` from RiskManager
     def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
         """
         get the premium of each contract in a position
@@ -782,7 +791,7 @@ class OptionSignalPortfolio(Portfolio):
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
                 
                 # open a new position after exercise
-                new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.OPEN.value, signal_id=fill_event.signal_id)
+                new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.LONG.value, signal_id=fill_event.signal_id)
                 self.eventScheduler.put(new_signal)
             
             
@@ -896,7 +905,7 @@ class OptionSignalPortfolio(Portfolio):
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position 
         """
-        return self.risk_manager.position_data[position['trade_id']]['Midpoint'][pd.to_datetime(self.eventScheduler.current_date)]
+        return self.risk_manager.position_data[position['trade_id']][self.option_price.capitalize()][pd.to_datetime(self.eventScheduler.current_date)]
 
     
     
