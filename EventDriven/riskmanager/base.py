@@ -1007,7 +1007,7 @@ Quanitity Sizing Type: {self.sizing_type}
             logger.info(f"Start Date: {self.start_date}")
             logger.info(f"End Date: {self.end_date}")
             
-            print(f"Calculating Greeks for {_id} on {date} in {direction} direction")
+            logger.info(f"Calculating Greeks for {_id} on {date} in {direction} direction")
             data = self.generate_option_data_for_trade(_id, date) ## Generate the option data for the trade
 
             if direction == 'L':
@@ -1587,7 +1587,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 try:
                     entry_date = self.pm.trades_map[id].entry_date
                 except Exception as e:
-                    print(f"Error getting entry date for position {id}: {e}")
+                    logger.error(f"Error getting entry date for position {id}: {e}")
                     entry_date = date
                 spot = self.chain_spot_timeseries[symbol][date] ## Use the spot price on the date (from chain cause of splits)
                 

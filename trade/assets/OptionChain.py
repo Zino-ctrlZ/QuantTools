@@ -43,7 +43,7 @@ shutdown_event = False
 def shutdown(pool):
     global shutdown_event
     shutdown_event = True
-    print('shutdown_event set')
+    logger.info('shutdown_event set')
     pool.terminate()
 
 
@@ -102,12 +102,12 @@ def produce_chain_values(chain, date, ticker, stock):
             
         
     except KeyboardInterrupt:
-        print('Interrupted by Keyboard')
+        logger.error('Interrupted by Keyboard')
         shutdown(pool)
         
 
     except Exception as e:
-        print('Exception:', e)
+        logger.error('Exception:', e)
         shutdown(pool)
         
 

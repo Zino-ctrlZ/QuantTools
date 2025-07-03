@@ -43,6 +43,6 @@ def runThreads(func, OrderedInputs: list[list],
         shutdown_event = True
         raise
     except Exception as e:
-        print('Error occurred: ', e)
+        logger.error('Error occurred: ', e)
         raise
     return list(results) if block else results

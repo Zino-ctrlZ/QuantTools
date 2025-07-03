@@ -1,17 +1,14 @@
-import os
 from dotenv import load_dotenv
-load_dotenv()
-import sys
 from helpers.helper import binomial, implied_vol_bt
 import warnings
 from helpers.Context import Context
 from helpers.Configuration import Configuration
-
 from helpers.helper import time_distance_helper
 import numpy as np
 import pandas as pd
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 import math
+load_dotenv()
 
 
 warnings.filterwarnings("ignore")

@@ -62,7 +62,7 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
         raise
 
     except Exception as e:
-        print('Error occured: ', e)
+        logger.error('Error occured: ', e)
         shutdown(pool)
         raise
 
@@ -140,7 +140,7 @@ def parallel_apply(data, func, timeout=60, pool = POOL_ENABLED):
                 try:
                     results[i] = future.result(timeout=timeout)
                 except Exception as e:
-                    print(f"Failed on row {i} ({data.iloc[i].to_dict()}): {e}")
+                    logger.error(f"Failed on row {i} ({data.iloc[i].to_dict()}): {e}")
                     results[i] = 0.0  # or np.nan
 
         return results

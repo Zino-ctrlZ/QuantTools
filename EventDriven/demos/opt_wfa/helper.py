@@ -55,6 +55,7 @@ def create_backtest_object(cash, weights, trades_, max_cash):
     evb_backtest.portfolio.risk_manager.t_plus_n = 1
     for key  in max_cash:
         if max_cash[key]*100 > evb_backtest.portfolio.allocated_cash_map[key]:
-            print(key, max_cash[key]*100, evb_backtest.portfolio.allocated_cash_map[key])
+            # print(key, max_cash[key]*100, evb_backtest.portfolio.allocated_cash_map[key])
+            pass
 
     return evb_backtest

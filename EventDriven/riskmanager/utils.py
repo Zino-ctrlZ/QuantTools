@@ -174,7 +174,7 @@ def save_info_stack():
     """
     global IDS, ID_SAVE_FILE, ID_SAVE_FOLDER
     if not IDS:
-        print("No data to save.")
+        logger.error("No data to save.")
         return
     full_data = pd.read_csv(ID_SAVE_FILE) if ID_SAVE_FILE.exists() else pd.DataFrame()
     df = pd.DataFrame(IDS)
@@ -214,7 +214,7 @@ def _retrieve_openInterest(*args, **kwargs) -> pd.DataFrame|None:
         return retrieve_openInterest(*args, **kwargs)
     except Exception as e:
         if is_thetadata_exception(e):
-            print(f"Error retrieving open interest: {e}")
+            logger.error(f"Error retrieving open interest: {e}")
             return None
         else:
             raise e
@@ -225,7 +225,7 @@ def _retrieve_eod_ohlc(*args, **kwargs) -> pd.DataFrame|None:
         return retrieve_eod_ohlc(*args, **kwargs)
     except Exception as e:
         if is_thetadata_exception(e):
-            print(f"Error retrieving EOD OHLC data: {e}")
+            logger.error(f"Error retrieving EOD OHLC data: {e}")
             return None
         else:
             raise e
@@ -333,7 +333,7 @@ def populate_cache_with_chain(tick, date, print_url = True):
         print_url = print_url
     )
     logger.info(f"Retrieved chain for {tick} on {date}")
-    print(f"Retrieved chain for {tick} on {date}")
+    logger.error(f"Retrieved chain for {tick} on {date}")
 
 
     ## Clip Chain
@@ -901,7 +901,7 @@ def populate_cache_v2(
                 return 'holiday'
 
             elif isinstance(data, str):
-                print(f"Data is a string: {data}, Error incoming...")
+                logger.error(f"Data is a string: {data}, Error incoming...")
                 
             full_data = pd.concat([full_data, data], axis=0)
 
@@ -1048,7 +1048,7 @@ def populate_cache_v2(
     
 @copy_doc(populate_cache_v2)
 def populate_cache(start_date, end_date, order_candidates, target_date, version = 2) -> str|None:
-    print(f"Populate Cache Dates: Start: {start_date}, End: {end_date}, Target: {target_date}")
+    logger.error(f"Populate Cache Dates: Start: {start_date}, End: {end_date}, Target: {target_date}")
     if version == 1:
         logger.info("Using V1")
         return populate_cache_v1(start_date, end_date, order_candidates, target_date)
@@ -1104,7 +1104,7 @@ def load_chain(date: str,
         None
         
         """
-        print(date, ticker) if print_stderr else None
+        logger.error(date, ticker) if print_stderr else None
         ## Get both calls and puts per moneyness. For 1 Moneyness, both will most be available. If not, if one is False, other True. 
         ## We will need to get two rows. 
         chain_key = f"{date}_{ticker}"
@@ -1115,7 +1115,7 @@ def load_chain(date: str,
                 start_time = time.time()
                 Stock_obj = Stock(ticker, run_chain = False)
                 end_time = time.time()
-                print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
+                logger.error(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
                 Option_Chain = Stock_obj.option_chain()
                 Spot = Stock_obj.spot(ts = False, spot_type = OptionModelAttributes.spot_type.name) ## need to use chain price to get the spot price, due to splits
                 Spot = list(Spot.values())[0]
@@ -1157,7 +1157,7 @@ def chain_details(date: str,
     if is_holiday(date):  
         return 'holiday'
     try:
-        print(date, ticker) if print_stderr else None
+        logger.error(date, ticker) if print_stderr else None
         chain_key = f"{date}_{ticker}"
         with Context(end_date=date):
             if chain_key in chain_cache:
@@ -1166,7 +1166,7 @@ def chain_details(date: str,
                 start_time = time.time()
                 Stock_obj = Stock(ticker, run_chain=False)
                 end_time = time.time()
-                print(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
+                logger.error(f"Time taken to get stock object: {end_time-start_time}") if print_stderr else None
                 try:
                     Option_Chain = Stock_obj.option_chain()
                 except:

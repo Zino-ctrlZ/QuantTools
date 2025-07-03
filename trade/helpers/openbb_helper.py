@@ -11,7 +11,7 @@ def load_openBB():
     try:
         obb.account.login(pat=openbb_key, remember_me= True)
     except Exception as e:
-        print("Error logging in to OpenBB:", e)
+        logger.error("Error logging in to OpenBB:", e)
         pass
     obb.account.refresh()
     obb.account.save()

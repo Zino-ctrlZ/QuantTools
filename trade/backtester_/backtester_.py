@@ -176,7 +176,6 @@ class PTBacktester(AggregatorParent):
             d.backtest._strategy._name = d.name
             d.backtest._strategy._runIndex = i
             if d.param_settings:
-                # print(d.name, "param_settings", d.param_settings)
                 if d.param_settings:
                     for setting, value in d.param_settings.items(): ## Set the settings for the strategy, per dataset                
                         setattr(self.strategy, setting, value)

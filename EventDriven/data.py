@@ -9,17 +9,13 @@ import datetime
 import os, os.path
 import pandas as pd
 import sys
-# sys.path.append(
-#     os.environ.get('WORK_DIR', '')) #type: ignore
-# sys.path.append(
-#     os.environ.get('DBASE_DIR', '')) #type: ignore
+from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
-
 from EventDriven.event import MarketEvent, SignalEvent
 from EventDriven.eventScheduler import EventScheduler
-
+logger = setup_logger('EventDriven.data')
 
 
 
@@ -111,7 +107,7 @@ class HistoricDataFrameDataHandler(DataHandler):
         try: 
             bars_list = self.latest_symbol_data[symbol]
         except KeyError:
-            print("That symbol is not available in the historical data set.")
+            logger.error("That symbol is not available in the historical data set.")
         else:
             return bars_list.tail(N)
         
@@ -127,7 +123,7 @@ class HistoricDataFrameDataHandler(DataHandler):
                 ## Like why not just return a row. It doesnt seem like there's another next call and generator looks to always return one row at a time? I may be wrong
                 bar = next(bar_generator)
             except StopIteration:
-                print(f"No more data available for symbol: {s}")
+                logger.error(f"No more data available for symbol: {s}")
                 self.continue_backtest = False
             else: 
                 if bar is not None:
@@ -230,7 +226,7 @@ class HistoricCSVDataHandler(DataHandler):
         try:
             bars_list = self.latest_symbol_data[symbol]
         except KeyError:
-            print("That symbol is not available in the historical data set.")
+            logger.error("That symbol is not available in the historical data set.")
         else:
             return bars_list[-N:]        
         
@@ -356,7 +352,7 @@ class HistoricTradeDataHandler(DataHandler):
                 if options is not None: 
                     self.options_data[option_id] = options # a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
                 else: 
-                    print(f"Option data not available for {option_id}") #TODO: good place to use logger
+                    logger.error(f"Option data not available for {option_id}") #TODO: good place to use logger
                 #Request ohlc data for option 
            
             

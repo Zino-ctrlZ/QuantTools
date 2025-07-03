@@ -679,7 +679,7 @@ class Stock:
                         closest_earning_date = match
 
             except Exception as e:
-                print('exception occured: ', e)
+                logger.error('exception occured: ', e)
                 return [364, ""]
             return [closest_earning_date, f"{difference.days}"]
 
@@ -709,7 +709,7 @@ class Stock:
 
             return df
         except Exception as e:
-            print(e)
+            logger.error(e)
             return []
 
     def get_typical_price(self, start, end):
