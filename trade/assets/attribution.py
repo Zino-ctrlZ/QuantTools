@@ -2,8 +2,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import sys
-# sys.path.append(
-#     os.environ.get('WORK_DIR')) # type: ignore
 from helpers.helper import binomial, implied_vol_bt
 import warnings
 from helpers.Context import Context

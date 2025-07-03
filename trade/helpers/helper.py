@@ -7,11 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import sys
 import pstats
-# sys.path.append(
-#     os.environ.get('WORK_DIR')) # type: ignore
 import warnings
 from typing import Union
-# from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
 import re
@@ -24,7 +21,6 @@ import pandas as pd
 from datetime import datetime
 from trade.helpers.parse import parse_date, parse_time
 import yfinance as yf
-# from trade.assets.rates import get_risk_free_rate_helper
 from py_vollib.black_scholes import black_scholes as bs
 from py_vollib.black_scholes.greeks.numerical import delta, vega, theta, rho
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
@@ -349,7 +345,6 @@ def import_option_keys():
     with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'rb') as f:
         option_keys = json.load(f)
 
-# import_option_keys()
 
 def save_option_keys(key, info):
     import json
@@ -359,8 +354,7 @@ def save_option_keys(key, info):
         option_keys[key] = info    
         with open(f'{os.environ["WORK_DIR"]}/trade/assets/option_key.json', 'w') as f:
             json.dump(option_keys, f)
-    # else:
-    #     print(f"{key} already exists in option_keys")
+
 
 def save_block_option_keys(block_option_keys):
     option_keys.update(block_option_keys)
@@ -533,7 +527,7 @@ def print_cprofile_internal_time_share(_stats, top_n=20, sort_by='tottime', full
     _stats.sort_stats(sort_by)
     
     all_stats = _stats.stats.items()
-    total_self_time = sum(stat[2] for _, stat in all_stats)  # stat[2] = tottime (internal time)
+    total_self_time = sum(stat[2] for _, stat in all_stats) 
 
     top_list = sorted(all_stats, key=lambda x: x[1][2], reverse=True)[:top_n]
 
@@ -728,7 +722,6 @@ def implied_vol_bs_helper(S0, K, T, r, market_price, flag='c', tol=1e-3, exp_dat
         C = bs_price - market_price
         vol_new = vol_old - C/Cprime
         bs_new = bs(flag, S0, K, T, r, vol_new)
-        # or abs(bs_new - market_price) < tol):
         if (abs((vol_old - vol_new)/vol_old)) < tol:
             break
         vol_old = vol_new
@@ -806,7 +799,6 @@ def vanna(S, K, r, T, sigma, flag, q):
     d1 = d1_helper(S, K, r, T, sigma, q)
     d2 = d2_helper(S, K, r, T, sigma, q)
     flag = flag.upper()
-    # vg = vega(flag.lower(), S, K, T, r, sigma, q)
     if sigma <= 0:
         raise ValueError("Volatility must be positive.")
     flag = flag.upper()
@@ -1110,7 +1102,6 @@ def generate_option_tick(symbol, right, exp, strike):
         strike = float(strike)
     
     key = symbol.upper() + tick_date + pad_string(strike) +right.upper()
-    # save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
 
@@ -1161,7 +1152,6 @@ def generate_option_tick_new(symbol, right, exp, strike) -> str:
         strike = float(strike)
     
     key = symbol.upper() + tick_date + right.upper() + f'{strike}' 
-    # save_option_keys(key, {'ticker': symbol, 'put_call': right, 'exp_date': exp, 'strike': float(strike)})
     return key
 
 def wait_for_response(wait_time, condition_func, interval):

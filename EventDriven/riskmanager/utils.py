@@ -79,9 +79,9 @@ import signal
 
 
 
-logger = setup_logger('QuantTools.EventDriven.riskmanager.utils')
+logger = setup_logger('QuantTools.EventDriven.riskmanager')
 time_logger = setup_logger('QuantTools.EventDriven.riskmanager.time')
-logger.info("RISK MANAGER is Using Old DataManager")
+logger.info("RISK MANAGER is Using New DataManager")
 
 
 ## There's no point loading only within strt, end. Load all to avoid 
@@ -1018,7 +1018,6 @@ def populate_cache_v2(
 
 
 
-            # Now my dear friends, we update cache of unavailable ticks
             start_time = time.time()
             update_cache_with_missing_ticks(parsed_opts = to_update_cache_data, date = target_date)
             end_time = time.time()
@@ -1083,8 +1082,6 @@ def return_closePrice(id: str,
         try:
             logger.info(f"Removing {cache_key} from cache, since date {date} not in close data") 
             DELETED_KEYS.append(cache_key)
-            # del close_cache[cache_key]
-            # del oi_cache[cache_key]
         except KeyError:
             pass
         return None
@@ -1157,7 +1154,7 @@ def chain_details(date: str,
     """
     return_dataframe = pd.DataFrame()
     errors = {}
-    if is_holiday(date):  # Replaced is_USholiday() with the optimized function
+    if is_holiday(date):  
         return 'holiday'
     try:
         print(date, ticker) if print_stderr else None
@@ -1319,8 +1316,6 @@ def produce_order_candidates(settings: dict,
             _thread = Thread(target=hacked_chain_details, args=(date, tick, spec['dte'], spec['rel_strike'], right, spec['moneyness_width']), kwargs={'direction': spec['direction']})
             _thread.start()
             thread_list.append(_thread)
-            # chain = chain_details(date, tick, spec['dte'], spec['rel_strike'], right,  moneyness_width = spec['moneyness_width'], direction = spec['direction'])
-            # order_candidates[spec['direction']].append(chain)
         for thread in thread_list:
             thread.join()
     else:

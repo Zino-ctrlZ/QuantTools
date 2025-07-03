@@ -114,9 +114,7 @@ class Stock:
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__close = None
-            # self.prev_close()
             self.__y = None
-            # self.div_yield()
             self.__OptChain = None
             self.__chain = None
             self.__asset_type = None
@@ -134,7 +132,6 @@ class Stock:
             """ Opting to make stock class Risk Rate personal to the instance, because the end_date can change"""
             self.init_rfrate_ts()
             self.init_risk_free_rate()
-            # self.__init_option_chain() 
 
         ## Logic to run chain, compatible with singleton behavior
         
@@ -398,7 +395,7 @@ class Stock:
         if div_type == 'value':
             dates = pd.date_range(start = div_history.index.min(), end = datetime.today() ,freq = 'B')
             div_history = div_history.reindex(dates, method = 'ffill')
-            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})#['yearly_dividend']
+            return resample(div_history['yearly_dividend'], interval, {'yearly_dividend':'last'})
         elif div_type == 'yield':
             pass
         else:
@@ -411,7 +408,7 @@ class Stock:
         spot.set_index('Date', inplace = True)
         spot['yearly_dividend'] = div_history['yearly_dividend']
         spot.fillna(method = 'ffill', inplace = True)
-        # spot.set_index('Date', inplace = True)
+
         ## Calculate Dividend Yield
         spot['dividend_yield'] = (spot['yearly_dividend']/spot['close'])
         div_yield = spot['dividend_yield']
@@ -479,7 +476,6 @@ class Stock:
                 df['close'] = df['chain_price']
                 df['cum_split_from_start'] = df['split_ratio'].cumprod()
         else:
-            # print(ts_start, ts_end, interval, provider)
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
 
         if ts:
@@ -496,13 +492,6 @@ class Stock:
                 spot = {end: df[spot_type].values[-1]}
             return spot
     
-    # def option_chain(self, date = None, return_price = 'Midpoint'):
-        # if not date:
-        #     date = self.end_date
-        # contracts = retrieve_chain_bulk(self.ticker, 0, date, date, '16:00')
-        # contracts['DTE'] = (contracts['Expiration'] - pd.to_datetime(date)).dt.days
-        # return contracts.pivot_table(index=['Expiration', 'DTE','Strike'], columns='Right',values = return_price, aggfunc=sum)
-
     def option_chain(self, date = None):
         if not date:
             date = self.end_date

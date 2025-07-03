@@ -1,11 +1,9 @@
 import sys, os
 from dotenv import load_dotenv
-# sys.path.extend([os.environ['WORK_DIR'], os.environ['DBASE_DIR']])
 from trade.assets.Option import Option
 import pandas as pd
 from datetime import datetime
 import numpy as np
-# from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
 from trade.helpers.Context import Context

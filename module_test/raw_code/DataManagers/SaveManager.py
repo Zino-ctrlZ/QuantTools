@@ -273,16 +273,6 @@ class SaveManager:
     @classmethod
     def status(cls):
         return _status(cls)
-        # return {
-        #     "pending_tasks": cls._queue.qsize(),
-        #     "max_queue_size": cls.MAX_QUEUE_SIZE,
-        #     "active_threads": sum(t.is_alive() for t in cls._threads),
-        #     "total_threads": len(cls._threads),
-        #     "current_requests": cls._current_requests,
-        #     "num_finished_requests": len(cls._finished_requests),
-        #     "num_failed_requests": len(cls._failed_requests),
-        #     "num_failed_initialization": len(cls._failed_initialization),
-        # }
 
 def _status(cls):
     """

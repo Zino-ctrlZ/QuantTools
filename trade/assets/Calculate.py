@@ -177,8 +177,7 @@ class Calculate:
         else:
             if asset.__class__.__name__ == 'Stock':
                 raise Exception("Stock can't be priced with options model. This method isn't utilized for a Stock Instance")
-            #elif isinstance(self.asset, Option):
-                ###pass variables from here to the variables to be used
+            
             if isinstance(asset, Option):
                     if K is None:
                         K = asset.K
@@ -579,7 +578,7 @@ class Calculate:
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
             
-            # print(f"Volga Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
+    
             t = time_distance_helper(asset.exp, asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
@@ -622,8 +621,6 @@ class Calculate:
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-            
-            # print(f"Gamma Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             
             t = time_distance_helper(asset.exp, asset.end_date)
             if model == 'bs':
@@ -677,8 +674,6 @@ class Calculate:
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-            
-            # print(f"Theta Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
             if model == 'bs':
                 d = theta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
@@ -721,8 +716,7 @@ class Calculate:
                         'model']
             for i in range(len(args)):
                 if args[i] is None:
-                    args[i] = getattr(asset, args_str[i])
-            # print(f"Rho Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
+                    args[i] = getattr(asset, args_str
             t = time_distance_helper(asset.exp, asset.end_date)
             if model == 'bs':
                 d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
@@ -830,8 +824,7 @@ class Calculate:
         ts_start = ts_start if ts_start else asset.start_date
         ts_end = ts_end if ts_end else asset.end_date
         start = pd.to_datetime(ts_start) - BDay(2)
-        end = pd.to_datetime(ts_end) + BDay(2)
-        # print(f"Start: {start}, End: {end}, ts_start: {ts_start}, ts_end: {ts_end}")
+        end = pd.to_datetime(ts_end) + BD
         if asset.__class__.__name__ == 'Option':
     
             ## Designate the columns to be used
@@ -1043,10 +1036,7 @@ def fullRevalPnL(
     spot_change_pnl = spot_change_pv - pv0
     S0_bump_pnl = S0_pv_bump - pv0
     delta_pnl = (S1 - S0) * S0_bump_pnl * 1000000
-    gamma_pnl = spot_change_pnl - delta_pnl
-    # print(f"Price0: {pv0}, Pv1: {pv1}, S0_pv_bump: {S0_pv_bump}, Spot Change PV: {spot_change_pv}")
-    # print(f"Spot Change PnL: {spot_change_pnl}, Spot Bump PnL: {S0_bump_pnl:.9f}")
-    # print(f'Delta PnL: {delta_pnl:.5f}, Gamma PnL: {gamma_pnl:.5f}')
+    gamma_pnl = spot_change_pnl - del
 
 
     ## Vega PnL
@@ -1062,40 +1052,23 @@ def fullRevalPnL(
     sigma_bump_pnl = sigma0_pv_bump - pv0
     vega_pnl = (sigma1 - sigma0) * sigma_bump_pnl * 1/bump
     volga_pnl = sigma_change_pnl - vega_pnl
-    vanna_pnl = sigma_plus_spot_pnl - delta_pnl - vega_pnl - gamma_pnl - volga_pnl
-    # print('')
-    # print(f'PV0: {pv0}, PV1: {pv1}')
-    # print(f"Sigm0: {sigma0}, Sigma1: {sigma1}, sigma0_pv_bump: {sigma0_pv_bump}, Sigma Change PV: {sigma_change_pv}")
-    # print(f"PnL from Sigma bump: {sigma_bump_pnl:.9f}, Sigma Change PnL: {sigma_change_pnl:.9f}")
-    # print(f'Vega PnL: {vega_pnl:.5f}, Volgamma PnL: {volga_pnl:.5f}')
-    # print(f'Vanna PnL: {vanna_pnl:.5f}')
-    # print(f'Vega Change: {sigma1 - sigma0}')
+    vanna_pnl = sigma_plus_spot_pnl - delta_pnl - vega_pnl - gamma_pnl - vol
   
     ## Theta PnL
     pv0
     pv0_tplus1 = Calculate.pv(S0 = S0, K = K, r = r0, sigma = sigma0, start = end, put_call = put_call, exp_date = exp, y = y0)
-    theta_pnl = pv0_tplus1 - pv0
-    # print('')
-    # print(f'Theta PnL: {theta_pnl:.5f}')
+    theta_pnl = pv0_tplus1
 
     ## Rho PnL
     rho_tplus1 = Calculate.pv(S0 = S0, K = K, r = r1, sigma = sigma0, start = start, put_call = put_call, exp_date = exp, y = y0)
-    rho_pnl = rho_tplus1 - pv0
-    # print('')
-    # print(f'Rho PnL: {rho_pnl:.5f}')
+    rho_pnl = rho_tplus1
 
     ## Dividend PnL
     div_tplus1 = Calculate.pv(S0 = S0, K = K, r = r0, sigma = sigma0, start = start, put_call = put_call, exp_date = exp, y = y1)
-    div_pnl = div_tplus1 - pv0
-    # print('')
-    # print(f'Dividend PnL: {div_pnl:.5f}')
+    div_pnl = div_tplus1
 
     ## Total PnL
-    total_pnl = delta_pnl + gamma_pnl + vega_pnl + volga_pnl + theta_pnl + rho_pnl + vanna_pnl + div_pnl
-    # print('')
-    # print(f'Total PnL: {total_pnl:.5f}')
-    # print(f'Actual PnL: {pv1-pv0}')
-    # print(f'Unexplained PnL: {(pv1-pv0) - total_pnl}')
+    total_pnl = delta_pnl + gamma_pnl + vega_pnl + volga_pnl + theta_pnl + rho_pnl + vanna_pnl + d
     pnl = pv1-pv0
     pnl = price1 - price0
     return {'Delta_PnL': delta_pnl*100, 

@@ -77,7 +77,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         event - Contains an Event object with order information.
         """
 
-        ## Need to add market_value here
+        ##TODO: Need to add market_value here
         if order_event.type == 'ORDER':
             fill_event = FillEvent(order_event.datetime, order_event.symbol,
                                    'ARCA', order_event.quantity, order_event.direction, fill_cost=0, commission=None, option=order_event.option, parent_event=order_event)
@@ -135,10 +135,8 @@ class SimulatedExecutionHandler(ExecutionHandler):
         except:
             pass
 
-        # quantity = order_event.quantity if order_event.quantity is not None else math.floor(order_event.cash/(price+self.commission_rate))
         commission = self.commission_rate * quantity * (len(order_event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
 
-        # market_value = (price * quantity) # cost before commission less slippage
         market_value = (order_event.position['close'] * quantity) # market value is based on the position's close price, not the slippage adjusted price
                                                             # This is to ensure that the market value is not affected by slippage, as slippage is a cost incurred after the market value is determined.
 
@@ -162,8 +160,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
         This method will execute an exercise event, calculate the pnl of the exercise and put a fill event on the queue
         """
-        assert exercise_event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {exercise_event.type}"
-        ##
+        assert exercise_event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {exercise_event.type}"       
         long_pnl = 0.0
         short_pnl = 0.0
         if exercise_event.long_premiums and 'long' in exercise_event.position:

@@ -133,7 +133,7 @@ class EventScheduler:
             else:
                 self.current_date = None
                 self.logger.info("No more dates left.")
-                return None  # No more dates left
+                return None 
 
         except (ValueError, IndexError):
             self.logger.error("Error advancing date. Possibly out of range.")

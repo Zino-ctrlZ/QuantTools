@@ -1,8 +1,6 @@
 import time
 start_time = time.time() 
 import os, sys
-# sys.path.append(os.environ['WORK_DIR'])
-# sys.path.append(os.environ['DBASE_DIR'])
 from trade.models.VolSurface import SurfaceLab
 from dbase.database.SQLHelpers import DatabaseAdapter
 from trade.helpers.helper import (change_to_last_busday, 
@@ -71,7 +69,7 @@ def get_df_set(split_df, id):
     if len(split_df) == 0:
         return pd.DataFrame()
     split_df[['expiration', 'build_date']] = split_df[['expiration', 'build_date']].astype(str)
-    # print(f'Size in ID {id} is {split_df.shape}')
+
     split_df[['price', 'vol']] = split_df.apply(lambda x: get_set(x['ticker'], x['build_date'], x['expiration'], x['right'], x['strike'], x['Spot'], x['r'], x['q']), axis = 1, result_type = 'expand')
     return split_df
 
@@ -79,8 +77,6 @@ def produce_chain_values(chain, date, ticker, stock):
     results = []
     global shutdown_event # To-do: Why after shut down event set in some situations, it is not being reset?
     shudown_event = False
-    # with Context(end_date = date):
-    # stk = Stock(ticker)
     stk = stock
     spot = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
     q = stk.div_yield()

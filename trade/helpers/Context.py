@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from trade.helpers.helper import change_to_last_busday
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
-# from trade.helpers.Configuration import Configuration, initialize_configuration
 from trade.helpers.Configuration import ConfigProxy, initialize_configuration
 Configuration = ConfigProxy()
 
@@ -110,7 +109,6 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
             Multiplier: {Configuration.timewidth}
             Timespan: {Configuration.timeframe}
             """)
-        #context_values = {'timewidth': timewidth, 'timeframe': timeframe, 'start_date': start_date, 'end_date': end_date}
         yield
 
     finally:

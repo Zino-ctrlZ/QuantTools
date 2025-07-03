@@ -10,8 +10,6 @@ from backtesting import Backtest
 import pandas as pd
 import sys
 import os
-# sys.path.append(
-#     os.environ.get('WORK_DIR'))
 from trade.assets.Stock import Stock
 import plotly.io as pio
 import plotly.express as px
@@ -79,10 +77,7 @@ def plot_portfolio(_tr: pd.DataFrame,
     fig = make_subplots(rows = 4, cols = 2, subplot_titles= subplot_titles, 
                         shared_xaxes= True, vertical_spacing=0.05, horizontal_spacing= 0.05, specs = specs, row_heights=row_heights)
 
-    # hovertemplate =  '<b>%{text}</b><br><br>' +
-    # 'Date: %{x}<br>' +
-    # 'Size: %{marker.size:.2f}<br>' +
-    # 'PnL: %{y}<br>'
+
 
     fig.add_trace(go.Scatter( x= _eq.index, y = (round(_eq.Total, 2)/_eq.Total[0]), showlegend= True, name = 'Equity Curve'),
     row = 1, col = 1
@@ -301,7 +296,6 @@ def optimize(object: 'PTBacktester',
     import threading
     import os
     from functools import partial
-    # from pathos.multiprocessing import ProcessingPool as Pool
     max_ = 0
     combo = pd.DataFrame(columns=optimize_var.keys())
     cart_plane = np.array(list(product(*optimize_var.values())))

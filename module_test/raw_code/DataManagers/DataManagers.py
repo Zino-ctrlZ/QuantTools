@@ -326,8 +326,7 @@ class SpotDataManager:
                 open_interest = resample(open_interest, PRICING_CONFIG['INTRADAY_AGG'] )
                 data['Open_interest']=open_interest
                 
-                return data#.dropna()
-                # return open_interest
+                return data
             else:
                 raise NotImplementedError("Bulk data not implemented for intra data")
             
@@ -423,7 +422,6 @@ class ChainDataManager(_ManagerLazyLoader):
                 set_attributes={'post_processed_data': data_request.post_processed_data,},
                 type_='chain',
             )
-            # _SaveManager.enqueue(kwargs)
             _SaveManager.schedule(kwargs) if SHOULD_SCHEDULE else _SaveManager.enqueue(kwargs)
 
         else:
@@ -469,7 +467,6 @@ class ChainDataManager(_ManagerLazyLoader):
         date = data_request.date
         chain = retrieve_chain_bulk(self.symbol, 0, date, date, PRICING_CONFIG['MARKET_CLOSE_TIME'])
         chain.index.name = 'build_date'
-        # self.exp = min(chain['Expiration'].unique()) ## Setting Expiration Date as an instance variable so LazyLoaderManager can use it
         chain_v2 = chain.rename(columns = {'Root':'ticker', 'Midpoint': 'price'}).drop(columns = ['Date']).reset_index()
         chain_v2.columns = [x.lower() for x in chain_v2.columns]
         chain_v2['dte'] = (chain_v2['expiration'] - chain_v2['build_date']).dt.days
@@ -480,13 +477,6 @@ class ChainDataManager(_ManagerLazyLoader):
         chain_v2['moneyness'] = chain_v2.apply(lambda x: x['spot'] / x['strike'], axis=1)
         data_request.post_processed_data = chain_v2
 
-    # @classmethod
-    # @property
-    # def REQUESTS(cls):
-    #     """
-    #     Returns the requests for the class
-    #     """
-    #     return get_chain_requests()
 
     @staticmethod
     def one_off_save(date:str,
@@ -687,7 +677,6 @@ class BulkOptionDataManager(_ManagerLazyLoader):
                 ## Add inputs to raw data, this is necessary for vol calculation
                 add_inputs_to_raw(self, data_request=data_request, bulk = True) ## Not formatting yet, this is to utilize joins on datetime
                 vol_data = self.vol_manager.calculate_iv(data_request=data_request)
-                # data_request.raw_spot_data = pd.concat([data_request.raw_spot_data, vol_data], axis=1)
                 if type_ in self.greek_names:
                     greek_data = self.greek_manager.calculate_greeks(type_, data_request = data_request)
             format_raw_spot_data(data_request=data_request)
@@ -701,7 +690,6 @@ class BulkOptionDataManager(_ManagerLazyLoader):
                                                               right=None, bulk=True, 
                                                               data_request=data_request)
 
-            # raw_spot_data['Datetime'] = pd.to_datetime(raw_spot_data['Datetime'])
             data_request.raw_spot_data = raw_spot_data
             if type_ != 'spot':
                 add_inputs_to_raw(self, data_request=data_request, bulk = True)
@@ -790,14 +778,6 @@ class BulkOptionDataManager(_ManagerLazyLoader):
         """
         bulk_one_off_save(start, end, tick, exp, print_info)
 
-    # @classmethod
-    # @property
-    # def REQUESTS(cls):
-    #     """
-    #     Returns the requests for the class
-    #     """
-    #     return get_bulk_requests()
-
 
 class OptionDataManager(_ManagerLazyLoader):
     """
@@ -868,13 +848,6 @@ class OptionDataManager(_ManagerLazyLoader):
 
         ## Prefer to use dicts to avoid having too many attributes
 
-    # @classmethod
-    # @property
-    # def REQUESTS(cls):
-    #     """
-    #     Returns the requests for the class
-    #     """
-    #     return get_single_requests()
 
     def get_timeseries(self, 
                        start: str | datetime, 
@@ -1213,7 +1186,6 @@ def save_to_database(data_request: 'RequestParameter',
         spot_sm['Strike'] = data_request.strike
         spot_sm['Expiration'] = data_request.exp
         spot_sm['Put/Call'] = data_request.right
-        # spot_sm['OptionTick'] = spot_sm.apply(lambda x: generate_option_tick_new(data_request.symbol, x['Put/Call'], x['Expiration'], x['Strike']), axis=1)
         spot_sm['OptionTick'] = data_request.opttick
         spot_sm['Underlier'] = data_request.symbol
         

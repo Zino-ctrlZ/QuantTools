@@ -6,8 +6,6 @@
 
 import sys
 import os
-# sys.path.append(
-#     os.environ.get('WORK_DIR'))
 from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
@@ -232,7 +230,6 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long 
     return excess_retrns/annualized_vol
 
 
-# YES
 def sortino(equity_timeseries: pd.DataFrame, risk_free_rate: float, MAR: Optional[float] = None) -> float:
     """
     Returns the Sortino ratio of the portfolio
@@ -562,7 +559,7 @@ class AggregatorParent(ABC):
         self.__port_stats = None
         self._trades = None
 
-    # @copy_doc_from(dates_)
+    @copy_doc_from(dates_)
     def dates_(self, start: bool):
         try:
             overwrite = pd.to_datetime(getattr(self, 'start_overwrite')).date()
@@ -661,7 +658,6 @@ class AggregatorParent(ABC):
         # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
         return sharpe(self._equity, risk_free_rate)
 
-    # YES
     def sortino(self, risk_free_rate: float, MAR: Optional[float] = None) -> float:
         """
         Returns the Sortino ratio of the portfolio

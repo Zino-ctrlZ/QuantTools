@@ -6,8 +6,6 @@
 import os, sys
 from dotenv import load_dotenv
 load_dotenv()
-# sys.path.append(os.environ['WORK_DIR'])
-# sys.path.append(os.environ['DBASE_DIR'])
 import matplotlib.pyplot as plt 
 plt.style.use('ggplot')
 import math
@@ -1199,7 +1197,6 @@ class CallVolSurfaceBuilder(SurfaceBuilder):
     """
     def __init__(self, date, full_chain, dumas_width):
         super().__init__( date, full_chain, 'C', dumas_width)
-        # self.build_model()
 
     def build_surface(self):
         return super().build_surface()

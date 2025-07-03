@@ -129,7 +129,7 @@ class OptionSignalPortfolio(Portfolio):
         self.unprocessed_signals = []
         self.resolve_orders = True 
         self.allow_multiple_trades = True # allow multiple trades for the same signal_id
-        self.risk_manager.pm = self #
+        self.risk_manager.pm = self 
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -217,7 +217,6 @@ class OptionSignalPortfolio(Portfolio):
                 assert isinstance(settings[key], value_type), f'Expected `{key}` to be of type {value_type}, got {type(settings[key])}'
             
     
-    # if weight map is set externally, recalculate the allocated cash map
     @property
     def weight_map(self): 
         return self.__weight_map
@@ -237,7 +236,7 @@ class OptionSignalPortfolio(Portfolio):
         if isinstance(max_contract_price, int):
             max_contract_price = {s: max_contract_price for s in self.symbol_list}
         assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
-        self.__max_contract_price = deepcopy(max_contract_price) ## Was editing the original dict
+        self.__max_contract_price = deepcopy(max_contract_price)
         
 
         
@@ -352,8 +351,6 @@ class OptionSignalPortfolio(Portfolio):
         return self.trades
     
     def get_port_stats(self):
-        ## NOTE: I want to pass false if backtest is not run. How?
-        ## if the latest date on the bars is equal to the start date, backtest has yet to run
         current_date = pd.to_datetime(self.eventScheduler.current_date)
         if pd.to_datetime(self.start_date) == pd.to_datetime(current_date):
             return False
@@ -408,9 +405,9 @@ class OptionSignalPortfolio(Portfolio):
             
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}')
-            position['close'] = self.calculate_close_on_position(position) #calculate close price on position
+            position['close'] = self.calculate_close_on_position(position)
             skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal_event.datetime]
-            #on the off case where close price is negative, move sell to next trading day
+            ## on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
                 if isinstance(signal_event.parent_event, RollEvent): ## If rolling, do not move to next trading day
                     self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, skipping sell for roll event')
@@ -436,7 +433,7 @@ class OptionSignalPortfolio(Portfolio):
         date_str = signal_event.datetime.strftime('%Y-%m-%d')
         position_type = 'C' if signal_event.signal_type == 'LONG' else 'P'
         # position_type = 'P'
-        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1) #use 90% of cash to buy contracts, leaving room for slippage and commission
+        cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
         position_result = self.risk_manager.get_order(tick = signal_event.symbol, 
@@ -485,9 +482,9 @@ class OptionSignalPortfolio(Portfolio):
         UNSUCCESSFUL: log warning
         UNAVAILABLE_CONTRACT: log warning
         """
-        if position_result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: # adjust moneyness width if moneyness_tracket_index has not exceeded threshold and add to queue   
-            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set 
-            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] #increase moneyness width by 20%
+        if position_result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: 
+            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) 
+            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] 
             new_signal = deepcopy(signal)
             new_signal.order_settings = order_settings
             
@@ -498,11 +495,11 @@ class OptionSignalPortfolio(Portfolio):
             else:
                 self.moneyness_tracker[signal.signal_id] += 1
             
-            # if moneyness width has been adjusted more than threshold, do not generate order
+            
             if moneyness_tracker_index > self.min_moneyness_threshold: 
                 new_max_price = self.__max_contract_price[signal.symbol]
                 new_signal_on_dte = deepcopy(signal) 
-                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings #first run threshold is exceeded, use default order settings, on next runs use signal order settings
+                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings 
                 self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
                 print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
                 self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
@@ -518,7 +515,7 @@ class OptionSignalPortfolio(Portfolio):
            
             
                 
-        elif position_result == ResultsEnum.IS_HOLIDAY.value or position_result == ResultsEnum.NO_TRADED_CLOSE.value: #move signal to next trading day
+        elif position_result == ResultsEnum.IS_HOLIDAY.value or position_result == ResultsEnum.NO_TRADED_CLOSE.value: 
             next_trading_day = signal.datetime + pd.offsets.BusinessDay(1)
             new_signal = deepcopy(signal)
             new_signal.datetime = next_trading_day
@@ -527,10 +524,10 @@ class OptionSignalPortfolio(Portfolio):
             self.eventScheduler.schedule_event(next_trading_day, new_signal)
             
                 
-        elif position_result == ResultsEnum.MAX_PRICE_TOO_LOW.value: #adjust max_price by 20% on max_price dict and add to queue
+        elif position_result == ResultsEnum.MAX_PRICE_TOO_LOW.value: 
             initial_contract_max_price = self.__max_contract_price[signal.symbol] if signal.max_contract_price is None else signal.max_contract_price
             new_max_price = initial_contract_max_price * self.max_contract_price_factor
-            allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) ## Max price should not exceed allocated cash
+            allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) 
             
             if new_max_price > allocated_cash:
                 new_max_price = self.__max_contract_price[signal.symbol]
@@ -550,7 +547,7 @@ class OptionSignalPortfolio(Portfolio):
     
             
         elif position_result == ResultsEnum.TOO_ILLIQUID.value or position_result == ResultsEnum.NO_ORDERS.value:
-            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) # use default order settings if signal order settings not set
+            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) 
             order_settings = self.__reduce_order_settings_dte_by_factor(order_settings)
             dte = order_settings['specifics'][0]['dte']
             
@@ -583,7 +580,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         assert event.type == 'SIGNAL', f"Expected 'SIGNAL' event type, got {event.type}"
         
-        # if multiple trades on a tick are not allowed, check if a position already exists for the symbol and if position is still open
+        
         if not self.allow_multiple_trades and event.signal_type != SignalTypes.CLOSE.value:
             if len(self.current_positions[event.symbol].keys()) > 0: 
                 for signal_id in self.current_positions[event.symbol]:
@@ -795,8 +792,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.eventScheduler.put(new_signal)
             
             
-        # update current_Positions with new position data
-        # self.current_positions[fill_event.symbol]= new_position_data
+
         self.current_positions[fill_event.symbol][fill_event.signal_id] = new_position_data
 
     def update_holdings_on_fill(self, fill_event: FillEvent):
@@ -948,10 +944,7 @@ class OptionSignalPortfolio(Portfolio):
                         signal_id
                     ])
 
-        # Create DataFrame
         df = pd.DataFrame(records, columns=['datetime', 'symbol', 'long', 'short', 'trade_id', 'close', 'quantity', 'market_value', signal_id])
-
-        # Set MultiIndex (datetime → symbol)
         df.set_index(['datetime', 'symbol'], inplace=True)
         df.index = df.index.set_levels(pd.to_datetime(df.index.levels[0]), level=0)  # Ensure datetime index
         return df

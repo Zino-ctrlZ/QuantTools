@@ -41,7 +41,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 
 logger = setup_logger("DataManager.SaveManager_process")
 timer = setup_logger("DataManager.SaveManager_process.Timer")
-# CTX = mp.get_context("fork")
+CTX = mp.get_context('forkserver')  # Use 'forkserver' to avoid issues with pickling
 JOB_TIMEOUT = 60 * 10  # 10 minutes
 JOB_TIMEOUTS = {
     'bulk': 60 * 60 * 3,  # 3 hours
@@ -141,68 +141,6 @@ class ProcessSaveManager:
         cls._failed_initialization = get_shared_list("failed_initialization")
 
 
-    # @classmethod
-    # def _worker(cls):
-    #     # cls.initialize()
-    #     while True:
-    #         from .shared_obj import setup_shared_objects
-    #         setup_shared_objects()  # ensure all proxies are re-bound in this process
-    #         try:
-
-    #             start = time.time()
-    #             thread_name = mp.current_process().name ## Get the name of the current thread
-    #             kwargs = cls._queue.get()
-    #             cls.__decrease_qsize() ## Decrease after getting the request
-    #             if kwargs is None: ## This is the signal to stop the worker 
-    #                 break
-    #             save_func = kwargs.pop('save_func')                
-    #             request = create_request_bulk(**kwargs)
-    #             if request is None:
-    #                 cls._queue.task_done()
-    #                 continue
-
-    #             ## Set current request before processing
-    #             with cls._lock: ## Ensures that only one thread can access this block at a time
-    #                 cls._current_requests[thread_name] = request
-    #                 print(f"[ProcessSaveManager] Current requests: {cls._current_requests}, inside lock")
-    #                 print(f"[ProcessSaveManager] Processing save request for {request.symbol} on {request}, thread {thread_name}")
-                
-    #             print(request)
-    #             print(f"Worker {thread_name} got a request")
-    #             print(f"Worker {thread_name} got a request: {request}")
-    #         except Exception as e:
-    #             ## Removing request incase it failed in initialization
-    #             _remove_request_from_list(kwargs)
-    #             logger.error(f"[ProcessSaveManager] Error getting request from queue: {e}")
-    #             logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
-    #             cls._failed_initialization.append(f"{kwargs['tick']}_{kwargs['exp']}: {e}\n{traceback.format_exc()}")
-    #             cls.schedule(kwargs)
-    #             cls._queue.task_done()
-    #             continue
-
-    #         try:
-    #             save_func(request)
-    #             end = time.time()
-    #             timer.info(f"Request Dict: {request.__dict__}, Class Name: {request.__class__.__name__}")
-    #             timer.info(f"[ProcessSaveManager] Worker {thread_name} finished processing request in {end - start:.2f} seconds.")
-                
-    #             with cls._lock:
-    #                 cls._finished_requests.append(request)
-    #                 del cls._current_requests[thread_name]
-                    
-    #         except Exception as e:
-    #             _remove_request_from_list(kwargs)
-    #             logger.error(f"[SaveWorker] Error processing save: {e}")
-
-    #             with cls._lock:
-    #                 request.error = f"{e}\n{traceback.format_exc()}"
-    #                 request.class_name = request.__class__.__name__
-    #                 cls._failed_requests.append(request)
-    #                 save_failed_request(request)
-    #                 del cls._current_requests[thread_name]
-    #         finally:
-    #             cls._queue.task_done()
-
     @classmethod
     def _worker(cls):
         from .shared_obj import setup_shared_objects
@@ -215,7 +153,6 @@ class ProcessSaveManager:
                 print(f"[{mp.current_process().name}] Got job: {job_type}")
                 timeout = JOB_TIMEOUTS.get(job_type, JOB_TIMEOUT)
                 print(f"[{mp.current_process().name}] Timeout for job: {timeout}")
-                # cls.__decrease_qsize()
             except Empty as e:
                 print(f"[{mp.current_process().name}] Queue is empty, continuing...")
                 continue
@@ -293,7 +230,6 @@ class ProcessSaveManager:
         cls.initialize()
         for i in range(cls.WORKER_COUNT):
             t = CTX.Process(target=cls._worker, daemon=False, name =f"SaveWorker-{i}")
-            # t = Thread(target=cls._worker, daemon=True, name =f"SaveWorker-{i}")
             t.start()
             t.name = f"SaveWorker-{t.pid}"
             cls._threads.append(t)
@@ -342,7 +278,6 @@ class ProcessSaveManager:
         kwargs['save_func'] = partial(kwargs['save_func'], pool = False)
         cls.auto_setup()
         _enqueue(cls, kwargs)
-        # cls.__increase_qsize() ## Increase after putting the request
 
     @classmethod
     def schedule(cls, kwargs):
@@ -368,16 +303,6 @@ class ProcessSaveManager:
     @classmethod
     def status(cls):
         return _status(cls)
-        # return {
-        #     "pending_tasks": cls._qsize.value,
-        #     "max_queue_size": cls.MAX_QUEUE_SIZE,
-        #     "active_processes": sum(t.is_alive() for t in cls._threads),
-        #     "total_processes": len(cls._threads),
-        #     "current_requests": dict(cls._current_requests.items()),
-        #     "num_finished_requests": len(cls._finished_requests),
-        #     "num_failed_requests": len(cls._failed_requests),
-        #     "failed_initialization": len(cls._failed_initialization),
-        # }
 
 ## Use to reset signals in the worker process
 def reset_signals_in_worker():
@@ -392,3 +317,69 @@ if __name__ == "__main__":
     get_manager()
     ProcessSaveManager.initialize()
     ProcessSaveManager.start_workers()
+
+
+
+
+
+    # @classmethod
+    # def _worker(cls):
+    #     # cls.initialize()
+    #     while True:
+    #         from .shared_obj import setup_shared_objects
+    #         setup_shared_objects()  # ensure all proxies are re-bound in this process
+    #         try:
+
+    #             start = time.time()
+    #             thread_name = mp.current_process().name ## Get the name of the current thread
+    #             kwargs = cls._queue.get()
+    #             cls.__decrease_qsize() ## Decrease after getting the request
+    #             if kwargs is None: ## This is the signal to stop the worker 
+    #                 break
+    #             save_func = kwargs.pop('save_func')                
+    #             request = create_request_bulk(**kwargs)
+    #             if request is None:
+    #                 cls._queue.task_done()
+    #                 continue
+
+    #             ## Set current request before processing
+    #             with cls._lock: ## Ensures that only one thread can access this block at a time
+    #                 cls._current_requests[thread_name] = request
+    #                 print(f"[ProcessSaveManager] Current requests: {cls._current_requests}, inside lock")
+    #                 print(f"[ProcessSaveManager] Processing save request for {request.symbol} on {request}, thread {thread_name}")
+                
+    #             print(request)
+    #             print(f"Worker {thread_name} got a request")
+    #             print(f"Worker {thread_name} got a request: {request}")
+    #         except Exception as e:
+    #             ## Removing request incase it failed in initialization
+    #             _remove_request_from_list(kwargs)
+    #             logger.error(f"[ProcessSaveManager] Error getting request from queue: {e}")
+    #             logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
+    #             cls._failed_initialization.append(f"{kwargs['tick']}_{kwargs['exp']}: {e}\n{traceback.format_exc()}")
+    #             cls.schedule(kwargs)
+    #             cls._queue.task_done()
+    #             continue
+
+    #         try:
+    #             save_func(request)
+    #             end = time.time()
+    #             timer.info(f"Request Dict: {request.__dict__}, Class Name: {request.__class__.__name__}")
+    #             timer.info(f"[ProcessSaveManager] Worker {thread_name} finished processing request in {end - start:.2f} seconds.")
+                
+    #             with cls._lock:
+    #                 cls._finished_requests.append(request)
+    #                 del cls._current_requests[thread_name]
+                    
+    #         except Exception as e:
+    #             _remove_request_from_list(kwargs)
+    #             logger.error(f"[SaveWorker] Error processing save: {e}")
+
+    #             with cls._lock:
+    #                 request.error = f"{e}\n{traceback.format_exc()}"
+    #                 request.class_name = request.__class__.__name__
+    #                 cls._failed_requests.append(request)
+    #                 save_failed_request(request)
+    #                 del cls._current_requests[thread_name]
+    #         finally:
+    #             cls._queue.task_done()

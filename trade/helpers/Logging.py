@@ -12,7 +12,6 @@ STREAM_LOG_LEVEL = 'DEBUG'
 FILE_LOG_LEVEL = 'INFO'
 PROPAGATE_TO_ROOT_LOGGER = 'False'
 """)
-# FILENAME = 'Logging.ipynb'
 from logging.handlers import TimedRotatingFileHandler
 
 def find_project_root(current_path: Path, marker=".git"):

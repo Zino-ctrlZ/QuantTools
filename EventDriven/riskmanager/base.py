@@ -39,9 +39,8 @@ BASE.mkdir(exist_ok=True)
 
 with open(f'{os.environ["WORK_DIR"]}/EventDriven/riskmanager/config.yaml', 'r') as f:
     CONFIG = yaml.safe_load(f)
-# logger = setup_logger('QuantTools.EventDriven.riskmanager.base')
-order_cache = CustomCache(BASE, fname = "order")
 
+order_cache = CustomCache(BASE, fname = "order")
 special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
 special_dividend['COST'] = {
     '2020-12-01': 10,
@@ -198,7 +197,7 @@ class OrderPicker:
             logger.info(f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
             min_m, max_m = 2-schema['min_moneyness'], 2 - schema['max_moneyness']
             schema['min_moneyness'] = min(min_m, max_m) ## For Calls, we want the min moneyness to be 2 - min_moneyness
-            schema['max_moneyness'] = max(min_m, max_m) ## For Calls, we want the max moneyness to be 2 - max_moneyness
+            schema['max_moneyness'] = max(min_m, max_m) 
             logger.info(f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
         elif schema['option_type'] == 'P': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
             logger.info(f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
@@ -815,6 +814,7 @@ Quanitity Sizing Type: {self.sizing_type}
             "spread_ticks":spread_ticks, "min_moneyness": min_moneyness, "max_moneyness": max_moneyness, "increment": 0.5,
             "min_total_price": min_total_price
         })
+        logger.info(f"Initial Schema on {date}: {schema}")
         order = self.OrderPicker.get_order_new(schema, date, spot, print_url = False)
 
         ## Resolve the schema if the order is not successful
@@ -1001,7 +1001,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 self.generate_data(swap_ticker(s['ticker']))
         ticker = swap_ticker(s['ticker'])
 
-        # @log_time(time_logger)
+        @log_time(time_logger)
         def get_timeseries(_id, direction):
             logger.info("Calculate Greeks dates")
             logger.info(f"Start Date: {self.start_date}")
@@ -1093,7 +1093,7 @@ Quanitity Sizing Type: {self.sizing_type}
                                                 type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
         greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
         greeks = greeks[greeks_cols]
-        greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+        greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill')
         greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
 
         spot = data_manager.get_timeseries(start = self.start_date,
@@ -1101,7 +1101,6 @@ Quanitity Sizing Type: {self.sizing_type}
                                             interval = '1d',
                                             type_ = 'spot',
                                             extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
-        # spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
         spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
         data = greeks.join(spot)
         return data
@@ -1238,11 +1237,6 @@ Quanitity Sizing Type: {self.sizing_type}
         
         """
         
-        ## We want to update delta limits for now.
-        ## This should be based on the SignalID.
-        ## I will use The date from Signal ID To create the limit
-        ## Goal is to enfore the limit on the signal, not the position
-        
         if signal_id in self.greek_limits['delta'] and not self.re_update_on_roll: ## May consider to maximize cash on roll
             logger.info(f"Greek Limits for Signal ID: {signal_id} already updated, skipping")
             return
@@ -1251,7 +1245,6 @@ Quanitity Sizing Type: {self.sizing_type}
         cash_available = self.pm.allocated_cash_map[swap_ticker(id_details['ticker'])]
         delta_at_purchase = self.position_data[position_id]['Delta'][id_details['date']] 
         s0_at_purchase = self.position_data[position_id]['s'][id_details['date']] ## As always, we use the chain spot data to account for splits
-        # equivalent_delta_size = (math.floor(cash_available/s0_at_purchase)/100) * self.sizing_lev
         equivalent_delta_size = ((cash_available/s0_at_purchase)/100) * self.sizing_lev
         self.greek_limits['delta'][signal_id] = abs(equivalent_delta_size)
         logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {id_details['date']}")
@@ -1277,7 +1270,6 @@ Quanitity Sizing Type: {self.sizing_type}
         purchase_date = pd.to_datetime(date)
         s0_at_purchase = self.position_data[positionID]['s'][purchase_date]  ## s -> chain spot, s0_close -> adjusted close
         logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
-        # opt_price = self.position_data[positionID]['Midpoint'][purchase_date]
         logger.info(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
         max_size_cash_can_buy = abs(math.floor(cash_available/(opt_price*100))) ## Assuming Allocated Cash map is already in 100s
 
@@ -1330,7 +1322,6 @@ Quanitity Sizing Type: {self.sizing_type}
                 current_position = self.pm.current_positions[sym]
                 if 'position' not in current_position:
                     continue
-                # roll_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
                 roll_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
 
         logger.info(f"Roll Dict {roll_dict}")
@@ -1345,7 +1336,6 @@ Quanitity Sizing Type: {self.sizing_type}
                 current_position = self.pm.current_positions[sym]
                 if 'position' not in current_position:
                     continue
-                # moneyness_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
                 moneyness_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
         logger.info(f"Moneyness Dict: {moneyness_dict}")
 
@@ -1382,9 +1372,6 @@ Quanitity Sizing Type: {self.sizing_type}
                     logger.info(f"Position has exited on {exit_signal_date} or not yet entered on {entry_date}, skipping")
                     continue
                 
-
-
-
 
                 ## There are 4 possible actions: roll, Hold, Exercise, Adjust
                 ## Roll happens on DTE & Moneyness. Exercise happens on DTE. Adjust happens on Greeks
@@ -1451,7 +1438,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 value = greek_dict.get(k, {}) ## Get the greek dict for each position
                 for greek, res in value.items(): ## Looping through each greek adjustments
                     quantity_change_list.append(res['quantity_diff'])
-                sub_action_dict['quantity_diff'] = min(quantity_change_list) ## Ultimate adjustment would be the minimum reduction factor
+                sub_action_dict['quantity_diff'] = min(quantity_change_list) ## Ultimate adjustment would be the minimum reduction factor because they're all negative values
                 if sub_action_dict['quantity_diff'] < 0: ## If the quantity needs to be reduced, set the action to adjust
                     pos_action = ADJUST(k, sub_action_dict)
                     pos_action.reason = "greek_limit"
@@ -1607,13 +1594,11 @@ Quanitity Sizing Type: {self.sizing_type}
                 if 'long' in current_position['position']:
                     for option_id in current_position['position']['long']:
                         option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
-                        # option_meta =  parse_option_tick(option_id)
                         strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
 
                 if 'short' in current_position['position']:
                     for option_id in current_position['position']['short']:
                         option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
-                        # option_meta =  parse_option_tick(option_id)
                         strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
                 
                 logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}, entry_date: {entry_date}")

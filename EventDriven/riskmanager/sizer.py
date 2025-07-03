@@ -197,10 +197,7 @@ class DefaultSizer(BaseSizer):
         Returns:
             float: The delta limit for the specified signal ID and date.
         """
-        ## Check if the signal_id already has a delta limit set. This avoids recalculating during rolls
-        # if signal_id in self.rm.greek_limits['delta'] and not self.re_update_on_roll:
-        #     logger.info(f"Greek Limits for Signal ID: {signal_id} already updated, skipping")
-        #     return self.rm.greek_limits['delta'][signal_id]       
+ 
         logger.info(f"DefaultSizer: Calculating Delta Limit for Signal ID: {signal_id} and Position ID: {position_id} on Date: {date}\n")
         id_details = parse_signal_id(signal_id)
         self.register_signal_starting_cash(signal_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the signal
@@ -317,23 +314,15 @@ class ZscoreRVolSizer(BaseSizer):
         """
         super().__init__(pm, rm, sizing_lev)
         
-        if rvol_window is None: ## If rvol_window is not provided, set it to default
-            rvol_window = 30 if vol_type == 'window' else (5, 20, 63)
 
-        if isinstance(rvol_window, int): ## If rvol_window is an int, it must be a positive integer and vol_type must be 'window'
-            assert vol_type == 'window', "rvol_window must be an int only when vol_type is 'window'."
-
-        elif isinstance(rvol_window, tuple): ## If rvol_window is a tuple, it must be of length 3 and vol_type must be 'weighted_mean' or 'mean'
-            assert vol_type == 'weighted_mean' or vol_type == 'mean', "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
-            assert len(rvol_window) == 3, "rvol_window must be a tuple of length 3 for weighted mean calculation."
-
+        rvol_window = self.__rvol_window_assert(vol_type, rvol_window)  ## Assert that the rvol_window is valid based on the vol_type
         assert vol_type in self.VOL_TYPES, f"vol_type must be one of {self.VOL_TYPES}, got {self.vol_type}"
         assert isinstance(weights, tuple) and len(weights) == 3, "weights must be a tuple of length 3"
         assert sum(weights) == 1, "weights must sum to 1"
+        assert rolling_window > 0, "rolling_window must be a positive integer"
 
         self.__rvol_window = rvol_window
         self.__rolling_window = rolling_window
-        # self.rvol_timeseries = CustomCache(BASE, fname = "rvol_timeseries", expire_days= 30)  ## Cache for realized volatility timeseries
         self.rvol_timeseries = {} 
         self.z_i = {}
         self.scaler = {}
@@ -342,14 +331,30 @@ class ZscoreRVolSizer(BaseSizer):
 
         self.weights = weights  ## Weights for the weighted mean calculation
 
+    def __rvol_window_assert(self, vol_type:str, rvol_window:int|tuple=None) -> int|tuple:
+        """
+        Assert that the rvol_window is a positive integer or a tuple of three integers.
+        """
+        if rvol_window is None: ## If rvol_window is not provided, set it to default
+            rvol_window = 30 if vol_type == 'window' else (5, 20, 63)
+
+        if isinstance(rvol_window, int): ## If rvol_window is an int, it must be a positive integer and vol_type must be 'window'
+            assert vol_type == 'window', "rvol_window must be an int only when vol_type is 'window'."
+            assert rvol_window > 0, "rvol_window must be a positive integer."
+
+        elif isinstance(rvol_window, tuple): ## If rvol_window is a tuple, it must be of length 3 and vol_type must be 'weighted_mean' or 'mean'
+            assert vol_type == 'weighted_mean' or vol_type == 'mean', "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
+            assert len(rvol_window) == 3, "rvol_window must be a tuple of length 3 for weighted mean calculation."
+
+        return rvol_window
+
     @property
     def rvol_window(self):
         return self.__rvol_window
     
     @rvol_window.setter
     def rvol_window(self, value):
-        if not isinstance(value, int) or value <= 0:
-            raise ValueError("rvol_window must be a positive integer.")
+        self.__rvol_window_assert(self.vol_type, value)  ## Assert that the rvol_window is valid based on the vol_type
         
         if value != self.__rvol_window: ## Clear the cache if the window changes
             logger.info(f"Setting realized volatility window to {value} days")
@@ -393,10 +398,10 @@ class ZscoreRVolSizer(BaseSizer):
         scaler = self.scaler[symbol][date]
 
         id_details = parse_signal_id(signal_id)
-        starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id)  ## Get the cash available for the ticker based on the cash rule
+        starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id) 
         logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
-        delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  ## This is the delta at the time of purchase
-        s0_at_purchase = self.rm.position_data[position_id]['s'][date]  ## This is the delta at the time of purchase## As always, we use the chain spot data to account for splits
+        delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  
+        s0_at_purchase = self.rm.position_data[position_id]['s'][date]  
         equivalent_delta_size = ((starting_cash * self.sizing_lev) / (s0_at_purchase * 100)) if s0_at_purchase != 0 else 0
         scaled_delta_size = equivalent_delta_size * scaler
         logger.info(f"Scaler for {symbol} on {date}: {scaler}")

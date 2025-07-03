@@ -1,7 +1,5 @@
 import os
 import sys
-# sys.path.append(
-#     os.environ.get('WORK_DIR'))
 from trade.backtester_.backtester_ import PTBacktester, PTDataset
 from trade.assets.Stock import Stock
 import pandas as pd
@@ -84,8 +82,6 @@ def split_window(
     for i in range(lookback_bars+warmup_bars, len(data_full)-validation_bars, validation_bars):
         s = i -lookback_bars - warmup_bars if not anchored else 0
         length_filter = 300
-        # printmd(f"## **Validation Run: {validation_run}**") if printHeaders else None
-        #  print(f"Current Parameters: Length: {strategy.length}, Inner Band: {strategy.inner_band}, Stop Loss: {strategy.stop_loss}, Open Wait days: {strategy.open_wait_days}, Close Wait days: {strategy.close_wait_days}")
         sample_datas = []
         validation_datas = []
 
@@ -153,8 +149,6 @@ def position_train(
 
         optimized = bt_training.position_optimize(optimize_params, maximize = optimize_str)
         strategy_settings = optimized.to_dict('index')
-        # print(f"Optimize Start: {bt_training.dates_(True)}, Optimize End: {bt_training.dates_(False)}, Values: {strategy_settings}")
-        # strat_sett_whole[official_start] = strategy_settings
         bt_training = PTBacktester(sample_datas, strategy, cash=cash, commission=commission, strategy_settings= strategy_settings)
         bt_training.run()
 

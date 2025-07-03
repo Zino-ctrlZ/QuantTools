@@ -42,7 +42,6 @@ class Option:
         today = datetime.today()
         end_date = datetime.strftime(today, format='%Y-%m-%d')
         _end_date = Configuration.end_date or end_date
-        # print(Configuration.end_date)
         
         key = (ticker, strike, _end_date, exp_date, put_call)
         if key not in cls._instances:
