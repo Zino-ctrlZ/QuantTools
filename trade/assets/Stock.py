@@ -119,6 +119,10 @@ class Stock:
             self.__chain = None
             self.__asset_type = None
             self.kwargs = kwargs
+            self.__current_spot = None
+            self.__bumped_spot = None
+            self.__rf_rate = None
+            self.__rf_ts = None
             
             def set_variables():
                 """
@@ -193,6 +197,37 @@ class Stock:
         else:
             self.__asset_type = self.__security_obj.info['quoteType']
     
+    @property
+    def spot_price(self):
+        """
+        Returns the latest available close price for the ticker
+        """
+        if self.__current_spot is not None:
+            return self.__current_spot if self.bump is None else self.bump
+        else:
+            self.__set_current_spot()
+            return self.__current_spot
+        
+    @spot_price.setter
+    def spot_price(self, v):
+        self.__bumped_spot = v
+
+        
+    def __set_current_spot(self):
+        """
+        Sets the current spot price for the ticker
+        """
+        current_spot = list(self.spot().values())[0]
+        self.__current_spot = current_spot
+
+    @property
+    def bump(self):
+        return self.__bumped_spot
+    
+    def clear_bump(self):
+        self.__bumped_spot = None
+
+
     @classmethod
     def clear_instances(cls, pop_all = True):
         if pop_all:
@@ -202,6 +237,28 @@ class Stock:
                 return cls._instances.popitem()
             
             return None
+        
+    @property
+    def rf_rate(self):
+        """
+        Returns the risk free rate for the stock
+        """
+        if self.__rf_rate is not None:
+            return self.__rf_rate
+        else:
+            self.init_risk_free_rate()
+            return self.__rf_rate
+        
+    @property
+    def rf_ts(self):
+        """
+        Returns the risk free rate timeseries for the stock
+        """
+        if self.__rf_ts is not None:
+            return self.__rf_ts
+        else:
+            self.init_rfrate_ts()
+            return self.__rf_ts
     
     @classmethod
     def list_instances(cls):
@@ -237,7 +294,7 @@ class Stock:
         Class method that initiates Risk Free rate timeseries across all classes
         """
         ts = get_risk_free_rate_helper()
-        self.rf_ts = ts
+        self.__rf_ts = ts
 
 
     def init_risk_free_rate(self):
@@ -247,7 +304,7 @@ class Stock:
 
         ts = self.rf_ts
         last_bus = change_to_last_busday(self.end_date)
-        self.rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
+        self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
     
     def rebuild_chain(self):
@@ -482,14 +539,17 @@ class Stock:
             df.index = pd.to_datetime(df.index)
             return df
         else:
-            if pd.to_datetime(self.end_date).date() >= datetime.today().date() and self.asset_type not in ['ETF', 'MUTUALFUND', 'INDEX']:
+            ## Can't remember why I opted for obb.quote. But I'll leave it for now incase I get an error.
+            ## If end == today, I'm expecting yfinance close to be latest close.
 
-                spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
-            else:
-                end  = change_to_last_busday(ts_end)
-                df.index = pd.to_datetime(df.index)
-                df = df[df.index.date == pd.to_datetime(end).date()]
-                spot = {end: df[spot_type].values[-1]}
+            # if pd.to_datetime(self.end_date).date() >= datetime.today().date() and self.asset_type not in ['ETF', 'MUTUALFUND', 'INDEX']:
+            #     spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
+            # else:
+            end  = change_to_last_busday(ts_end)
+            df.index = pd.to_datetime(df.index)
+            df = df[df.index.date == pd.to_datetime(end).date()]
+            spot = {end: df[spot_type].values[-1]}
+
             return spot
     
     def option_chain(self, date = None):
