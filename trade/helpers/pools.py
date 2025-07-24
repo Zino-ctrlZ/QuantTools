@@ -33,16 +33,15 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
     --------
     List of results from the multiprocessing function.
     if run_type is 'map', results are ordered as the inputs.
-    if run_type is 'amap', results are ordered as the inputs.
+    if run_type is 'amap', results are ordered as the inputs. Asynchronous
     if run_type is 'uimap', results are unordered, and a list of futures is returned.
-    if run_type is 'imap', results are ordered, and a list of futures is returned
+    if run_type is 'imap', results are ordered, and a list of futures is returned. Non blocking.
     """
 
     global shutdown_event
     try:
-
         pool = Pool(cpu_count())
-        pool.restart()
+        pool.restart(force=True)
         if run_type == 'map':
             results = pool.map(func, *OrderedInputs)
         elif run_type == 'amap':

@@ -1,0 +1,15 @@
+from trade.helpers.Logging import setup_logger
+from . import load_config
+logger = setup_logger('trade.optionlib.config.defaults')
+
+config=load_config()
+DAILY_BASIS = config['DAILY_BASIS']
+DIVIDEND_LOOKBACK_YEARS = config['DIVIDEND_FORECAST_LOOKBACK_YEARS']
+DIVIDEND_LOOKFORWARD_YEARS = config['DIVIDEND_FORECAST_LOOKFORWARD_YEARS']
+OPTION_TIMESERIES_START_DATE = config['OPTION_TIMESERIES_START_DATE']
+DIVIDEND_FORECAST_METHOD = config['DIVIDEND_FORECAST_METHOD']
+VOL_EST_UPPER_BOUND= config['VOL_EST_UPPER_BOUND']
+VOL_EST_LOWER_BOUND= config['VOL_EST_LOWER_BOUND']
+N_PRECISION_GREEKS= config['N_PRECISION_GREEKS']
+DX_THRESH= config['DX_THRESH']
+
