@@ -728,6 +728,22 @@ class RiskManager:
         # self.position_data.clear()
         self.dividend_timeseries.clear()
 
+    def clear_core_data_caches(self):
+        """
+        Clears the core data caches used by the RiskManager for a new run.
+        spot, chain_spot, processed_option_data, position_data
+        This only clears if USE_TEMP_CACHE is True else nothing happens
+        """
+        if get_use_temp_cache():
+            self.spot_timeseries.clear()
+            self.chain_spot_timeseries.clear()
+            self.processed_option_data.clear()
+            self.position_data.clear()
+            self.dividend_timeseries.clear()
+            get_persistent_cache().clear() ## Ensures any caching with `.memoize` is cleared as well.
+        else:
+            logger.critical(f"USE_TEMP_CACHE set to False. Cache will not be cleared")
+
     
     @property
     def pm(self):

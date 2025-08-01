@@ -80,7 +80,7 @@ from .SaveManager_processes import ProcessSaveManager
 from functools import partial
 
 ## DM NEEDED IMPORTS
-from .utils import _ManagerLazyLoader
+from .utils import _ManagerLazyLoader, EMPTY_TIMESEIRES_TABLE
 from .Requests import (
     create_request_bulk,
                        get_bulk_requests,
@@ -173,6 +173,21 @@ def cached_get_timeseries(func):
         return result
 
     return wrapper
+
+## Skip MySql Query. MySql query is not optimized so just go straight to API
+SKIP_MYSQL_QUERY = False
+def set_skip_mysql_query(value: bool):
+    """
+    Set the skip MySQL query flag.
+    """
+    global SKIP_MYSQL_QUERY
+    SKIP_MYSQL_QUERY = value
+
+def get_skip_mysql_query():
+    """
+    Get the skip MySQL query flag.
+    """
+    return SKIP_MYSQL_QUERY
 
 
 ## Set Save Manager 
@@ -1639,6 +1654,13 @@ def init_query(**kwargs):
     except KeyError:
         raise KeyError("Query category not specified, expected one of: ['single', 'bulk', 'chain']")
     
+    ## Return Empty DataFrame and skip to API if single & SKIP_MYSQL is True
+    if query_category == 'single' and get_skip_mysql_query():
+        EMPTY_TIMESEIRES_TABLE.columns = [col.lower() for col in EMPTY_TIMESEIRES_TABLE.columns]
+        data_request.database_data = EMPTY_TIMESEIRES_TABLE
+        return data_request
+    
+
     ## 1) Check if it already cached
     skip_db_query = query_cache(data_request, query_category)
     
