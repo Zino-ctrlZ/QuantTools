@@ -1,7 +1,11 @@
-from typing import List, Union
+from typing import List, Union, Literal
+import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 import numpy as np
 from ..pricing.black_scholes import black_scholes_vectorized
+from ..pricing.bjs2002 import bjerksund_stensland_2002_vectorized
+from ..pricing.binomial import crr_binomial_pricing
+from ..config.defaults import BRUTE_FORCE_MAX_ITERATIONS
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('trade.optionlib.vol.implied_vol')
 
@@ -99,7 +103,7 @@ def bsm_vol_est_brute_force(
     - Estimated volatility
     """
     intrinsic_check(F, K, T, r, 0.2, market_price, option_type)  # Check intrinsic value
-    sigmas = np.linspace(0.001, 5, 40000)  # Range of volatilities to test
+    sigmas = np.linspace(0.001, 5, BRUTE_FORCE_MAX_ITERATIONS)  # Range of volatilities to test
 
     prices = black_scholes_vectorized(
         F=F, 
@@ -120,10 +124,11 @@ def bsm_vol_est_brute_force(
 
 
 def vector_vol_estimation(brute_callable: Union[callable, str],
-                       list_input: List[tuple]) -> List[float]:
+                       list_input: List[tuple],
+                       *args) -> List[float]:
     """
-    Vectorized vol estimation method to estimate implied volatility by minimizing the difference
-    between the market price and the Black-Scholes price.
+    Wrapper function to allow passing a callable and a list of inputs, in order to replicate vectorized behavior..
+    This function works by using list comprehension to apply the callable to each set of parameters in the list_input.
     
     Parameters:
     - brute_callable: Function to call for brute force estimation
@@ -135,9 +140,126 @@ def vector_vol_estimation(brute_callable: Union[callable, str],
     Returns:
     - Estimated volatilities as a numpy array
     """
+    ## Can either pass list_input or args, but not both
+    is_list_input = list_input is not None
+    is_args = len(args) > 0
+
+    if is_list_input and is_args:
+        raise ValueError("Either provide list_input or args, not both. If passing list_input, it should be a list of tuples with all parameters. Pass None for list_input if using args.")
+    
+    if args:
+        for arg in args:
+            if not isinstance(args,(list, tuple, np.ndarray)):
+                raise ValueError("args must be a list, tuple, or numpy array.")
+        list_input = list(zip(*args))  # Transpose args to create list of tuples
+
     if len(list_input) == 0:
         return []
     estimated_vols = [brute_callable(*params) for params in list_input]
 
     
     return estimated_vols
+
+
+def vol_est_brute_force_bjs_2002(
+        S: float,
+        K: float,
+        T: float,
+        r: float,
+        market_price: float,
+        q: float = 0.0,
+        option_type: str = 'c',
+):
+    """
+
+    Brute force method to estimate implied volatility by minimizing the difference
+    between the market price and the Black-Scholes price.
+    Parameters:
+    - F: Forward price
+    - K: Strike price
+    - T: Time to maturity
+    - r: Risk-free rate
+    - q: Continuous dividend yield
+    - market_price: Market price of the option
+    - option_type: 'c' for call, 'p' for put
+    Returns:
+    - Estimated volatility
+    """
+    # 
+    
+    sigmas = np.linspace(0.001, 5, BRUTE_FORCE_MAX_ITERATIONS)  # Range of volatilities to test
+    S, K, T, r, q, option_type = map(np.asarray, (S, K, T, r, q, option_type))
+    prices = bjerksund_stensland_2002_vectorized(
+        S=S,
+        K=K,
+        T=T,
+        r=r,
+        sigma=sigmas,
+        option_type=option_type,
+        dividend_type='continuous',  # Assuming continuous dividends for this example
+        dividend=q  # No discrete dividends in this case
+    )
+    non_na_mask = ~np.isnan(prices) & ~np.isinf(prices)  # Filter out NaN/Inf prices
+    prices = prices[non_na_mask]  # Filter prices
+    sigmas = sigmas[non_na_mask]  # Filter corresponding sigmas
+
+    # Calculate the absolute differences between market price and calculated prices
+    differences = np.abs(prices - market_price)
+    # Find the index of the minimum difference
+    min_index = np.argmin(differences)
+
+    # Return the corresponding volatility
+    return sigmas[min_index]  # Return the estimated volatility and corresponding price
+
+
+def estimate_crr_implied_volatility(
+        S: float,
+        K: float,
+        T: float,
+        r: float,
+        market_price: float,
+        q: float = 0.0,
+        option_type: str = 'c',
+        N: int = 1000,
+        dividend_type: Literal['continuous', 'discrete'] = 'continuous',
+        american: bool = False
+) -> float:
+    """
+    Estimate implied volatility using optimization.
+    
+    Parameters:
+    - S: Spot price
+    - K: Strike price
+    - T: Time to maturity
+    - r: Risk-free interest rate
+    - market_price: Market price of the option
+    - q: Continuous dividend yield (default is 0.0)
+    - option_type: 'c' for call, 'p' for put
+    - N: Number of time steps in the binomial tree
+    
+    Returns:
+    - Estimated volatility
+    """
+    def binomial_objective_function(sigma: float) -> float:
+        calculated_price = crr_binomial_pricing(
+            K=K,
+            T=T,
+            sigma=sigma,  # Initial guess for sigma, will be optimized
+            r=r,
+            N=N,
+            S0=S,
+            dividend_type=dividend_type,
+            div_yield=q if dividend_type == 'continuous' else 0.0,  # Use q for continuous dividends
+            dividends=q if dividend_type == 'discrete' else [],  # Use q for discrete dividends
+            option_type=option_type,
+            american=american
+        )
+        
+        return (calculated_price - market_price) ** 2
+    result = minimize_scalar(
+        binomial_objective_function,
+        bounds=(0.001, 5.0),  # Reasonable bounds for volatility
+        method='bounded'
+    )
+    
+    return result.x if result.success else None

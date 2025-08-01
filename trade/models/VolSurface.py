@@ -2,7 +2,44 @@
 ## To-Do: Add a way to check if the model is valid, and rerun till valid. Log this
 ##To-Do: 
 
+"""
+SVI Object Flow:
 
+Model Calculation: class ModelBuilder
+    - Responsible for building the model, not the surface itself.
+|
+
+Build Surface: class SurfaceBuilder.
+    - Utilizes ModelBuilder as worker to build a surface for DTE/Right combinations.
+|
+
+Surface Management: class SurfaceManager
+    - Manages the volatility surfaces, including interpolation and prediction.
+    - Holds a set of SurfaceBuilder objects.
+    - Can either be SurfaceManagerModelBuild or SurfaceManagerDatabase
+        - Either builds the model or retrieve model params from database.
+
+SurfaceLab: class SurfaceLab
+    - Contains dumas, svi Model Managers.
+    - Picks whether to use ModelBuilder or DatabaseManager based on the input.
+
+    
+Dumas Object Flow:
+
+Dumas Model Results: class DumasModelResults
+    - Stores the results of the Dumas model, including predictions and mean predictions.
+Dumas Rolling Model: class DumasRollingModel
+    - Implements the Dumas model for a rolling window of days to expiration (DTE).
+Dumas Model Builder: class DumasModelBuilder
+    - Builds the Dumas model for a given option chain.
+    - Relies on DumasRollingModel for the actual model fitting.
+    - Predicts IV for a given DTE and Strike Price.
+
+
+Extension Goals:
+- Extend For SSVI Model Builder
+- Extend for Timeseries implementation
+"""
 import os, sys
 from dotenv import load_dotenv
 load_dotenv()
@@ -26,7 +63,7 @@ from functools import partial
 from trade.models.ModelLibrary import ModelLibrary
 from dbase.database.SQLHelpers import DatabaseAdapter
 from dbase.DataAPI.ThetaData import retrieve_chain_bulk
-from trade.helpers.decorators import log_error, log_error_with_stack
+from trade.helpers.decorators import log_error, log_error_with_stack, log_time
 import copy
 from copy import deepcopy
 import plotly.graph_objects as go
@@ -44,7 +81,7 @@ shutdown_event = False
 
 ## To-Do: Make sure SVI never throws nan values
 
-
+@log_time(logger)
 def fit_svi_model(
                 underlier: str,
                 expiration: str,
@@ -152,6 +189,16 @@ class SurfaceManager(ABC):
     """
     Abstract class for managing volatility surfaces.
     """
+    
+    def __init__(self):
+        """
+        Initializes the SurfaceManager with empty dataframes for call and put SVI parameters and variables.
+        """
+        self.call_svi_params_table = pd.DataFrame()
+        self.put_svi_params_table = pd.DataFrame()
+        self.call_svi_variables = pd.DataFrame()
+        self.put_svi_variables = pd.DataFrame()
+
 
     @abstractmethod
     def predict(self):
@@ -250,7 +297,9 @@ class DumasModelResults:
     Class to store the results of the Dumas model.
     """
     def __init__(self):
-        pass
+        self.predictions = None
+        self.mean_prediction = None
+        self.distance_weighted_prediction = None
 
 
 class DumasRollingModel:
@@ -463,10 +512,10 @@ class DumasModelBuilder(ModelBuilder):
     """
     
     def __init__(self,
-                 date, 
-                 right,
-                 full_chain = None,
-                 dumas_width = .30,):
+                 date: Union[str, pd.Timestamp],
+                 right: Union[str, Literal['C', 'P']] = 'C',
+                 full_chain:pd.DataFrame = None,
+                 dumas_width:float = .30,):
 
         full_chain = full_chain.copy()
         if full_chain.empty:
@@ -493,7 +542,7 @@ class DumasModelBuilder(ModelBuilder):
 
 
 
-
+    @log_time(logger)
     def build_model(self):
         """
         Builds and fits the Dumas models.
@@ -598,6 +647,8 @@ class DumasModelBuilder(ModelBuilder):
 class SVIModelBuilder(ModelBuilder):
     """
     SVIModelBuilder is a class that builds a Stochastic Volatility Inspired (SVI) model for a given options chain.
+    Reponsible for base fitting and calibrating the SVI parameters
+    Since SVI is begged to one DTE, this class is designed to handle a single DTE at a time.
 
     Attributes:
         cons (tuple): Constraints for the optimization process.
@@ -662,7 +713,6 @@ class SVIModelBuilder(ModelBuilder):
         {'type': 'ineq', 'fun': lambda x: x[3]}, #c >= 0
         )
     
-
 
     def __init__(self,
                  chain, 
@@ -870,7 +920,7 @@ class SVIModelBuilder(ModelBuilder):
         params[2], params[3] = slope_min_wt * slope_scaling_min, slope_max_wt * slope_scaling_max
         self.svi_params2 = copy.deepcopy(params)
 
-
+    @log_time(logger)
     def build_model(self):
         """
         Builds the volatility surface model using the SVI-JW (Stochastic Volatility Inspired - Jim Gatheral and Antoine Jacquier) method.
@@ -1117,6 +1167,7 @@ def pool_builder(obj, builders):
 class SurfaceBuilder(ABC):
     """
     Abstract class for building Vol Surface models. This is the surface itself. The Put & Call surfaces with this
+    The Put/Call surfaces holds a set of SVI models for each DTE, and a Dumas model for the same date.
     """
 
     def __init__(self,
@@ -1224,6 +1275,8 @@ class PutVolSurfaceBuilder(SurfaceBuilder):
 
 class SurfaceManagerModelBuild(SurfaceManager):
     """SurfaceManager is a class designed to manage and predict implied volatilities for options using both Dumas and SVI models. 
+
+    This class is responsible for building and managing the volatility surface for a given ticker and date, using the full options chain data. It utilizes the CallVolSurfaceBuilder and PutVolSurfaceBuilder to create call and put surfaces respectively, and it interpolates SVI parameters for different days to expiration (DTE).
     Attributes:
     interpolation_kwargs : dict
         Keyword arguments for the interpolation method used in the class.
@@ -1482,7 +1535,8 @@ class SurfaceManagerDatabase(SurfaceManager):
         predict(dte, k, right, interpolate_variables=True):
     """
     interpolation_kwargs = {'method': 'spline', 'axis': 0, 'order': 1}
-    def __init__(self, tick, full_chain, call_svi_params, put_svi_params):
+    def __init__(self, tick, full_chain, call_svi_params, put_svi_params, dumas_width=0.3):
+
         super().__init__()
         full_chain.columns = full_chain.columns.str.lower()
         
@@ -1491,15 +1545,16 @@ class SurfaceManagerDatabase(SurfaceManager):
 
         if 'dte' in full_chain.columns:
             full_chain = full_chain.rename(columns = {'dte': 'DTE'})
-
         self.tick = tick
+        self.date = full_chain.build_date.values[0]
         self.spot = full_chain['Spot'].values[0]
         self.full_chain = full_chain.rename(columns = {'spot': 'Spot'})
-        self.date = full_chain.build_date.values[0]
+        
+        
         self.call_svi_params_table = call_svi_params.set_index('dte')[['v', 'psi', 'p', 'c', 'v_tilde']]
         self.put_svi_params_table = put_svi_params.set_index('dte')[['v', 'psi', 'p', 'c', 'v_tilde']]
-        self.CallDumasBuilder = DumasModelBuilder(self.date, 'C', full_chain)
-        self.PutDumasBuilder = DumasModelBuilder(self.date, 'P', full_chain)
+        self.CallDumasBuilder = DumasModelBuilder(self.date, 'C', full_chain, dumas_width)
+        self.PutDumasBuilder = DumasModelBuilder(self.date, 'P', full_chain, dumas_width)
         self.CallDumasBuilder.build_model()
         self.PutDumasBuilder.build_model()
         self.interpolated_dtes = {'C': [], 'P': []}
@@ -1658,10 +1713,25 @@ class SurfaceLab:
     """
     SurfaceLab is a class that manages the volatility surface modeling for options.
     This class initiates the SurfaceManager from either the database or the model build.
+
+    Order of operations:
+    Lab: The top level object.
+        => Responsible for: Initiating either SurfaceManagerModelBuild or SurfaceManagerDatabase based on the availability of data in the database.
+        => Persisting predict all the way from the Model Objects
+    
+    SurfaceManager: The manager for the volatility surface. Could either be built from the database (SurfaceManagerDatabase) or from the model build (SurfaceManagerModelBuild).
+        => Responsible for bringing Put Surface & Call Surface together.
+        => It also handles the interpolation of SVI parameters for different days to expiration (DTE). 
+
+    SurfaceBuilder: The abstract class for building the volatility surface per right. Each right holds a set of models
+        => Responsible for building the volatility surface for a given right (Call or Put).
+
+    ModelBuilder: The abstract class for building the SVI models for each DTE.
     """
     def __init__(self, tick, date, full_chain, dumas_width, force_build = False):
-
+        full_chain = full_chain.copy()
         full_chain.columns = full_chain.columns.str.lower()
+        full_chain['build_date'] = date 
         self.ticker = tick
         self.build_date = date
         self.dumas_width = dumas_width
@@ -1691,7 +1761,7 @@ class SurfaceLab:
             else:
                 calls_svi_params = svi_data[svi_data['right'] == 'C']
                 puts_svi_params = svi_data[svi_data['right'] == 'P']
-                self.manager = SurfaceManagerDatabase(tick, full_chain, calls_svi_params, puts_svi_params)
+                self.manager = SurfaceManagerDatabase(tick, full_chain, calls_svi_params, puts_svi_params, dumas_width)
         else:
             self.manager = SurfaceManagerModelBuild(tick, date, full_chain, dumas_width)
 
@@ -1703,5 +1773,34 @@ class SurfaceLab:
         return f"SurfaceLab({self.ticker} on {pd.to_datetime(self.build_date).strftime('%Y%m%d')})"
     
     def predict(self, dte, k, right, interpolate_variables = False):
+        """
+        Predicts the implied volatility for given days to expiration (DTE) and strike price(s).
+        
+        Parameters:
+        -----------
+        dte : int
+            Days to expiration. Must be less than or equal to the maximum DTE in the full chain.
+        k : int, float, list, or np.ndarray
+            Strike price(s). Can be a single numeric value, a list of numeric values, or a numpy array.
+        right : str
+            Option type. Must be one of "C" (call), "P" (put), "otm" (out of the money), or "itm" (in the money).
+        interpolate_variables : bool, optional
+            Whether to interpolate variables for SVI model if DTE is not directly available. Default is True.
+        
+        Returns:
+        --------
+        predictions : dict
+            A dictionary containing the predicted implied volatilities. Keys include:
+            - 'k': The input strike prices.
+            - 'dumas': Predicted volatilities using the Dumas model.
+            - 'svi': Predicted volatilities using the SVI model.
+        
+        Raises:
+        -------
+        ValueError
+            If DTE is larger than the maximum permitted DTE or if an invalid option type is provided.
+        TypeError
+            If the strike price is not a numeric value or a list/array of numeric values.
+        """
         return self.manager.predict(dte, k, right, interpolate_variables)
 

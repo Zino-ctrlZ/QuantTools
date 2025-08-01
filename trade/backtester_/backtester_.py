@@ -40,6 +40,7 @@ class PTDataset:
         self.__param_settings = param_settings ## Making param_settings private
         self.name = name
         self.data = data
+        self.backtest = None
     
     def __repr__(self):
         return f"PTDataset({self.name})"
@@ -100,7 +101,7 @@ class PTBacktester(AggregatorParent):
         self.strategy_settings = strategy_settings
         self.default_settings = {}
         self._names = [d.name for d in datalist]
-        datalist = deepcopy(datalist) ## To avoid changing the original datalist
+        datalist = deepcopy(datalist) ## To avoid changing the original datalist deepcopy
         self.update_settings(datalist) if self.strategy_settings else None
 
         assert isinstance(cash, dict) or isinstance(cash, int) or isinstance(cash, float), "Cash must be of type float, int, dict"

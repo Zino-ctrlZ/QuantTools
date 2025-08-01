@@ -182,6 +182,7 @@ def project_dividends(
 
 
 
+
 # Abstract base class for dividends
 class Dividend(ABC):
     """
@@ -206,6 +207,50 @@ class Dividend(ABC):
     
     def __repr__(self):
         return f"<{self.__class__.__name__}: {self.get_type()}>"
+
+# Schedule Class
+class Schedule:
+    """
+    Class to represent a dividend schedule.
+    """
+    def __init__(self, schedule: List[Tuple[datetime, float]]):
+        """
+        Initialize a Schedule object.
+        schedule: List[Tuple[datetime, float]] - A list of tuples containing dividend dates and amounts.
+        """
+        self.schedule = schedule
+    def get_schedule(self) -> List[Tuple[datetime, float]]:
+        """
+        Get the dividend schedule as a list of tuples containing date and amount.
+        Returns:
+            List[Tuple[datetime, float]]: A list of tuples where each tuple contains a dividend date and its corresponding amount.
+        """
+        return self.schedule
+    
+    def __repr__(self):
+        return f"<Schedule: {len(self.schedule)} dividends>"
+
+    def __len__(self):
+        """
+        Get the number of dividends in the schedule.
+        Returns:
+            int: The number of dividends in the schedule.
+        """
+        return len(self.schedule)
+    
+    def __str__(self):
+        """
+        Get a string representation of the schedule.
+        Returns:
+            str: A string representation of the schedule.
+        """
+        return self.__repr__()
+
+    def __iter__(self):
+        """
+        Make the Schedule object iterable.
+        """
+        return iter(self.schedule)
 
 
 # Concrete class for a dividend schedule
@@ -263,7 +308,7 @@ class DividendSchedule(Dividend):
         else:
             self.amounts = [self.input_amount] * len(self.dates)
 
-        self.schedule = list(zip(self.dates, self.amounts))
+        self.schedule = Schedule(list(zip(self.dates, self.amounts)))
 
     def get_schedule(self) -> List[Tuple[datetime, float]]:
         """
@@ -280,11 +325,11 @@ class DividendSchedule(Dividend):
         Returns:
             List[Tuple[float, float]]: A list of tuples containing the time distance and the corresponding amount.
         """
-        return [
+        return Schedule([
             (time_distance_helper(dt, self.valuation_date), amt)
             for dt, amt in self.schedule
             if dt > self.valuation_date
-        ]
+        ])
     
     def get_present_value(self, discount_rate: float, sum_up: bool=True, **kwargs) -> float:
         """
@@ -597,8 +642,8 @@ def get_vectorized_dividend_scehdule(
                               end_date=end_date,
                               div_history=tick_history[ticker],
                               inferred_growth_rate=gr)
-        schedules.append(list(zip(payments, dates)))
-    return schedules
+        schedules.append(Schedule(list(zip(payments, dates))))
+    return (schedules)
 
 def vector_convert_to_time_frac(
         schedules: List[list],
@@ -617,11 +662,11 @@ def vector_convert_to_time_frac(
     assert_equal_length(schedules, valuation_dates, end_dates)
     time_fractions = []
     for i, sch in enumerate(schedules):
-        time_fractions.append([
+        time_fractions.append(Schedule([
             (time_distance_helper(dt, valuation_dates[i]), amt) 
             for amt, dt in sch if compare_dates.is_after(dt, valuation_dates[i])
-        ])
-    return time_fractions
+        ]))
+    return (time_fractions)
 
 def vectorized_discrete_pv(
         schedules: List[list],

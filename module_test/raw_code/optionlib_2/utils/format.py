@@ -1,3 +1,4 @@
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from trade.helpers.Logging import setup_logger
@@ -9,14 +10,16 @@ def assert_equal_length(*args):
     """
     lengths = [len(arg) for arg in args]
     if len(set(lengths)) != 1:
-        raise ValueError("All input lists must have the same length.")
+        return False
     return True
 
 def convert_to_array(*args):
     """
-    Convert input lists to numpy arrays.
+    Convert input(s) to numpy arrays. If only one input is given, return it as a single array, not a list.
     """
-    return [np.asarray(arg)  for arg in args]
+    arrays = [np.asarray(arg) for arg in args]
+    return arrays[0] if len(arrays) == 1 else arrays
+
 
 def option_inputs_assert(sigma, K, S0, T, r, q, market_price, flag):
 
@@ -61,3 +64,29 @@ def option_inputs_assert(sigma, K, S0, T, r, q, market_price, flag):
     
     if pd.isna(sigma) or pd.isna(K) or pd.isna(S0) or pd.isna(r) or pd.isna(q) or pd.isna(market_price):
         raise ValueError("Input values cannot be NaN.")
+    
+
+# def convert_to_array(value):
+#     if isinstance(value, (list, np.ndarray)):
+#         return np.array(value)
+#     elif isinstance(value, (int, float, str, datetime, np.datetime64)):
+#         return np.array([value])
+#     else:
+#         raise ValueError(f"Unsupported type for value conversion : {type(value)}")
+
+def to_1d_array(x):
+    x = np.atleast_1d(x)
+    if x.ndim > 1:
+        return x.flatten()
+    return x
+
+def equalize_lengths(*args):
+    """
+    Ensure all inputs have the same length if an arg is a list of size 1 or a single value.
+    """
+    max_size = max(len(arg) if isinstance(arg, (list, np.ndarray)) else 1 for arg in args)
+    if max_size == 0:
+        raise ValueError("All input arrays are empty.")
+
+    return [np.full(max_size, arg) if isinstance(arg, (int, float, str, datetime)) or len(arg) == 1 else np.asarray(arg) for arg in args]
+    
