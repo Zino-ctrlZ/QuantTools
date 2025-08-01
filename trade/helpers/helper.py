@@ -77,6 +77,39 @@ def _ipython_shutdown(_callable):
         logger.error(f"Error during IPython shutdown registration: {e}")
 
 
+class Scalar:
+    def __init__(self, value):
+        self.value = value
+
+    def __add__(self, other):
+        return Scalar(self.value + self._get_val(other))
+
+    def __sub__(self, other):
+        return Scalar(self.value - self._get_val(other))
+
+    def __mul__(self, other):
+        return Scalar(self.value * self._get_val(other))
+
+    def __truediv__(self, other):
+        return Scalar(self.value / self._get_val(other))
+
+    def __pow__(self, other):
+        return Scalar(self.value ** self._get_val(other))
+
+    def __repr__(self):
+        return f"Scalar({self.value})"
+
+    def __float__(self):
+        return float(self.value)
+
+    def __array__(self):
+        return np.array(self.value)
+
+    def _get_val(self, other):
+        return other.value if isinstance(other, Scalar) else other
+
+
+
 class CustomCache(Cache):
     """
     CustomCache is a dictionary-like object that stores data on disk. It is a subclass of diskcache.Cache and provides additional functionality
@@ -463,7 +496,7 @@ def enforce_allowed_models(model: list) -> list:
 
 
 
-def date_inbetween(date, start, end):
+def date_inbetween(date, start, end, inclusive=True):
     """
     Check if a date is within a given range.
     Args:
@@ -474,7 +507,10 @@ def date_inbetween(date, start, end):
         bool: True if date is within the range, False otherwise.
     """
     start, end, date = pd.to_datetime(start), pd.to_datetime(end), pd.to_datetime(date)
-    return start <= date <= end
+    if inclusive:
+        return start <= date <= end
+    else:
+        return start < date < end
 
 class compare_dates:
     """
@@ -505,7 +541,7 @@ class compare_dates:
         return pd.to_datetime(date1) == pd.to_datetime(date2)
     
     @staticmethod
-    def inbetween(date, start, end):
+    def inbetween(date, start, end, inclusive=True):
         """
         Check if a date is within a given range.
         Args:
@@ -515,7 +551,7 @@ class compare_dates:
         Returns:
             bool: True if date is within the range, False otherwise.
         """
-        return date_inbetween(date, start, end)
+        return date_inbetween(date, start, end, inclusive)
 
 
 

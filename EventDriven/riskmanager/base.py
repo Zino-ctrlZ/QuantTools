@@ -684,7 +684,7 @@ class RiskManager:
     
     def clear_caches(self):
         """
-        Clears the caches
+        Clears the spot, chain_spot, dividend caches
         """
         self.spot_timeseries.clear()
         self.chain_spot_timeseries.clear()

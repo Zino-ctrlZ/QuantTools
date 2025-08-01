@@ -1,15 +1,30 @@
 from contextlib import contextmanager
 import datetime
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 from contextlib import contextmanager
 from trade.helpers.helper import change_to_last_busday
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
 from trade.helpers.Configuration import ConfigProxy, initialize_configuration
+from trade.helpers.helper import is_USholiday
 Configuration = ConfigProxy()
 
 ## Change to Class ContextManager
+def validate_dates(*args):
+    """
+    Validates if the input date is a valid datetime object.
+    """
+    for dt in args:
+        if not isinstance(dt, (datetime, pd.Timestamp, date)):
+            raise ValueError(f"Invalid date: {dt}. Expected a datetime object.")
+        
+        if is_USholiday(dt):
+            raise ValueError(f"Date {dt} is a US holiday. Please choose a different date.")
+        
+        if dt.weekday() in [5, 6]:
+            raise ValueError(f"Date {dt} falls on a weekend. Please choose a weekday.")
+
 
 
 @contextmanager
@@ -40,6 +55,9 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
 
     """
     initialize_configuration()
+    none_non_dates = [pd.to_datetime(x) for x in [start_date, end_date] if x is not None]
+    validate_dates(*none_non_dates)
+    
     try:
         if timeframe is not None:
             Configuration.timeframe = str(timeframe)

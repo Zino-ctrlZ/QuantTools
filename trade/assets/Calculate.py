@@ -716,7 +716,7 @@ class Calculate:
                         'model']
             for i in range(len(args)):
                 if args[i] is None:
-                    args[i] = getattr(asset, args_str
+                    args[i] = getattr(asset, args_str[i])
             t = time_distance_helper(asset.exp, asset.end_date)
             if model == 'bs':
                 d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
@@ -1036,7 +1036,7 @@ def fullRevalPnL(
     spot_change_pnl = spot_change_pv - pv0
     S0_bump_pnl = S0_pv_bump - pv0
     delta_pnl = (S1 - S0) * S0_bump_pnl * 1000000
-    gamma_pnl = spot_change_pnl - del
+    gamma_pnl = spot_change_pnl - delta_pnl
 
 
     ## Vega PnL
@@ -1052,7 +1052,7 @@ def fullRevalPnL(
     sigma_bump_pnl = sigma0_pv_bump - pv0
     vega_pnl = (sigma1 - sigma0) * sigma_bump_pnl * 1/bump
     volga_pnl = sigma_change_pnl - vega_pnl
-    vanna_pnl = sigma_plus_spot_pnl - delta_pnl - vega_pnl - gamma_pnl - vol
+    vanna_pnl = sigma_plus_spot_pnl - delta_pnl - vega_pnl - gamma_pnl - volga_pnl
   
     ## Theta PnL
     pv0
