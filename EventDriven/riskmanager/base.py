@@ -1,6 +1,7 @@
 ## NOTE:
 ## 1) If a split happens during a backtest window, the trade id won't be updated. The dataframe will simply be uploaded with a the split adjusted strike.
 ## 2) All Greeks &  Midpoint with Zero values will be FFWD'ed
+## 3) Do something about all these caches locations. I don't like it. It's confusing
 
 from pprint import pprint
 from .utils import *
@@ -10,7 +11,10 @@ from .utils import (logger,
                     date_in_cache_index,
                     add_skip_columns,
                     _clean_data,
-                    PERSISTENT_CACHE)
+                    PERSISTENT_CACHE,
+                    persistent_cache_decorator,
+                    get_use_temp_cache,
+                    get_persistent_cache)
 from .actions import *
 from .picker import *
 from .sizer import BaseSizer, DefaultSizer, ZscoreRVolSizer
@@ -33,7 +37,7 @@ from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
 import yaml
 
-BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
+BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
 
@@ -41,11 +45,40 @@ with open(f'{os.environ["WORK_DIR"]}/EventDriven/riskmanager/config.yaml', 'r') 
     CONFIG = yaml.safe_load(f)
 
 order_cache = CustomCache(BASE, fname = "order")
-special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
-special_dividend['COST'] = {
-    '2020-12-01': 10,
-    '2023-12-27': 15
-}
+
+
+def load_riskmanager_cache():
+
+    """ Load the risk manager cache based on the USE_TEMP_CACHE setting."""
+    if get_use_temp_cache():
+        logger.info("Using Temporary Cache for RiskManager")        
+        spot_timeseries = CustomCache(BASE/"temp", fname = "rm_spot_timeseries", expire_days=100)
+        chain_spot_timeseries = CustomCache(BASE/"temp", fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", expire_days=100)
+        position_data = CustomCache(BASE/"temp", fname = "rm_position_data", clear_on_exit=True)
+        dividend_timeseries = CustomCache(BASE/"temp", fname = "rm_dividend_timeseries", expire_days=100)
+    else:
+        spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
+        chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
+        position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
+        dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
+    
+    ## Not dependent on USE_TEMP_CACHE, so always use the persistent cache.
+    splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
+    special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
+    special_dividend['COST'] = {
+        '2020-12-01': 10,
+        '2023-12-27': 15
+    }
+    
+    return (spot_timeseries, 
+            chain_spot_timeseries, 
+            processed_option_data, 
+            position_data, 
+            dividend_timeseries, 
+            splits_raw, 
+            special_dividend)
 
 def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
     """
@@ -183,7 +216,7 @@ class OrderPicker:
     
     # @lru_cache(maxsize=128)
     @staticmethod
-    @PERSISTENT_CACHE.memoize()
+    @persistent_cache_decorator()
     def __get_order(schema:tuple,
                 date: str|datetime,
                 spot: float,
@@ -597,11 +630,17 @@ class RiskManager:
         self.end_date = end
         self.symbol_list = self.bars.symbol_list
         self.OrderPicker = OrderPicker(start, end)
-        self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
-        self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
-        self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
-        self.position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
-        self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
+        
+        ## Load data caches. USE_TEMP_CACHE == True means a reset every kernel refresh. Else persists over days.
+        (
+        self.spot_timeseries,
+        self.chain_spot_timeseries,
+        self.processed_option_data,
+        self.position_data,
+        self.dividend_timeseries,
+        self.splits_raw,
+        self.special_dividends
+        ) = load_riskmanager_cache()
         self.sizing_type = sizing_type
         self.sizing_lev = leverage
         self.limits = {
@@ -626,7 +665,6 @@ class RiskManager:
         self.max_moneyness = max_moneyness
         self.option_price = option_price
         self._actions = {}
-        self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
         self.splits = self.set_splits(self.splits_raw)
         self.schema_cache = {}
         self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
@@ -641,7 +679,6 @@ class RiskManager:
         self.executor = executor
         self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
-        self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
         self.__sizer = None
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.

@@ -88,6 +88,28 @@ logger.info("RISK MANAGER is Using New DataManager")
 TIMESERIES_START = pd.to_datetime('2017-01-01')
 TIMESERIES_END = datetime.today()
 
+def set_timeseries_start(start: str|datetime) -> None:
+    """
+    Sets the start date for the timeseries data.
+    
+    Args:
+        start (str|datetime): The start date for the timeseries data.
+    """
+    global TIMESERIES_START
+    TIMESERIES_START = pd.to_datetime(start)
+    logger.info(f"Timeseries Start set to: {TIMESERIES_START}")
+
+def set_timeseries_end(end: str|datetime) -> None:
+    """
+    Sets the end date for the timeseries data.
+    
+    Args:
+        end (str|datetime): The end date for the timeseries data.
+    """
+    global TIMESERIES_END
+    TIMESERIES_END = pd.to_datetime(end)
+    logger.info(f"Timeseries End set to: {TIMESERIES_END}")
+
 ## Patch tickers to swap old tickers with new ones
 PATCH_TICKERS = True
 
@@ -106,17 +128,64 @@ def set_patch_tickers(patch_tickers):
 # 1) pick a folder for your caches
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 BASE.mkdir(exist_ok=True)
-location = Path(os.environ['GEN_CACHE_PATH'])
+location = Path(os.environ['GEN_CACHE_PATH']) ## Allows users to set a custom cache location
+
+# 1a) Create USE_TEMP_CACHE
+USE_TEMP_CACHE = False
+def set_use_temp_cache(use_temp_cache: bool) -> None:
+    """
+    Sets the USE_TEMP_CACHE variable to the given value.
+    
+    Args:
+        use_temp_cache (bool): The value to set USE_TEMP_CACHE to.
+    """
+    global USE_TEMP_CACHE
+    USE_TEMP_CACHE = use_temp_cache
+    logger.info(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}")
+    logger.critical(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}. This will use a temporary cache that is cleared on exit. Utilize reset_persistent_cache() to reset the persistent cache.")
+
+def get_use_temp_cache() -> bool:
+    """
+    Returns the current value of USE_TEMP_CACHE.
+    
+    Returns:
+        bool: The current value of USE_TEMP_CACHE.
+    """
+    global USE_TEMP_CACHE
+    return USE_TEMP_CACHE
 
 # 2) swap your dicts for Cache instances
+
 chain_cache = CustomCache(BASE, fname="chain", expire_days=45)
 close_cache = CustomCache(BASE, fname="close", expire_days=45)
 oi_cache    = CustomCache(BASE, fname="oi", expire_days=45)
 spot_cache  = CustomCache(BASE, fname="spot", expire_days=45)
 formatted_flags = CustomCache(location = BASE, fname = 'formatted_flags', expire_days=45)
-PERSISTENT_CACHE = CustomCache(location,
-                               fname='persistent_cache',
-                               expire_days=30)
+
+# 2a) Create persistent cache or temp
+def get_persistent_cache() -> CustomCache:
+    """
+    Returns the persistent cache.
+    
+    Returns:
+        CustomCache: The persistent cache instance.
+    """
+    if USE_TEMP_CACHE:
+        return CustomCache(location/'temp', fname='temp_cache', clear_on_exit= True)
+    else:
+        return CustomCache(location, fname='persistent_cache', expire_days=30)
+    
+def persistent_cache_decorator(): ## Factory function for persistent cache decorator
+    return get_persistent_cache().memoize()
+
+def reset_persistent_cache() -> None: ## To reset cache Variable, just incase
+    """
+    Resets the persistent cache by clearing it.
+    """
+    global PERSISTENT_CACHE
+    PERSISTENT_CACHE = get_persistent_cache()
+
+PERSISTENT_CACHE = get_persistent_cache() 
 
 # 3) Create clear_cache function
 def clear_cache() -> None:
@@ -318,7 +387,7 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-@PERSISTENT_CACHE.memoize()
+@persistent_cache_decorator()
 def populate_cache_with_chain(tick, date, print_url = True):
     """
     Populate the cache with chain data.
