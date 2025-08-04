@@ -14,7 +14,10 @@ from .utils import (logger,
                     PERSISTENT_CACHE,
                     persistent_cache_decorator,
                     get_use_temp_cache,
-                    get_persistent_cache)
+                    get_persistent_cache,
+                    load_position_data,
+                    enrich_data,
+                    generate_spot_greeks)
 from .actions import *
 from .picker import *
 from .sizer import BaseSizer, DefaultSizer, ZscoreRVolSizer
@@ -94,6 +97,9 @@ def add_columns(series:pd.Series, col_to_add:int, factory=ADD_COLUMNS_FACTORY):
     Add new columns to a DataFrame using a factory function.
     """
     return factory[col_to_add](series)
+
+
+
 
 
 
@@ -805,7 +811,7 @@ Quanitity Sizing Type: {self.sizing_type}
             """
         print(msg)
         
-
+    @log_time(time_logger)
     def get_order(self, *args, **kwargs):
         """
         Compulsory variables for OrderSchema:
@@ -903,9 +909,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
             print(f"\nOrder Received: {order}\n")
-
             position_id = order['data']['trade_id']
-            # self.register_option_meta_frame(date, position_id) ## Register the option meta frame for the position
             
         else:
             print(f"\nOrder Failed: {order}\n")
@@ -917,10 +921,8 @@ Quanitity Sizing Type: {self.sizing_type}
         self.calculate_position_greeks(position_id, kwargs['date'])
         order = self.update_order_close(position_id, kwargs['date'], order) ## Update the order with the close price from the position data
         logger.info('Updating Signal Limits')
-        # self.update_greek_limits(signalID, position_id)
         self.sizer.update_delta_limit(signalID, position_id, date)
         logger.info("Calculating Quantity")
-        # quantity = self.calculate_quantity(position_id, signalID, kwargs['date'], order['data']['close'])
         quantity = self.sizer.calculate_position_size(signalID, position_id, order['data']['close'], kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
         order['data']['quantity'] = quantity
@@ -1020,7 +1022,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     new_details['strike']/=split_meta[1]
                     direction_frame.loc[split_start:, i] = generate_option_tick_new(*new_details.values())
 
-
+    @log_time(time_logger)
     def calculate_position_greeks(self, positionID, date):
         """
         Calculate the greeks of a position
@@ -1107,56 +1109,76 @@ Quanitity Sizing Type: {self.sizing_type}
         This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
         This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
         """
-        ## Check if the option tick is already processed
-        if opttick in self.processed_option_data:
-            return self.processed_option_data[opttick]
-
         ## Get Meta
         meta = parse_option_tick(opttick)
-
-        ## Generate data
-        data = self.generate_spot_greeks( opttick)
-        data = self.enrich_data(data, meta['ticker'])
-        self.processed_option_data[opttick] = data
-        return data
+        return load_position_data(opttick, 
+                                  self.processed_option_data, 
+                                  self.start_date, 
+                                  self.end_date,
+                                  s=self.chain_spot_timeseries[meta['ticker']],
+                                  r=self.rf_timeseries,
+                                  y=self.dividend_timeseries[meta['ticker']],
+                                  s0_close=self.spot_timeseries[meta['ticker']],)
 
     def enrich_data(self, data, ticker):
         """
         Enrich the data with additional information.
         """
-        data = _clean_data(data)
-        data = data[~data.index.duplicated(keep = 'last')]
-        data['s'] = self.chain_spot_timeseries[ticker]
-        data['r'] = self.rf_timeseries
-        data['y'] = self.dividend_timeseries[ticker]
-        data['s0_close'] = self.spot_timeseries[ticker]
-        data = ffwd_data(data, ticker)
-        return data
+        return enrich_data(data, ticker, self.spot_timeseries, self.chain_spot_timeseries, self.rf_timeseries, self.dividend_timeseries)
         
     def generate_spot_greeks(self, opttick):
         """
         Generate spot greeks for a given option tick.
         """
         ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
-        meta = parse_option_tick(opttick)
-        data_manager = OptionDataManager(opttick=opttick)
-        greeks = data_manager.get_timeseries(start = self.start_date,
-                                                end = self.end_date,
-                                                interval = '1d',
-                                                type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
-        greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
-        greeks = greeks[greeks_cols]
-        greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill')
-        greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+        return generate_spot_greeks(opttick, self.start_date, self.end_date)
+    
+    def append_option_data(self, 
+                             option_id: str=None,
+                             position_data: pd.DataFrame=None,
+                             data_pack: dict|CustomCache=None,):
+        """
+        Append option data to the processed_position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if option_id:
+            assert position_data is not None, "position_data must be provided if option_id is given"
+            self.processed_option_data[option_id] = position_data
+        
+        elif data_pack:
+            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.processed_option_data[k] = v
+        
+        else:
+            raise ValueError("Either option_id or data_pack must be provided to append_position_data")
+        
+    def append_position_data(self, 
+                             position_id: str=None,
+                             position_data: pd.DataFrame=None,
+                             data_pack: dict|CustomCache=None,):
+        """
+        Append position data to the position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if position_id:
+            assert position_data is not None, "position_data must be provided if position_id is given"
+            self.position_data[position_id] = position_data
+        
+        elif data_pack:
+            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.position_data[k] = v
+        
+        else:
+            raise ValueError("Either option_id or data_pack must be provided to append_position_data")
 
-        spot = data_manager.get_timeseries(start = self.start_date,
-                                            end = self.end_date,
-                                            interval = '1d',
-                                            type_ = 'spot',
-                                            extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
-        spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
-        data = greeks.join(spot)
-        return data
 
 
     def generate_option_data_for_trade(self, opttick, check_date):

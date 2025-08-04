@@ -76,6 +76,7 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
 import signal
+from .config import ffwd_data
 
 
 
@@ -387,6 +388,7 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
+@log_time(time_logger)
 @persistent_cache_decorator()
 def populate_cache_with_chain(tick, date, print_url = True):
     """
@@ -434,6 +436,97 @@ def populate_cache_with_chain(tick, date, print_url = True):
     chain_clipped.columns = chain_clipped.columns.str.lower()
 
     return chain_clipped
+
+
+##UTILS
+def load_position_data(opttick, 
+                       processed_option_data, 
+                       start, 
+                       end,
+                       s,
+                       r,
+                       y,
+                       s0_close):
+    """
+    Load position data for a given option tick.
+
+    args:
+        opttick (str): The option tick to load data for.
+        processed_option_data (dict): A dictionary to store processed option data.
+        start (str|datetime): The start date for the data.
+        end (str|datetime): The end date for the data.
+        s (pd.Series): The spot price series. Must be split adjusted.
+        r (pd.Series): The risk-free rate series.
+        y (pd.Series): The dividend yield series.
+        s0_close (pd.Series): The close price of the underlying asset series.
+
+    This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
+    This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
+    """
+    ## Check if the option tick is already processed
+    if opttick in processed_option_data:
+        return processed_option_data[opttick]
+
+    ## Get Meta
+    meta = parse_option_tick(opttick)
+
+    ## Generate data
+    data = generate_spot_greeks( opttick, start_date=start, end_date=end)
+    data = enrich_data(data, meta['ticker'], 
+                       s[s.index.isin(data.index)],
+                       r[r.index.isin(data.index)],
+                       y[y.index.isin(data.index)],
+                       s0_close[s0_close.index.isin(data.index)])
+    processed_option_data[opttick] = data
+    return data
+
+def enrich_data(data, ticker, s, r, y, s0_close):
+    """
+    Args:
+        data (pd.DataFrame): The data to enrich.
+        ticker (str): The ticker symbol for the option.
+        s (pd.Series): The spot price. Adjusted for splits.
+        r (pd.Series): The risk-free rate.
+        y (pd.Series): The dividend yield.
+        s0_close (pd.Series): The close price of the underlying asset.
+    Enrich the data with additional information.
+    """
+    data = _clean_data(data)
+    data = data[~data.index.duplicated(keep = 'last')]
+    data['s'] = s
+    data['r'] = r
+    data['y'] = y
+    data['s0_close'] = s0_close
+    data = ffwd_data(data, ticker)
+    return data
+    
+def generate_spot_greeks(opttick, start_date: str|datetime, end_date: str|datetime) -> pd.DataFrame:
+    """
+    Generate spot greeks for a given option tick.
+    """
+    ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
+    meta = parse_option_tick(opttick)
+    data_manager = OptionDataManager(opttick=opttick)
+    greeks = data_manager.get_timeseries(start = start_date,
+                                            end = end_date,
+                                            interval = '1d',
+                                            type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
+    greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+    greeks = greeks[greeks_cols]
+    greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill')
+    greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+    spot = data_manager.get_timeseries(start = start_date,
+                                        end = end_date,
+                                        interval = '1d',
+                                        type_ = 'spot',
+                                        extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
+    spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
+    data = greeks.join(spot)
+    return data
+
+
+
 
 def refresh_cache() -> None:
     """

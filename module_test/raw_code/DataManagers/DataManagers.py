@@ -180,6 +180,8 @@ def set_skip_mysql_query(value: bool):
     """
     Set the skip MySQL query flag.
     """
+    if value:
+        logger.critical("Skipping MySQL query. This is not optimized and may lead to performance issues.")
     global SKIP_MYSQL_QUERY
     SKIP_MYSQL_QUERY = value
 

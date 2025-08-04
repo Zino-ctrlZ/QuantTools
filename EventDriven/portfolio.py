@@ -68,7 +68,12 @@ class OptionSignalPortfolio(Portfolio):
     initial_capital: int
     """
     
-    def __init__(self, bars : HistoricTradeDataHandler, eventScheduler: EventScheduler, risk_manager : RiskManager, weight_map = None, initial_capital = 10000): 
+    def __init__(self, bars : HistoricTradeDataHandler, 
+                 eventScheduler: EventScheduler, 
+                 risk_manager : RiskManager, 
+                 weight_map = None, 
+                 initial_capital = 10000,
+                 finalize_trades: bool = True): 
         """
         Portfolio class for managing option trading strategies based on signals.
         Handles position tracking, order generation, portfolio valuation, and trade management.
@@ -113,6 +118,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         self.bars = bars
         self.eventScheduler = eventScheduler
+        self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1])
         self.symbol_list = self.bars.symbol_list
         self.start_date = bars.start_date.strftime("%Y%m%d")
         self.initial_capital = initial_capital
@@ -129,6 +135,7 @@ class OptionSignalPortfolio(Portfolio):
         self.unprocessed_signals = []
         self.resolve_orders = True 
         self.allow_multiple_trades = True # allow multiple trades for the same signal_id
+        self.finalize_trades = finalize_trades # whether to finalize trades or not
         self.risk_manager.pm = self 
         self._order_settings =  {
             'type': 'spread',
