@@ -252,6 +252,53 @@ TABLES = {
     }
 }
 
+## Choose btwn QUOTES or EOD:
+USE_QUOTES = False
+
+
+def set_use_quotes(value: bool):
+    """
+    Set the use quotes flag.
+    """
+    global USE_QUOTES
+    USE_QUOTES = value
+    if value:
+        logger.critical("Using quotes for data retrieval.")
+    else:
+        logger.critical("Using EOD data for data retrieval.")
+    QuoteController.set_use_quotes(value)
+
+
+
+def get_use_quotes():
+    """
+    Get the use quotes flag.
+    """
+    return USE_QUOTES
+class QuoteController:
+    """
+    This module is used to control the use of quotes or EOD data across the data managers.
+    """
+    __USE_QUOTES = USE_QUOTES
+    
+    @classmethod
+    def get_use_quotes(cls):
+        """
+        Get the use quotes flag.
+        """
+        global USE_QUOTES
+        return USE_QUOTES
+
+    @classmethod
+    def set_use_quotes(cls, value: bool):
+        """
+        Set the use quotes flag.
+        """
+        global USE_QUOTES
+        USE_QUOTES = value
+        cls.__USE_QUOTES = value
+    
+
 
 #### Empty classes. Not yet implemented.
 
@@ -265,7 +312,7 @@ class ScenarioDataManager:
 
     
 
-class SpotDataManager:
+class SpotDataManager(QuoteController):
     def __init__(self, symbol:str):
         self.symbol = symbol
 
@@ -286,7 +333,24 @@ class SpotDataManager:
         agg = data_request.agg
         if agg == 'eod':
             if not bulk:
-                data = retrieve_eod_ohlc(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url)
+                if self.get_use_quotes():
+                    data=retrieve_quote(symbol=self.symbol, 
+                                        end_date=end, 
+                                        exp=exp, 
+                                        right=right, 
+                                        start_date=start, 
+                                        strike=strike, 
+                                        print_url=print_url, 
+                                        interval='1d',
+                                        ohlc_format=True)
+                else:
+                    data = retrieve_eod_ohlc(symbol=self.symbol, 
+                                            end_date=end, 
+                                            exp=exp, 
+                                            right=right, 
+                                            start_date=start, 
+                                            strike=strike, 
+                                            print_url=print_url)
                 data = data[~data.index.duplicated(keep='first')]
                 open_interest = retrieve_openInterest(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url).set_index('Datetime')
                 open_interest.drop_duplicates(inplace = True)
@@ -369,7 +433,7 @@ class VolDataManager:
         raw_data.drop(columns=['datetime'], inplace=True)
 
 
-class GreeksDataManager:
+class GreeksDataManager(QuoteController):
     def __init__(self, symbol:str):
         self.symbol = symbol
 
@@ -395,7 +459,8 @@ class GreeksDataManager:
 ## Writing this as a separate class to handle the chain data
 ## I don't want it to depend on OptionDataManager
 ## Because it isn't tethered to a specific option.
-class ChainDataManager(_ManagerLazyLoader):
+class ChainDataManager(_ManagerLazyLoader,
+                       QuoteController):
     """
     Class to manage the chain data for a given symbol.
     It inherits from the _ManagerLazyLoader class to load data on demand.
@@ -516,7 +581,8 @@ class ChainDataManager(_ManagerLazyLoader):
 
 
 
-class BulkOptionDataManager(_ManagerLazyLoader):
+class BulkOptionDataManager(_ManagerLazyLoader,
+                            QuoteController):
     """
     Class to manage the bulk option data for a given symbol.
     It inherits from the _ManagerLazyLoader class to load data on demand.
@@ -796,14 +862,16 @@ class BulkOptionDataManager(_ManagerLazyLoader):
         bulk_one_off_save(start, end, tick, exp, print_info)
 
 
-class OptionDataManager(_ManagerLazyLoader):
+class OptionDataManager(_ManagerLazyLoader, 
+                        QuoteController):
+
     """
     Class to manage the option data for a given symbol.
     It inherits from the _ManagerLazyLoader class to load data on demand.
     It uses the OptionQueryRequestParameter class to handle the data requests.
     It uses the DatabaseAdapter class to handle the database operations.
     """
-
+    USE_QUOTES = get_use_quotes() ## This is a global variable to control if we use quotes or not
 
     @log_time(time_logger)
     def __init__(self,

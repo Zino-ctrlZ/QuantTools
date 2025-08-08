@@ -1,51 +1,20 @@
 Portfolio File:
     Now:
-        ✔ Extend OptionSignalClass @done(25-01-27 00:25)
-        ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14)
-        ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14)
-        ✘ Write a logic to generate spreads based on criteria @cancelled(25-01-27 22:14)
-            ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14)
 
-        ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25)
-        ✔ Make a module for demo @done(25-02-10 21:39)
-        ✔ Investigate get_trades_new (chidi mentioned it was not working) @done(25-02-16 18:44)
-        ✔ Ensure all data is consistent, trades, all_positions, current_positions etc @done(25-02-16 18:44)
-        ✔ remove old functions in portfolio.py and clean _new functions @done(25-02-17 20:16)
-        ✘ Catch theta data no listed contracts error. @cancelled(25-02-17 20:16)
-        ✔ Save the orders we can't get because of price. (???) @done(25-03-13 17:08)
-        ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day, is_holiday go to next day, is_money_too_low (adjust to max cash ), no_contracts(Just drop.) @done(25-03-04 22:09)
-            ✔ min moneyness breaker @done(25-03-04 22:10)
-        ✔ In all_holdings: @done(25-02-17 22:55)
-            ✔ Cash to be the weight not allocated * initial capital @done(25-02-17 22:55)
-            ✔ Tickers Value to be current market value of cash assigned to the ticker @done(25-02-17 22:55)
-            ✔ Eg: $1100, bought 10 contracts for 100. You have $100. Market value will be 10 * 100 (Contracts value) + $100 (Unallocated cash) @done(25-02-17 22:55)
-                ✔ Example extends to next day & contract value increases to 105. Market value will be (10 * 105) + $100 @done(25-02-17 22:55)
-
-        ✔ Initialize available cash for each tick with weight * iniitial capital @done(25-02-17 22:57)
-            ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57)
-        ✔ Make max close a variable @done(25-02-17 22:56)
-        ✘ Commissions look too low. @cancelled(25-02-17 22:56)
-        ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41)
-        ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41)
-        ✔ Create two trades data. One that tracks actual assets, another that tracks position. @done(25-03-13 17:08)
-        ✔ Add floor to contracts quantity @done(25-02-17 22:56)
-        ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41)
-        ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41)
-        ✔ (PRIORITY) Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino). @done(25-03-13 17:09)
-            ✔ When roll_bool is True, we roll when dte <= dte_min @done(25-03-13 17:09)
-            ✔ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid @done(25-03-13 17:09)
-                ✔ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium @done(25-03-13 17:09)
-        ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35)
-        
-        ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10)
-        ✘ Add aggregator to portfolio @cancelled(25-03-04 00:36)
-        
-        ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32)
-        ✔ Add max-close on tick @done(25-03-04 00:32)
-        ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35) 
-        ✔ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism @done(25-03-30 21:09)
-        ✔ make max close passable in a signal for cases where max close is too low @done(25-03-30 21:09)
-        ✔ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage @done(25-03-30 21:08)
+    
+    Long Term:
+        ☐ Implement buy on Open, Bid, Ask.
+        ☐ Getting divYield to have a max retries to factor in sporadic errors 
+        ☐ Add rebalancing
+        ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
+        ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
+        ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
+        ☐ Stop Loss, Scaling in & Out, Trailing Stop
+        ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
+        ☐ Handle the Exercise Properly
+        ☐ Hedging 
+        ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
+        ☐ Seperate whole get_order process to allow easy injection into backtest
         ☐ For missing value, use intrinsic value are price
         ☐ add a setter for roll_map & min_acceptable_dte_threshold:
             - min_acceptable_dte_threshold cannot be less than roll_map
@@ -56,49 +25,15 @@ Portfolio File:
         ☐ Execute order proxy: This produces the exact data of executing and ordeer and returns it. if less than 0, we reduce the quantity and try again.
         ☐ Create basic Hedge Class with Calculate hedge ratio. (Should have an open & close method.)
         ☐ Make Positions an object
-    
-    Long Term:
-        ☐ Implement buy on Open, Bid, Ask.
-        ☐ Getting divYield to have a max retries to factor in sporadic errors 
-        ☐ Add rebalancing
-        ✔ Implement enum for signal types, order types & event types @done(25-03-30 21:12)
-        ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
-        ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
-        ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
-        ☐ Stop Loss, Scaling in & Out, Trailing Stop
-        ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-        ☐ Handle the Exercise Properly
-        ☐ Hedging 
-        ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
-        ☐ Create table for split date @chidi
+        ☐ Make PTBacktest cross-sectional or write a new one that is cross-sectional
       
-Events:
-    ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26)
-    ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day @done(25-03-04 18:26)
-    ✘ add count indicator to show how many times an event has been triggered @cancelled(25-03-04 18:27)
-    ✔ Add a signal_id to each event, for tracking trades, add signal_id to each trade @done(25-03-04 18:26)
-     ✔ improve store_events function @done(25-03-10 23:36)
-     ✔ Make ROLL its own event @done(25-03-13 18:36)
 
 EventScheduler:
-    ✔ Create subclass of queue and overide getnowait() function @done(25-03-30 21:09)
-    ✘ Implement a dictionary that mirrors the queue, keys will be same as the events_dict, each dictionary value will have CLOSE and OPEN dictionaries that store signals. @cancelled(25-03-30 21:10)
-    ✔ When processing, if the event is a signal event to OPEN, check for matching signal to CLOSE on that same day, put the buy back in the event queue for same day if there is a matching close in existence, have a check for if that reverse operation has been conducted to prevent infinite loops @done(25-03-30 21:10)
     ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
-Data File:
-    ✘ update_latest_bars doesn't need arguments. @cancelled(25-03-03 22:46)
-    ✔ only create market events when the date is a valid trading day @done(25-03-10 23:36)
-    ✘ Create a class for price data/any other other trade @future-implementation(25-03-04 18:28)
-    ✘ Data must drip feed data with ohlc fields @future-implementation(25-03-04 18:27)
-
-
-Strategy File:
-    ✔ We will use LONG, SHORT and CLOSE. CLOSE checks if there is an active position then sends the OPPOSITE signal to Porfolio manager. @done(25-02-10 22:55)
 
 
 Risk Manager:
-    ✔ Create a dummy risk manager. (Compute risk exposure) @done(25-01-21 07:33)
     ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
     ☐ Get Close From Chain, with bulk
     ☐ Improve speed of rm
@@ -120,13 +55,10 @@ Risk Manager:
     ☐ (Consider) Add Vega, Gamma, Delta limits?
     ☐ In add a min size filter
     ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
-    ✔ ## Add a setter to update lookback dictionary in OrderPicker/RM file @done(25-03-02 12:53)
-
 
 General:
     ☐ Implement buy on Open.
     ☐ Add days lag and `trade_on`
-    ✘ Secondary queue/list to repopulate next bar @cancelled(25-02-17 21:11)
     ☐ Getting divYield to have a max retries to factor in sporadic errors 
     ☐ Enforce typedDicts for functions
     ☐ Add rebalancing
@@ -136,36 +68,17 @@ General:
     ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
 
 
-
-Setup Logger:
-    ✔ Instead of creating a logs folder in every root, it should be created in the root of the project. @done(25-02-05 06:24)
-
-
-
 Additional Portfolio Attributes:
-    ✔ Cash Dict, for each symbol @done(25-02-25 00:10)
     - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
     - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
 
 Feb 10, 2025 updates: 
-    ✔ Fix data consistency issues (zino) @done(25-02-16 18:44)
-    ✔ implement deepcopy where objects/dataframes are assigned (zino) @done(25-02-25 00:10)
-    ✔ Investigate get_trades_new  (zino) @done(25-02-16 18:44)
-    ✔ Fix errors during backtest, known issues: openBB, cols[-1] = 'close' IndexError: list assignment index out of range in get_order (chidi) @done(25-02-16 23:42)
     ☐ After fixing the above, push to main branch and focus on optimization for optionSignalBacktest 
-
 
 List Contracts:
     ☐ Should return error for no dates
 
-
-Usable:
-    ✔ In_holdings fixed. @done(25-02-25 00:10)
-    ✔ 90% of trades from Stock go thru in Options @done(25-03-16 20:54)
-    ✔ Can conduct aggregation @done(25-03-02 12:55)
-    ✔ Can do naked & spreads without errors @done(25-03-04 21:53)
     
-
 Backtest:
     ☐ Re-run walkforward
     ☐ Write doctrsing and type hint:
@@ -173,9 +86,421 @@ Backtest:
         - Even b
         - PTBacktester
 
-
-
 Zino Convo 5/31/25:
     - Add mkdir to custom cache
 
 
+
+General:
+
+    General:
+        ✔ Create a module to hold general functions like get_class_attributes (done) @done(24-09-08 17:50)
+        ✔ Creat universe holder @done(24-09-16 11:23)
+        ✔ Look into openBB @done(24-09-08 17:52)
+        ☐ Find a way to use CIK Codes & Financials to get the necessary data. ZINO! @Zino
+        ✔ Move to-do to new file type @done(24-09-16 11:23)
+        ✔ Figure out how to save news for the time being @done(24-09-16 11:23)
+        ☐ Think up a better logging strategy
+        ☐ Add chain call log
+        ☐ Write typehints for all functions & classes
+
+
+
+    Overall Trading:
+        ☐ Check OpenBB for economic Calendar
+
+
+    Main Focus:
+        ☐ Analyze the PTBacktester Walk Forward
+        ☐ Improve the strategy:
+            ☐ - Scale in & Scale out @Zino
+            ☐ - Re-entry &  exit
+            ☐ - Test Regime optimize @critical
+            ☐ - Rebalancing
+            ☐ + Look into openBB
+            ✔ Create function for saving data (done) @done (9/8/2024, 5:31:58 PM)
+            ☐ Set up automatic saves of price data/clean up
+
+
+    Create stocks universe module:
+        ☐ Create Package
+        ☐ Create Screener
+        ☐ Create SPY, QQQ, & other ETF top names
+        ☐ Save to Mysql database
+        ☐ columns: tick, market_cap at time, share of S&P, price
+
+
+
+
+
+
+Backtest:
+    Module:
+        PTBacktester Improvements:
+            ✔ Create per position optimizer: @done(25-02-05 06:25)
+            ✔ - Create settings in PTDataset (done) @done (9/8/2024, 5:32:33 PM)
+            ☐ - Save optimized in a dict
+            ✔ - Reset strategy class settings (done) @done (9/8/2024, 5:32:30 PM)
+            ✔ Create a strategy (Done) @done (9/8/2024, 5:32:27 PM)
+            ✔ Speed up optimizer & aggregate methods @done(24-09-08 17:52)
+            ✔ Write PTBacktester docstring @done(25-02-21 09:51)
+            ☐ Add other performance metrics like monthly pnl grid. (month column, year index)
+            ☐ Add max periodic loss/gain to aggregate
+            ☐ Begin test QSTrader
+            ☐ Add Filters for trend strategy & MAStrat
+            ✔ Add name & runindex to strategy position optimize incase it's needed @done(25-03-02 12:18)
+            ☐ Multithread for Aggregate (later date, more pressing issues)
+            ☐ Change BuyNhold calc
+            ☐ Include open trades in agg
+
+
+        Options Event Driven Backtesting:
+            ✔ Add the recommeded changes. Choosing structure, risk manager etc @done(25-02-21 09:51)
+
+        Attribution:
+            ☐ Create Attribution off trades entries.
+
+    Process:
+        Backtest To-Do:
+            ✔ Replace INTC with META after compatible in stock @done(25-03-02 12:33)
+            ☐ Find some sort of analysis/Comparison for EQ & Options backtest
+                - I need more information, how are they different? What are the benefits of each?
+                - How do I compare them?
+            ☐ Regime Optimize (????)
+            ☐ Stock Selection Optimize (Future Date, once we have more data)
+            ☐ Look into this QSTrader Backtester (Future Date)
+            ☐ Incorporate sensitivity analysis (Future Date) https://paperswithbacktest.com/wiki/sensitivity-analysis#implementing-sensitivity-analysis-with-build-alpha
+
+
+        Backtesting:
+            ✔ Create .plot() (done) @done(24-09-08 17:50)
+            ✔ Make an optimize (done): @done(24-09-08 17:50)
+                Create a file that saves this data. save: trades, equity, dd, 
+            ☐ Strategy Edition:
+                ☐ Add scale in & scale out
+                ☐ Trade on open
+                ☐ Profit Targets
+            ☐ Add how to keep count of strategy signal (not enter & reentry trades) (get Vector)
+            ☐ Find filters for BBANDS & MAStrat to improve PnL
+                ☐ Possible Filters: Trend Strength, Volatility, Market Direction,
+
+        Strategy:
+
+            BBANDS:
+                ✘ Find filters for BBANDS & MAStrat to improve PnL @cancelled(25-03-05 21:32)
+
+            Walk-Forward Optimization:
+                ✔ Add equity curve to WalkForwardAnalysis @done(25-03-02 12:39)
+
+            Analysis:
+                ☐ Do some sort of analysis to see how liquidity (open interest, volume) affects bid/ask spread (maybe even strategy performance)
+        
+        Option Backtest:
+            Attribution:
+                ☐ Why is the Gamma negative?
+
+
+
+
+
+Live Trading:
+
+    Portfolio Performance Class:
+        ☐ Create this
+        ☐ Calculate vol gamma
+        ☐ Create Spot/Vol Scenario
+
+
+
+
+Database Management:
+    General:
+        ✔ Save Timeseries and ) @done(24-09-08 17:53)
+        ✔ Save available option chain @done(25-02-05 06:26)
+        ☐ Daily Price
+        ✔ Putting database on harddrive (done) @done(24-09-08 17:51)
+        ☐ Write Reference for each table:
+            Name, Data Provider, Data Contained, Product Type, Data Update Freq, Storage type, 
+        ☐ Save the factors data to database 
+        ☐ Add undl_type back to optiondata once I can source where to get it from.
+        ✔ For the options with bidask, use midpoint btwn bid & ask as close, then calc vol. Have a column for theoritical @done(24-09-16 11:21)
+        ☐ Schedule data deletion
+        ☐ Save splits to database (tick, date, split ratio)
+        ☐ Add Vol_resolve column to database & old price. Replace old Price with price from Vol resolve
+            ☐ add ask & bid columns for vol resolve
+
+    
+
+    ThetaData Functions:
+        ☐ What is causing the empty cells when run?
+        ☐ Add date to listed_contract logs
+        ☐ Log every func
+        ☐ Switch to class.
+            ☐ Idea: 
+                - Set attribute for live, intraday & EOD
+                - Create a generic func for formatting thetadat
+                - Able to set a time for eod cpntracts.
+                - Freq is allowed to be set for intraday
+        ☐ Create tick map for tickers that have changed names
+        ☐ Get retrieve_quote to return 1day
+        ☐ Still raise the valid_name error
+        ☐ Standardize print_url in every pass_kwargs dict
+        ☐ Quote at time function
+        ☐ Standardize error logging with a function
+        ☐ Standardize column formatting with a function
+        ☐ Add print_url to all proxy func calls
+        ☐ Have data_api return greeks & vol data from database. If not available, calculate and save
+        ☐ Ensure timer is actually tracking correctly
+
+        ThetaData Class
+            - __init__:
+                - Interval, EOD_Time, print_url
+            - Has All Functions
+            - A formatting function: Job is to calculate any column that needs to be calculated. Example: Midpoint, Weighted_Midpoint, Date, 
+            - Function/Decorator To raise errors.
+            - Minimum intra-day level to 1hr.
+                - Intra-day process. I use 5mins interval from thetadata, then I resample myself.
+            - One function for both intraday & EOD
+
+    Data Sourcing:
+        ☐ Source and save index compositions
+        ☐ Aggregate open interest & volume for options and store in database
+
+    DataManager:
+        ✔ Create attribution table @done(25-03-05 21:30)
+        ✔ Clean up DataManager @done(25-04-25 11:08)
+        ✔ Create datamanager to save data to database @done(25-04-25 11:09)
+        ✔ Would it make sense to have a global data manager that can be used to query these data for multiple strikes/expirations. Obvs bpegged to ticker. But ultimately to avoid making multiple instances @done(25-04-25 11:09)
+        ✔ Extend DataManager to take variable on what to price on Available Options are 'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint', 'Open' @done(25-04-25 11:09)
+            ✔ Add Open greeks, Bid, Ask greeks to database @done(25-04-25 11:09)
+        ✔ Binomial Vol should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09)
+        ✔ BS Vol Should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09)
+        ☐ Binomial Vol should have vol Resolve, add model name to Volsurface database ie when creating vol surface, if using binomial or  bs vols
+        ☐ Extend DB connections to use pooling 
+        ☐ Implement a caching to reduce dependency on DB. It will be like wrapper: stores in cache, checks for available data, merges, etc20:01:53.849 [error] Disposing session as kernel process died ExitCode: undefined, Reason: Fatal Python error: Segmentation fault
+
+
+
+
+
+
+
+Modules:
+
+    General:
+        ✔ Clean up as much as possible @done(24-10-13 17:29)
+        ✔ Calculate module is quite buggy, fix this. Especially attribution @done(24-10-13 17:29)
+        ✔ Move RESCLIENT to __init__ @done(24-09-16 11:19)
+        ✔ Make every timeseries have timestamp as index @done(24-09-16 11:22)
+        ✔ Calculate should have rates & vol scenarios @done(24-10-13 17:29)
+        ✔ Switch all pricing to use quantlib (done) @done(24-09-08 17:51)
+        ✔ Make sure context returns data as per date @done(24-10-28 21:49)
+            ✔ On options, it should rreturn spot, price, vol as of @done(24-10-28 21:49)
+            ✔ For stock, spot, dividends as of @done(24-10-28 21:49)
+        ✔ Stock: Source option Chain @done(24-10-16 22:08)
+        ✔ Add timeseries gen for Option, if not available, save: Also save latest date @done(24-10-13 17:28)
+        ☐ Change the timeseries in Stock Module to intraday (Alpha Vantage)
+        ✔ Switch up spot in options to quote from theta data @done(24-10-13 17:28)
+        ✔ Change option Volga & Vanna in database @done(24-09-16 11:20)
+        ✔ Centralize everything to do with getting_option_timeseries @done(24-10-13 17:27)
+            ✔ Querying data @done(24-10-13 17:27)
+            ✔ Saving data @done(24-10-13 17:27)
+            ✔ Providing greeks @done(24-10-13 17:27)
+        ✔ Fix stock div_yield_history to return intraday @done(24-10-14 00:34)
+        ✔ Make time_distance_helper assist with intraday time as well @done(24-09-23 23:52)
+            ✔ Now adjust to make sure daily pricing is as at 16:00 @done(24-10-13 17:27)
+        ✔ In intraday of OptionDataManager, make sure the table is updated EOD for names saved that day @done(24-10-19 18:23)
+        ✔ Automate saving get risk free rate daily and switch code to query database @done(24-10-19 18:23)
+        ☐ Create test files
+        ✔ Change all pricing place to use CHAIN PRICE @done(25-03-05 20:00)
+        ☐ Add interest rate pricing choice to env, and vol surface tables as a column
+        ☐ Scrape this site to get bool of stock splits: https://companiesmarketcap.com/nvidia/stock-splits/
+        ☐ Optimize is_USHoliday to use a dictionary
+
+    New Modules:
+        ✔ Create a module for Option Structures @done(25-02-05 06:27)
+
+    OptionStructure:
+        ✘ Create singleton for OptionStructure @cancelled(25-03-05 21:32)
+
+    Option:
+        ☐ Allow passing different values to produce new PV
+        ☐ create MarketOption, ModelOption
+
+    Stock:
+        ✘ Make stock name change compatible. Eg (FB -> Meta) @cancelled(25-03-05 20:00)
+        ✔ Add vol surface @done(25-03-05 20:02)
+        ☐ Add ATM Vol, Skew, Smile
+        ☐ Create fixed strike vol (100, 95, 80, 105, 120)
+            ☐ Switch to just calculting vol based on IV Function
+            ☐ Switch Process to use imap
+            ✔ Save this to database @done(25-03-05 20:02)
+        ☐ Create skew vol (100, 95, 80, 105, 120)
+        ✔ Build IV Manager @done(25-03-05 20:01)
+        ✘ What's causing the empty cells in the option_chain call? @cancelled(25-03-05 20:02)
+        ✘ Add unadjusted option for spot @cancelled(25-03-05 20:02)
+        ✔ What's causing the Stock to sometimes run the OptionChain when it shouldnt. Especially in datamanager. @done(25-03-05 20:02)
+        ☐ Div yield sometimes returns an empty dataframe from OpenBB. Raise eerror. Add retry
+        ☐ Raise non-intialied chain error instead of not ready error. Use run_chaim
+        ☐ Fix prev_close in stock init
+
+
+    DocString:
+        ☐ Modules
+        ☐ WalkforwardAnalysis doc string
+
+    
+    Rates:
+        ☐ Speed up generation
+        
+
+
+    Model:
+        ✔ Create model class @done(24-12-02 01:03)
+        ✔ Add the graphing and chart control stuff. @done(24-12-02 01:03)
+        ☐ Switch to SSVI
+        ☐ Learn SABR and Heston + Implement
+        ☐ Midpoint greeks/vols Cannot have 0 values
+            - Potential Solutions:
+                - If midpoint returns a non 0, Check close first
+                - If above fails, interpolate between the two closest values
+                - If above fails, fit to vol surface
+                - How can we test this?
+        ☐ Write own Binomial Tree & Vol Finding
+        ☐ Use Binomial Vol in SSVI Fitting. Use Forward Price in SSVI.
+        ☐ Add %P, %F & Fixed Strike Vol to vol surface
+        ☐ SVI Manager should take: Datetime, Term (3m), DTE
+        ☐ Why is this binomial vol returning option expired error:
+            2025-03-26 06:43:51 trade.helpers.helper WARNING: "binomial_implied_vol" raised the below error
+            2025-03-26 06:43:51 trade.helpers.helper WARNING: option expired
+            2025-03-26 06:43:51 trade.helpers.helper WARNING: Kwargs: {'price': 365.525, 'S': 334.9200134277344, 'K': 700.0, 'r': 0.052249999046325685, 'T': '2023-12-15', 'option_type': 'p', 'pricing_date': '2024-01-19', 'dividend_yield': 0.0}
+        ☐ Have R2 for SVI Fit:
+            - One that compares only Fitted DTEs
+            - One that compares how the model does with interpolation
+        ☐ Tests:
+            - MAE for SVI Fit (Find relative solutions)
+            - MSE
+            - Pricing Error
+            - Greeks Error
+        ☐ Switch SVI interpolation to Monotonic spline
+        ☐ Simplistic dividend forecasting model
+        ☐ Binomial Models to implement:
+            - Leisen-Reimer
+            - Dividend Add at nodes
+            - Spot Deduct/Strike Add
+            - Recombining (Subtract dividend from every node after the dividend date)
+            - Non-Recombining (Subtract dividend from only the nodes that are affected by the dividend)
+        ☐ Switch all option modelling code to a centralized region.
+
+    DataManager:
+        ☐ Implement quotes on Bulk
+
+    Helper:
+        ✔ Create an OptionStructure or Option Class from function @done(25-02-18 22:00)
+
+    Rates:
+        ☐ Clean up rates module
+
+
+    
+    Calculate:
+        ☐ Find a way to do attribution on passed data instead of API data
+        ☐ Why GB method producing large Unexpected PnL
+
+Knowledge:
+    ☐ Getting Implied Vol Surface
+    ✔ How to get one ATM vol btwn call & put @done(25-04-01 07:36)
+    ☐ Learn what this local vol is
+
+Repo Presentation:
+    ☐ Write a Sample
+    
+
+Others:
+    ☐ Populate Rates database with 5/8 & 5/9
+    ☐ Add update daily routine to risk manager:
+        ☐ Total Greeks
+        ☐ PnL Attribution
+        ☐ Slide Profile (Vol & Spot)
+        ☐ Maybe VaR
+    ☐ Create a way to refresh intraday rates at hourly intervals
+
+Vol Surface Plan:
+    ☐ First create two tables. Thetadat vols & calculated vols
+    ☐ When initial query, check steps:
+        - If Calculated Vols are available, use them else
+        - If Thetadat Vols are available, use them else
+        - If neither, calculate them
+
+Archive:
+  ✔ Extend OptionSignalClass @done(25-01-27 00:25) @project(Portfolio File.Now)
+  ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14) @project(Portfolio File.Now)
+  ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14) @project(Portfolio File.Now)
+  ✘ Write a logic to generate spreads based on criteria @cancelled(25-01-27 22:14) @project(Portfolio File.Now)
+  ✘ OptionBacktest.ipynb cell 15: We want to create a function that returns specific orders. @cancelled(25-01-27 22:14) @project(Portfolio File.Now)
+  ✔ Quantity: Names Available Cash/Close of trade @done(25-01-27 00:25) @project(Portfolio File.Now)
+  ✔ Make a module for demo @done(25-02-10 21:39) @project(Portfolio File.Now)
+  ✔ Investigate get_trades_new (chidi mentioned it was not working) @done(25-02-16 18:44) @project(Portfolio File.Now)
+  ✔ Ensure all data is consistent, trades, all_positions, current_positions etc @done(25-02-16 18:44) @project(Portfolio File.Now)
+  ✔ remove old functions in portfolio.py and clean _new functions @done(25-02-17 20:16) @project(Portfolio File.Now)
+  ✘ Catch theta data no listed contracts error. @cancelled(25-02-17 20:16) @project(Portfolio File.Now)
+  ✔ Save the orders we can't get because of price. (???) @done(25-03-13 17:08) @project(Portfolio File.Now)
+  ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day, is_holiday go to next day, is_money_too_low (adjust to max cash ), no_contracts(Just drop.) @done(25-03-04 22:09) @project(Portfolio File.Now)
+  ✔ min moneyness breaker @done(25-03-04 22:10) @project(Portfolio File.Now)
+  ✔ In all_holdings: @done(25-02-17 22:55) @project(Portfolio File.Now)
+  ✔ Cash to be the weight not allocated * initial capital @done(25-02-17 22:55) @project(Portfolio File.Now)
+  ✔ Tickers Value to be current market value of cash assigned to the ticker @done(25-02-17 22:55) @project(Portfolio File.Now)
+  ✔ Eg: $1100, bought 10 contracts for 100. You have $100. Market value will be 10 * 100 (Contracts value) + $100 (Unallocated cash) @done(25-02-17 22:55) @project(Portfolio File.Now)
+  ✔ Example extends to next day & contract value increases to 105. Market value will be (10 * 105) + $100 @done(25-02-17 22:55) @project(Portfolio File.Now)
+  ✔ Initialize available cash for each tick with weight * iniitial capital @done(25-02-17 22:57) @project(Portfolio File.Now)
+  ✔ Add {ticker: cash, cash: Unallocated cash} to available cash @done(25-02-17 22:57) @project(Portfolio File.Now)
+  ✔ Make max close a variable @done(25-02-17 22:56) @project(Portfolio File.Now)
+  ✘ Commissions look too low. @cancelled(25-02-17 22:56) @project(Portfolio File.Now)
+  ✔ Commissions on spreads are on both legs. Therefore commission is len(legs) * commission * quantity @done(25-02-24 22:41) @project(Portfolio File.Now)
+  ✔ Include EntrySlippage and ExitSlippage in trades @done(25-02-24 22:41) @project(Portfolio File.Now)
+  ✔ Create two trades data. One that tracks actual assets, another that tracks position. @done(25-03-13 17:08) @project(Portfolio File.Now)
+  ✔ Add floor to contracts quantity @done(25-02-17 22:56) @project(Portfolio File.Now)
+  ✔ Add cash to total when calculating weighted_holdings @done(25-02-24 22:41) @project(Portfolio File.Now)
+  ✘ Implement dataframe and numy instead of lists and list of dicts @cancelled(25-02-24 22:41) @project(Portfolio File.Now)
+  ✔ (PRIORITY) Create a roll method. This will use `dte_min` and `roll_bool` to determine if we should roll and when to roll (priority @Zino). @done(25-03-13 17:09) @project(Portfolio File.Now)
+  ✔ When roll_bool is True, we roll when dte <= dte_min @done(25-03-13 17:09) @project(Portfolio File.Now)
+  ✔ When roll_bool is False, we hold to expiry and reopen day after if trade is still valid @done(25-03-13 17:09) @project(Portfolio File.Now)
+  ✔ PnL for expiry is Call: Max(0, spot - strike) - premium, Put: Max(0, strike - spot) - premium @done(25-03-13 17:09) @project(Portfolio File.Now)
+  ✘ Implement Max close as either a dict of Symbol Close for specific tickers or a global max close for all tickers @cancelled(25-03-04 00:35) @project(Portfolio File.Now)
+  ✔ Add Attribution & Greek timeseries @Chidi @done(25-02-26 07:10) @project(Portfolio File.Now)
+  ✘ Add aggregator to portfolio @cancelled(25-03-04 00:36) @project(Portfolio File.Now)
+  ✔ Slippage should increase buy price and reduce sell @done(25-03-02 19:32) @project(Portfolio File.Now)
+  ✔ Add max-close on tick @done(25-03-04 00:32) @project(Portfolio File.Now)
+  ✔ Add a check to ensure max-close never exceeds allocated cash for a ticker @done(25-03-04 00:35)  @project(Portfolio File.Now)
+  ✔ reduce the DTE for trades that fail, reduce by 2 months so 60, make the days to reduce it by an attribute for dynamism @done(25-03-30 21:09) @project(Portfolio File.Now)
+  ✔ make max close passable in a signal for cases where max close is too low @done(25-03-30 21:09) @project(Portfolio File.Now)
+  ✔ Add while loop to ensure allocated cash doesn't go negative in the Executor.randomized slippage @done(25-03-30 21:08) @project(Portfolio File.Now)
+  ✔ Implement enum for signal types, order types & event types @done(25-03-30 21:12) @project(Portfolio File.Long Term)
+  ✔ Create table for split date @chidi @done(25-08-07 21:20) @project(Portfolio File.Long Term)
+  ✔ Add order_settings for SignalEvents. @done(25-03-04 18:26) @project(Events)
+  ✔ If moneyness_too_tight adjust moneyness weight and add to Event Queue for same day @done(25-03-04 18:26) @project(Events)
+  ✘ add count indicator to show how many times an event has been triggered @cancelled(25-03-04 18:27) @project(Events)
+  ✔ Add a signal_id to each event, for tracking trades, add signal_id to each trade @done(25-03-04 18:26) @project(Events)
+  ✔ improve store_events function @done(25-03-10 23:36) @project(Events)
+  ✔ Make ROLL its own event @done(25-03-13 18:36) @project(Events)
+  ✔ Create subclass of queue and overide getnowait() function @done(25-03-30 21:09) @project(EventScheduler)
+  ✘ Implement a dictionary that mirrors the queue, keys will be same as the events_dict, each dictionary value will have CLOSE and OPEN dictionaries that store signals. @cancelled(25-03-30 21:10) @project(EventScheduler)
+  ✔ When processing, if the event is a signal event to OPEN, check for matching signal to CLOSE on that same day, put the buy back in the event queue for same day if there is a matching close in existence, have a check for if that reverse operation has been conducted to prevent infinite loops @done(25-03-30 21:10) @project(EventScheduler)
+  ✘ update_latest_bars doesn't need arguments. @cancelled(25-03-03 22:46) @project(Data File)
+  ✔ only create market events when the date is a valid trading day @done(25-03-10 23:36) @project(Data File)
+  ✘ Create a class for price data/any other other trade @future-implementation(25-03-04 18:28) @project(Data File)
+  ✘ Data must drip feed data with ohlc fields @future-implementation(25-03-04 18:27) @project(Data File)
+  ✔ We will use LONG, SHORT and CLOSE. CLOSE checks if there is an active position then sends the OPPOSITE signal to Porfolio manager. @done(25-02-10 22:55) @project(Strategy File)
+  ✔ Create a dummy risk manager. (Compute risk exposure) @done(25-01-21 07:33) @project(Risk Manager)
+  ✔ ## Add a setter to update lookback dictionary in OrderPicker/RM file @done(25-03-02 12:53) @project(Risk Manager)
+  ✘ Secondary queue/list to repopulate next bar @cancelled(25-02-17 21:11) @project(General)
+  ✔ Instead of creating a logs folder in every root, it should be created in the root of the project. @done(25-02-05 06:24) @project(Setup Logger)
+  ✔ Cash Dict, for each symbol @done(25-02-25 00:10) @project(Additional Portfolio Attributes)
+  ✔ Fix data consistency issues (zino) @done(25-02-16 18:44) @project(Feb 10, 2025 updates)
+  ✔ implement deepcopy where objects/dataframes are assigned (zino) @done(25-02-25 00:10) @project(Feb 10, 2025 updates)
+  ✔ Investigate get_trades_new  (zino) @done(25-02-16 18:44) @project(Feb 10, 2025 updates)
+  ✔ Fix errors during backtest, known issues: openBB, cols[-1] = 'close' IndexError: list assignment index out of range in get_order (chidi) @done(25-02-16 23:42) @project(Feb 10, 2025 updates)
+  ✔ In_holdings fixed. @done(25-02-25 00:10) @project(Usable)
+  ✔ 90% of trades from Stock go thru in Options @done(25-03-16 20:54) @project(Usable)
+  ✔ Can conduct aggregation @done(25-03-02 12:55) @project(Usable)
+  ✔ Can do naked & spreads without errors @done(25-03-04 21:53) @project(Usable)
