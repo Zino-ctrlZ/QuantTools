@@ -208,9 +208,9 @@ class OptionSignalPortfolio(Portfolio):
         optional_keys = {
             'spread_ticks': int,
             'dte_tolerance': int,
-            'min_moneyness': float,
-            'max_moneyness': float,
-            'min_total_price': float,
+            'min_moneyness': (float, int),  # can be float or int for moneyness
+            'max_moneyness': (float, int),
+            'min_total_price': (float, int),
         }
         if settings['type'] == 'spread' and len(settings['specifics']) < 2:
                 raise ValueError(f'Expected 2 legs for spreads')

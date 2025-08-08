@@ -44,7 +44,14 @@ class OptionSignalBacktest():
         if trades.empty:
             raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
         trades = self.__handle_t_plus_n(trades)
-        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                              row['EntryTime'], 
+                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                              axis=1)
+        unadjusted['unadjusted_signal_id'] = unadjusted.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                              row['EntryTime'], 
+                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                              axis=1)
         self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
         self.finalize_trades = finalize_trades
         self.__construct_data(trades, initial_capital, symbol_list)
@@ -126,7 +133,6 @@ class OptionSignalBacktest():
                         if event.type == EventTypes.SIGNAL.value:
                             if not self.finalize_trades and self.eventScheduler.current_date == self.final_date:
                                 self.logger.info("Finalizing trades is disabled, skipping signal processing")
-                                print("Finalizing trades is disabled, skipping signal processing")
                                 continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:

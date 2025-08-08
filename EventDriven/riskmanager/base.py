@@ -12,12 +12,13 @@ from .utils import (logger,
                     add_skip_columns,
                     _clean_data,
                     PERSISTENT_CACHE,
-                    persistent_cache_decorator,
+                    dynamic_memoize,
                     get_use_temp_cache,
                     get_persistent_cache,
                     load_position_data,
                     enrich_data,
-                    generate_spot_greeks)
+                    generate_spot_greeks,
+                    parse_position_id)
 from .actions import *
 from .picker import *
 from .sizer import BaseSizer, DefaultSizer, ZscoreRVolSizer
@@ -213,19 +214,21 @@ class OrderPicker:
                       schema: OrderSchema, 
                       date: str|datetime,
                       spot,
+                      chain_spot: float = None,
                       print_url: bool = False):
         
         schema = tuple(schema.data.items())
-        
-        return self.__get_order(schema, date, spot, print_url=print_url)
+        chain_spot=spot
+        return self.__get_order(schema, date, spot, chain_spot, print_url=print_url)
     
     
     # @lru_cache(maxsize=128)
     @staticmethod
-    @persistent_cache_decorator()
+    @dynamic_memoize
     def __get_order(schema:tuple,
                 date: str|datetime,
                 spot: float,
+                chain_spot: float = None,
                 print_url: bool = False) -> dict:
         """
         Get the order for the given schema, date, and spot price.
@@ -244,9 +247,14 @@ class OrderPicker:
         chain = populate_cache_with_chain(
             schema['tick'], 
             date, 
+            chain_spot,
             print_url = print_url
         )
-        raw_order = build_strategy(chain, schema, spot, dict(get_cache('spot')))
+
+        cache = get_cache('spot')
+        cache = {k: v for k, v in cache.items() }
+
+        raw_order = build_strategy(chain, schema, spot, cache)
         return extract_order(raw_order)
     
 
@@ -849,6 +857,7 @@ Quanitity Sizing Type: {self.sizing_type}
         max_moneyness = kwargs.pop('max_moneyness', 1.25)
         target_dte = kwargs.pop('target_dte')
         min_total_price = kwargs.pop('min_total_price', max_close/2)
+        direction='LONG' if option_type == 'C' else 'SHORT' 
         
         if is_USholiday(date):
             logger.info(f"Date {date} is a US Holiday, skipping order generation")
@@ -860,6 +869,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         self.generate_data(tick)
         spot = self.chain_spot_timeseries[tick][date] 
+
         logger.info(f"## ***Signal ID: {signalID}***")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
@@ -910,6 +920,8 @@ Quanitity Sizing Type: {self.sizing_type}
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
             print(f"\nOrder Received: {order}\n")
             position_id = order['data']['trade_id']
+            order['signal_id'] = signalID
+            order['direction'] = direction
             
         else:
             print(f"\nOrder Failed: {order}\n")
@@ -1149,7 +1161,7 @@ Quanitity Sizing Type: {self.sizing_type}
             self.processed_option_data[option_id] = position_data
         
         elif data_pack:
-            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            # assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
             for k, v in data_pack.items():
                 self.processed_option_data[k] = v
         
@@ -1727,14 +1739,7 @@ Quanitity Sizing Type: {self.sizing_type}
             self.dividend_timeseries[symbol] = divs
 
     def parse_position_id(self, positionID):
-        position_str = positionID
-        position_list = position_str.split('&')
-        position_list = [x.split(':') for x in position_list if x]
-        position_list_parsed = [(x[0], parse_option_tick(x[1])) for x in position_list]
-        position_dict = dict(L = [], S = [])
-        for x in position_list_parsed:
-            position_dict[x[0]].append(x[1])
-        return position_dict, position_list
+        return parse_position_id(positionID)
 
     def get_position_dict(self, positionID):
         return self.parse_position_id(positionID)[0]

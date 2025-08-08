@@ -314,7 +314,9 @@ class ZscoreRVolSizer(BaseSizer):
         """
         super().__init__(pm, rm, sizing_lev)
         
-
+        if isinstance(weights, (list)): weights = tuple(weights)  ## Ensure weights is a tuple
+        if isinstance(rvol_window, (list)): rvol_window = tuple(rvol_window)  ## Ensure rvol_window is a tuple if provided as a list
+        
         rvol_window = self.__rvol_window_assert(vol_type, rvol_window)  ## Assert that the rvol_window is valid based on the vol_type
         assert vol_type in self.VOL_TYPES, f"vol_type must be one of {self.VOL_TYPES}, got {self.vol_type}"
         assert isinstance(weights, tuple) and len(weights) == 3, "weights must be a tuple of length 3"

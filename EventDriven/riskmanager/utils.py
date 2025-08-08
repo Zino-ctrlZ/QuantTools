@@ -1,5 +1,6 @@
 import os, sys
 from .config import get_avoid_opticks
+import functools
 from trade.assets.Stock import Stock
 from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
@@ -142,7 +143,6 @@ def set_use_temp_cache(use_temp_cache: bool) -> None:
     """
     global USE_TEMP_CACHE
     USE_TEMP_CACHE = use_temp_cache
-    logger.info(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}")
     logger.critical(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}. This will use a temporary cache that is cleared on exit. Utilize reset_persistent_cache() to reset the persistent cache.")
 
 def get_use_temp_cache() -> bool:
@@ -172,12 +172,29 @@ def get_persistent_cache() -> CustomCache:
         CustomCache: The persistent cache instance.
     """
     if USE_TEMP_CACHE:
+        logger.info("Using temporary cache. This cache will be cleared on exit.")
         return CustomCache(location/'temp', fname='temp_cache', clear_on_exit= True)
     else:
+        logger.info("Using persistent cache. This cache will be saved to disk and can be reused.")
         return CustomCache(location, fname='persistent_cache', expire_days=30)
     
-def persistent_cache_decorator(): ## Factory function for persistent cache decorator
-    return get_persistent_cache().memoize()
+def dynamic_memoize(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        cache = get_persistent_cache()  # resolved on every call
+
+        # Attach storage for memoized wrappers to the cache instance
+        if not hasattr(cache, "_memoized_wrappers"):
+            cache._memoized_wrappers = {}
+
+        # Reuse the memoized version for this func+cache
+        if func not in cache._memoized_wrappers:
+            cache._memoized_wrappers[func] = cache.memoize()(func)
+
+        memoized_func = cache._memoized_wrappers[func]
+        return memoized_func(*args, **kwargs)
+
+    return wrapper
 
 def reset_persistent_cache() -> None: ## To reset cache Variable, just incase
     """
@@ -388,9 +405,9 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-@log_time(time_logger)
-@persistent_cache_decorator()
-def populate_cache_with_chain(tick, date, print_url = True):
+# @log_time(time_logger)
+@dynamic_memoize
+def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
     """
     Populate the cache with chain data.
     """
@@ -433,6 +450,13 @@ def populate_cache_with_chain(tick, date, print_url = True):
     runThreads(
         save_to_cache, 
         save_params)
+    
+    if chain_spot:
+        chain_clipped['spot']=chain_spot
+        chain_clipped['moneyness']=0
+        chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike'] / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
+        chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot'] / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
+        chain_clipped=chain_clipped[chain_clipped['moneyness'].between(0.01, 3)] ## Filter out extreme moneyness to reduce size
     chain_clipped.columns = chain_clipped.columns.str.lower()
 
     return chain_clipped
@@ -526,7 +550,15 @@ def generate_spot_greeks(opttick, start_date: str|datetime, end_date: str|dateti
     return data
 
 
-
+def parse_position_id(positionID:str) -> Tuple[dict, list]:
+    position_str = positionID
+    position_list = position_str.split('&')
+    position_list = [x.split(':') for x in position_list if x]
+    position_list_parsed = [(x[0], parse_option_tick(x[1])) for x in position_list]
+    position_dict = dict(L = [], S = [])
+    for x in position_list_parsed:
+        position_dict[x[0]].append(x[1])
+    return position_dict, position_list
 
 def refresh_cache() -> None:
     """
@@ -1544,3 +1576,85 @@ def liquidity_check(id: str,
 
 
 
+
+
+import functools
+import pandas as pd
+
+def make_cache_key(func, args, kwargs):
+    # naïve example: you can improve by normalizing mutable inputs if needed
+    return (func.__name__, args, tuple(sorted(kwargs.items())))
+
+def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
+    """
+    Populate the cache with chain data.
+    """
+    cache = get_persistent_cache()  # resolved on every call
+    # build a key depending on the inputs that define uniqueness
+    key = make_cache_key(populate_cache_with_chain, (tick, date), {'chain_spot': chain_spot, 'print_url': print_url})
+
+    # Try fetch from cache manually
+    if key in cache:
+        logger.info(f"Cache hit for {tick} on {date}")
+        return cache[key]
+
+    # Otherwise compute
+    chain = retrieve_chain_bulk(
+        tick,
+        '',
+        date,
+        date,
+        '16:00',
+        'C',
+        print_url=print_url
+    )
+    logger.info(f"Retrieved chain for {tick} on {date}")
+
+    ## Clip Chain
+    chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    if PATCH_TICKERS:
+        chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
+
+    ## Create ID
+    id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
+    ids = runThreads(
+        generate_option_tick_new,
+        id_params
+    )
+    chain_clipped['opttick'] = ids
+    filter_opt = get_avoid_opticks(tick)
+    chain_clipped = chain_clipped[~chain_clipped['opttick'].isin(filter_opt)]
+    chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
+    chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
+
+    ## Save to cache (spot)
+    def save_to_cache(id_, date_, spot):
+        date_str = pd.to_datetime(date_).strftime('%Y-%m-%d')
+        save_id = f"{id_}_{date_str}"
+        if save_id not in get_cache('spot'):
+            spot_cache[save_id] = spot
+    save_params = chain_clipped[['opttick', 'datetime', 'Midpoint']].T.to_numpy()
+    runThreads(
+        save_to_cache,
+        save_params
+    )
+
+    if chain_spot:
+        chain_clipped['spot'] = chain_spot
+        chain_clipped['moneyness'] = 0
+        chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = (
+            chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike']
+            / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
+        )
+        chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = (
+            chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot']
+            / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
+        )
+        chain_clipped = chain_clipped[chain_clipped['moneyness'].between(0.1, 2)]
+
+    chain_clipped.columns = chain_clipped.columns.str.lower()
+
+    # Store result in cache
+    cache[key] = chain_clipped
+
+    return chain_clipped
