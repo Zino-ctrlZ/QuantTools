@@ -114,7 +114,9 @@ def build_spread_by_ticks(df, schema, cache):
                     "type": "vertical",
                     "legs": [long, short],
                 })
-
+    if len(spreads) == 0:
+        logger.critical(f"No spreads found for {schema['option_type']} with DTE {schema['target_dte']} ± {schema['dte_tolerance']} and ticks {schema['spread_ticks']}.")
+        return []
     if schema["structure_direction"] == "long":
         pick = min((s for s in spreads if s["spread_price"] > 0), key=lambda s: s["spread_price"], default=None)
     else:
@@ -147,6 +149,7 @@ def build_spread_by_pct(df, schema, spot, cache):
 
             if actual_width < min_width or error > max_error:
                 logger.info(f"Skipping spread due to width or error: {actual_width:.2f} < {min_width:.2f} or error {error:.2f} > {max_error:.2f}")
+                print(f"Skipping spread due to width or error: {actual_width:.2f} < {min_width:.2f} or error {error:.2f}")
                 continue
 
             long, short = (leg1, leg2)
@@ -188,6 +191,8 @@ def build_strategy(df, schema, spot, cache):
         "vertical": build_vertical_spread,
         "naked": build_naked_option,
     }
+    if schema["strategy"] not in strategy_map:
+        raise ValueError(f"Unsupported strategy: {schema['strategy']}")
     builder = strategy_map.get(schema["strategy"])
     return builder(df, schema, spot, cache) if builder else []
 

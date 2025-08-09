@@ -1,6 +1,7 @@
 ## NOTE:
 ## 1) If a split happens during a backtest window, the trade id won't be updated. The dataframe will simply be uploaded with a the split adjusted strike.
 ## 2) All Greeks &  Midpoint with Zero values will be FFWD'ed
+## 3) Do something about all these caches locations. I don't like it. It's confusing
 
 from pprint import pprint
 from .utils import *
@@ -10,7 +11,14 @@ from .utils import (logger,
                     date_in_cache_index,
                     add_skip_columns,
                     _clean_data,
-                    PERSISTENT_CACHE)
+                    PERSISTENT_CACHE,
+                    dynamic_memoize,
+                    get_use_temp_cache,
+                    get_persistent_cache,
+                    load_position_data,
+                    enrich_data,
+                    generate_spot_greeks,
+                    parse_position_id)
 from .actions import *
 from .picker import *
 from .sizer import BaseSizer, DefaultSizer, ZscoreRVolSizer
@@ -33,7 +41,7 @@ from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
 import yaml
 
-BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
+BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
 
@@ -41,11 +49,40 @@ with open(f'{os.environ["WORK_DIR"]}/EventDriven/riskmanager/config.yaml', 'r') 
     CONFIG = yaml.safe_load(f)
 
 order_cache = CustomCache(BASE, fname = "order")
-special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
-special_dividend['COST'] = {
-    '2020-12-01': 10,
-    '2023-12-27': 15
-}
+
+
+def load_riskmanager_cache():
+
+    """ Load the risk manager cache based on the USE_TEMP_CACHE setting."""
+    if get_use_temp_cache():
+        logger.info("Using Temporary Cache for RiskManager")        
+        spot_timeseries = CustomCache(BASE/"temp", fname = "rm_spot_timeseries", expire_days=100)
+        chain_spot_timeseries = CustomCache(BASE/"temp", fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", expire_days=100)
+        position_data = CustomCache(BASE/"temp", fname = "rm_position_data", clear_on_exit=True)
+        dividend_timeseries = CustomCache(BASE/"temp", fname = "rm_dividend_timeseries", expire_days=100)
+    else:
+        spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
+        chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
+        position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
+        dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
+    
+    ## Not dependent on USE_TEMP_CACHE, so always use the persistent cache.
+    splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
+    special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
+    special_dividend['COST'] = {
+        '2020-12-01': 10,
+        '2023-12-27': 15
+    }
+    
+    return (spot_timeseries, 
+            chain_spot_timeseries, 
+            processed_option_data, 
+            position_data, 
+            dividend_timeseries, 
+            splits_raw, 
+            special_dividend)
 
 def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
     """
@@ -61,6 +98,9 @@ def add_columns(series:pd.Series, col_to_add:int, factory=ADD_COLUMNS_FACTORY):
     Add new columns to a DataFrame using a factory function.
     """
     return factory[col_to_add](series)
+
+
+
 
 
 
@@ -174,19 +214,21 @@ class OrderPicker:
                       schema: OrderSchema, 
                       date: str|datetime,
                       spot,
+                      chain_spot: float = None,
                       print_url: bool = False):
         
         schema = tuple(schema.data.items())
-        
-        return self.__get_order(schema, date, spot, print_url=print_url)
+        chain_spot=spot
+        return self.__get_order(schema, date, spot, chain_spot, print_url=print_url)
     
     
     # @lru_cache(maxsize=128)
     @staticmethod
-    @PERSISTENT_CACHE.memoize()
+    @dynamic_memoize
     def __get_order(schema:tuple,
                 date: str|datetime,
                 spot: float,
+                chain_spot: float = None,
                 print_url: bool = False) -> dict:
         """
         Get the order for the given schema, date, and spot price.
@@ -205,9 +247,14 @@ class OrderPicker:
         chain = populate_cache_with_chain(
             schema['tick'], 
             date, 
+            chain_spot,
             print_url = print_url
         )
-        raw_order = build_strategy(chain, schema, spot, dict(get_cache('spot')))
+
+        cache = get_cache('spot')
+        cache = {k: v for k, v in cache.items() }
+
+        raw_order = build_strategy(chain, schema, spot, cache)
         return extract_order(raw_order)
     
 
@@ -597,11 +644,17 @@ class RiskManager:
         self.end_date = end
         self.symbol_list = self.bars.symbol_list
         self.OrderPicker = OrderPicker(start, end)
-        self.spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
-        self.chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
-        self.processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
-        self.position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
-        self.dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
+        
+        ## Load data caches. USE_TEMP_CACHE == True means a reset every kernel refresh. Else persists over days.
+        (
+        self.spot_timeseries,
+        self.chain_spot_timeseries,
+        self.processed_option_data,
+        self.position_data,
+        self.dividend_timeseries,
+        self.splits_raw,
+        self.special_dividends
+        ) = load_riskmanager_cache()
         self.sizing_type = sizing_type
         self.sizing_lev = leverage
         self.limits = {
@@ -626,7 +679,6 @@ class RiskManager:
         self.max_moneyness = max_moneyness
         self.option_price = option_price
         self._actions = {}
-        self.splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
         self.splits = self.set_splits(self.splits_raw)
         self.schema_cache = {}
         self.max_dte_tolerance = kwargs.get('max_dte_tolerance', 90) ## Default is 90 days
@@ -641,7 +693,6 @@ class RiskManager:
         self.executor = executor
         self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
-        self.special_dividends = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
         self.__sizer = None
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
@@ -690,6 +741,22 @@ class RiskManager:
         self.chain_spot_timeseries.clear()
         # self.position_data.clear()
         self.dividend_timeseries.clear()
+
+    def clear_core_data_caches(self):
+        """
+        Clears the core data caches used by the RiskManager for a new run.
+        spot, chain_spot, processed_option_data, position_data
+        This only clears if USE_TEMP_CACHE is True else nothing happens
+        """
+        if get_use_temp_cache():
+            self.spot_timeseries.clear()
+            self.chain_spot_timeseries.clear()
+            self.processed_option_data.clear()
+            self.position_data.clear()
+            self.dividend_timeseries.clear()
+            get_persistent_cache().clear() ## Ensures any caching with `.memoize` is cleared as well.
+        else:
+            logger.critical(f"USE_TEMP_CACHE set to False. Cache will not be cleared")
 
     
     @property
@@ -752,7 +819,7 @@ Quanitity Sizing Type: {self.sizing_type}
             """
         print(msg)
         
-
+    @log_time(time_logger)
     def get_order(self, *args, **kwargs):
         """
         Compulsory variables for OrderSchema:
@@ -790,6 +857,7 @@ Quanitity Sizing Type: {self.sizing_type}
         max_moneyness = kwargs.pop('max_moneyness', 1.25)
         target_dte = kwargs.pop('target_dte')
         min_total_price = kwargs.pop('min_total_price', max_close/2)
+        direction='LONG' if option_type == 'C' else 'SHORT' 
         
         if is_USholiday(date):
             logger.info(f"Date {date} is a US Holiday, skipping order generation")
@@ -801,6 +869,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         self.generate_data(tick)
         spot = self.chain_spot_timeseries[tick][date] 
+
         logger.info(f"## ***Signal ID: {signalID}***")
 
         ## I cannot calculate greeks here. I need option_data to be available first.
@@ -850,9 +919,9 @@ Quanitity Sizing Type: {self.sizing_type}
 
         if order['result'] == ResultsEnum.SUCCESSFUL.value:
             print(f"\nOrder Received: {order}\n")
-
             position_id = order['data']['trade_id']
-            # self.register_option_meta_frame(date, position_id) ## Register the option meta frame for the position
+            order['signal_id'] = signalID
+            order['direction'] = direction
             
         else:
             print(f"\nOrder Failed: {order}\n")
@@ -864,10 +933,8 @@ Quanitity Sizing Type: {self.sizing_type}
         self.calculate_position_greeks(position_id, kwargs['date'])
         order = self.update_order_close(position_id, kwargs['date'], order) ## Update the order with the close price from the position data
         logger.info('Updating Signal Limits')
-        # self.update_greek_limits(signalID, position_id)
         self.sizer.update_delta_limit(signalID, position_id, date)
         logger.info("Calculating Quantity")
-        # quantity = self.calculate_quantity(position_id, signalID, kwargs['date'], order['data']['close'])
         quantity = self.sizer.calculate_position_size(signalID, position_id, order['data']['close'], kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
         order['data']['quantity'] = quantity
@@ -967,7 +1034,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     new_details['strike']/=split_meta[1]
                     direction_frame.loc[split_start:, i] = generate_option_tick_new(*new_details.values())
 
-
+    @log_time(time_logger)
     def calculate_position_greeks(self, positionID, date):
         """
         Calculate the greeks of a position
@@ -1054,56 +1121,76 @@ Quanitity Sizing Type: {self.sizing_type}
         This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
         This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
         """
-        ## Check if the option tick is already processed
-        if opttick in self.processed_option_data:
-            return self.processed_option_data[opttick]
-
         ## Get Meta
         meta = parse_option_tick(opttick)
-
-        ## Generate data
-        data = self.generate_spot_greeks( opttick)
-        data = self.enrich_data(data, meta['ticker'])
-        self.processed_option_data[opttick] = data
-        return data
+        return load_position_data(opttick, 
+                                  self.processed_option_data, 
+                                  self.start_date, 
+                                  self.end_date,
+                                  s=self.chain_spot_timeseries[meta['ticker']],
+                                  r=self.rf_timeseries,
+                                  y=self.dividend_timeseries[meta['ticker']],
+                                  s0_close=self.spot_timeseries[meta['ticker']],)
 
     def enrich_data(self, data, ticker):
         """
         Enrich the data with additional information.
         """
-        data = _clean_data(data)
-        data = data[~data.index.duplicated(keep = 'last')]
-        data['s'] = self.chain_spot_timeseries[ticker]
-        data['r'] = self.rf_timeseries
-        data['y'] = self.dividend_timeseries[ticker]
-        data['s0_close'] = self.spot_timeseries[ticker]
-        data = ffwd_data(data, ticker)
-        return data
+        return enrich_data(data, ticker, self.spot_timeseries, self.chain_spot_timeseries, self.rf_timeseries, self.dividend_timeseries)
         
     def generate_spot_greeks(self, opttick):
         """
         Generate spot greeks for a given option tick.
         """
         ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
-        meta = parse_option_tick(opttick)
-        data_manager = OptionDataManager(opttick=opttick)
-        greeks = data_manager.get_timeseries(start = self.start_date,
-                                                end = self.end_date,
-                                                interval = '1d',
-                                                type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
-        greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
-        greeks = greeks[greeks_cols]
-        greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill')
-        greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+        return generate_spot_greeks(opttick, self.start_date, self.end_date)
+    
+    def append_option_data(self, 
+                             option_id: str=None,
+                             position_data: pd.DataFrame=None,
+                             data_pack: dict|CustomCache=None,):
+        """
+        Append option data to the processed_position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if option_id:
+            assert position_data is not None, "position_data must be provided if option_id is given"
+            self.processed_option_data[option_id] = position_data
+        
+        elif data_pack:
+            # assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.processed_option_data[k] = v
+        
+        else:
+            raise ValueError("Either option_id or data_pack must be provided to append_position_data")
+        
+    def append_position_data(self, 
+                             position_id: str=None,
+                             position_data: pd.DataFrame=None,
+                             data_pack: dict|CustomCache=None,):
+        """
+        Append position data to the position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if position_id:
+            assert position_data is not None, "position_data must be provided if position_id is given"
+            self.position_data[position_id] = position_data
+        
+        elif data_pack:
+            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.position_data[k] = v
+        
+        else:
+            raise ValueError("Either option_id or data_pack must be provided to append_position_data")
 
-        spot = data_manager.get_timeseries(start = self.start_date,
-                                            end = self.end_date,
-                                            interval = '1d',
-                                            type_ = 'spot',
-                                            extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
-        spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
-        data = greeks.join(spot)
-        return data
 
 
     def generate_option_data_for_trade(self, opttick, check_date):
@@ -1652,14 +1739,7 @@ Quanitity Sizing Type: {self.sizing_type}
             self.dividend_timeseries[symbol] = divs
 
     def parse_position_id(self, positionID):
-        position_str = positionID
-        position_list = position_str.split('&')
-        position_list = [x.split(':') for x in position_list if x]
-        position_list_parsed = [(x[0], parse_option_tick(x[1])) for x in position_list]
-        position_dict = dict(L = [], S = [])
-        for x in position_list_parsed:
-            position_dict[x[0]].append(x[1])
-        return position_dict, position_list
+        return parse_position_id(positionID)
 
     def get_position_dict(self, positionID):
         return self.parse_position_id(positionID)[0]

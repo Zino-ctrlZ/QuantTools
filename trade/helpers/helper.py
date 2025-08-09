@@ -323,9 +323,13 @@ def check_missing_dates(x, _start, _end):
     Returns:
         list: List of missing business days in the range.
     """
+    if 'Datetime' not in x.columns:
+        logger.warning(f"DataFrame does not contain 'Datetime' column. Will default to index")
+        x['Datetime'] = x.index
     date_range = bus_range(_start, _end, freq = '1B')
     dates_available = x.Datetime
     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    x.drop(columns=['Datetime'], inplace=True, errors='ignore')
     return missing_dates_second_check
 
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):

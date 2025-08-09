@@ -90,3 +90,4 @@ HOLIDAY_SET.update({
 ## Import Pricing Config
 with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
     PRICING_CONFIG = json.load(f)
+

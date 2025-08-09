@@ -32,6 +32,7 @@ def log_error(logger):
                 logger.error('')
                 logger.error(f'{func.__name__} raise an error: {e}', exc_info = True)
                 logger.error(f'args {args}, kwargs: {kwargs}')
+                logger.error("Traceback:\n" + traceback.format_exc())
                 raise e
         return wrapper
     return decorator

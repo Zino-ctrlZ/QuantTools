@@ -26,7 +26,9 @@ class OptionSignalBacktest():
     def __init__(self, trades: pd.DataFrame, 
                  initial_capital: int | float =100000, 
                  t_plus_n: float = 0,
-                  symbol_list = None ) -> None:
+                 symbol_list = None,
+                 finalize_trades: bool = True
+                    ) -> None:
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -42,8 +44,16 @@ class OptionSignalBacktest():
         if trades.empty:
             raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
         trades = self.__handle_t_plus_n(trades)
-        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                              row['EntryTime'], 
+                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                              axis=1)
+        unadjusted['unadjusted_signal_id'] = unadjusted.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                              row['EntryTime'], 
+                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                              axis=1)
         self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
+        self.finalize_trades = finalize_trades
         self.__construct_data(trades, initial_capital, symbol_list)
         
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
@@ -59,6 +69,7 @@ class OptionSignalBacktest():
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
         self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
+        self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1]).strftime('%Y%m%d')
         self.risk_free_rate = 0.055
         self.events = []
     
@@ -120,6 +131,9 @@ class OptionSignalBacktest():
                         print(f"Processing event: {event.type} {event.datetime}")
 
                         if event.type == EventTypes.SIGNAL.value:
+                            if not self.finalize_trades and self.eventScheduler.current_date == self.final_date:
+                                self.logger.info("Finalizing trades is disabled, skipping signal processing")
+                                continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
                             self.executor.execute_order_randomized_slippage(event)

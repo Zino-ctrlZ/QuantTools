@@ -1,5 +1,6 @@
 import os, sys
 from .config import get_avoid_opticks
+import functools
 from trade.assets.Stock import Stock
 from trade.assets.Option import Option
 from trade.assets.OptionStructure import OptionStructure
@@ -76,6 +77,7 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
 import signal
+from .config import ffwd_data
 
 
 
@@ -87,6 +89,28 @@ logger.info("RISK MANAGER is Using New DataManager")
 ## There's no point loading only within strt, end. Load all to avoid 
 TIMESERIES_START = pd.to_datetime('2017-01-01')
 TIMESERIES_END = datetime.today()
+
+def set_timeseries_start(start: str|datetime) -> None:
+    """
+    Sets the start date for the timeseries data.
+    
+    Args:
+        start (str|datetime): The start date for the timeseries data.
+    """
+    global TIMESERIES_START
+    TIMESERIES_START = pd.to_datetime(start)
+    logger.info(f"Timeseries Start set to: {TIMESERIES_START}")
+
+def set_timeseries_end(end: str|datetime) -> None:
+    """
+    Sets the end date for the timeseries data.
+    
+    Args:
+        end (str|datetime): The end date for the timeseries data.
+    """
+    global TIMESERIES_END
+    TIMESERIES_END = pd.to_datetime(end)
+    logger.info(f"Timeseries End set to: {TIMESERIES_END}")
 
 ## Patch tickers to swap old tickers with new ones
 PATCH_TICKERS = True
@@ -106,17 +130,80 @@ def set_patch_tickers(patch_tickers):
 # 1) pick a folder for your caches
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
 BASE.mkdir(exist_ok=True)
-location = Path(os.environ['GEN_CACHE_PATH'])
+location = Path(os.environ['GEN_CACHE_PATH']) ## Allows users to set a custom cache location
+
+# 1a) Create USE_TEMP_CACHE
+USE_TEMP_CACHE = False
+def set_use_temp_cache(use_temp_cache: bool) -> None:
+    """
+    Sets the USE_TEMP_CACHE variable to the given value.
+    
+    Args:
+        use_temp_cache (bool): The value to set USE_TEMP_CACHE to.
+    """
+    global USE_TEMP_CACHE
+    USE_TEMP_CACHE = use_temp_cache
+    logger.critical(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}. This will use a temporary cache that is cleared on exit. Utilize reset_persistent_cache() to reset the persistent cache.")
+
+def get_use_temp_cache() -> bool:
+    """
+    Returns the current value of USE_TEMP_CACHE.
+    
+    Returns:
+        bool: The current value of USE_TEMP_CACHE.
+    """
+    global USE_TEMP_CACHE
+    return USE_TEMP_CACHE
 
 # 2) swap your dicts for Cache instances
+
 chain_cache = CustomCache(BASE, fname="chain", expire_days=45)
 close_cache = CustomCache(BASE, fname="close", expire_days=45)
 oi_cache    = CustomCache(BASE, fname="oi", expire_days=45)
 spot_cache  = CustomCache(BASE, fname="spot", expire_days=45)
 formatted_flags = CustomCache(location = BASE, fname = 'formatted_flags', expire_days=45)
-PERSISTENT_CACHE = CustomCache(location,
-                               fname='persistent_cache',
-                               expire_days=30)
+
+# 2a) Create persistent cache or temp
+def get_persistent_cache() -> CustomCache:
+    """
+    Returns the persistent cache.
+    
+    Returns:
+        CustomCache: The persistent cache instance.
+    """
+    if USE_TEMP_CACHE:
+        logger.info("Using temporary cache. This cache will be cleared on exit.")
+        return CustomCache(location/'temp', fname='temp_cache', clear_on_exit= True)
+    else:
+        logger.info("Using persistent cache. This cache will be saved to disk and can be reused.")
+        return CustomCache(location, fname='persistent_cache', expire_days=30)
+    
+def dynamic_memoize(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        cache = get_persistent_cache()  # resolved on every call
+
+        # Attach storage for memoized wrappers to the cache instance
+        if not hasattr(cache, "_memoized_wrappers"):
+            cache._memoized_wrappers = {}
+
+        # Reuse the memoized version for this func+cache
+        if func not in cache._memoized_wrappers:
+            cache._memoized_wrappers[func] = cache.memoize()(func)
+
+        memoized_func = cache._memoized_wrappers[func]
+        return memoized_func(*args, **kwargs)
+
+    return wrapper
+
+def reset_persistent_cache() -> None: ## To reset cache Variable, just incase
+    """
+    Resets the persistent cache by clearing it.
+    """
+    global PERSISTENT_CACHE
+    PERSISTENT_CACHE = get_persistent_cache()
+
+PERSISTENT_CACHE = get_persistent_cache() 
 
 # 3) Create clear_cache function
 def clear_cache() -> None:
@@ -318,8 +405,9 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-@PERSISTENT_CACHE.memoize()
-def populate_cache_with_chain(tick, date, print_url = True):
+# @log_time(time_logger)
+@dynamic_memoize
+def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
     """
     Populate the cache with chain data.
     """
@@ -362,9 +450,115 @@ def populate_cache_with_chain(tick, date, print_url = True):
     runThreads(
         save_to_cache, 
         save_params)
+    
+    if chain_spot:
+        chain_clipped['spot']=chain_spot
+        chain_clipped['moneyness']=0
+        chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike'] / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
+        chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot'] / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
+        chain_clipped=chain_clipped[chain_clipped['moneyness'].between(0.01, 3)] ## Filter out extreme moneyness to reduce size
     chain_clipped.columns = chain_clipped.columns.str.lower()
 
     return chain_clipped
+
+
+##UTILS
+def load_position_data(opttick, 
+                       processed_option_data, 
+                       start, 
+                       end,
+                       s,
+                       r,
+                       y,
+                       s0_close):
+    """
+    Load position data for a given option tick.
+
+    args:
+        opttick (str): The option tick to load data for.
+        processed_option_data (dict): A dictionary to store processed option data.
+        start (str|datetime): The start date for the data.
+        end (str|datetime): The end date for the data.
+        s (pd.Series): The spot price series. Must be split adjusted.
+        r (pd.Series): The risk-free rate series.
+        y (pd.Series): The dividend yield series.
+        s0_close (pd.Series): The close price of the underlying asset series.
+
+    This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
+    This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
+    """
+    ## Check if the option tick is already processed
+    if opttick in processed_option_data:
+        return processed_option_data[opttick]
+
+    ## Get Meta
+    meta = parse_option_tick(opttick)
+
+    ## Generate data
+    data = generate_spot_greeks( opttick, start_date=start, end_date=end)
+    data = enrich_data(data, meta['ticker'], 
+                       s[s.index.isin(data.index)],
+                       r[r.index.isin(data.index)],
+                       y[y.index.isin(data.index)],
+                       s0_close[s0_close.index.isin(data.index)])
+    processed_option_data[opttick] = data
+    return data
+
+def enrich_data(data, ticker, s, r, y, s0_close):
+    """
+    Args:
+        data (pd.DataFrame): The data to enrich.
+        ticker (str): The ticker symbol for the option.
+        s (pd.Series): The spot price. Adjusted for splits.
+        r (pd.Series): The risk-free rate.
+        y (pd.Series): The dividend yield.
+        s0_close (pd.Series): The close price of the underlying asset.
+    Enrich the data with additional information.
+    """
+    data = _clean_data(data)
+    data = data[~data.index.duplicated(keep = 'last')]
+    data['s'] = s
+    data['r'] = r
+    data['y'] = y
+    data['s0_close'] = s0_close
+    data = ffwd_data(data, ticker)
+    return data
+    
+def generate_spot_greeks(opttick, start_date: str|datetime, end_date: str|datetime) -> pd.DataFrame:
+    """
+    Generate spot greeks for a given option tick.
+    """
+    ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
+    meta = parse_option_tick(opttick)
+    data_manager = OptionDataManager(opttick=opttick)
+    greeks = data_manager.get_timeseries(start = start_date,
+                                            end = end_date,
+                                            interval = '1d',
+                                            type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
+    greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+    greeks = greeks[greeks_cols]
+    greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill')
+    greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+    spot = data_manager.get_timeseries(start = start_date,
+                                        end = end_date,
+                                        interval = '1d',
+                                        type_ = 'spot',
+                                        extra_cols=['bid', 'ask']).post_processed_data ## Using chain spot data to account for splits
+    spot = spot[['Midpoint', 'Closeask', 'Closebid']] ## This is raw calc place
+    data = greeks.join(spot)
+    return data
+
+
+def parse_position_id(positionID:str) -> Tuple[dict, list]:
+    position_str = positionID
+    position_list = position_str.split('&')
+    position_list = [x.split(':') for x in position_list if x]
+    position_list_parsed = [(x[0], parse_option_tick(x[1])) for x in position_list]
+    position_dict = dict(L = [], S = [])
+    for x in position_list_parsed:
+        position_dict[x[0]].append(x[1])
+    return position_dict, position_list
 
 def refresh_cache() -> None:
     """
@@ -1382,3 +1576,85 @@ def liquidity_check(id: str,
 
 
 
+
+
+import functools
+import pandas as pd
+
+def make_cache_key(func, args, kwargs):
+    # naïve example: you can improve by normalizing mutable inputs if needed
+    return (func.__name__, args, tuple(sorted(kwargs.items())))
+
+def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
+    """
+    Populate the cache with chain data.
+    """
+    cache = get_persistent_cache()  # resolved on every call
+    # build a key depending on the inputs that define uniqueness
+    key = make_cache_key(populate_cache_with_chain, (tick, date), {'chain_spot': chain_spot, 'print_url': print_url})
+
+    # Try fetch from cache manually
+    if key in cache:
+        logger.info(f"Cache hit for {tick} on {date}")
+        return cache[key]
+
+    # Otherwise compute
+    chain = retrieve_chain_bulk(
+        tick,
+        '',
+        date,
+        date,
+        '16:00',
+        'C',
+        print_url=print_url
+    )
+    logger.info(f"Retrieved chain for {tick} on {date}")
+
+    ## Clip Chain
+    chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    if PATCH_TICKERS:
+        chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
+
+    ## Create ID
+    id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
+    ids = runThreads(
+        generate_option_tick_new,
+        id_params
+    )
+    chain_clipped['opttick'] = ids
+    filter_opt = get_avoid_opticks(tick)
+    chain_clipped = chain_clipped[~chain_clipped['opttick'].isin(filter_opt)]
+    chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
+    chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
+
+    ## Save to cache (spot)
+    def save_to_cache(id_, date_, spot):
+        date_str = pd.to_datetime(date_).strftime('%Y-%m-%d')
+        save_id = f"{id_}_{date_str}"
+        if save_id not in get_cache('spot'):
+            spot_cache[save_id] = spot
+    save_params = chain_clipped[['opttick', 'datetime', 'Midpoint']].T.to_numpy()
+    runThreads(
+        save_to_cache,
+        save_params
+    )
+
+    if chain_spot:
+        chain_clipped['spot'] = chain_spot
+        chain_clipped['moneyness'] = 0
+        chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = (
+            chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike']
+            / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
+        )
+        chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = (
+            chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot']
+            / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
+        )
+        chain_clipped = chain_clipped[chain_clipped['moneyness'].between(0.1, 2)]
+
+    chain_clipped.columns = chain_clipped.columns.str.lower()
+
+    # Store result in cache
+    cache[key] = chain_clipped
+
+    return chain_clipped
