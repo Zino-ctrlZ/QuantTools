@@ -179,7 +179,7 @@ class ModelBuilder(ABC):
         pass
 
     @abstractmethod
-    def predict(self):
+    def predict(self, **kwargs):
         pass
 
 
@@ -201,7 +201,7 @@ class SurfaceManager(ABC):
 
 
     @abstractmethod
-    def predict(self):
+    def predict(self, **kwargs):
         pass
 
     def _is_dte_available_for_svi(self, dte, right):
@@ -622,7 +622,7 @@ class DumasModelBuilder(ModelBuilder):
         fig.update_layout(title=f'{self.right_name}:{dte} DTE Market IV vs Strike Price', xaxis_title='Strike Price', yaxis_title='Implied Volatility', height = 800, width = 800)
         fig.show()
 
-    def predict(self, dte: Union[np.array, int,float], k):
+    def predict(self, dte: Union[np.array, int,float], k, **kwargs) -> float:
         """
         Predict the Implied Volatility for a given DTE and Strike Price
 
@@ -1077,7 +1077,7 @@ class SVIModelBuilder(ModelBuilder):
         fig.update_layout(title=f'{self.right_name}:{self.DTE} DTE Market IV vs Strike Price', xaxis_title='Strike Price', yaxis_title='Implied Volatility', height = 800, width = 800)
         fig.show()
 
-    def predict(self, k):
+    def predict(self, k, *args, **kwargs):
         """
         Predicts the implied volatility for a given strike price using the SVI model.
 
@@ -1101,7 +1101,6 @@ class SVIModelBuilder(ModelBuilder):
             
 
         ## Note: Sticking to using TotalVarSVIJW for now, will refactor to use VolSVI. Until we can ensure no nan values
-        # return ModelLibrary.VolSVI(self.spot, k, self.t, **self.preferred_svi_variables)
         return np.sqrt(ModelLibrary.TotalVarSVIJW(self.spot, k, self.t, *self.preferred_svi_params)/self.t)
 
 
@@ -1345,10 +1344,10 @@ class SurfaceManagerModelBuild(SurfaceManager):
         self.call_builder.build_model()
         self.put_builder.build_model()
         
-        self.call_svi_variables = pd.DataFrame({model.DTE: model.preferred_svi_variables for model in self.call_builder.svi_models}).T
-        self.call_svi_params_table = pd.DataFrame({model.DTE: model.preferred_svi_params for model in self.call_builder.svi_models}).T
-        self.put_svi_params_table = pd.DataFrame({model.DTE: model.preferred_svi_params for model in self.put_builder.svi_models}).T
-        self.put_svi_variables = pd.DataFrame({model.DTE: model.preferred_svi_variables for model in self.put_builder.svi_models}).T
+        self.call_svi_variables = pd.DataFrame({model.DTE: model.preferred_svi_variables for model in self.call_builder.svi_models}).T.dropna()
+        self.call_svi_params_table = pd.DataFrame({model.DTE: model.preferred_svi_params for model in self.call_builder.svi_models}).T.dropna()
+        self.put_svi_params_table = pd.DataFrame({model.DTE: model.preferred_svi_params for model in self.put_builder.svi_models}).T.dropna()
+        self.put_svi_variables = pd.DataFrame({model.DTE: model.preferred_svi_variables for model in self.put_builder.svi_models}).T.dropna()
         self.call_svi_variables.sort_index(inplace=True)
         self.put_svi_variables.sort_index(inplace=True)
         
@@ -1391,7 +1390,7 @@ class SurfaceManagerModelBuild(SurfaceManager):
 
 
 
-    def predict(self, dte, k, right, interpolate_variables = False):
+    def predict(self, dte, k, right, interpolate_variables = False, **kwargs):
         """
         Predicts the implied volatility for given days to expiration (DTE) and strike price(s).
         
@@ -1456,7 +1455,7 @@ class SurfaceManagerModelBuild(SurfaceManager):
             if self._is_dte_available_for_svi(dte, right) and dte not in self.interpolated_dtes[right]:
                 for model in builder.svi_models:
                     if model == dte:
-                        svi_prediction = model.predict(dte, k)
+                        svi_prediction = model.predict(dte=dte, k=k)
                         predictions['svi'] = svi_prediction
             else:
                 schema = self.interpolate_svi(dte, right, interpolate_variables)
@@ -1593,7 +1592,7 @@ class SurfaceManagerDatabase(SurfaceManager):
                 raise AttributeError(f"'SurfaceManagerDatabase' object has no attribute '{name}'")
             
 
-    def predict(self, dte, k, right, interpolate_variables = True):
+    def predict(self, dte, k, right, interpolate_variables = True, **kwargs):
         """
         Predicts the implied volatility for given days to expiration (DTE) and strike price(s).
         
@@ -1772,7 +1771,7 @@ class SurfaceLab:
     def __repr__(self):
         return f"SurfaceLab({self.ticker} on {pd.to_datetime(self.build_date).strftime('%Y%m%d')})"
     
-    def predict(self, dte, k, right, interpolate_variables = False):
+    def predict(self, dte, k, right, interpolate_variables = False, **kwargs):
         """
         Predicts the implied volatility for given days to expiration (DTE) and strike price(s).
         

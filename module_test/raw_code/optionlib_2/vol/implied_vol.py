@@ -2,7 +2,7 @@ from typing import List, Union, Literal
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 import numpy as np
-from ..pricing.black_scholes import black_scholes_vectorized
+from ..pricing.black_scholes import black_scholes_vectorized, black_scholes_vectorized_scalar
 from ..pricing.bjs2002 import bjerksund_stensland_2002_vectorized
 from ..pricing.binomial import crr_binomial_pricing
 from ..config.defaults import BRUTE_FORCE_MAX_ITERATIONS
@@ -104,8 +104,9 @@ def bsm_vol_est_brute_force(
     """
     intrinsic_check(F, K, T, r, 0.2, market_price, option_type)  # Check intrinsic value
     sigmas = np.linspace(0.001, 5, BRUTE_FORCE_MAX_ITERATIONS)  # Range of volatilities to test
+    # F, K, T, r, option_type = map(lambda x: np.repeat(x, BRUTE_FORCE_MAX_ITERATIONS), (F, K, T, r, option_type))
 
-    prices = black_scholes_vectorized(
+    prices = black_scholes_vectorized_scalar(
         F=F, 
         K=K, 
         T=T, 

@@ -11,7 +11,8 @@ from ..config.defaults import (
     DAILY_BASIS
 )
 from ..utils.format import (
-    option_inputs_assert
+    option_inputs_assert,
+    convert_to_array_individual
 )
 
 from ..greeks.numerical.finite_diff import FiniteGreeksEstimator
@@ -28,7 +29,60 @@ logger = setup_logger('trade.optionlib.pricing.black_scholes')
 
 
 # Vectorized Black-Scholes formula using forward price directly
-def black_scholes_vectorized(F, K, T, r, sigma, option_type="c"):
+def black_scholes_vectorized(F: Union[float, np.ndarray],
+                             K: Union[float, np.ndarray],
+                             T: Union[float, np.ndarray],
+                             r: Union[float, np.ndarray],
+                             sigma: Union[float, np.ndarray],
+                             option_type: Union[str, List[str]] = "c"):
+    """
+    Vectorized Black-Scholes formula using forward price directly.
+    F: Forward price (array)
+    K: Strike price (array)
+    T: Time to expiration in years (array)
+    r: Risk-free interest rate (array)
+    sigma: Volatility (array)
+    option_type: "c" for call, "p" for put (single string)
+
+    Note: This uses numpy for vectorized operations. And yes, multiprocessing can speed it up
+    Returns: Option prices (array)
+    """
+    F = convert_to_array_individual(F)
+    K = convert_to_array_individual(K)
+    T = convert_to_array_individual(T)
+    r = convert_to_array_individual(r)
+    sigma = convert_to_array_individual(sigma)
+    option_type = convert_to_array_individual(option_type)
+
+
+    d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    df = np.exp(-r * T)
+    if not np.all(np.isin(option_type, ["c", "p"])):
+        raise ValueError("option_type must be 'c' or 'p'")
+    
+    call = option_type == "c"
+    put = option_type == "p"
+    price = np.zeros_like(F)
+    price[call] = df[call] * (F[call] * norm.cdf(d1[call]) - K[call] * norm.cdf(d2[call]))
+    price[put] = df[put] * (K[put] * norm.cdf(-d2[put]) - F[put] * norm.cdf(-d1[put]))
+    return price
+
+
+def black_scholes_vectorized_scalar(F, K, T, r, sigma, option_type="c"):
+    """
+    Vectorized Black-Scholes formula using forward price directly.
+    F: Forward price (array)
+    K: Strike price (array)
+    T: Time to expiration in years (array)
+    r: Risk-free interest rate (array)
+    sigma: Volatility (array)
+    option_type: "c" for call, "p" for put (single string)
+
+    Note: This uses numpy for vectorized operations. And yes, multiprocessing can speed it up
+    This allows passing single values for F, K, T, r, sigma and broadcasting them to arrays.
+    Returns: Option prices (array)
+    """
     F = np.asarray(F)
     K = np.asarray(K)
     T = np.asarray(T)
@@ -38,12 +92,12 @@ def black_scholes_vectorized(F, K, T, r, sigma, option_type="c"):
     d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     df = np.exp(-r * T)
+    assert option_type in ["c", "p"], "option_type must be 'c' or 'p'"
+    
     if option_type == "c":
         price = df * (F * norm.cdf(d1) - K * norm.cdf(d2))
     elif option_type == "p":
         price = df * (K * norm.cdf(-d2) - F * norm.cdf(-d1))
-    else:
-        raise ValueError("option_type must be 'c' or 'p'")
 
     return price
 

@@ -356,6 +356,8 @@ def vectorized_market_forward_calc(ticks: List[str],
     end_dates: List of end dates (expiration dates of the options)
     r: List of risk-free rates (annualized)
     div_type: Type of dividend ('discrete' or 'continuous')
+        if 'discrete', it returns the forward price, (dividend schedule & present value of dividends)
+        if 'continuous', it returns the forward price, (dividend rate & present value of dividends)
     Returns: Forward prices (array)
     """
         
@@ -379,6 +381,8 @@ def vectorized_market_forward_calc(ticks: List[str],
             pv_divs=div_amt
         )
 
+        div_amt = (schedule, div_amt) 
+
     elif div_type == 'continuous':
         div_rate = get_vectorized_dividend_rate(
             tickers=ticks,
@@ -395,6 +399,8 @@ def vectorized_market_forward_calc(ticks: List[str],
             q_factor=div_amt,
             T=[time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))]
         )
+
+        div_amt = (div_rate, div_amt)  # Return the dividend rate and present value of dividends
     else:
         raise ValueError(f"Unsupported dividend type '{div_type}'. Use 'discrete' or 'continuous'.")
     

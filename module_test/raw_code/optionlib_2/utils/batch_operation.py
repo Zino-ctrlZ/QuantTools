@@ -49,7 +49,6 @@ def vector_batch_processor(callable, *args, **kwargs):
             split_arg = [arg] * num_process
             ordered_inputs.append(split_arg)
 
-    # print(ordered_inputs)
     results = runProcesses(
         func=callable,
         OrderedInputs=ordered_inputs,

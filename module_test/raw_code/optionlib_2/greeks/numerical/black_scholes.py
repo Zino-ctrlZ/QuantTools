@@ -132,6 +132,7 @@ def vectorized_black_scholes_greeks(
     option_type: "c" for call, "p" for put (single string or list of strings)
     div_type: Type of dividend ('discrete' or 'continuous')
     div_amount: Dividend amount (single float or list of floats, ignored for continuous dividends)
+        if discrete expecting present value of discrete dividends, else if continuous expecting continuous yield rate.
     Returns: Greeks (dictionary)
     """
 

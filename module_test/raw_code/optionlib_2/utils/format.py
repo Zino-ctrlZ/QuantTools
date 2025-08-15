@@ -13,6 +13,15 @@ def assert_equal_length(*args):
         return False
     return True
 
+def convert_to_array_individual(value):
+    if isinstance(value, (list, np.ndarray, pd.Series)):
+        return np.array(value)
+    elif isinstance(value, (int, float, str, datetime, np.datetime64)):
+        return np.array([value], dtype=object)  # Use dtype=object to handle mixed types
+    else:
+        raise ValueError(f"Unsupported type for value conversion : {type(value)}")
+
+
 def convert_to_array(*args):
     """
     Convert input(s) to numpy arrays. If only one input is given, return it as a single array, not a list.
@@ -66,13 +75,7 @@ def option_inputs_assert(sigma, K, S0, T, r, q, market_price, flag):
         raise ValueError("Input values cannot be NaN.")
     
 
-# def convert_to_array(value):
-#     if isinstance(value, (list, np.ndarray)):
-#         return np.array(value)
-#     elif isinstance(value, (int, float, str, datetime, np.datetime64)):
-#         return np.array([value])
-#     else:
-#         raise ValueError(f"Unsupported type for value conversion : {type(value)}")
+
 
 def to_1d_array(x):
     x = np.atleast_1d(x)

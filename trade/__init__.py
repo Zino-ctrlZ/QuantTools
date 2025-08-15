@@ -91,3 +91,18 @@ HOLIDAY_SET.update({
 with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
     PRICING_CONFIG = json.load(f)
 
+
+def get_pricing_config():
+    """
+    Get the pricing configuration.
+    """
+    return PRICING_CONFIG
+
+def reload_pricing_config():
+    """
+    Reload the pricing configuration from the file.
+    """
+    global PRICING_CONFIG
+    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
+        PRICING_CONFIG = json.load(f)
+    logger.info("Pricing configuration reloaded.")

@@ -414,53 +414,68 @@ def filter_zeros(data):
     return data.ffill()
 
 @backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
-def retrieve_timeseries(tick, start, end, interval = '1d', provider = 'yfinance', **kwargs):
+def retrieve_timeseries(tick, 
+                        start, 
+                        end, 
+                        interval = '1d', 
+                        provider = 'yfinance', 
+                        spot_type='close',
+                        **kwargs):
     """
     Returns an OHLCV for provided ticker.
 
     Utilizes OpenBB historical api. Default provider is yfinance.
     """
-    try:
-        res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
-    except:
-        raise OpenBBEmptyData(f"OpenBB raised an unexpected error for {tick} with {provider} provider. Check the logs for more details")
-    
-    
-    ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
-    data = res.to_df()
-    if 'split_ratio' not in data.columns:
-        res_vs = [r.__dict__ for r in res.results]
-        data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
-        data['split_ratio'] = 0
-
-
-    data.split_ratio.replace(0, 1, inplace = True)
-    data['cum_split'] = data.split_ratio.cumprod()
-    data['max_cum_split'] = data.cum_split.max()
-    data['unadjusted_close'] = data.close * data.max_cum_split
-    data['split_factor'] = data.max_cum_split / data.cum_split
-    data['chain_price'] = data.close * data.split_factor
-    data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
-    data['is_split_date'] = data['split_ratio'] != 1
-    data.index = pd.to_datetime(data.index)
-    ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
-    ## In the function, add a logger to log the anomalies
-
-    if data.empty and provider == 'yfinance':
-        logger.warning(f"yfinance returned empty data for {tick} is empty")
-        raise YFinanceEmptyData(f"yfinance returned empty data for {tick} is empty")
-
-    ## Fix intraday data missing 16:00:00 timestamp
-    if 'h' in interval or 'm' in interval:
-        if 'm' in interval:
-            ## Pandas doesn't like the 'm' in the interval, so we need to replace it with 'min'. 'm' is month in pandas
-            interval = interval.replace('m', 'min')
-        data = enforce_bus_hours(data)
-        reindex = bus_range(data.index[0], data.index[-1], interval)
-        data = data.reindex(reindex, method='ffill').dropna()
-
+    if spot_type == 'chain_price':
+        df = retrieve_timeseries(tick, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
+                                    start = '1960-01-01', interval= interval, provider = provider)
+        df.index = pd.to_datetime(df.index)
+        df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
+        df['close'] = df['chain_price']
+        df['cum_split_from_start'] = df['split_ratio'].cumprod()
+        return df
+    else:
+        try:
+            res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
+        except:
+            raise OpenBBEmptyData(f"OpenBB raised an unexpected error for {tick} with {provider} provider. Check the logs for more details")
         
-    return data
+        
+        ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
+        data = res.to_df()
+        if 'split_ratio' not in data.columns:
+            res_vs = [r.__dict__ for r in res.results]
+            data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
+            data['split_ratio'] = 0
+
+
+        data.split_ratio.replace(0, 1, inplace = True)
+        data['cum_split'] = data.split_ratio.cumprod()
+        data['max_cum_split'] = data.cum_split.max()
+        data['unadjusted_close'] = data.close * data.max_cum_split
+        data['split_factor'] = data.max_cum_split / data.cum_split
+        data['chain_price'] = data.close * data.split_factor
+        data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+        data['is_split_date'] = data['split_ratio'] != 1
+        data.index = pd.to_datetime(data.index)
+        ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
+        ## In the function, add a logger to log the anomalies
+
+        if data.empty and provider == 'yfinance':
+            logger.warning(f"yfinance returned empty data for {tick} is empty")
+            raise YFinanceEmptyData(f"yfinance returned empty data for {tick} is empty")
+
+        ## Fix intraday data missing 16:00:00 timestamp
+        if 'h' in interval or 'm' in interval:
+            if 'm' in interval:
+                ## Pandas doesn't like the 'm' in the interval, so we need to replace it with 'min'. 'm' is month in pandas
+                interval = interval.replace('m', 'min')
+            data = enforce_bus_hours(data)
+            reindex = bus_range(data.index[0], data.index[-1], interval)
+            data = data.reindex(reindex, method='ffill').dropna()
+
+            
+        return data
 
 def identify_interval(timewidth, timeframe, provider = 'default'):
     if provider == 'yfinance':
