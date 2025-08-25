@@ -1165,6 +1165,10 @@ Quanitity Sizing Type: {self.sizing_type}
             for k, v in data_pack.items():
                 self.processed_option_data[k] = v
         
+        elif isinstance(data_pack, (CustomCache, dict)):
+            for k, v in data_pack.items():
+                self.processed_option_data[k] = v
+        
         else:
             raise ValueError("Either option_id or data_pack must be provided to append_position_data")
         

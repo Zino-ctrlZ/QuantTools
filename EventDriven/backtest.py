@@ -72,6 +72,7 @@ class OptionSignalBacktest():
         self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1]).strftime('%Y%m%d')
         self.risk_free_rate = 0.055
         self.events = []
+        self.order_cache = {}
     
     def __handle_t_plus_n(self, trades: pd.DataFrame) -> pd.DataFrame:
         """
@@ -136,6 +137,8 @@ class OptionSignalBacktest():
                                 continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
+                            self.order_cache.setdefault(event.direction, {})\
+                                .setdefault(event.datetime, []).append(event)
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
