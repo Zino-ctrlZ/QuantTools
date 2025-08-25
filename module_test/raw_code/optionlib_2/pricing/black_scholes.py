@@ -47,12 +47,12 @@ def black_scholes_vectorized(F: Union[float, np.ndarray],
     Note: This uses numpy for vectorized operations. And yes, multiprocessing can speed it up
     Returns: Option prices (array)
     """
-    F = convert_to_array_individual(F)
-    K = convert_to_array_individual(K)
-    T = convert_to_array_individual(T)
-    r = convert_to_array_individual(r)
-    sigma = convert_to_array_individual(sigma)
-    option_type = convert_to_array_individual(option_type)
+    F = convert_to_array_individual(F, dtype=float)
+    K = convert_to_array_individual(K, dtype=float)
+    T = convert_to_array_individual(T, dtype=float)
+    r = convert_to_array_individual(r, dtype=float)
+    sigma = convert_to_array_individual(sigma, dtype=float)
+    option_type = convert_to_array_individual(option_type, dtype=str)
 
 
     d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))

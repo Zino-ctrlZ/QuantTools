@@ -296,7 +296,22 @@ class CustomCache(Cache):
         self._on_exit()
         os.kill(os.getpid(), signum)
 
-
+def str_to_bool(value: str) -> bool:
+    """
+    Convert a string to a boolean value.
+    Args:
+        value (str): The string to convert.
+    Returns:
+        bool: True if the string is 'True', '1', or 'yes' (case-insensitive), False otherwise.
+    """
+    if value.lower() in ['true', '1', 'yes']:
+        return True
+    elif value.lower() in ['false', '0', 'no']:
+        return False
+    else:
+        raise ValueError("Invalid boolean string. Expected 'True', 'False', '1', '0', 'yes', or 'no'.")
+    
+    
 def check_all_days_available(x, _start, _end):
     """
     Check if all business days in the range are available in the DataFrame x.
@@ -315,7 +330,8 @@ def check_all_days_available(x, _start, _end):
 
 def check_missing_dates(x, _start, _end):
     """
-    Check for missing business days in the DataFrame x within the specified date range.
+    Check for missing business days in the DataFrame x within the specified date range. This also skips US market holidays.
+    It also ensures there are no weekends
     Args:
         x (pd.DataFrame): DataFrame with a 'Datetime' column.
         _start (str or datetime): Start date of the range.
@@ -329,8 +345,10 @@ def check_missing_dates(x, _start, _end):
     date_range = bus_range(_start, _end, freq = '1B')
     dates_available = x.Datetime
     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
+    missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
     x.drop(columns=['Datetime'], inplace=True, errors='ignore')
-    return missing_dates_second_check
+    return missing_dates_fourth_check
 
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
 

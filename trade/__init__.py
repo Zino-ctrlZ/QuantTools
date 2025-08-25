@@ -74,10 +74,11 @@ set_pool_enabled(bool(os.environ.get('POOL_ENABLED')))
 
 ## Universal Holidays set
 ## Get Business days FOR NYSE (Some days are still trading days)
+##TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
 nyse = mcal.get_calendar('NYSE')
-schedule = nyse.schedule(start_date='2000-01-01', end_date=datetime.today())
+schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01')
 all_trading_days = mcal.date_range(schedule, frequency='1D').date
-all_days = pd.date_range(start='2000-01-01', end=datetime.today(), freq='B')
+all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
 holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
 HOLIDAY_SET = set(holidays)
 

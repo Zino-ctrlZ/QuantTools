@@ -13,11 +13,11 @@ def assert_equal_length(*args):
         return False
     return True
 
-def convert_to_array_individual(value):
+def convert_to_array_individual(value, dtype=None):
     if isinstance(value, (list, np.ndarray, pd.Series)):
-        return np.array(value)
+        return np.array(value, dtype=dtype or object)
     elif isinstance(value, (int, float, str, datetime, np.datetime64)):
-        return np.array([value], dtype=object)  # Use dtype=object to handle mixed types
+        return np.array([value], dtype=dtype or object)
     else:
         raise ValueError(f"Unsupported type for value conversion : {type(value)}")
 
