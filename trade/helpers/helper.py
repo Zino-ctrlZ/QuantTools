@@ -18,6 +18,8 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
+import yfinance as yf
+from pandas.tseries.offsets import BDay
 from datetime import datetime
 from trade.helpers.parse import parse_date, parse_time
 import yfinance as yf
@@ -431,21 +433,33 @@ def filter_zeros(data):
     data = data.replace(0, np.nan)
     return data.ffill()
 
-@backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
+@backoff.on_exception(backoff.expo, 
+                      (OpenBBEmptyData, YFinanceEmptyData), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_timeseries(tick, 
                         start, 
                         end, 
                         interval = '1d', 
                         provider = 'yfinance', 
                         spot_type='close',
-                        **kwargs):
+                        **kwargs) -> pd.DataFrame:
     """
     Returns an OHLCV for provided ticker.
 
     Utilizes OpenBB historical api. Default provider is yfinance.
+    Args:
+        tick (str): Stock ticker
+        start (str): Start date in 'YYYY-MM-DD' format
+        end (str): End date in 'YYYY-MM-DD'
+        interval (str): Data interval (e.g., '1d', '1h', '15m')
+        provider (str): Data provider ('yfinance', 'fmp', etc.)
+        spot_type (str): 'close' for regular close price, 'chain_price' for adjusted close price considering splits
+    Returns:
+        pd.DataFrame: DataFrame with OHLCV data and additional columns for split adjustments
     """
     if spot_type == 'chain_price':
-        df = retrieve_timeseries(tick, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
+        df = retrieve_timeseries(tick, end =(change_to_last_busday(datetime.today())+ BDay(1)).strftime('%Y-%m-%d'), 
                                     start = '1960-01-01', interval= interval, provider = provider)
         df.index = pd.to_datetime(df.index)
         df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
@@ -454,17 +468,23 @@ def retrieve_timeseries(tick,
         return df
     else:
         try:
-            res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
-        except:
-            raise OpenBBEmptyData(f"OpenBB raised an unexpected error for {tick} with {provider} provider. Check the logs for more details")
+            # res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
+            
+            data = yf.download(tick, start=start,  end = end, interval='1d', multi_level_index=False, progress=False, actions = True)
+            data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
+            data.columns = data.columns.str.lower() 
+            if data.empty:
+                raise YFinanceEmptyData(f"OpenBB returned empty data for {tick} with {provider} provider")
+        except Exception as e: ## Unnecessary placeholder, I know. Will look for best idea for this.
+            raise e
         
         
         ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
-        data = res.to_df()
-        if 'split_ratio' not in data.columns:
-            res_vs = [r.__dict__ for r in res.results]
-            data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
-            data['split_ratio'] = 0
+        # data = res.to_df()
+        # if 'split_ratio' not in data.columns:
+        #     res_vs = [r.__dict__ for r in res.results]
+        #     data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
+        #     data['split_ratio'] = 0
 
 
         data.split_ratio.replace(0, 1, inplace = True)

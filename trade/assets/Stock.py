@@ -461,7 +461,7 @@ class Stock:
         ## Get Spot Price timeseries
         spot = self.spot(ts = True, ts_timeframe = ts_timeframe, ts_timewidth = ts_timewidth, ts_start = pd.to_datetime(start_date), ts_end = self.end_date)
         spot["Date"] = pd.to_datetime(spot.index.date)
-        spot.reset_index(inplace = True)
+        spot.reset_index(inplace = True, drop = True)
         spot.set_index('Date', inplace = True)
         spot['yearly_dividend'] = div_history['yearly_dividend']
         spot.fillna(method = 'ffill', inplace = True)
@@ -527,11 +527,7 @@ class Stock:
         
         if spot_type == 'chain_price':
                 df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
-                                         start = '1960-01-01', interval= interval, provider = provider)
-                df.index = pd.to_datetime(df.index)
-                df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
-                df['close'] = df['chain_price']
-                df['cum_split_from_start'] = df['split_ratio'].cumprod()
+                                         start = '1960-01-01', interval= interval, provider = provider, spot_type = spot_type)  
         else:
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
 
