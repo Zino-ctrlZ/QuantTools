@@ -1058,6 +1058,7 @@ Quanitity Sizing Type: {self.sizing_type}
         ]
 
         date = pd.to_datetime(date) ## Ensure date is in datetime format
+    
         
         ## First get position info
         position_dict, positon_meta = self.parse_position_id(positionID)
@@ -1067,6 +1068,24 @@ Quanitity Sizing Type: {self.sizing_type}
             for s in p:
                 self.generate_data(swap_ticker(s['ticker']))
         ticker = swap_ticker(s['ticker'])
+        if ticker not in self.spot_timeseries:
+            self.spot_timeseries[ticker] = self.pm.get_underlier_data(ticker).spot(
+                ts = True,
+                ts_start = self.start_date,
+                ts_end = self.end_date,
+            )
+
+        if ticker not in self.chain_spot_timeseries:
+            self.chain_spot_timeseries[ticker] = self.pm.get_underlier_data(ticker).spot(
+                ts = True,
+                ts_start = self.start_date,
+                ts_end = self.end_date,
+                spot_type = 'chain_price'
+            )
+
+        if ticker not in self.dividend_timeseries:
+            self.dividend_timeseries[ticker] = self.pm.get_underlier_data(ticker).div_yield_history(start = self.start_date)
+
 
         @log_time(time_logger)
         def get_timeseries(_id, direction):
