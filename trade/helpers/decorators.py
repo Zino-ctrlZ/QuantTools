@@ -6,6 +6,7 @@ import pstats
 import io
 import traceback
 import pandas as pd
+import numbers
 
 def log_time(logger):
     def decorator(func):
@@ -98,3 +99,35 @@ def copy_doc(from_func):
         to_func.__doc__ = from_func.__doc__
         return to_func
     return decorator
+
+
+def class_math_operation(cls):
+    """
+    Compatible with dataclasses only
+    """
+    def make_op(op):
+        def f(self, other):
+            ## support number operation
+            if isinstance(other, numbers.Number):
+                other = cls(**{field: other for field in self.__dataclass_fields__})
+                
+            elif not isinstance(other, cls):
+                return NotImplemented
+            data = {}
+            for field in self.__dataclass_fields__:
+                v1, v2 = getattr(self, field), getattr(other, field)
+                if not isinstance(v1, (int, float)) or not isinstance(v2, (int, float)):
+                    data[field] = None
+
+                else:
+                    data[field]= op(v1,v2)
+            return cls(**data)
+        return f
+    
+    import operator
+    cls.__add__ = make_op(operator.add)
+    cls.__sub__ = make_op(operator.sub)
+    cls.__mul__ = make_op(operator.mul)
+    cls.__truediv__ = make_op(operator.truediv)
+    cls.__floordiv__ = make_op(operator.floordiv)
+    return cls
