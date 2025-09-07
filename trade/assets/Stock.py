@@ -174,7 +174,7 @@ class Stock:
     def y(self):
         while self.set_thread.is_alive():
             logger.info(f'Waiting for {self.ticker} to set yield')
-            time.sleep(5)
+            time.sleep(1)
         return self.__y
 
     @property
