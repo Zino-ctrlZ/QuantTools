@@ -172,6 +172,10 @@ thoughts_log.md
 .cache/
 .riskmanager_cache/
 
+
+# Private schedueling files
+.scheduling
+
 # Others
 ## Only relevant for me since I do the scheduling
 module_test/raw_code/DataManagers/scheduler/   

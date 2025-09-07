@@ -3,6 +3,7 @@ Whole Codebase Routine:
     ☐ Build file/setup_env.py to set up the environment
     ☐ Constant readme for each folders
     ☐ Decouple the riskmanager, portfolio manager, sizer
+    ☐ Create a schedule script to automatically run on cron and writeable from vscode
 
 
 
@@ -301,6 +302,8 @@ Modules:
         ☐ Return to chatgpt and get prepping sequence of vol data. Reference Chat:
             - Vol Surface preparation tips. Using Fitting Checklist from memory
         ☐ Verify forward interpolation is correct with ChatGPT
+        ☐ Slides calculation:
+            - Spot, Vol, Pnl & Greeks
 
     General:
         ✔ Clean up as much as possible @done(24-10-13 17:29)
@@ -413,6 +416,7 @@ Modules:
 
     Helper:
         ✔ Create an OptionStructure or Option Class from function @done(25-02-18 22:00)
+        ☐ Have change_to_last_busday enforce trading hours bool
 
     Rates:
         ☐ Clean up rates module
