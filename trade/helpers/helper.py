@@ -355,12 +355,13 @@ def check_missing_dates(x, _start, _end):
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
 
     """Check for errors in the input parameters for the vol backout function"""
-    assert isinstance(sigma, (int, float)), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
-    assert isinstance(K, (int, float)), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
-    assert isinstance(S0, (int, float)), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
-    assert isinstance(r, (int, float)), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
-    assert isinstance(q, (int, float)), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
-    assert isinstance(market_price, (int, float)), f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
+    import numbers
+    assert isinstance(sigma, numbers.Number), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
+    assert isinstance(K, numbers.Number), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
+    assert isinstance(S0, numbers.Number), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
+    assert isinstance(r, numbers.Number), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
+    assert isinstance(q, numbers.Number), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
+    assert isinstance(market_price, numbers.Number), f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
     assert isinstance(flag, str), f"Recieved '{type(flag)}' for flag. Expected 'str'"
 
     if sigma <= 0:
@@ -468,27 +469,21 @@ def retrieve_timeseries(tick,
         return df
     else:
         try:
-            # res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
-            
-            data = yf.download(tick, start=start,  end = end, interval='1d', multi_level_index=False, progress=False, actions = True)
+            ## yfinance needs end date to be + 1 day to be inclusive
+            end = pd.to_datetime(end) + relativedelta(days=1)
+            data = yf.download(tick, start=start,  end = end, interval=interval, multi_level_index=False, progress=False, actions = True)
             data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
+            data = data.loc[:, ~data.columns.duplicated()] ## For some reason columns are duplicated sometimes
             data.columns = data.columns.str.lower() 
             if data.empty:
                 raise YFinanceEmptyData(f"OpenBB returned empty data for {tick} with {provider} provider")
+            data = data[(data.index.date >= pd.to_datetime(start).date()) & 
+                        (data.index.date <= (pd.to_datetime(end) - relativedelta(days=1)).date())]
         except Exception as e: ## Unnecessary placeholder, I know. Will look for best idea for this.
             raise e
-        
-        
-        ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
-        # data = res.to_df()
-        # if 'split_ratio' not in data.columns:
-        #     res_vs = [r.__dict__ for r in res.results]
-        #     data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
-        #     data['split_ratio'] = 0
 
-
-        data.split_ratio.replace(0, 1, inplace = True)
-        data['cum_split'] = data.split_ratio.cumprod()
+        data['split_ratio'].replace(0, 1, inplace = True)
+        data['cum_split'] = data['split_ratio'].cumprod()
         data['max_cum_split'] = data.cum_split.max()
         data['unadjusted_close'] = data.close * data.max_cum_split
         data['split_factor'] = data.max_cum_split / data.cum_split
@@ -1048,6 +1043,7 @@ def IV_handler(*args, **kwargs):
     """
     Calculate the Black-Scholes-Merton implied volatility.
 
+    :param price: option price
     :param S: underlying asset price
     :type S: float
     :param K: strike price
@@ -1288,14 +1284,23 @@ def change_to_last_busday(end, offset = 1):
     ## Make End Comparison Busday
     isBiz = is_busday(end)
     while not isBiz:
-
         end_dt = pd.to_datetime(end)
+        end_dt = end_dt.replace(hour=16, minute=0, second=0) ## Defaulting to EOD
         end = (end_dt - BDay( offset)).strftime('%Y-%m-%d %H:%M:%S')
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
         end = pd.to_datetime(end)-BDay(offset)
+        end = end.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
+
+    ## Make End Comparison same day if after 16:00
+    elif pd.Timestamp(end).time() >= pd.Timestamp('16:00').time():
+
+        end_dt = pd.to_datetime(end)
+        end = end_dt.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
+    
+
 
     # Make End Comparison prev day if holiday
     while is_USholiday(end):
