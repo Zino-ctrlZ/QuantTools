@@ -120,7 +120,9 @@ class Stock:
             self.__asset_type = None
             self.kwargs = kwargs
             self.__current_spot = None
+            self.__current_chain_spot = None
             self.__bumped_spot = None
+            self.__bumped_chain_spot = None
             self.__rf_rate = None
             self.__rf_ts = None
             
@@ -221,11 +223,49 @@ class Stock:
         self.__current_spot = current_spot
 
     @property
+    def asset_type(self):
+        if self.__asset_type is not None:   
+            return self.__asset_type
+        else:
+            self.__asset_type = self.__security_obj.info['quoteType']
+            return self.__asset_type
+        
+    
+    @property
+    def chain_price(self):
+        """
+        Returns the latest available close price for the ticker
+        """
+        if self.__current_chain_spot is not None:
+            return self.__current_chain_spot if self.chain_bump is None else self.chain_bump
+        else:
+            self.__set_current_chain_spot()
+            return self.__current_chain_spot
+        
+    @chain_price.setter
+    def chain_price(self, v):
+        self.__bumped_chain_spot = v
+
+        
+    def __set_current_chain_spot(self):
+        """
+        Sets the current spot price for the ticker
+        """
+        current_spot = list(self.spot(spot_type='chain_price').values())[0]
+        self.__current_chain_spot = current_spot
+
+
+    @property
     def bump(self):
         return self.__bumped_spot
     
+    @property
+    def chain_bump(self):
+        return self.__bumped_chain_spot
+    
     def clear_bump(self):
         self.__bumped_spot = None
+        self.__bumped_chain_spot = None
 
 
     @classmethod
