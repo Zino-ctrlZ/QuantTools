@@ -3,7 +3,12 @@ Whole Codebase Routine:
     ☐ Build file/setup_env.py to set up the environment
     ☐ Constant readme for each folders
     ☐ Decouple the riskmanager, portfolio manager, sizer
-    ☐ Create a schedule script to automatically run on cron and writeable from vscode
+    ☐ Create a schedule script to automatically run on cron and writeable from vscode:
+        - Suggestion: One script that registers a py file?: Issue is this script will be alive through out the day
+        - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
+        - Another Suggestion: Find a way to run a python script that directly appends to cron
+
+
 
 
 

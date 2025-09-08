@@ -1,9 +1,10 @@
+import os
+from openbb import obb
 from trade.helpers.Logging import setup_logger
+
 logger = setup_logger('trade.helpers.openbb_helper')
 
 def load_openBB():
-    import os
-    from openbb import obb
     openbb_key = os.environ.get('OPENBB_KEY')
     if openbb_key is None:
         logger.critical("OPENBB_KEY environment variable not set. Some OpenBB Dependencies will not work.")
@@ -11,7 +12,7 @@ def load_openBB():
     try:
         obb.account.login(pat=openbb_key, remember_me= True)
     except Exception as e:
-        logger.error("Error logging in to OpenBB:", e)
-        pass
+        logger.error("Error logging in to OpenBB: %s", e)
+
     obb.account.refresh()
     obb.account.save()
