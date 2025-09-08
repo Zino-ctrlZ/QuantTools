@@ -21,14 +21,14 @@ from trade.helpers.types import OptionModelAttributes
 logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICAL)
 
 
-## To-Do, recalculate the pv with the new vol values
-## Todo, add replace option. Either to fill close with midpoint, use only close or use only midpoint
-## To-Do: Add volga, vanna, dividend attribution to GB
-## To-Do: Streamline GB attribution columns with RV
-## To-Do: Find a way to return data fill for GB
-## To-Do: Speed up RV PnL calc with Processing
-## To-Do: Add logs for attribution returning zero values
-## To-Do: No need to calculate greeks if using RV for attribution
+## TODO, recalculate the pv with the new vol values
+## TODO, add replace option. Either to fill close with midpoint, use only close or use only midpoint
+## TODO: Add volga, vanna, dividend attribution to GB
+## TODO: Streamline GB attribution columns with RV
+## TODO: Find a way to return data fill for GB
+## TODO: Speed up RV PnL calc with Processing
+## TODO: Add logs for attribution returning zero values
+## TODO: No need to calculate greeks if using RV for attribution
 
 
 
@@ -340,7 +340,85 @@ class Calculate:
                                         greeks_to_calc = greeks_to_calc)
         else:
             raise TypeError(f'Invalid Asset Type. Recieved {asset}')
+
+    @staticmethod
+    def spot_vol_grid(asset = None, 
+                      vol_pct=[-0.05, -0.02, -0.01, 0, +0.01, +0.02, +0.05], 
+                      spot_pct=[0.8, 0.9, 0.95, 1, 1.05, 1.1, 1.2],
+                      greek_enum = 'pv',
+                      **kwargs):
+        """
+        Calculates a grid of spot and vol shocks
+        Returns a dataframe containing both PnL and price post shock
+        Parameters:
+        vol_pct_spot = An iterable with vol shocks
+        spot_pct_spot = An iterable with price shocks
+        **kwargs = Keyword arguments as seen in Calculate.PV()
+                For asset_type == 'stock' kwargs is S0
+                    
+        """
+
+        if asset is None:
+            k = kwargs['K']
+            exp_date = kwargs['exp_date']
+            sigma = kwargs['sigma']
+            s0 = kwargs['S0']
+            put_call = kwargs['put_call']
+            r = kwargs['r']
+            y = kwargs['y']
+            start = kwargs['start']
+            modelType = 'option'
+        else:
+            assert asset.__class__.__name__ == 'Option', f'Invalid asset type, expected Option, recieved {asset.__class__.__name__}'
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
+
+        def spot_vol_helper(spot_shock, vol_shock, greek_enum):
+            if greek_enum not in ['pv', 'delta', 'gamma', 'vega', 'rho', 'theta', 'vanna', 'volga','pnl']:
+                raise TypeError(f'Invalid greek_enum, expected one of ["pv", "delta", "gamma", "vega", "rho", "theta", "vanna", "volga"], recieved {greek_enum}')
             
+
+            if greek_enum == 'pnl':
+                fn = Calculate.pv
+            else:
+                fn = getattr(Calculate, greek_enum)
+            shocked_spot = spot_shock * s0
+            shocked_vol = sigma + vol_shock
+
+            ## Calculate shocked value
+            if greek_enum in ['pv', 'pnl']:
+                shocked_value = fn(K = k, exp_date = exp_date, sigma = shocked_vol, S0 = shocked_spot,
+                                            put_call = put_call, r =r, y = y, start = start)
+            else:
+                shocked_value = fn(K = k, exp = exp_date, sigma = shocked_vol, S = shocked_spot,
+                                    flag = put_call, r =r,start = start, y = y)
+            
+            ## Calculate base value for Pnl and set value to shocked - base
+            if greek_enum == 'pnl':
+                pv = fn(K = k, exp_date = exp_date, sigma = sigma, S0 = s0,
+                                        put_call = put_call, r =r, y = y, start = start)
+                value = shocked_value - pv
+
+            ## Else just return shocked value
+            else: 
+                value = shocked_value
+            return value
+        
+        
+        ## Create dataframe
+        spv = pd.DataFrame(index = sorted(vol_pct), columns = sorted(spot_pct))
+        for v in vol_pct:
+            for s in spot_pct:
+                spv.loc[v, s] = spot_vol_helper(s, v, greek_enum)
+        spv.index.name = 'vol_shock'
+        spv.columns.name = 'spot_shock'
+        return spv
                                 
             
     @staticmethod
@@ -824,7 +902,7 @@ class Calculate:
         ts_start = ts_start if ts_start else asset.start_date
         ts_end = ts_end if ts_end else asset.end_date
         start = pd.to_datetime(ts_start) - BDay(2)
-        end = pd.to_datetime(ts_end) + BD
+        end = pd.to_datetime(ts_end) + BDay(2)
         if asset.__class__.__name__ == 'Option':
     
             ## Designate the columns to be used
@@ -872,7 +950,7 @@ class Calculate:
 
             ## Fixing the vol values that are 0 with a fill forward
 
-            ## To-Do, recalculate the pv with the new vol values
+            ## TODO, recalculate the pv with the new vol values
             full_data[vol_col] = full_data[vol_col].replace(0.0, np.nan)
             full_data[vol_col] = full_data[vol_col].ffill()
 
