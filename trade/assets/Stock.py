@@ -57,7 +57,7 @@ class Stock:
         ## I don't need an instance per minute. I need an instance per day.
         ## I can update the end_date in __init__ if I need to
 
-        end_date = Configuration.end_date or _end_date
+        end_date = pd.to_datetime(Configuration.end_date or _end_date).strftime('%Y-%m-%d')
         ticker = swap_ticker(ticker).upper()
         key = (ticker, end_date)
 
