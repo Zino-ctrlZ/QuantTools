@@ -2,14 +2,15 @@
 import warnings
 warnings.filterwarnings("ignore")
 import os, sys
+import signal
 import json
 import pandas_market_calendars as mcal
 import pandas as pd
 from datetime import datetime
 from .helpers.Logging import setup_logger
-sys.path.append(os.environ.get('DBASE_DIR', ''))
-sys.path.append(os.environ.get('WORK_DIR', ''))
-import signal
+from trade.helpers.pools import runProcesses
+from trade.helpers.threads import runThreads
+
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 logger = setup_logger('trade.__init__')
@@ -107,3 +108,13 @@ def reload_pricing_config():
     with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
         PRICING_CONFIG = json.load(f)
     logger.info("Pricing configuration reloaded.")
+
+
+def get_parrallel_apply():
+    """
+    Get the parallel apply function based on the pool enabled flag.
+    """
+    if get_pool_enabled():
+        return runProcesses
+    else:
+        return runThreads

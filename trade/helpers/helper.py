@@ -994,8 +994,29 @@ def optionPV_helper(
 
         # Market data
         spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot_price))
-        dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividend_yield, day_count))
-        risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
+        rate_dc = ql.Actual365Fixed()
+
+        dividend_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(
+                settlement_date,
+                float(dividend_yield),
+                rate_dc,
+                ql.Continuous,   # make it explicit for dividends
+                ql.Annual        # ignored for continuous but required by signature
+            )
+        )
+
+        risk_free_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(
+                settlement_date,
+                float(risk_free_rate),
+                rate_dc,
+                ql.Compounded,   # common convention for “risk-free” examples
+                ql.Annual
+            )
+        )
+
+        # risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
         volatility_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatility, day_count))
 
         # Black-Scholes-Merton Process (with dividend yield)
@@ -1020,6 +1041,7 @@ def optionPV_helper(
             black_scholes_price = european_option.NPV()
             return black_scholes_price
     except Exception as e:
+        print(f"Error in optionPV_helper: {e}")
         logger.info('')
         logger.info('"optionPV_helper" raised the below error')
         logger.info(e)

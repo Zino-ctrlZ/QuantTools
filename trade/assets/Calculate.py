@@ -17,6 +17,9 @@ import logging
 from typing import Callable
 from pandas.tseries.offsets import BDay
 from trade.helpers.types import OptionModelAttributes
+from trade import get_parrallel_apply
+
+
 
 logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICAL)
 
@@ -29,7 +32,6 @@ logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICA
 ## TODO: Speed up RV PnL calc with Processing
 ## TODO: Add logs for attribution returning zero values
 ## TODO: No need to calculate greeks if using RV for attribution
-
 
 
 def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_all = False, *args, **kwargs):
@@ -357,7 +359,7 @@ class Calculate:
                 For asset_type == 'stock' kwargs is S0
                     
         """
-
+        parrallel_apply_func = get_parrallel_apply()
         if asset is None:
             k = kwargs['K']
             exp_date = kwargs['exp_date']
@@ -401,9 +403,12 @@ class Calculate:
             
             ## Calculate base value for Pnl and set value to shocked - base
             if greek_enum == 'pnl':
+                # print(f"Calculating PnL for spot shock {spot_shock} and vol shock {vol_shock}")
+                # print(f"k={k}, exp_date={exp_date}, sigma={sigma}, S0={s0}, put_call={put_call}, r={r}, y={y}, start={start}")
                 pv = fn(K = k, exp_date = exp_date, sigma = sigma, S0 = s0,
                                         put_call = put_call, r =r, y = y, start = start)
                 value = shocked_value - pv
+                # print(f"Base PV: {pv}, Shocked PV: {shocked_value}, PnL: {value}")
 
             ## Else just return shocked value
             else: 
@@ -427,6 +432,7 @@ class Calculate:
         scenario_helper should return a dataframe with shocks as index
         This is a multi-purpose scenario calculator. It calculates the scenario for different shocks
         """
+        
         modelType = kwargs['modelType']
         if modelType == 'option':
             k = kwargs['K']

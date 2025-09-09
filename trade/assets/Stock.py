@@ -8,8 +8,6 @@
 ## Taking too long to load Stock
 
 from openbb import obb
-import sys
-import os
 from dotenv import load_dotenv
 load_dotenv()
 import backoff
@@ -18,10 +16,9 @@ from dbase.DataAPI.ThetaData import (list_contracts)
 # from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
-from trade.helpers.Context import Context
 import re
 from dateutil.relativedelta import relativedelta
-from trade.helpers.exception import OpenBBEmptyData, raise_tick_name_change
+from trade.helpers.exception import OpenBBEmptyData
 import numpy as np
 import requests
 import pandas as pd
@@ -30,18 +27,15 @@ import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
-from trade.models.VolSurface import SurfaceLab
 load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
-from dbase.DataAPI.ThetaData import resample, retrieve_chain_bulk
+from dbase.DataAPI.ThetaData import resample
 from pandas.tseries.offsets import BDay
-from dbase.database.SQLHelpers import DatabaseAdapter
-from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
 from trade.assets.OptionChain import OptionChain
-from threading import Thread, Lock
-from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker, swap_ticker
+from threading import Thread
+from trade.assets.helpers.utils import swap_ticker
 from trade.helpers.types import OptionModelAttributes
 from dbase.utils import bus_range
 logger = setup_logger('trade.asset.Stock')
@@ -114,7 +108,7 @@ class Stock:
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__close = None
-            self.__y = None
+            self.__y = 0.0 ## Starting with 0.0 yield to avoid None errors
             self.__OptChain = None
             self.__chain = None
             self.__asset_type = None
@@ -130,8 +124,14 @@ class Stock:
                 """
                 Sets the variables for the Stock class
                 """
-                self.prev_close()
-                self.div_yield()
+                try:
+                    self.prev_close()
+                except Exception as e: ## TODO: Revisit this error handling
+                    logger.error(f"Error setting close for {self.ticker}: {e}")
+                try:
+                    self.div_yield()
+                except Exception as e:
+                    logger.error(f"Error setting yield for {self.ticker}: {e}")
             self.set_thread = Thread(target=set_variables, name=self.__repr__() + '_SetVariables')
             self.set_thread.start()
 

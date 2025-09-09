@@ -63,7 +63,7 @@ class OptionSignalBacktest():
         self.initial_capital = initial_capital
         
         #initialize critical components 
-        self.eventScheduler = EventScheduler(self.start_date, self.end_date); 
+        self.eventScheduler = EventScheduler(self.start_date, self.end_date)
         self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
