@@ -597,12 +597,6 @@ class Stock:
             df.index = pd.to_datetime(df.index)
             return df
         else:
-            ## Can't remember why I opted for obb.quote. But I'll leave it for now incase I get an error.
-            ## If end == today, I'm expecting yfinance close to be latest close.
-
-            # if pd.to_datetime(self.end_date).date() >= datetime.today().date() and self.asset_type not in ['ETF', 'MUTUALFUND', 'INDEX']:
-            #     spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
-            # else:
             end  = change_to_last_busday(ts_end)
             df.index = pd.to_datetime(df.index)
             df = df[df.index.date == pd.to_datetime(end).date()]
