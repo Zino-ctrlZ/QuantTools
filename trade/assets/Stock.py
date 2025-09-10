@@ -147,7 +147,6 @@ class Stock:
             self.init_risk_free_rate()
 
         ## Logic to run chain, compatible with singleton behavior
-        
         run_chain = kwargs.get('run_chain', False) ## Leave default as False for now)
         self.run_chain = run_chain
         if run_chain:
@@ -351,6 +350,22 @@ class Stock:
 
         ts = self.rf_ts
         last_bus = change_to_last_busday(self.end_date)
+
+        ## Retry logic to handle missing dates
+        if last_bus.date() not in ts.index.date:
+            retry_counter = 0
+            
+            while last_bus.date() not in ts.index.date and retry_counter < 5:
+                self.init_rfrate_ts()
+                ts = self.rf_ts
+                counter += 1
+                time.sleep(1)  # Wait for 1 second before retrying
+            
+            ## If still not found after retries, raise an error
+            if last_bus.date() not in ts.index.date:
+                logger.error(f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after retries.")
+                raise ValueError(f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after retries.")
+            
         self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
     
