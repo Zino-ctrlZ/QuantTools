@@ -17,7 +17,7 @@ import logging
 from typing import Callable
 from pandas.tseries.offsets import BDay
 from trade.helpers.types import OptionModelAttributes
-from trade import get_parrallel_apply
+from trade.helpers.helper import get_parrallel_apply
 
 
 
