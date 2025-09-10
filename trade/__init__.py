@@ -8,8 +8,7 @@ import pandas_market_calendars as mcal
 import pandas as pd
 from datetime import datetime
 from .helpers.Logging import setup_logger
-from trade.helpers.pools import runProcesses
-from trade.helpers.threads import runThreads
+
 
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
@@ -110,11 +109,3 @@ def reload_pricing_config():
     logger.info("Pricing configuration reloaded.")
 
 
-def get_parrallel_apply():
-    """
-    Get the parallel apply function based on the pool enabled flag.
-    """
-    if get_pool_enabled():
-        return runProcesses
-    else:
-        return runThreads
