@@ -52,6 +52,9 @@ from pprint import pprint, pformat
 import atexit
 import signal
 import shortuuid
+from trade import get_pool_enabled
+from trade.helpers.pools import runProcesses
+from trade.helpers.threads import runThreads
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -59,6 +62,15 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 option_keys = {}
+
+def get_parrallel_apply():
+    """
+    Get the parallel apply function based on the pool enabled flag.
+    """
+    if get_pool_enabled():
+        return runProcesses
+    else:
+        return runThreads
 
 
 def _ipython_shutdown(_callable):
