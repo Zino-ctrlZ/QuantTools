@@ -121,18 +121,24 @@ class Stock:
             self.__rf_rate = None
             self.__rf_ts = None
             
+            @log_error_with_stack(logger, raise_exception=False)
             def set_variables():
                 """
                 Sets the variables for the Stock class
                 """
                 try:
                     self.prev_close()
+
                 except Exception as e: ## TODO: Revisit this error handling
                     logger.error(f"Error setting close for {self.ticker}: {e}")
+                    raise e ## Raise error so that decorator can catch it
                 try:
                     self.div_yield()
+
                 except Exception as e:
                     logger.error(f"Error setting yield for {self.ticker}: {e}")
+                    raise e ## Raise error so that decorator can catch it
+
             self.set_thread = Thread(target=set_variables, name=self.__repr__() + '_SetVariables')
             self.set_thread.start()
 
