@@ -9,13 +9,9 @@
 
 from openbb import obb
 from dotenv import load_dotenv
-load_dotenv()
 import backoff
 from dbase.DataAPI.ThetaData import (list_contracts)
-
-# from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
-Configuration = ConfigProxy()
 import re
 from dateutil.relativedelta import relativedelta
 from trade.helpers.exception import OpenBBEmptyData
@@ -27,17 +23,22 @@ import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
-load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
 from dbase.DataAPI.ThetaData import resample
 from pandas.tseries.offsets import BDay
 from trade.helpers.helper import change_to_last_busday
+from trade.helpers.decorators import log_error_with_stack
 from trade.assets.OptionChain import OptionChain
 from threading import Thread
 from trade.assets.helpers.utils import swap_ticker
 from trade.helpers.types import OptionModelAttributes
 from dbase.utils import bus_range
+import traceback
+
+load_openBB()
+load_dotenv()
+Configuration = ConfigProxy()
 logger = setup_logger('trade.asset.Stock')
 
 
