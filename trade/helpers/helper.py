@@ -481,14 +481,52 @@ def retrieve_timeseries(tick,
         return df
     else:
         try:
-            ## yfinance needs end date to be + 1 day to be inclusive
+
+            ## yfinance needs end date to be + 1 day to be inclusive. Doing this before the function call because it's undone later
             end = pd.to_datetime(end) + relativedelta(days=1)
-            data = yf.download(tick, start=start,  end = end, interval=interval, multi_level_index=False, progress=False, actions = True)
-            data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
-            data = data.loc[:, ~data.columns.duplicated()] ## For some reason columns are duplicated sometimes
-            data.columns = data.columns.str.lower() 
+
+            def query_data(start, end, tick, interval):
+                data = yf.download(tick, start=start,  end = end, interval=interval, multi_level_index=False, progress=False, actions = True)
+                data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
+                data = data.loc[:, ~data.columns.duplicated()] ## For some reason columns are duplicated sometimes
+                data.columns = data.columns.str.lower() 
+                return data
+            
+            data = query_data(start=start, end=end, tick=tick, interval=interval)
+
+            ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
             if data.empty:
                 raise YFinanceEmptyData(f"OpenBB returned empty data for {tick} with {provider} provider")
+            
+            ## Retry logic for missing split_ratio column
+            if 'split_ratio' not in data.columns:
+
+                ## `close` spot type means split_ratio isn't important. Set to 1
+                if spot_type == 'close':
+                    data['split_ratio'] = 1
+                    logger.info(f"No splits found for {tick} between {start} and {end}. Added split_ratio column with 1s")
+
+                ## `chain_price` spot type means split_ratio is important. Retry up to 3 times
+                else:
+                    retry_counter = 0
+
+                    ## Retry up to 3 times
+                    while retry_counter < 3:
+                        data = query_data(start=start, end=end, tick=tick, interval=interval)
+
+                        ## If found, break
+                        if 'split_ratio' in data.columns:
+                            break
+                        
+                        ## Else, wait 2 seconds and retry
+                        time.sleep(2)
+                        retry_counter += 1
+                    
+                    ## Final check: if still not found, raise error
+                    if 'split_ratio' not in data.columns:
+                        raise YFinanceEmptyData(f"yfinance returned data without split_ratio column for {tick} after 3 retries")
+                    
+            ## Filter Data within range
             data = data[(data.index.date >= pd.to_datetime(start).date()) & 
                         (data.index.date <= (pd.to_datetime(end) - relativedelta(days=1)).date())]
         except Exception as e: ## Unnecessary placeholder, I know. Will look for best idea for this.
