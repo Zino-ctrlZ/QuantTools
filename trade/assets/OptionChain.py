@@ -22,7 +22,7 @@ from dbase.DataAPI.ThetaData import (retrieve_quote_rt,
                                      list_contracts)
 
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore
-from pathos.multiprocessing import ProcessingPool as Pool
+from trade._multiprocessing import ensure_global_start_method, PathosPool
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, root_mean_squared_error
 from pprint import pprint
 import numpy as np
@@ -92,7 +92,8 @@ def produce_chain_values(chain, date, ticker, stock):
 
 
     #Multiprocessing to speed up chain retrieval
-    pool = Pool(nodes = workers)
+    ensure_global_start_method()
+    pool = PathosPool(nodes = workers)
     pool.restart()
     try:
         for result in pool.imap(get_df_set, split_data, [i for i in range(workers)]):

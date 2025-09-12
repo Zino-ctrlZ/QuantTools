@@ -19,7 +19,7 @@ from itertools import product
 from collections.abc import Callable as callable_func
 import random
 import inspect
-from pathos.multiprocessing import ProcessingPool as Pool
+from trade._multiprocessing import ensure_global_start_method, PathosPool
 import threading
 
 
@@ -322,7 +322,8 @@ def optimize(object: 'PTBacktester',
         reset_dict[name] = [getattr(dataset.backtest._strategy, name) for dataset in object.datasets]
     
     partial_funct = partial(evaluate_plane, object = object, optimize_var = optimize_var, maximize = maximize, constraint = constraint )
-    pool = Pool()
+    ensure_global_start_method()
+    pool = PathosPool()
     pool.restart()
     results = pool.map(partial_funct, cart_plane )
     pool.close()
