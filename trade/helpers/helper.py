@@ -239,6 +239,13 @@ class CustomCache(Cache):
 
     @property
     def register_location(self):
+        if not os.path.exists(self._register_location):
+            ## Ensure dir exists
+            os.makedirs(os.path.dirname(self._register_location), exist_ok=True)
+
+            ## Create empty json file
+            with open(self._register_location, 'w') as f: 
+                json.dump({}, f)
         return self._register_location
     
     def _install_handlers(self):
@@ -1346,7 +1353,6 @@ def change_to_last_busday(end, offset = 1):
     
     #Enfore time is passed
 
-
     if not isinstance(end, str):
         end = end.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -1365,14 +1371,12 @@ def change_to_last_busday(end, offset = 1):
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
         end = pd.to_datetime(end)-BDay(offset)
         end = end.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
-
+    
     ## Make End Comparison same day if after 16:00
     elif pd.Timestamp(end).time() >= pd.Timestamp('16:00').time():
-
         end_dt = pd.to_datetime(end)
         end = end_dt.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
     
-
 
     # Make End Comparison prev day if holiday
     while is_USholiday(end):
