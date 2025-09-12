@@ -358,7 +358,7 @@ class Stock:
             while last_bus.date() not in ts.index.date and retry_counter < 5:
                 self.init_rfrate_ts()
                 ts = self.rf_ts
-                counter += 1
+                retry_counter += 1
                 time.sleep(1)  # Wait for 1 second before retrying
             
             ## If still not found after retries, raise an error
