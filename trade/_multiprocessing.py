@@ -1,6 +1,7 @@
 import platform
 import multiprocessing
 from multiprocessing.context import BaseContext
+from pathos.multiprocessing import ProcessingPool
 from typing import Tuple
 
 ## OS Type
@@ -45,4 +46,4 @@ Queue = MP_CONTEXT.Queue
 Pipe = MP_CONTEXT.Pipe
 Event = MP_CONTEXT.Event
 Lock = MP_CONTEXT.Lock
-
+PathosPool = ProcessingPool
