@@ -369,7 +369,9 @@ class SpotDataManager(QuoteController):
                 ## Add Option Tick
                 bulk_eod = bulk.reset_index()
                 tick_col = ['Root', 'Right', 'Expiration', 'Strike']
-                bulk_eod['OptionTick'] = parallel_apply(bulk_eod[tick_col], generate_option_tick_new, pool = False)
+
+                ## Allowing control of pool from POOL_ENABLED global variable
+                bulk_eod['OptionTick'] = parallel_apply(bulk_eod[tick_col], generate_option_tick_new)
                 if data_request.opttick is not None:
                     bulk_eod = bulk_eod[bulk_eod['OptionTick'].isin(data_request.opttick)]
 
@@ -381,10 +383,12 @@ class SpotDataManager(QuoteController):
                     start_date = start,
                     end_date = end,
                 )
+
                 ## Add Option Tick
-                bulk_oi['OptionTick'] = parallel_apply(bulk_oi[tick_col], generate_option_tick_new, pool = False)
+                bulk_oi['OptionTick'] = parallel_apply(bulk_oi[tick_col], generate_option_tick_new)
                 if data_request.opttick is not None:
                     bulk_oi = bulk_oi[bulk_oi['OptionTick'].isin(data_request.opttick)]
+
                 ## Add EOD Timestamp
                 bulk_oi['Datetime'] = add_eod_timestamp(pd.DatetimeIndex(bulk_oi['Datetime']))
                 data = bulk_eod.merge(bulk_oi[['Datetime','OptionTick', 'Open_interest']], on = ['Datetime', 'OptionTick'], how = 'left')
@@ -1927,10 +1931,12 @@ def calc_vol_for_data_parallel(
     
     bs_column = [price_col, col_kwargs['underlier_price'], col_kwargs['strike'], 't', col_kwargs['rf_rate'], col_kwargs['dividend'], col_kwargs['put/call']]
     if model == 'bs':
-        df[col_name] = parallel_apply(temp_df[bs_column], IV_handler, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        df[col_name] = parallel_apply(temp_df[bs_column], IV_handler)
         
     elif model == 'binomial':
-        df[col_name] = parallel_apply(temp_df[binomial_column], binomial_implied_vol, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        df[col_name] = parallel_apply(temp_df[binomial_column], binomial_implied_vol)
     return df
 
 @log_error(logger)
@@ -2054,7 +2060,8 @@ def calc_greeks_for_data_parallel(
                          col_kwargs[ 'datetime'], col_kwargs['put/call'], col_kwargs['expiration'], col_kwargs['dividend'], 'model']
                          
     if not greek_name:
-        greek = parallel_apply(temp_df[greeks_colums_use], Calculate.greeks, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        greek = parallel_apply(temp_df[greeks_colums_use], Calculate.greeks)
         greek = pd.DataFrame(greek)
         greek.columns = [greek_name_format.format(x=x) for x in greek.columns]
         greek.index = temp_df.index
@@ -2062,7 +2069,9 @@ def calc_greeks_for_data_parallel(
         return df
     else:
         calc_func = getattr(Calculate, greek_name.lower())
-        greek = parallel_apply(temp_df[greeks_colums_use], calc_func, pool = pool)
+
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        greek = parallel_apply(temp_df[greeks_colums_use], calc_func)
         df[greek_name_format.format(x=greek_name)] = greek
         return df
 

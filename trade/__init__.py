@@ -4,15 +4,40 @@ warnings.filterwarnings("ignore")
 import os, sys
 import signal
 import json
+import multiprocessing
 import pandas_market_calendars as mcal
+from zoneinfo import ZoneInfo
 import pandas as pd
 from datetime import datetime
+import platform
 from .helpers.Logging import setup_logger
+
 
 
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 logger = setup_logger('trade.__init__')
+
+
+
+## Universal Holidays set
+## Get Business days FOR NYSE (Some days are still trading days)
+##TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
+NY = ZoneInfo("America/New_York")
+nyse = mcal.get_calendar('NYSE')
+schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01', tz=NY)
+all_trading_days = mcal.date_range(schedule, frequency='1D').date
+all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
+holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
+HOLIDAY_SET = set(holidays)
+
+## Additional holidays
+HOLIDAY_SET.update({
+    '2025-01-09', ## Jimmy Carter's Death
+}) 
+
+
+
 
 
 def register_signal(signum, signal_func):
@@ -29,12 +54,12 @@ def register_signal(signum, signal_func):
     if signum not in SIGNALS_TO_RUN:
         SIGNALS_TO_RUN[signum] = []
         signal.signal(signum, run_signals)
-        logger.info(f"Registered signal number {signum}.")
+        logger.info("Registered signal number %d.", signum)
     if not callable(signal_func):
         raise ValueError(f"Signal function {signal_func} is not callable.")
     
     SIGNALS_TO_RUN[signum].append( signal_func)
-    logger.info(f"Signal function for `{signal_func.__name__}` added to signal number {signum}.")
+    logger.info("Signal function for `%s` added to signal number %d.", signal_func.__name__, signum)
 
 def run_signals(signum, frame):
     """
@@ -43,12 +68,12 @@ def run_signals(signum, frame):
     if signum in SIGNALS_TO_RUN:
         for signal_func in SIGNALS_TO_RUN[signum]:
             try:
-                logger.info(f"Running signal function {signal_func.__name__} for signal {signum}.")
+                logger.info("Running signal function %s for signal %d.", signal_func.__name__, signum)
                 signal_func()
-            except Exception as e:
-                logger.info(f"Error running signal function {signal_func.__name__}: {e}")
+            except (ValueError, TypeError) as e:
+                logger.info("Error running signal function %s: %s", signal_func.__name__, e)
     else:
-        logger.info(f"No registered signals for signal number {signum}.")
+        logger.info("No registered signals for signal number %d.", signum)
             
 def get_signals_to_run():
     """
@@ -72,20 +97,6 @@ def get_pool_enabled():
 
 set_pool_enabled(bool(os.environ.get('POOL_ENABLED')))
 
-## Universal Holidays set
-## Get Business days FOR NYSE (Some days are still trading days)
-##TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
-nyse = mcal.get_calendar('NYSE')
-schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01')
-all_trading_days = mcal.date_range(schedule, frequency='1D').date
-all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
-holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
-HOLIDAY_SET = set(holidays)
-
-## Additional holidays
-HOLIDAY_SET.update({
-    '2025-01-09', ## Jimmy Carter's Death
-}) 
 
 
 ## Import Pricing Config

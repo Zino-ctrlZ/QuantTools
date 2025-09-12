@@ -1,8 +1,10 @@
 import os
 import numpy as np
 from itertools import chain
-from trade.helpers.pools import runProcesses
+from trade.helpers.helper import get_parrallel_apply
 from typing import List, Union
+
+parrallel_apply = get_parrallel_apply() ## Using system to pick btwmeen multiprocessing and threading
 
 def vector_batch_processor(callable, *args, **kwargs):
     """
@@ -49,7 +51,7 @@ def vector_batch_processor(callable, *args, **kwargs):
             split_arg = [arg] * num_process
             ordered_inputs.append(split_arg)
 
-    results = runProcesses(
+    results = parrallel_apply(
         func=callable,
         OrderedInputs=ordered_inputs,
         run_type='map')

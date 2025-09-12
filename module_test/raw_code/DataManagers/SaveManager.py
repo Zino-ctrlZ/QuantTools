@@ -2,6 +2,7 @@
 ## Refer to .SaveManager_process.py for all SaveManager related notes
 
 import multiprocessing as mp
+from pathlib import Path
 from queue import Queue, Full
 import threading
 from threading import Thread, Lock
@@ -25,7 +26,7 @@ import time
 print('\n')
 print("Scheduled Data Requests will be saved to:", f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler/requests.jsonl")
 _SCHEDULED_NAMES = []
-folder_path = f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler"
+folder_path = Path(f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler")
 
 
 ## Using names created from current requests, so if older names get into requests.jsonl, we can still process them
@@ -56,7 +57,10 @@ def construct_current_scheduled_names():
 
 
     except FileNotFoundError:
-        raise FileNotFoundError("The file scheduler/requests.jsonl does not exist. Please create it first.")
+        os.makedirs(folder_path, exist_ok=True)
+        with open(f"{folder_path}/requests.jsonl", "w") as f:
+            f.write('')
+        # raise FileNotFoundError("The file scheduler/requests.jsonl does not exist. Please create it first.")
 
 construct_current_scheduled_names()
 

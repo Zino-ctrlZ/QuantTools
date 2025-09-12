@@ -37,11 +37,12 @@ from .SaveManager import( _enqueue,
                          _remove_request_from_list,
                          _status,)
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from trade._multiprocessing import MP_CONTEXT
 
 
 logger = setup_logger("DataManager.SaveManager_process")
 timer = setup_logger("DataManager.SaveManager_process.Timer")
-CTX = mp.get_context('forkserver')  # Use 'forkserver' to avoid issues with pickling
+CTX = MP_CONTEXT  # Using context from trade._multiprocessing. It matches the OS
 JOB_TIMEOUT = 60 * 10  # 10 minutes
 JOB_TIMEOUTS = {
     'bulk': 60 * 60 * 3,  # 3 hours
