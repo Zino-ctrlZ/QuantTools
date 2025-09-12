@@ -1,20 +1,29 @@
-from typing import List, Dict
-from abc import ABC, abstractmethod
-from pathos.multiprocessing import ProcessingPool as Pool
+"""
+This module provides functionality for parallel processing using multiprocessing and threading.
+"""
+from typing import List
 from multiprocessing import cpu_count
-from pathos.multiprocessing import cpu_count
-from pathos.pools import _ProcessPool
-from threading import Thread
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from trade.helpers.Logging import setup_logger
-from trade import POOL_ENABLED
-import os, sys
+import os
 import time
-logger = setup_logger('trade.helpers.pools')
+import logging
+from pathos.multiprocessing import ProcessingPool as Pool
+from trade.helpers.Logging import setup_logger
+from trade import get_pool_enabled
+
+logger = setup_logger('trade.helpers.pools', stream_log_level=logging.INFO)
 
 shutdown_event = False
 num_workers = int(os.environ.get('NUM_WORKERS', str(cpu_count())).strip())
+
+def change_logger_stream_level(level):
+    """
+    Change the logger stream level.
+    """
+    logger.setLevel(level)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(level)
 
 def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List:
     """
@@ -61,7 +70,7 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
         raise
 
     except Exception as e:
-        logger.error('Error occured: ', e)
+        logger.error('Error occurred: %s', e)
         shutdown(pool)
         raise
 
@@ -84,11 +93,16 @@ def shutdown(pool):
 
 
 
-def parallel_apply(data, func, timeout=60, pool = POOL_ENABLED):
+def parallel_apply(data: List[List], func: callable, timeout: int = 60, pool: Pool = None):
     """
     Apply a function to a DataFrame in parallel using multiprocessing.
     """
     global shutdown_event
+
+
+    ## Set pool
+    if pool is None:
+        pool = get_pool_enabled()
 
     # Check if the function is callable
     if not callable(func):
@@ -100,9 +114,10 @@ def parallel_apply(data, func, timeout=60, pool = POOL_ENABLED):
 
 
     if pool:
-        logger.info("Using multiprocessing in parallel_apply")
+        logger.info("`parrallel_apply` using multiprocessing with %d workers", num_workers)
+        logger.info("To change to threading, either set the environment POOL_ENABLED to False, or use `set_pool_enabled(False)` found in trade.__init__")
+        logger.info("Logger stream level is set to %s. To change this behavior & reduce stream logs, use `change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
         shutdown_event = False
-        logger.info(f"Using multiprocessing with {cpu_count()} cores")
         try:
             with Pool(num_workers) as p:
                 p.restart(force = True)
@@ -129,7 +144,9 @@ def parallel_apply(data, func, timeout=60, pool = POOL_ENABLED):
         return results
 
     else:
-        logger.info("Using threading in parallel_apply")
+        logger.info("`parrallel_apply` using threading with %d workers", num_workers)
+        logger.info("To change to multiprocessing, either set the environment POOL_ENABLED to True, or use `set_pool_enabled(True)` found in trade.__init__")
+        logger.info("Logger stream level is set to %s. To change, use `change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
         results = [None] * len(data)
         with ThreadPoolExecutor() as executor:
             future_to_idx = {executor.submit(func, *row): i for i, row in enumerate(data.itertuples(index=False, name=None))}
