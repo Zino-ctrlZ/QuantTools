@@ -8,6 +8,7 @@ import os
 import time
 import logging
 from pathos.multiprocessing import ProcessingPool as Pool
+from trade._multiprocessing import ensure_global_start_method, PathosPool
 from trade.helpers.Logging import setup_logger
 from trade import get_pool_enabled
 
@@ -48,8 +49,9 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
     """
 
     global shutdown_event
+    ensure_global_start_method()
     try:
-        pool = Pool(cpu_count())
+        pool = PathosPool(cpu_count())
         pool.restart(force=True)
         if run_type == 'map':
             results = pool.map(func, *OrderedInputs)
@@ -119,7 +121,8 @@ def parallel_apply(data: List[List], func: callable, timeout: int = 60, pool: Po
         logger.info("Logger stream level is set to %s. To change this behavior & reduce stream logs, use `change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
         shutdown_event = False
         try:
-            with Pool(num_workers) as p:
+            ensure_global_start_method()
+            with PathosPool(num_workers) as p:
                 p.restart(force = True)
                 logger.info("Starting Function with multiprocessing")
                 start = time.time()
