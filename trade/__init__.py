@@ -1,19 +1,19 @@
 ## Initialisation of the trade package
-import warnings
-warnings.filterwarnings("ignore")
-import os, sys
+import os
 import signal
 import json
-import multiprocessing
-import pandas_market_calendars as mcal
-from zoneinfo import ZoneInfo
-import pandas as pd
+import warnings
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import platform
+import pandas as pd
+import pandas_market_calendars as mcal
 from .helpers.Logging import setup_logger
 
+warnings.filterwarnings("ignore")
 
 
+USER = str(os.environ.get("USER", "unknown_user")).lower() ## Temporary fix to allow only chidi utilize some features
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 logger = setup_logger('trade.__init__')
@@ -26,7 +26,7 @@ logger = setup_logger('trade.__init__')
 NY = ZoneInfo("America/New_York")
 nyse = mcal.get_calendar('NYSE')
 schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01', tz=NY)
-all_trading_days = mcal.date_range(schedule, frequency='1D').date
+all_trading_days = mcal.date_range(schedule, frequency='1D').date ## type: ignore
 all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
 holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
 HOLIDAY_SET = set(holidays)
@@ -37,6 +37,27 @@ HOLIDAY_SET.update({
 }) 
 
 
+def is_allowed_user(allowed_users: list) -> bool:
+    """
+    Check if the current user is in the list of allowed users.
+
+    Parameters:
+    ----------
+    allowed_users : list
+        List of allowed usernames.
+
+    Returns:
+    -------
+    bool
+        True if the current user is allowed, False otherwise.
+    """
+    allowed_users = [user.lower() for user in allowed_users]
+    if USER.lower() in allowed_users:
+        return True
+    else:
+        logger.warning("User %s is not allowed to perform this action.", USER)
+        return False
+    
 
 
 
@@ -100,7 +121,7 @@ set_pool_enabled(bool(os.environ.get('POOL_ENABLED')))
 
 
 ## Import Pricing Config
-with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
+with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as f:
     PRICING_CONFIG = json.load(f)
 
 
@@ -114,9 +135,8 @@ def reload_pricing_config():
     """
     Reload the pricing configuration from the file.
     """
-    global PRICING_CONFIG
-    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json") as f:
-        PRICING_CONFIG = json.load(f)
+    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as pricing_file:
+        PRICING_CONFIG = json.load(pricing_file)
     logger.info("Pricing configuration reloaded.")
 
 
