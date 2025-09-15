@@ -7,7 +7,8 @@ from trade.assets.OptionStructure import OptionStructure
 from trade.assets.Calculate import Calculate
 # from trade.assets.helpers.DataManagers_new import OptionDataManager
 from trade.assets.helpers.utils import (swap_ticker)
-from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, SaveManager, BulkOptionDataManager
+from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, BulkOptionDataManager
+from module_test.raw_code.DataManagers import SaveManager
 
 from trade.helpers.Context import Context, clear_context
 from trade.helpers.helper import (change_to_last_busday, 
