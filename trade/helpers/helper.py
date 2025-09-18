@@ -29,6 +29,7 @@ from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from py_vollib.black_scholes_merton import black_scholes_merton
 from py_lets_be_rational.exceptions import BelowIntrinsicException
 from scipy.stats import norm
+from zoneinfo import ZoneInfo
 import yfinance as yf
 from openbb import obb
 import pandas as pd
@@ -62,6 +63,9 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 option_keys = {}
+NY = ZoneInfo("America/New_York")
+def ny_now() -> datetime:
+    return datetime.now(tz=NY)
 
 def get_parrallel_apply():
     """
@@ -453,10 +457,10 @@ def filter_zeros(data):
     data = data.replace(0, np.nan)
     return data.ffill()
 
-@backoff.on_exception(backoff.expo, 
-                      (OpenBBEmptyData, YFinanceEmptyData), 
-                      max_tries=5, 
-                      logger=logger)
+# @backoff.on_exception(backoff.expo, 
+#                       (OpenBBEmptyData, YFinanceEmptyData), 
+#                       max_tries=5, 
+#                       logger=logger)
 def retrieve_timeseries(tick, 
                         start, 
                         end, 
@@ -491,7 +495,6 @@ def retrieve_timeseries(tick,
 
             ## yfinance needs end date to be + 1 day to be inclusive. Doing this before the function call because it's undone later
             end = pd.to_datetime(end) + relativedelta(days=1)
-
             def query_data(start, end, tick, interval):
                 data = yf.download(tick, start=start,  end = end, interval=interval, multi_level_index=False, progress=False, actions = True)
                 data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
