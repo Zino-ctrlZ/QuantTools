@@ -457,10 +457,10 @@ def filter_zeros(data):
     data = data.replace(0, np.nan)
     return data.ffill()
 
-# @backoff.on_exception(backoff.expo, 
-#                       (OpenBBEmptyData, YFinanceEmptyData), 
-#                       max_tries=5, 
-#                       logger=logger)
+@backoff.on_exception(backoff.expo, 
+                      (OpenBBEmptyData, YFinanceEmptyData), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_timeseries(tick, 
                         start, 
                         end, 
