@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import platform
 import pandas as pd
 import pandas_market_calendars as mcal
+from dotenv import load_dotenv
 from .helpers.Logging import setup_logger
 
 warnings.filterwarnings("ignore")
@@ -26,6 +27,7 @@ logger = setup_logger('trade.__init__')
 NY = ZoneInfo("America/New_York")
 nyse = mcal.get_calendar('NYSE')
 schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01', tz=NY)
+# pylint: disable=E1101
 all_trading_days = mcal.date_range(schedule, frequency='1D').date ## type: ignore
 all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
 holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
@@ -95,6 +97,22 @@ def run_signals(signum, frame):
                 logger.info("Error running signal function %s: %s", signal_func.__name__, e)
     else:
         logger.info("No registered signals for signal number %d.", signum)
+
+
+def str_to_bool(value: str) -> bool:
+    """
+    Convert a string to a boolean value.
+    Args:
+        value (str): The string to convert.
+    Returns:
+        bool: True if the string is 'True', '1', or 'yes' (case-insensitive), False otherwise.
+    """
+    if value.lower() in ['true', '1', 'yes']:
+        return True
+    elif value.lower() in ['false', '0', 'no']:
+        return False
+    else:
+        raise ValueError("Invalid boolean string. Expected 'True', 'False', '1', '0', 'yes', or 'no'.")
             
 def get_signals_to_run():
     """
@@ -107,6 +125,7 @@ def set_pool_enabled(value: bool):
     """
     Set the pool enabled flag.
     """
+    logger.info(f"Setting POOL_ENABLED to {value}")
     global POOL_ENABLED
     POOL_ENABLED = value
 
@@ -116,7 +135,14 @@ def get_pool_enabled():
     """
     return POOL_ENABLED
 
-set_pool_enabled(bool(os.environ.get('POOL_ENABLED')))
+def reset_pool_enabled():
+    """
+    Reset the pool enabled flag to None.
+    """
+    load_dotenv(f"{os.environ['WORK_DIR']}/.env")
+    set_pool_enabled(str_to_bool(os.environ.get('POOL_ENABLED', 'False')))
+
+reset_pool_enabled()
 
 
 
