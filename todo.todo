@@ -69,6 +69,7 @@ Risk Manager:
     ☐ (Consider) Add Vega, Gamma, Delta limits?
     ☐ In add a min size filter
     ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
+    ☐ Start using function from positions.analyze._analyze to ensure consistency
 
 General:
     ☐ Implement buy on Open.
@@ -366,6 +367,7 @@ Modules:
         ☐ Div yield sometimes returns an empty dataframe from OpenBB. Raise eerror. Add retry
         ☐ Raise non-intialied chain error instead of not ready error. Use run_chaim
         ☐ Fix prev_close in stock init
+        ☐ Fix thread locks for data querying.
 
 
     DocString:

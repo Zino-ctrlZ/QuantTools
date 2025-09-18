@@ -262,7 +262,7 @@ def save_info_stack():
     """
     global IDS, ID_SAVE_FILE, ID_SAVE_FOLDER
     if not IDS:
-        logger.error("No data to save.")
+        logger.info("No data to save.")
         return
     full_data = pd.read_csv(ID_SAVE_FILE) if ID_SAVE_FILE.exists() else pd.DataFrame()
     df = pd.DataFrame(IDS)
