@@ -696,6 +696,7 @@ class RiskManager:
         self.__sizer = None
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
+        self.limits_meta = {}
 
     @property 
     def option_data(self):
@@ -934,6 +935,9 @@ Quanitity Sizing Type: {self.sizing_type}
         order = self.update_order_close(position_id, kwargs['date'], order) ## Update the order with the close price from the position data
         logger.info('Updating Signal Limits')
         self.sizer.update_delta_limit(signalID, position_id, date)
+
+        ## Hack to get limit meta
+        self.store_limits_meta(signalID, position_id, date)
         logger.info("Calculating Quantity")
         quantity = self.sizer.calculate_position_size(signalID, position_id, order['data']['close'], kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
@@ -953,6 +957,23 @@ Quanitity Sizing Type: {self.sizing_type}
         self.adjust_slippage(position_id, date) ## Adjust the slippage for the position based on the position data
 
         return order
+
+    def store_limits_meta(self, signal_id, position_id, date):
+        """
+        Stores the limits meta for the signal and position
+        """
+
+        delta = self.greek_limits['delta'].get(signal_id, None)
+        gamma = self.greek_limits['gamma'].get(signal_id, None)
+        vega = self.greek_limits['vega'].get(signal_id, None)
+        theta = self.greek_limits['theta'].get(signal_id, None)
+
+        self.limits_meta[(signal_id, position_id, date)] = {
+            'delta': delta,
+            'gamma': gamma,
+            'vega': vega,
+            'theta': theta,
+        }
     
     def adjust_slippage(self, position_id, date):
         position_data = self.position_data.get(position_id, None)
