@@ -70,6 +70,7 @@ Risk Manager:
     ☐ In add a min size filter
     ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
     ☐ Start using function from positions.analyze._analyze to ensure consistency
+    ☐ Start using functions from get_order to ensure consistency
 
 General:
     ☐ Implement buy on Open.

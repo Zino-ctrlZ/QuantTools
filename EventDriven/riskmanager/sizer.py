@@ -198,13 +198,13 @@ class DefaultSizer(BaseSizer):
             float: The delta limit for the specified signal ID and date.
         """
  
-        logger.info(f"DefaultSizer: Calculating Delta Limit for Signal ID: {signal_id} and Position ID: {position_id} on Date: {date}\n")
+        logger.info("DefaultSizer: Calculating Delta Limit for Signal ID: %s and Position ID: %s on Date: %s\n", signal_id, position_id, date)
         id_details = parse_signal_id(signal_id)
         self.register_signal_starting_cash(signal_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the signal
         self.register_position_id_starting_cash(position_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the position ID
 
 
-        logger.info(f"Updating Greek Limits for Signal ID: {signal_id} and Position ID: {position_id}")
+        logger.info("Updating Greek Limits for Signal ID: %s and Position ID: %s", signal_id, position_id)
         starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id)  ## Get the cash available for the ticker based on the cash rule
         logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
         delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  ## This is the delta at the time of purchase
