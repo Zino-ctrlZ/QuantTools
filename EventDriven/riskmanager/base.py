@@ -40,6 +40,7 @@ from functools import lru_cache
 from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
 import yaml
+from ._orders import resolve_schema
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
@@ -114,63 +115,63 @@ def get_order_cache():
 
 
 
-def resolve_schema(schema: OrderSchema, 
-                   tries: int, 
-                   max_dte_tolerance: int, 
-                   otm_moneyness_width: float, 
-                   itm_moneyness_width: float,
-                   max_close: float, max_tries: int =6) -> (OrderSchema, int):
-    """
-    Resolving schema by order of importance
-    1. DTE Tolerance
-    2. Min Moneyness width
-    3. Max Moneyness width
-    4. Max Close Price
-    5. Max Schema Tries
-    If no schema is found after max tries, return False and the number of tries.
+# def resolve_schema(schema: OrderSchema, 
+#                    tries: int, 
+#                    max_dte_tolerance: int, 
+#                    otm_moneyness_width: float, 
+#                    itm_moneyness_width: float,
+#                    max_close: float, max_tries: int =6) -> (OrderSchema, int):
+#     """
+#     Resolving schema by order of importance
+#     1. DTE Tolerance
+#     2. Min Moneyness width
+#     3. Max Moneyness width
+#     4. Max Close Price
+#     5. Max Schema Tries
+#     If no schema is found after max tries, return False and the number of tries.
 
-    Args:
-        schema (OrderSchema): The schema to resolve.
-        tries (int): The number of tries already made.
-        max_dte_tolerance (int): The maximum DTE tolerance to allow.
-        moneyness_width (float): The moneyness width to allow.
-        max_close (float): The maximum close price to allow.
-        max_tries (int): The maximum number of tries allowed.
+#     Args:
+#         schema (OrderSchema): The schema to resolve.
+#         tries (int): The number of tries already made.
+#         max_dte_tolerance (int): The maximum DTE tolerance to allow.
+#         moneyness_width (float): The moneyness width to allow.
+#         max_close (float): The maximum close price to allow.
+#         max_tries (int): The maximum number of tries allowed.
 
-    Returns:
-        tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
-    """
+#     Returns:
+#         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
+#     """
 
-    ##0). Max schema tries
-    if tries >= max_tries:
-        return False, tries
+#     ##0). Max schema tries
+#     if tries >= max_tries:
+#         return False, tries
 
-    #1). DTE Resolve
-    tries +=1
-    if schema['dte_tolerance'] <= max_dte_tolerance:
-        logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
-        schema['dte_tolerance'] += 20
-        return schema, tries
+#     #1). DTE Resolve
+#     tries +=1
+#     if schema['dte_tolerance'] <= max_dte_tolerance:
+#         logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
+#         schema['dte_tolerance'] += 20
+#         return schema, tries
     
-    #2). Min Moneyness Resolve
-    elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
-        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
-        schema['min_moneyness'] -= 0.1
-        return schema, tries    
+#     #2). Min Moneyness Resolve
+#     elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
+#         logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
+#         schema['min_moneyness'] -= 0.1
+#         return schema, tries    
 
-    #3). Max Moneyness Resolve
-    elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
-        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
-        schema['max_moneyness'] += 0.1
-        return schema, tries
+#     #3). Max Moneyness Resolve
+#     elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
+#         logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
+#         schema['max_moneyness'] += 0.1
+#         return schema, tries
     
-    #4). Close Resolve
-    elif schema['max_total_price'] <= max_close:
-        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
-        schema['max_total_price'] += 1
-        return schema, tries
+#     #4). Close Resolve
+#     elif schema['max_total_price'] <= max_close:
+#         logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
+#         schema['max_total_price'] += 1
+#         return schema, tries
     
-    return False, tries
+#     return False, tries
 
 
 
