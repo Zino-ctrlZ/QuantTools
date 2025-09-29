@@ -1155,7 +1155,7 @@ Quanitity Sizing Type: {self.sizing_type}
         return position_data
 
 
-    def load_position_data(self, opttick):
+    def load_position_data(self, opttick) -> pd.DataFrame:
         """
         Load position data for a given option tick.
 
@@ -1173,13 +1173,13 @@ Quanitity Sizing Type: {self.sizing_type}
                                   y=self.dividend_timeseries[meta['ticker']],
                                   s0_close=self.spot_timeseries[meta['ticker']],)
 
-    def enrich_data(self, data, ticker):
+    def enrich_data(self, data, ticker) -> pd.DataFrame:
         """
         Enrich the data with additional information.
         """
         return enrich_data(data, ticker, self.spot_timeseries, self.chain_spot_timeseries, self.rf_timeseries, self.dividend_timeseries)
         
-    def generate_spot_greeks(self, opttick):
+    def generate_spot_greeks(self, opttick) -> pd.DataFrame:
         """
         Generate spot greeks for a given option tick.
         """
@@ -1238,7 +1238,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
 
 
-    def generate_option_data_for_trade(self, opttick, check_date):
+    def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """
         Generate option data for a given trade.
         This function retrieve the option data to backtest on. Data will not be saved, as it will be applying splits and adjustments.
@@ -1276,6 +1276,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         ## Sort the splits by date
         to_adjust_split.sort(key=lambda x: x[0])  ## Sort by date
+        logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
 
         ## If there are no splits, we can just load the data
         if not to_adjust_split:
@@ -1361,7 +1362,7 @@ Quanitity Sizing Type: {self.sizing_type}
         return final_data
 
     @log_time(time_logger)
-    def update_greek_limits(self, signal_id, position_id):
+    def update_greek_limits(self, signal_id, position_id) -> None:
         """
         Updates the limits associated with a signal
         ps: This should only be updated on first purchase of the signal
