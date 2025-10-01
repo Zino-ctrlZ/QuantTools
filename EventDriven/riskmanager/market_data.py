@@ -48,14 +48,18 @@ class MarketTimeseries:
     DEFAULT_NAMES: ClassVar[List[str]] = ['spot', 'chain_spot', 'dividends']
     _refresh_delta: Optional[timedelta] = timedelta(minutes=30)
     _last_refresh: Optional[datetime] = field(default_factory=ny_now)
+    _start: str = OPTION_TIMESERIES_START_DATE
+    _end: str = datetime.now().strftime('%Y-%m-%d')
 
     def load_timeseries(self, 
                         sym: str, 
-                        start_date: str|datetime, 
-                        end_date: str|datetime, 
+                        start_date: str|datetime = None, 
+                        end_date: str|datetime = None, 
                         interval='1d',
                         force: bool = False) -> None:
         
+        start_date = start_date or self._start
+        end_date = end_date or self._end
         if sym in self.spot and not force:
             logger.info("Timeseries for %s already loaded. Use force=True to reload.", sym)
             return
@@ -67,11 +71,11 @@ class MarketTimeseries:
             divs.set_index('ex_dividend_date', inplace = True)
         except Exception:
             logger.error("Failed to retrieve dividends for symbol %s", sym)
-            divs = pd.DataFrame({'amount':[0]}, index = pd.bdate_range(start=OPTION_TIMESERIES_START_DATE, end=datetime.now(), freq='1Q'))
+            divs = pd.DataFrame({'amount':[0]}, index = pd.bdate_range(start=self._start, end=self._end, freq='1Q'))
         
         ## Ensure datetime index
         divs.index = pd.to_datetime(divs.index)
-        divs = divs.reindex(pd.bdate_range(start=OPTION_TIMESERIES_START_DATE, end=datetime.now(), freq='1D'), method='ffill')
+        divs = divs.reindex(pd.bdate_range(start=self._start, end=self._end, freq='1D'), method='ffill')
         divs = resample(divs['amount'], method='ffill', interval=interval)
         self.spot[sym] = spot
         self.chain_spot[sym] = chain_spot
@@ -86,6 +90,25 @@ class MarketTimeseries:
         Returns:
             AtIndexResult: A dataclass containing spot price, chain spot price, and dividends."""
         
+        ## Adding refresh check every at_index call
+        refresh = (
+            self._refresh_delta is not None and ## Check if refresh is set
+            self._last_refresh is not None and ## Check if last refresh is set
+            (ny_now() - self._last_refresh) > self._refresh_delta ## Check if refresh is due
+        )
+
+        ## If refresh is due, reload all timeseries
+        if refresh:
+            logger.info("Refreshing market timeseries data...")
+            for s in self.spot.keys():
+                self.load_timeseries(
+                    sym=s,
+                    start_date=self._start,
+                    end_date=self._end,
+                    force=True
+                )
+            self._last_refresh = ny_now()
+                    
 
         if isinstance(index, (str|datetime)):
             index = pd.Timestamp(index)
