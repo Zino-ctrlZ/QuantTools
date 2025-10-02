@@ -131,3 +131,10 @@ def class_math_operation(cls):
     cls.__truediv__ = make_op(operator.truediv)
     cls.__floordiv__ = make_op(operator.floordiv)
     return cls
+
+
+class classproperty(property):
+    def __get__(self, obj, cls):
+        return self.fget(cls)
+    def __set__(self, obj, value):
+        return self.fset(type(obj), value)
