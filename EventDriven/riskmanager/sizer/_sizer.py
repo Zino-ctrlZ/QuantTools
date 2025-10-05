@@ -292,6 +292,7 @@ class DefaultSizer(BaseSizer):
                                 position_id:str=None, 
                                 opt_price:str=None, 
                                 date:str|datetime=None,
+                                side:int=1,
                                 **overrides) -> float:
         """
         Returns the quantity of the position that can be bought based on the sizing type
@@ -300,7 +301,19 @@ class DefaultSizer(BaseSizer):
             position_id (str): The ID of the position.
             opt_price (float): The price of the option.
             date (str|datetime): The date for which the position size is calculated.
+            side (int): The side of the position, 1 for long and -1 for short.
+        Raises:
+            ValueError: If side is not 1 or -1.
+            NotImplementedError: If side is -1 (short position sizing not implemented).
+        Note: This calculation only makes sense for long positions. No implementation for short positions yet.
+        Returns:
+            float: The quantity of the position that can be bought based on the sizing type.
+
         """
+        if side not in [1, -1]:
+            raise ValueError("side must be either 1 (long) or -1 (short).")
+        if side == -1:
+            raise NotImplementedError("Short position sizing is not implemented yet.")
 
         if self._unavailable:
             return override_calculate_position_size(**overrides)
@@ -496,7 +509,7 @@ class ZscoreRVolSizer(BaseSizer):
                 cash_available=current_cash,
                 sizing_lev=self.sizing_lev,
                 underlier_price_at_time=underlier_price_at_time,
-                scaler=scaler
+                _scaler=scaler
             )
             return equivalent_delta_size
 
@@ -542,6 +555,7 @@ class ZscoreRVolSizer(BaseSizer):
                                 position_id:str=None, 
                                 opt_price:float=None, 
                                 date:str|datetime=None,
+                                side:int=1,
                                 **overrides) -> float:
         """
         Calculate the position size based on the percentile of the realized volatility.
@@ -551,9 +565,17 @@ class ZscoreRVolSizer(BaseSizer):
             position_id (str): The ID of the position.
             opt_price (float): The price of the option.
             date (str|datetime): The date for which the position size is calculated.
+            side (int): The side of the position, 1 for long and -1 for short. Default is 1.
 
+        Returns:
+            float: The quantity of the position that can be bought based on the sizing type.
 
+        Note: This calculation only makes sense for long positions. No implementation for short positions yet.
         """
+        if side not in [1, -1]:
+            raise ValueError("side must be either 1 (long) or -1 (short).")
+        if side == -1:
+            raise NotImplementedError("Short position sizing is not implemented yet.")
 
         if self._unavailable:
             return override_calculate_position_size(**overrides)
