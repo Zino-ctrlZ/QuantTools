@@ -53,6 +53,7 @@ INPUTS = {
         'max_tries': (numbers.Number, "This should be an integer representing the maximum number of tries."),
         'otm_moneyness_width': (numbers.Number, "This should be a float representing the OTM moneyness width max for ATM against OTM."),
         'itm_moneyness_width': (numbers.Number, "This should be a float representing the ITM moneyness width max for ATM against ITM."),
+        'tick_cash': (numbers.Number, "This should be a float representing the cash allocated to this tick."),
     }
 
 
@@ -80,6 +81,7 @@ class OrderInputs:
         max_tries: numbers.Number
         otm_moneyness_width: float
         itm_moneyness_width: float
+        tick_cash: float
 
     def __init__(self, **kwargs):
         for k in kwargs:
@@ -103,6 +105,7 @@ def verify_order_selection_inputs(**kwargs):
 def build_inputs_with_config(config: _SlugConfig, 
                              max_close: float,
                              row: pd.Series,
+                             tick_cash: float,
                              tick: str) -> tuple[OrderSchema, OrderInputs]:
     """
     Builds the inputs for the order selection engine based on the strategy config and trade row.
@@ -198,7 +201,8 @@ def build_inputs_with_config(config: _SlugConfig,
         max_dte_tolerance=max_dte_tolerance,
         max_tries=max_tries,
         otm_moneyness_width=otm_moneyness_width,
-        itm_moneyness_width=itm_moneyness_width
+        itm_moneyness_width=itm_moneyness_width,
+        tick_cash=tick_cash
     )
     verify_order_selection_inputs(**inputs)
     return OrderSchema({

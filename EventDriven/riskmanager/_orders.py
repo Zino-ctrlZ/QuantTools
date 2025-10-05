@@ -173,7 +173,7 @@ def get_open_order(
         schema=schema,
         date=inputs.date,
         spot=spot,
-        max_close=inputs.max_close,
+        max_close=inputs.tick_cash/100, ## Use tick cash to determine max close. Normalize to 100 contracts
         max_dte_tolerance=inputs.max_dte_tolerance,
         max_tries=inputs.max_tries,
         otm_moneyness_width=inputs.otm_moneyness_width,
