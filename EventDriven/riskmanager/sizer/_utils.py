@@ -3,6 +3,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal, ClassVar
 import pandas as pd
+from EventDriven.riskmanager.utils import logger
 from ..market_data import get_timeseries_obj, OPTION_TIMESERIES_START_DATE
 
 
@@ -32,8 +33,8 @@ def zscore_rvol_delta_limit(
     cash_available: float,
     sizing_lev: float,
     underlier_price_at_time: float,
-    scaler: float
-):
+    _scaler: float
+) -> float:
     """
     This function calculates the equivalent delta size based on the cash available * sizing leverage and a z-score scaler.
     Equivalent delta size is the amount of delta exposure that can be taken on based on the cash available if buying Delta 1.
@@ -55,22 +56,35 @@ def zscore_rvol_delta_limit(
         sizing_lev=sizing_lev,
         underlier_price_at_time=underlier_price_at_time
     ) 
-    return equiv * scaler
+    return equiv * _scaler
 
 def delta_position_sizing(
         cash_available: float,
         option_price_at_time: float,
         delta: float,
         delta_limit: float,
-):
-    """"""
+) -> int:
+    """
+    Calculate the position size based on delta and cash available.
+    Args:
+        cash_available (float): The cash available for trading.
+        option_price_at_time (float): The price of the option at the time of calculation.
+        delta (float): The delta of the option.
+        delta_limit (float): The maximum delta exposure allowed.
+    Returns:
+        int: The calculated position size."""
     ## TODO: Add docstring
     ## TODO: Raise error if delta is 0 or cash_available is <= 0
-    if delta == 0:
+    if delta == 0 or cash_available <= 0 or option_price_at_time <= 0:
+        logger.critical(f"Delta is 0 or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0.")
         return 0
     delta_size = (math.floor(delta_limit/abs(delta)))
     max_size_cash_can_buy = abs(math.floor(cash_available/(option_price_at_time*100)))
-    return max(delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy, 1)
+    # size = max(delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy, 1)
+
+    ## Opting to return 0 if size is 0
+    size = delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy
+    return size
 
 def raise_none(param, name):
     if param is None:
