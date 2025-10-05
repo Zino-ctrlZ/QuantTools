@@ -19,8 +19,14 @@ def get_tick_increments(mid: float, volume: float | None)-> float:
         return 0.01
     
 class Side(str, Enum):
+    """Enum for order sides."""
     BUY = "BUY"
     SELL = "SELL"
+
+class PositionEffect(str, Enum):
+    """Enum for position effects."""
+    OPEN = "OPEN"
+    CLOSE = "CLOSE"
 
 def limit_price(
     side: Side,
