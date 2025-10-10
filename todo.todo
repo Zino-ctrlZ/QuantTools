@@ -39,6 +39,8 @@ EventScheduler:
     ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
 Risk Manager:
+    ☐ Switch to using SlugConfig and StratConfiguration to build configs for backtest
+        - Use init_config load to extend to _SlugConfig with the aim of simplifying config management.
     ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
     ☐ Get Close From Chain, with bulk
     ☐ Improve speed of rm
