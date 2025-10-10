@@ -115,8 +115,8 @@ class MarketTimeseries:
         if sym not in self.spot:
             raise ValueError(f"Symbol {sym} not found in timeseries data.")
         if not (isinstance(index, pd.Timestamp) or isinstance(index, datetime)):
-            print(index)
             raise ValueError("Index must be a pandas Timestamp or datetime object.")
+        index = index.strftime('%Y-%m-%d')
         spot = self.spot[sym].loc[index] if sym in self.spot else None
         chain_spot = self.chain_spot[sym].loc[index] if sym in self.chain_spot else None
         dividends = self.dividends[sym].loc[index] if sym in self.dividends else None
