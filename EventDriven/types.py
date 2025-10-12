@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 
 class ResultsEnum(Enum):
@@ -79,7 +79,7 @@ class Order:
     result: str
     signal_id: str
     map_signal_id: str
-    date: datetime
+    date: date
     data: OrderData
 
     def __getitem__(self, key):
