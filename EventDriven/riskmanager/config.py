@@ -1,6 +1,114 @@
+from datetime import datetime, date
+import numbers
 import pandas as pd
 import numpy as np
-from datetime import datetime
+
+def assert_missing_keys(config: dict) -> None:
+    """
+    Assert that all required keys are present in the config dictionary and its nested dictionaries.
+    Raises KeyError if any required key is missing or TypeError if a key has an incorrect
+    data type."""
+
+    # Define the must-have keys and their expected data types
+    must_keys = {
+        't_plus_n': numbers.Number,
+        'traded_symbols': list,
+        'portfolio_rebalance_freq': str,
+        'weight_recalculation_freq': str,
+        'weights_last_refresh': (str, date, datetime),
+        'rm_series_start': (str, date, datetime),
+        'rm_series_end': (str, date, datetime),
+        'official_start_date': (str, date, datetime),
+        'weights': dict,
+        'option_settings': dict,
+        'strat_name': str,
+        'open_missed_signals': bool,
+        'executor_level': numbers.Number,
+        'strat_slug': str,
+    }
+
+    must_in_opt_settings = {
+        'order_settings': dict,
+        'rm_settings': dict,
+        'portfolio_settings': dict,
+        'sizer_settings': dict,
+    }
+
+    must_in_order_settings = {
+        'target_dte': numbers.Number,
+        'strategy': str,
+        'structure_direction': str,
+        'spread_ticks': numbers.Number,
+        'dte_tolerance': numbers.Number,
+        'min_moneyness': numbers.Number,
+        'max_moneyness': numbers.Number,
+        'min_total_price': numbers.Number,
+    }
+
+    must_in_rm_settings = {
+        'sizing_lev': numbers.Number,
+        'limits_enabled': list,
+        'max_moneyness': numbers.Number,
+        'otm_moneyness_width': numbers.Number,
+        'itm_moneyness_width': numbers.Number,
+        're_update_on_roll': bool,
+        'add_skip_column_window': numbers.Number,
+        'add_skip_column_threshold': numbers.Number,
+        'price_on': str,
+        'option_price': str,
+        'max_tries': numbers.Number,
+        'max_slippage': numbers.Number,
+        'sizer_type': str,
+        'quit_on_max_factor': bool,
+        'quit_on_max_tries': bool,
+    }
+
+    must_in_portfolio_settings = {
+        'roll_map': numbers.Number,
+        'weights_haircut': numbers.Number,
+        'max_cash_map': dict,
+        't_plus_n': numbers.Number,
+        'min_acceptable_dte_threshold': numbers.Number,
+    }
+
+    # Function to validate keys and types
+    def validate_keys(config_section, must_keys):
+        for key, expected_type in must_keys.items():
+            if key not in config_section:
+                raise KeyError(f"Missing required key: {key}")
+            if not isinstance(config_section[key], expected_type):
+                raise TypeError(f"Key '{key}' must be of type {expected_type.__name__}, got {type(config_section[key]).__name__}")
+
+
+    ## Check for missing keys in config
+    validate_keys(config, must_keys)
+
+    ## Check for missing keys in option_settings
+    validate_keys(config['option_settings'], must_in_opt_settings)
+
+    ## Check for missing keys in order_settings
+    validate_keys(config['option_settings']['order_settings'], must_in_order_settings)
+
+    ## Check for missing keys in rm_settings
+    validate_keys(config['option_settings']['rm_settings'], must_in_rm_settings)
+
+    ## Check for missing keys in portfolio_settings
+    validate_keys(config['option_settings']['portfolio_settings'], must_in_portfolio_settings)
+
+    ## Traded Symbols
+    assert 'traded_symbols' in config, "traded_symbols is missing in config"
+    assert isinstance(config['traded_symbols'], list), "traded_symbols should be a list"
+
+    ## Portfolio Rebalance Freq
+    assert 'portfolio_rebalance_freq' in config, "portfolio_rebalance_freq is missing in config"
+    assert config['portfolio_rebalance_freq'] in ['1d', '1w', '1m', '1y'], "portfolio_rebalance_freq should be one of ['1d', '1w', '1m', '1y']"
+
+    ## weight recalculation freq
+    assert 'weight_recalculation_freq' in config, "weight_recalculation_freq is missing in config"
+    assert config['weight_recalculation_freq'] in ['1d', '1w', '1m', '1y'], "weight_recalculation_freq should be one of ['1d', '1w', '1m', '1y']"
+
+    ## weights_last_refresh
+    assert 'weights_last_refresh' in config, "weights_last_refresh is missing in config"
 
 
 AVOID_OPTTICKS = {
