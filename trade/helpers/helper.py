@@ -40,6 +40,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
+import logging
 from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
 import traceback
 from pandas.tseries.holiday import USFederalHolidayCalendar
@@ -66,6 +67,9 @@ option_keys = {}
 NY = ZoneInfo("America/New_York")
 def ny_now() -> datetime:
     return datetime.now(tz=NY)
+
+def ny_now_busday() -> datetime:
+    return change_to_last_busday(ny_now())
 
 def get_parrallel_apply():
     """
