@@ -8,97 +8,57 @@
 ## 6. There are timeframe requests where the data starts later than the requested start date, database has the complete data but that date is not available anywhere.
     ## So anytime we query data, it will still go thru ThetaData. Therefore, we will return an empty dataframe
 
-import warnings
-warnings.filterwarnings("ignore")
-import time
-from dotenv import load_dotenv
-import os
-import sys
 import logging
-from openpyxl import load_workbook
-from datetime import datetime, date
-from datetime import time as dtTime
-import pandas as pd
-import threading
+from typing import List, Tuple
+import time
+import warnings
+from functools import partial, wraps
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 import numpy as np
-from pathos.multiprocessing import ProcessingPool as Pool
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import concurrent.futures
+import pandas as pd
+from pandas.tseries.offsets import BDay
 from trade import get_pool_enabled, PRICING_CONFIG
-from trade.assets.Stock import Stock
-from trade.helpers.helper import generate_option_tick_new
-from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.helper import (IV_handler, 
-                                  time_distance_helper, 
-                                  binomial_implied_vol,
-                                    wait_for_response, 
-                                    HOLIDAY_SET,
-                                    enforce_allowed_models,
-                                    optionPV_helper,
-                                    check_missing_dates,
-                                    check_all_days_available)
-from trade.helpers.helper import extract_numeric_value, change_to_last_busday, parse_option_tick
-from trade.helpers.helper import optionPV_helper
+                                   time_distance_helper, 
+                                   binomial_implied_vol,
+                                   enforce_allowed_models,
+                                   optionPV_helper,
+                                   check_missing_dates,
+                                   check_all_days_available,
+                                   extract_numeric_value,  
+                                   generate_option_tick_new,
+                                   parse_option_tick)
 from trade.helpers.exception import IncorrectExecutionError
 from trade.helpers.Logging import setup_logger
 from trade.assets.Calculate import Calculate
-from trade.helpers.Context import Context
-from dbase.DataAPI.ThetaData import (retrieve_ohlc, 
-                                     retrieve_quote_rt, 
-                                     retrieve_eod_ohlc, 
-                                     resample, 
-                                     retrieve_quote, 
-                                     enforce_bus_hours,
-                                     retrieve_bulk_eod,
-                                     retrieve_openInterest,
-                                     retrieve_chain_bulk,
-                                     list_contracts,
-                                     retrieve_bulk_open_interest,
-                                     set_should_schedule
-                                     )
-from trade.helpers.pools import  parallel_apply
+from trade.helpers.pools import parallel_apply
 from trade.helpers.decorators import log_error, log_error_with_stack, log_time
-from trade.helpers.types import OptionModelAttributes
-from dateutil.relativedelta import relativedelta
-from pandas.tseries.offsets import BDay
 from dbase.database.SQLHelpers import DatabaseAdapter
-from trade.models.VolSurface import fit_svi_model
 from trade.models.utils import resolve_missing_vol
-from threading import Thread, Lock
-from dbase.utils import add_eod_timestamp, bus_range, enforce_bus_hours, default_timestamp
-from trade.helpers.pools import runProcesses
-from pathos.multiprocessing import ProcessingPool as Pool
-from copy import deepcopy
-import json
-from queue import Queue, Full
-from threading import Thread
-from typing import TYPE_CHECKING, List, Tuple
-from .SaveManager import (SaveManager, 
-                          save_failed_request, 
-                          flatten_all_dfs)
-from .SaveManager_processes import ProcessSaveManager
-from functools import partial
-
-## DM NEEDED IMPORTS
+from trade import is_allowed_user
+from dbase.utils import add_eod_timestamp, bus_range, default_timestamp
+from dbase.DataAPI.ThetaData import (retrieve_ohlc, 
+                                      retrieve_eod_ohlc, 
+                                      resample, 
+                                      retrieve_quote, 
+                                      retrieve_bulk_eod,
+                                      retrieve_openInterest,
+                                      retrieve_chain_bulk,
+                                      retrieve_bulk_open_interest,
+                                      set_should_schedule)
+from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
+from .SaveManager import save_failed_request
 from .utils import _ManagerLazyLoader, EMPTY_TIMESEIRES_TABLE
-from .Requests import (
-    create_request_bulk,
-                       get_bulk_requests,
-                       get_chain_requests,
-                       get_single_requests,
-                       ChainDataRequest,
+from .Requests import (ChainDataRequest,
                        OptionQueryRequestParameter,
                        BulkOptionQueryRequestParameter)
 from .cache import get_cache
-from .shared_obj import (get_request_list)
-from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
-import logging
-from pathlib import Path
-from functools import wraps
-
-                       
+from .vars import ALLOWED_SCHEDULE_USERS
 
 
+
+warnings.filterwarnings("ignore")
 logger = setup_logger('DataManager.py', stream_log_level = logging.CRITICAL)
 time_logger = setup_logger('time_logger_test_dm')
 vol_resolve_logger = setup_logger('DataManagers.Vol_Resolve')
@@ -194,10 +154,15 @@ def get_skip_mysql_query():
 
 ## Set Save Manager 
 def get_save_manager():
-    from .SaveManager import SaveManager
-    from .SaveManager_processes import ProcessSaveManager
     from trade import get_pool_enabled
-    return ProcessSaveManager if get_pool_enabled_dm() else SaveManager
+    if get_pool_enabled():
+        logger.critical("Using ProcessSaveManager for saving data.")
+        from .SaveManager_processes import ProcessSaveManager
+        return ProcessSaveManager
+    else:
+        logger.critical("Using Threaded SaveManager for saving data.")
+        from .SaveManager import SaveManager
+        return SaveManager
 
 _SaveManager = get_save_manager()
 
@@ -369,7 +334,9 @@ class SpotDataManager(QuoteController):
                 ## Add Option Tick
                 bulk_eod = bulk.reset_index()
                 tick_col = ['Root', 'Right', 'Expiration', 'Strike']
-                bulk_eod['OptionTick'] = parallel_apply(bulk_eod[tick_col], generate_option_tick_new, pool = False)
+
+                ## Allowing control of pool from POOL_ENABLED global variable
+                bulk_eod['OptionTick'] = parallel_apply(bulk_eod[tick_col], generate_option_tick_new)
                 if data_request.opttick is not None:
                     bulk_eod = bulk_eod[bulk_eod['OptionTick'].isin(data_request.opttick)]
 
@@ -381,10 +348,12 @@ class SpotDataManager(QuoteController):
                     start_date = start,
                     end_date = end,
                 )
+
                 ## Add Option Tick
-                bulk_oi['OptionTick'] = parallel_apply(bulk_oi[tick_col], generate_option_tick_new, pool = False)
+                bulk_oi['OptionTick'] = parallel_apply(bulk_oi[tick_col], generate_option_tick_new)
                 if data_request.opttick is not None:
                     bulk_oi = bulk_oi[bulk_oi['OptionTick'].isin(data_request.opttick)]
+
                 ## Add EOD Timestamp
                 bulk_oi['Datetime'] = add_eod_timestamp(pd.DatetimeIndex(bulk_oi['Datetime']))
                 data = bulk_eod.merge(bulk_oi[['Datetime','OptionTick', 'Open_interest']], on = ['Datetime', 'OptionTick'], how = 'left')
@@ -426,7 +395,6 @@ class VolDataManager:
         raw_data = data_request.raw_spot_data
         raw_data.columns = [x.lower() for x in raw_data.columns]
         raw_data['datetime'] = raw_data.index
-        return_cols = []
         for col, name in data_request.iv_cols.items():
             calc_vol_for_data_parallel(raw_data, col, name, model, col_kwargs = data_request.col_kwargs, pool = False)
 
@@ -1212,6 +1180,10 @@ def save_to_database(data_request: 'RequestParameter',
     """
     Saves the data to the database
     """
+    
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.warning("User not allowed to run this tasks")
+        return
     set_should_schedule(False) ## Avoid scheduling. This will occur when SpotDataManager.query_thetadata is called
     func_start = time.time()
     req_class = data_request.__class__.__name__
@@ -1927,10 +1899,12 @@ def calc_vol_for_data_parallel(
     
     bs_column = [price_col, col_kwargs['underlier_price'], col_kwargs['strike'], 't', col_kwargs['rf_rate'], col_kwargs['dividend'], col_kwargs['put/call']]
     if model == 'bs':
-        df[col_name] = parallel_apply(temp_df[bs_column], IV_handler, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        df[col_name] = parallel_apply(temp_df[bs_column], IV_handler)
         
     elif model == 'binomial':
-        df[col_name] = parallel_apply(temp_df[binomial_column], binomial_implied_vol, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        df[col_name] = parallel_apply(temp_df[binomial_column], binomial_implied_vol)
     return df
 
 @log_error(logger)
@@ -2054,7 +2028,8 @@ def calc_greeks_for_data_parallel(
                          col_kwargs[ 'datetime'], col_kwargs['put/call'], col_kwargs['expiration'], col_kwargs['dividend'], 'model']
                          
     if not greek_name:
-        greek = parallel_apply(temp_df[greeks_colums_use], Calculate.greeks, pool = pool)
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        greek = parallel_apply(temp_df[greeks_colums_use], Calculate.greeks)
         greek = pd.DataFrame(greek)
         greek.columns = [greek_name_format.format(x=x) for x in greek.columns]
         greek.index = temp_df.index
@@ -2062,7 +2037,9 @@ def calc_greeks_for_data_parallel(
         return df
     else:
         calc_func = getattr(Calculate, greek_name.lower())
-        greek = parallel_apply(temp_df[greeks_colums_use], calc_func, pool = pool)
+
+        ## Control pool or thread with `set_pool_enabled` from trade.__init__
+        greek = parallel_apply(temp_df[greeks_colums_use], calc_func)
         df[greek_name_format.format(x=greek_name)] = greek
         return df
 

@@ -151,6 +151,21 @@ class ChainDataRequest:
         self.date = date
         self.table_name = table_name
         self.db_name = db_name
+        self.post_processed_data = pd.DataFrame()
+        self.database_data = pd.DataFrame()
+        self.is_empty = False
+        self.organized_data = pd.DataFrame()
+        self.input_params = None
+        self.model = None
+        self.ivl_str = None
+        self.ivl_int = None
+        self.default_fill = None
+        self.agg = None
+        self.requested_col = None
+        self.iv_cols = None
+        self.greek_cols = None
+        self.col_kwargs = None
+        self.pre_process = {}
         
 
 class OptionQueryRequestParameter:
@@ -170,6 +185,22 @@ class OptionQueryRequestParameter:
         self.spot = None
         self.interval = None
         self.type_ = None
+        self.post_processed_data = pd.DataFrame()
+        self.database_data = pd.DataFrame()
+        self.is_empty = False
+        self.organized_data = pd.DataFrame()
+        self.missing_dates = []
+        self.input_params = None
+        self.model = None
+        self.ivl_str = None
+        self.ivl_int = None
+        self.default_fill = None
+        self.agg = None
+        self.requested_col = None
+        self.iv_cols = None
+        self.greek_cols = None
+        self.col_kwargs = None
+        self.pre_process = {}
 
 
 class BulkOptionQueryRequestParameter:
@@ -189,6 +220,22 @@ class BulkOptionQueryRequestParameter:
         self.spot = None
         self.interval = None
         self.type_ = None
+        self.post_processed_data = pd.DataFrame()
+        self.database_data = pd.DataFrame()
+        self.is_empty = False
+        self.organized_data = pd.DataFrame()
+        self.missing_dates = []
+        self.input_params = None
+        self.model = None
+        self.ivl_str = None
+        self.ivl_int = None
+        self.default_fill = None
+        self.agg = None
+        self.requested_col = None
+        self.iv_cols = None
+        self.greek_cols = None
+        self.col_kwargs = None
+        self.pre_process = {}
 
 def create_kwargs_from_object(obj: Union[OptionQueryRequestParameter, 
                                         BulkOptionQueryRequestParameter, 

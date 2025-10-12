@@ -4,6 +4,7 @@ import pandas_market_calendars as mcal
 from pandas import DatetimeIndex
 from queue import Queue
 from typing import Dict, Optional
+from trade import HOLIDAY_SET
 
 from EventDriven.event import Event, ExerciseEvent, FillEvent, OrderEvent, SignalEvent
 from EventDriven.types import SignalTypes
@@ -81,6 +82,7 @@ class EventScheduler:
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date)
         self.market_dates = pd.bdate_range(start=self.start_date, end=self.end_date)
+        self.market_dates = self.market_dates[~self.market_dates.isin(HOLIDAY_SET)]
         self.events_map: Dict[str, Queue] = {
             self.clean_date(d): EventQueue(maxsize=0) for d in self.market_dates
         }

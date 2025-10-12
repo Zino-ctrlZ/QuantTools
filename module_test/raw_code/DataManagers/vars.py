@@ -1,0 +1,1 @@
+ALLOWED_SCHEDULE_USERS = ['chidi']

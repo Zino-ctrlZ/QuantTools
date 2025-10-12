@@ -87,8 +87,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
 
         if end_date is not None:
             ## TEMP (MAYBE): Enforcing np Non-business day for now
-            end_date = change_to_last_busday(pd.to_datetime(end_date)
-)
+            end_date = change_to_last_busday(pd.to_datetime(end_date))
             ## If no time is passed and date is today set to current time if btwn 9:30 & 4pm
             if datetime.today().date() == end_date.date() and end_date.time() == pd.Timestamp('00:00').time():
                 end_date = datetime.now()

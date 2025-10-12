@@ -17,6 +17,10 @@ from .utils import *
 from datetime import datetime, timedelta
 from trade.helpers.helper import CustomCache
 order_cache = CustomCache(BASE, fname = "order")
+
+
+
+
 # --------- OrderSchema ---------
 @dataclass
 class OrderSchema:
@@ -186,14 +190,17 @@ def build_naked_option(df, schema, spot, cache):
     pick = df.iloc[0] if not df.empty else None
     return [{schema["structure_direction"]: pick}] if pick is not None else []
 
+STRATEGY_MAP = {
+    "vertical": build_vertical_spread,
+    "naked": build_naked_option,
+}
+
+
 def build_strategy(df, schema, spot, cache):
-    strategy_map = {
-        "vertical": build_vertical_spread,
-        "naked": build_naked_option,
-    }
-    if schema["strategy"] not in strategy_map:
+
+    if schema["strategy"] not in STRATEGY_MAP:
         raise ValueError(f"Unsupported strategy: {schema['strategy']}")
-    builder = strategy_map.get(schema["strategy"])
+    builder = STRATEGY_MAP.get(schema["strategy"])
     return builder(df, schema, spot, cache) if builder else []
 
 def extract_order(obj):

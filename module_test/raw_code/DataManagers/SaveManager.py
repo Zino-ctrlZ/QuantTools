@@ -1,18 +1,19 @@
 ## Notes:
 ## Refer to .SaveManager_process.py for all SaveManager related notes
-
+import time
 import multiprocessing as mp
+from pathlib import Path
 from queue import Queue, Full
 import threading
 from threading import Thread, Lock
 from trade.helpers.helper import setup_logger
-import os, sys
+import os
+import logging
 import json
 import pandas as pd
-import pickle
 from copy import deepcopy
 from trade.helpers.helper import check_all_days_available
-from .Requests import create_request_bulk,construct_request_name, OptionQueryRequestParameter, BulkOptionQueryRequestParameter
+from .Requests import create_request_bulk,construct_request_name, OptionQueryRequestParameter
 from dbase.database.SQLHelpers import DatabaseAdapter
 from functools import partial
 from .shared_obj import (get_shared_queue, 
@@ -21,11 +22,16 @@ from .shared_obj import (get_shared_queue,
                          get_int_value,
                          get_shared_lock, 
                          get_request_list)
-import time
-print('\n')
-print("Scheduled Data Requests will be saved to:", f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler/requests.jsonl")
+from trade import is_allowed_user, USER
+from trade.helpers.Logging import setup_logger
+from .vars import ALLOWED_SCHEDULE_USERS
+
+logger = setup_logger('DataManager.py', stream_log_level = logging.CRITICAL)
+if is_allowed_user(ALLOWED_SCHEDULE_USERS):
+    print('\n')
+    print("Scheduled Data Requests will be saved to:", f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler/requests.jsonl")
 _SCHEDULED_NAMES = []
-folder_path = f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler"
+folder_path = Path(f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler")
 
 
 ## Using names created from current requests, so if older names get into requests.jsonl, we can still process them
@@ -35,6 +41,11 @@ def construct_current_scheduled_names():
     Load the current scheduled names from the file.
     """
     global _SCHEDULED_NAMES
+
+    ## Only allow user 'chidi' to load scheduled names from file.
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.info("Allowed user not detected, skipping loading scheduled names from file.")
+        return
     try:
         with open(f"{folder_path}/requests.jsonl", "r") as f:
             stripped = [request.strip() for request in f.readlines()]
@@ -56,7 +67,10 @@ def construct_current_scheduled_names():
 
 
     except FileNotFoundError:
-        raise FileNotFoundError("The file scheduler/requests.jsonl does not exist. Please create it first.")
+        os.makedirs(folder_path, exist_ok=True)
+        with open(f"{folder_path}/requests.jsonl", "w") as f:
+            f.write('')
+        # raise FileNotFoundError("The file scheduler/requests.jsonl does not exist. Please create it first.")
 
 construct_current_scheduled_names()
 
@@ -88,6 +102,10 @@ def save_failed_request(request, filename='requests_json/failed_request.jsonl'):
     """
     Saves the failed request to a JSON file.
     """
+    ## Only allow user only allowed users to save failed requests to file.
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.info("Not user 'chidi', skipping saving failed request to file.")
+        return
     request = flatten_all_dfs(request)
     with open(f'{os.environ["WORK_DIR"]}/module_test/raw_code/DataManagers/{filename}', 'a') as f:
         json.dump(request.__dict__, f, default=str)
@@ -273,6 +291,8 @@ class SaveManager:
     @classmethod
     def status(cls):
         return _status(cls)
+    
+##TODO: Move below functions to a utils file later
 
 def _status(cls):
     """
@@ -318,8 +338,11 @@ def is_already_scheduled(kwargs):
         kwargs should contain both keyword arguments for the save function and the save function itself.
     :return: True if the request is already scheduled, False otherwise.
     """
+    ## If not allowed user, we assume it's already scheduled to avoid scheduling it again.
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.info("Not user 'chidi', skipping checking if request is already scheduled.")
+        return True 
     
-    # construct_current_scheduled_names() ## Update the scheduled names
     global _SCHEDULED_NAMES
     request_name = construct_request_name(**kwargs)
     if request_name in _SCHEDULED_NAMES:
@@ -333,6 +356,11 @@ def write_to_requests_jsonl(kwargs):
     """
     Write the request to a jsonl file.
     """
+    ## Only allow allowed users to write to the file.
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.info("Not user 'chidi', skipping writing to requests.jsonl.")
+        return
+    
     with open(f"{folder_path}/requests.jsonl", "a") as f:
         json.dump(kwargs, f, default=str)
         f.write('\n')
@@ -359,6 +387,10 @@ def _schedule(cls, kwargs):
     :param kwargs: Dictionary of parameters to pass to the save function.
         kwargs should contain both keyword arguments for the save function and the save function itself.
     """
+
+    if not is_allowed_user(ALLOWED_SCHEDULE_USERS):
+        logger.info("Allowed user not detected, skipping scheduling request to file.")
+        return
     global _SCHEDULED_NAMES
     print_attr = {x: y for x, y in kwargs.items() if x not in ['set_attributes', '_requests', 'save_func']}
     logger.info(f"[{cls.__name__}] is scheduling a request for {kwargs['tick']} on {print_attr}")

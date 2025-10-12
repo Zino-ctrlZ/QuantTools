@@ -40,6 +40,7 @@ from functools import lru_cache
 from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
 import yaml
+from ._orders import resolve_schema
 
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
@@ -114,63 +115,63 @@ def get_order_cache():
 
 
 
-def resolve_schema(schema: OrderSchema, 
-                   tries: int, 
-                   max_dte_tolerance: int, 
-                   otm_moneyness_width: float, 
-                   itm_moneyness_width: float,
-                   max_close: float, max_tries: int =6) -> (OrderSchema, int):
-    """
-    Resolving schema by order of importance
-    1. DTE Tolerance
-    2. Min Moneyness width
-    3. Max Moneyness width
-    4. Max Close Price
-    5. Max Schema Tries
-    If no schema is found after max tries, return False and the number of tries.
+# def resolve_schema(schema: OrderSchema, 
+#                    tries: int, 
+#                    max_dte_tolerance: int, 
+#                    otm_moneyness_width: float, 
+#                    itm_moneyness_width: float,
+#                    max_close: float, max_tries: int =6) -> (OrderSchema, int):
+#     """
+#     Resolving schema by order of importance
+#     1. DTE Tolerance
+#     2. Min Moneyness width
+#     3. Max Moneyness width
+#     4. Max Close Price
+#     5. Max Schema Tries
+#     If no schema is found after max tries, return False and the number of tries.
 
-    Args:
-        schema (OrderSchema): The schema to resolve.
-        tries (int): The number of tries already made.
-        max_dte_tolerance (int): The maximum DTE tolerance to allow.
-        moneyness_width (float): The moneyness width to allow.
-        max_close (float): The maximum close price to allow.
-        max_tries (int): The maximum number of tries allowed.
+#     Args:
+#         schema (OrderSchema): The schema to resolve.
+#         tries (int): The number of tries already made.
+#         max_dte_tolerance (int): The maximum DTE tolerance to allow.
+#         moneyness_width (float): The moneyness width to allow.
+#         max_close (float): The maximum close price to allow.
+#         max_tries (int): The maximum number of tries allowed.
 
-    Returns:
-        tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
-    """
+#     Returns:
+#         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
+#     """
 
-    ##0). Max schema tries
-    if tries >= max_tries:
-        return False, tries
+#     ##0). Max schema tries
+#     if tries >= max_tries:
+#         return False, tries
 
-    #1). DTE Resolve
-    tries +=1
-    if schema['dte_tolerance'] <= max_dte_tolerance:
-        logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
-        schema['dte_tolerance'] += 20
-        return schema, tries
+#     #1). DTE Resolve
+#     tries +=1
+#     if schema['dte_tolerance'] <= max_dte_tolerance:
+#         logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
+#         schema['dte_tolerance'] += 20
+#         return schema, tries
     
-    #2). Min Moneyness Resolve
-    elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
-        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
-        schema['min_moneyness'] -= 0.1
-        return schema, tries    
+#     #2). Min Moneyness Resolve
+#     elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
+#         logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
+#         schema['min_moneyness'] -= 0.1
+#         return schema, tries    
 
-    #3). Max Moneyness Resolve
-    elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
-        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
-        schema['max_moneyness'] += 0.1
-        return schema, tries
+#     #3). Max Moneyness Resolve
+#     elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
+#         logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
+#         schema['max_moneyness'] += 0.1
+#         return schema, tries
     
-    #4). Close Resolve
-    elif schema['max_total_price'] <= max_close:
-        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
-        schema['max_total_price'] += 1
-        return schema, tries
+#     #4). Close Resolve
+#     elif schema['max_total_price'] <= max_close:
+#         logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
+#         schema['max_total_price'] += 1
+#         return schema, tries
     
-    return False, tries
+#     return False, tries
 
 
 
@@ -696,6 +697,7 @@ class RiskManager:
         self.__sizer = None
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
+        self.limits_meta = {}
 
     @property 
     def option_data(self):
@@ -934,6 +936,9 @@ Quanitity Sizing Type: {self.sizing_type}
         order = self.update_order_close(position_id, kwargs['date'], order) ## Update the order with the close price from the position data
         logger.info('Updating Signal Limits')
         self.sizer.update_delta_limit(signalID, position_id, date)
+
+        ## Hack to get limit meta
+        self.store_limits_meta(signalID, position_id, date)
         logger.info("Calculating Quantity")
         quantity = self.sizer.calculate_position_size(signalID, position_id, order['data']['close'], kwargs['date'])
         logger.info(f"Quantity for Position ({position_id}) Date {kwargs['date']}, Signal ID {signalID} is {quantity}")
@@ -953,6 +958,23 @@ Quanitity Sizing Type: {self.sizing_type}
         self.adjust_slippage(position_id, date) ## Adjust the slippage for the position based on the position data
 
         return order
+
+    def store_limits_meta(self, signal_id, position_id, date):
+        """
+        Stores the limits meta for the signal and position
+        """
+
+        delta = self.greek_limits['delta'].get(signal_id, None)
+        gamma = self.greek_limits['gamma'].get(signal_id, None)
+        vega = self.greek_limits['vega'].get(signal_id, None)
+        theta = self.greek_limits['theta'].get(signal_id, None)
+
+        self.limits_meta[(signal_id, position_id, date)] = {
+            'delta': delta,
+            'gamma': gamma,
+            'vega': vega,
+            'theta': theta,
+        }
     
     def adjust_slippage(self, position_id, date):
         position_data = self.position_data.get(position_id, None)
@@ -1058,6 +1080,7 @@ Quanitity Sizing Type: {self.sizing_type}
         ]
 
         date = pd.to_datetime(date) ## Ensure date is in datetime format
+    
         
         ## First get position info
         position_dict, positon_meta = self.parse_position_id(positionID)
@@ -1067,6 +1090,24 @@ Quanitity Sizing Type: {self.sizing_type}
             for s in p:
                 self.generate_data(swap_ticker(s['ticker']))
         ticker = swap_ticker(s['ticker'])
+        if ticker not in self.spot_timeseries:
+            self.spot_timeseries[ticker] = self.pm.get_underlier_data(ticker).spot(
+                ts = True,
+                ts_start = self.start_date,
+                ts_end = self.end_date,
+            )
+
+        if ticker not in self.chain_spot_timeseries:
+            self.chain_spot_timeseries[ticker] = self.pm.get_underlier_data(ticker).spot(
+                ts = True,
+                ts_start = self.start_date,
+                ts_end = self.end_date,
+                spot_type = 'chain_price'
+            )
+
+        if ticker not in self.dividend_timeseries:
+            self.dividend_timeseries[ticker] = self.pm.get_underlier_data(ticker).div_yield_history(start = self.start_date)
+
 
         @log_time(time_logger)
         def get_timeseries(_id, direction):
@@ -1114,7 +1155,7 @@ Quanitity Sizing Type: {self.sizing_type}
         return position_data
 
 
-    def load_position_data(self, opttick):
+    def load_position_data(self, opttick) -> pd.DataFrame:
         """
         Load position data for a given option tick.
 
@@ -1132,13 +1173,13 @@ Quanitity Sizing Type: {self.sizing_type}
                                   y=self.dividend_timeseries[meta['ticker']],
                                   s0_close=self.spot_timeseries[meta['ticker']],)
 
-    def enrich_data(self, data, ticker):
+    def enrich_data(self, data, ticker) -> pd.DataFrame:
         """
         Enrich the data with additional information.
         """
         return enrich_data(data, ticker, self.spot_timeseries, self.chain_spot_timeseries, self.rf_timeseries, self.dividend_timeseries)
         
-    def generate_spot_greeks(self, opttick):
+    def generate_spot_greeks(self, opttick) -> pd.DataFrame:
         """
         Generate spot greeks for a given option tick.
         """
@@ -1162,6 +1203,10 @@ Quanitity Sizing Type: {self.sizing_type}
         
         elif data_pack:
             # assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.processed_option_data[k] = v
+        
+        elif isinstance(data_pack, (CustomCache, dict)):
             for k, v in data_pack.items():
                 self.processed_option_data[k] = v
         
@@ -1193,7 +1238,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
 
 
-    def generate_option_data_for_trade(self, opttick, check_date):
+    def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """
         Generate option data for a given trade.
         This function retrieve the option data to backtest on. Data will not be saved, as it will be applying splits and adjustments.
@@ -1231,6 +1276,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         ## Sort the splits by date
         to_adjust_split.sort(key=lambda x: x[0])  ## Sort by date
+        logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
 
         ## If there are no splits, we can just load the data
         if not to_adjust_split:
@@ -1316,7 +1362,7 @@ Quanitity Sizing Type: {self.sizing_type}
         return final_data
 
     @log_time(time_logger)
-    def update_greek_limits(self, signal_id, position_id):
+    def update_greek_limits(self, signal_id, position_id) -> None:
         """
         Updates the limits associated with a signal
         ps: This should only be updated on first purchase of the signal

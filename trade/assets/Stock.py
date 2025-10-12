@@ -8,20 +8,13 @@
 ## Taking too long to load Stock
 
 from openbb import obb
-import sys
-import os
 from dotenv import load_dotenv
-load_dotenv()
 import backoff
 from dbase.DataAPI.ThetaData import (list_contracts)
-
-# from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
-Configuration = ConfigProxy()
-from trade.helpers.Context import Context
 import re
 from dateutil.relativedelta import relativedelta
-from trade.helpers.exception import OpenBBEmptyData, raise_tick_name_change
+from trade.helpers.exception import OpenBBEmptyData
 import numpy as np
 import requests
 import pandas as pd
@@ -30,20 +23,22 @@ import robin_stocks as robin
 from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
-from trade.models.VolSurface import SurfaceLab
-load_openBB()
 import yfinance as yf
 from trade.assets.rates import get_risk_free_rate_helper
-from dbase.DataAPI.ThetaData import resample, retrieve_chain_bulk
+from dbase.DataAPI.ThetaData import resample
 from pandas.tseries.offsets import BDay
-from dbase.database.SQLHelpers import DatabaseAdapter
-from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.helper import change_to_last_busday
+from trade.helpers.decorators import log_error_with_stack
 from trade.assets.OptionChain import OptionChain
-from threading import Thread, Lock
-from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, INVALID_TICKERS, verify_ticker, swap_ticker
+from threading import Thread, Lock, RLock
+from trade.assets.helpers.utils import swap_ticker
 from trade.helpers.types import OptionModelAttributes
 from dbase.utils import bus_range
+import traceback
+
+load_openBB()
+load_dotenv()
+Configuration = ConfigProxy()
 logger = setup_logger('trade.asset.Stock')
 
 
@@ -54,6 +49,7 @@ class Stock:
     init_date = None
     dumas_width = 0.75
     _instances = {}
+    _registry_lock = Lock()
 
 
     def __new__(cls, ticker: str, **kwargs):
@@ -63,14 +59,18 @@ class Stock:
         ## I don't need an instance per minute. I need an instance per day.
         ## I can update the end_date in __init__ if I need to
 
-        end_date = Configuration.end_date or _end_date
+        end_date = pd.to_datetime(Configuration.end_date or _end_date).strftime('%Y-%m-%d')
         ticker = swap_ticker(ticker).upper()
         key = (ticker, end_date)
 
-        if key not in cls._instances:
-            instance = super().__new__(cls)
-            cls._instances[key] = instance
-        return cls._instances[key]
+
+        # Double-checked locking for singleton creation
+        with cls._registry_lock:
+            inst = cls._instances.get(key)
+            if inst is None:
+                inst = super().__new__(cls)
+                cls._instances[key] = inst
+        return inst
 
 
 
@@ -114,22 +114,38 @@ class Stock:
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__close = None
-            self.__y = None
+            self.__y = 0.0 ## Starting with 0.0 yield to avoid None errors
             self.__OptChain = None
             self.__chain = None
             self.__asset_type = None
             self.kwargs = kwargs
             self.__current_spot = None
+            self.__current_chain_spot = None
             self.__bumped_spot = None
+            self.__bumped_chain_spot = None
             self.__rf_rate = None
             self.__rf_ts = None
+            self.__thread_lock = RLock()
             
+            @log_error_with_stack(logger, raise_exception=False)
             def set_variables():
                 """
                 Sets the variables for the Stock class
                 """
-                self.prev_close()
-                self.div_yield()
+                with self.__thread_lock:
+                    try:
+                        self.prev_close()
+
+                    except Exception as e: ## TODO: Revisit this error handling
+                        logger.error(f"Error setting close for {self.ticker}: {e}")
+                        raise e ## Raise error so that decorator can catch it
+                    try:
+                        self.div_yield()
+
+                    except Exception as e:
+                        logger.error(f"Error setting yield for {self.ticker}: {e}")
+                        raise e ## Raise error so that decorator can catch it
+
             self.set_thread = Thread(target=set_variables, name=self.__repr__() + '_SetVariables')
             self.set_thread.start()
 
@@ -138,7 +154,6 @@ class Stock:
             self.init_risk_free_rate()
 
         ## Logic to run chain, compatible with singleton behavior
-        
         run_chain = kwargs.get('run_chain', False) ## Leave default as False for now)
         self.run_chain = run_chain
         if run_chain:
@@ -174,7 +189,7 @@ class Stock:
     def y(self):
         while self.set_thread.is_alive():
             logger.info(f'Waiting for {self.ticker} to set yield')
-            time.sleep(5)
+            time.sleep(1)
         return self.__y
 
     @property
@@ -205,8 +220,9 @@ class Stock:
         if self.__current_spot is not None:
             return self.__current_spot if self.bump is None else self.bump
         else:
-            self.__set_current_spot()
-            return self.__current_spot
+            with self.__thread_lock:
+                self.__set_current_spot()
+                return self.__current_spot
         
     @spot_price.setter
     def spot_price(self, v):
@@ -221,11 +237,50 @@ class Stock:
         self.__current_spot = current_spot
 
     @property
+    def asset_type(self):
+        if self.__asset_type is not None:   
+            return self.__asset_type
+        else:
+            self.__asset_type = self.__security_obj.info['quoteType']
+            return self.__asset_type
+        
+    
+    @property
+    def chain_price(self):
+        """
+        Returns the latest available close price for the ticker
+        """
+        if self.__current_chain_spot is not None:
+            return self.__current_chain_spot if self.chain_bump is None else self.chain_bump
+        else:
+            with self.__thread_lock:
+                self.__set_current_chain_spot()
+                return self.__current_chain_spot
+        
+    @chain_price.setter
+    def chain_price(self, v):
+        self.__bumped_chain_spot = v
+
+        
+    def __set_current_chain_spot(self):
+        """
+        Sets the current spot price for the ticker
+        """
+        current_spot = list(self.spot(spot_type='chain_price').values())[0]
+        self.__current_chain_spot = current_spot
+
+
+    @property
     def bump(self):
         return self.__bumped_spot
     
+    @property
+    def chain_bump(self):
+        return self.__bumped_chain_spot
+    
     def clear_bump(self):
         self.__bumped_spot = None
+        self.__bumped_chain_spot = None
 
 
     @classmethod
@@ -304,6 +359,22 @@ class Stock:
 
         ts = self.rf_ts
         last_bus = change_to_last_busday(self.end_date)
+
+        ## Retry logic to handle missing dates
+        if last_bus.date() not in ts.index.date:
+            retry_counter = 0
+            
+            while last_bus.date() not in ts.index.date and retry_counter < 5:
+                self.init_rfrate_ts()
+                ts = self.rf_ts
+                retry_counter += 1
+                time.sleep(1)  # Wait for 1 second before retrying
+            
+            ## If still not found after retries, raise an error
+            if last_bus.date() not in ts.index.date:
+                logger.error(f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after retries.")
+                raise ValueError(f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after retries.")
+            
         self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime('%Y-%m-%d')]['annualized'].values[0]
 
     
@@ -461,7 +532,7 @@ class Stock:
         ## Get Spot Price timeseries
         spot = self.spot(ts = True, ts_timeframe = ts_timeframe, ts_timewidth = ts_timewidth, ts_start = pd.to_datetime(start_date), ts_end = self.end_date)
         spot["Date"] = pd.to_datetime(spot.index.date)
-        spot.reset_index(inplace = True)
+        spot.reset_index(inplace = True, drop = True)
         spot.set_index('Date', inplace = True)
         spot['yearly_dividend'] = div_history['yearly_dividend']
         spot.fillna(method = 'ffill', inplace = True)
@@ -527,11 +598,7 @@ class Stock:
         
         if spot_type == 'chain_price':
                 df = retrieve_timeseries(self.ticker, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
-                                         start = '1960-01-01', interval= interval, provider = provider)
-                df.index = pd.to_datetime(df.index)
-                df = df[(df.index >= pd.Timestamp(ts_start)) & (df.index <= pd.Timestamp(ts_end))]
-                df['close'] = df['chain_price']
-                df['cum_split_from_start'] = df['split_ratio'].cumprod()
+                                         start = '1960-01-01', interval= interval, provider = provider, spot_type = spot_type)  
         else:
             df = retrieve_timeseries(self.ticker, end =ts_end, start = ts_start, interval= interval, provider = provider)
 
@@ -539,12 +606,6 @@ class Stock:
             df.index = pd.to_datetime(df.index)
             return df
         else:
-            ## Can't remember why I opted for obb.quote. But I'll leave it for now incase I get an error.
-            ## If end == today, I'm expecting yfinance close to be latest close.
-
-            # if pd.to_datetime(self.end_date).date() >= datetime.today().date() and self.asset_type not in ['ETF', 'MUTUALFUND', 'INDEX']:
-            #     spot = {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['last_price'].values[0])}
-            # else:
             end  = change_to_last_busday(ts_end)
             df.index = pd.to_datetime(df.index)
             df = df[df.index.date == pd.to_datetime(end).date()]

@@ -1,8 +1,6 @@
 import os
 import sys
 import pickle
-sys.path.append(
-    os.environ.get('WORK_DIR')) # type: ignore
 from backtesting.backtesting import Strategy
 import pandas as pd
 from pandas.tseries.offsets import BDay

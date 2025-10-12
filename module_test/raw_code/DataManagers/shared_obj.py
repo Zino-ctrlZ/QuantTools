@@ -3,9 +3,10 @@
 ## Using spawn context, we set manager only after the first import is done 
 import multiprocessing as mp
 from trade.helpers.Logging import setup_logger
+from trade._multiprocessing import MP_CONTEXT, ensure_global_start_method
 logger = setup_logger('DataManagers.shared_obj.py')
 
-_ctx = mp.get_context("fork")
+_ctx = MP_CONTEXT
 _manager = None
 
 _shared_queue = None
@@ -17,6 +18,7 @@ _request_list = None
 
 def setup_shared_objects():
     global _manager, _shared_queue, _shared_dict, _shared_lists, _shared_lock, _shared_value, _request_list
+    ensure_global_start_method()
     _manager = _ctx.Manager()
     _shared_queue = _manager.Queue()
     _shared_dict = _manager.dict()

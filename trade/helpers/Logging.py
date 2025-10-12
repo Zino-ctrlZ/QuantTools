@@ -26,6 +26,25 @@ def find_project_root(current_path: Path, marker=".git"):
             return parent
     return os.environ['WORK_DIR']  # Default to current path if no marker is found
 
+
+def change_logger_stream_level(logger: logging.Logger, level: int):
+    """
+    Change the logger stream level.
+
+    params:
+    --------
+    logger: Logger object to change the stream level for.
+    level: New logging level (e.g., logging.INFO, logging.DEBUG).
+    
+    returns:
+    --------
+    None
+    """
+    logger.setLevel(level)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(level)
+
 def setup_logger(filename,stream_log_level = None, file_log_level = None, log_file=None, remove_root = True, custom_logger_name = None):
 
 

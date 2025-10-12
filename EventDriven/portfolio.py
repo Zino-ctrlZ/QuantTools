@@ -165,6 +165,10 @@ class OptionSignalPortfolio(Portfolio):
         self.trades_df = None
         self.trades_map = {}
         self.current_cash = {}
+        self.order_cache = {
+            'CLOSE': {},
+            'OPEN': {}
+        }
 
     @property
     def order_settings(self):
@@ -391,7 +395,9 @@ class OptionSignalPortfolio(Portfolio):
         order_type = 'MKT'
         
         if signal_type != 'CLOSE': #generate order for LONG or SHORT
-            return self.create_order( signal_event, order_type)
+            order =  self.create_order( signal_event, order_type)
+            self.order_cache['OPEN'].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
+            return order
         elif signal_type == 'CLOSE':
             if signal_event.signal_id not in self.current_positions[symbol]:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
@@ -429,6 +435,7 @@ class OptionSignalPortfolio(Portfolio):
                 self.eventScheduler.schedule_event(next_trading_day, new_signal)
                 return None
             order = OrderEvent(symbol, signal_event.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal_event.signal_id, parent_event=signal_event)
+            self.order_cache['CLOSE'].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
             return order
         return None
     

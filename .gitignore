@@ -172,10 +172,15 @@ thoughts_log.md
 .cache/
 .riskmanager_cache/
 
+
+# Private schedueling files
+.scheduling
+
 # Others
 ## Only relevant for me since I do the scheduling
 module_test/raw_code/DataManagers/scheduler/   
 module_test/raw_code/DataManagers/requests_json/
+setup_process/
 
 ## Must be unique for each user
 trade/helpers/clear_dirs.json
@@ -186,5 +191,4 @@ trade/helpers/*vol_resolve*.json
 
 ## Pickle files
 *.pkl
-
 \qtenv

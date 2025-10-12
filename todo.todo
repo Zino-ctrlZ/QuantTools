@@ -3,13 +3,13 @@ Whole Codebase Routine:
     ☐ Build file/setup_env.py to set up the environment
     ☐ Constant readme for each folders
     ☐ Decouple the riskmanager, portfolio manager, sizer
-
-
+    ☐ Create a schedule script to automatically run on cron and writeable from vscode:
+        - Suggestion: One script that registers a py file?: Issue is this script will be alive through out the day
+        - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
+        - Another Suggestion: Find a way to run a python script that directly appends to cron
 
 Portfolio File:
-    Now:
 
-    
     Long Term:
         ☐ Implement buy on Open, Bid, Ask.
         ☐ Getting divYield to have a max retries to factor in sporadic errors 
@@ -35,13 +35,12 @@ Portfolio File:
         ☐ Make Positions an object
         ☐ Make PTBacktest cross-sectional or write a new one that is cross-sectional
       
-
 EventScheduler:
     ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
-
-
 Risk Manager:
+    ☐ Switch to using SlugConfig and StratConfiguration to build configs for backtest
+        - Use init_config load to extend to _SlugConfig with the aim of simplifying config management.
     ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
     ☐ Get Close From Chain, with bulk
     ☐ Improve speed of rm
@@ -63,6 +62,10 @@ Risk Manager:
     ☐ (Consider) Add Vega, Gamma, Delta limits?
     ☐ In add a min size filter
     ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
+    ☐ Start using function from positions.analyze._analyze to ensure consistency
+    ☐ Start using functions from get_order to ensure consistency
+    ☐ Use SlugConfig and StratConfiguration to build configs for backtest
+    ☐ Seperate OrderPicker from RiskManager.base
 
 General:
     ☐ Implement buy on Open.
@@ -75,7 +78,6 @@ General:
     ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
     ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
 
-
 Additional Portfolio Attributes:
     - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
     - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
@@ -86,7 +88,6 @@ Feb 10, 2025 updates:
 List Contracts:
     ☐ Should return error for no dates
 
-    
 Backtest:
     ☐ Re-run walkforward
     ☐ Write doctrsing and type hint:
@@ -97,26 +98,16 @@ Backtest:
 Zino Convo 5/31/25:
     - Add mkdir to custom cache
 
-
-
 General:
 
     General:
-        ✔ Create a module to hold general functions like get_class_attributes (done) @done(24-09-08 17:50)
-        ✔ Creat universe holder @done(24-09-16 11:23)
-        ✔ Look into openBB @done(24-09-08 17:52)
         ☐ Find a way to use CIK Codes & Financials to get the necessary data. ZINO! @Zino
-        ✔ Move to-do to new file type @done(24-09-16 11:23)
-        ✔ Figure out how to save news for the time being @done(24-09-16 11:23)
         ☐ Think up a better logging strategy
         ☐ Add chain call log
         ☐ Write typehints for all functions & classes
 
-
-
     Overall Trading:
         ☐ Check OpenBB for economic Calendar
-
 
     Main Focus:
         ☐ Analyze the PTBacktester Walk Forward
@@ -126,9 +117,7 @@ General:
             ☐ - Test Regime optimize @critical
             ☐ - Rebalancing
             ☐ + Look into openBB
-            ✔ Create function for saving data (done) @done (9/8/2024, 5:31:58 PM)
             ☐ Set up automatic saves of price data/clean up
-
 
     Create stocks universe module:
         ☐ Create Package
@@ -137,40 +126,24 @@ General:
         ☐ Save to Mysql database
         ☐ columns: tick, market_cap at time, share of S&P, price
 
-
-
-
-
-
 Backtest:
     Module:
         PTBacktester Improvements:
-            ✔ Create per position optimizer: @done(25-02-05 06:25)
-            ✔ - Create settings in PTDataset (done) @done (9/8/2024, 5:32:33 PM)
             ☐ - Save optimized in a dict
-            ✔ - Reset strategy class settings (done) @done (9/8/2024, 5:32:30 PM)
-            ✔ Create a strategy (Done) @done (9/8/2024, 5:32:27 PM)
-            ✔ Speed up optimizer & aggregate methods @done(24-09-08 17:52)
-            ✔ Write PTBacktester docstring @done(25-02-21 09:51)
             ☐ Add other performance metrics like monthly pnl grid. (month column, year index)
             ☐ Add max periodic loss/gain to aggregate
             ☐ Begin test QSTrader
             ☐ Add Filters for trend strategy & MAStrat
-            ✔ Add name & runindex to strategy position optimize incase it's needed @done(25-03-02 12:18)
             ☐ Multithread for Aggregate (later date, more pressing issues)
             ☐ Change BuyNhold calc
             ☐ Include open trades in agg
 
-
-        Options Event Driven Backtesting:
-            ✔ Add the recommeded changes. Choosing structure, risk manager etc @done(25-02-21 09:51)
 
         Attribution:
             ☐ Create Attribution off trades entries.
 
     Process:
         Backtest To-Do:
-            ✔ Replace INTC with META after compatible in stock @done(25-03-02 12:33)
             ☐ Find some sort of analysis/Comparison for EQ & Options backtest
                 - I need more information, how are they different? What are the benefits of each?
                 - How do I compare them?
@@ -179,11 +152,7 @@ Backtest:
             ☐ Look into this QSTrader Backtester (Future Date)
             ☐ Incorporate sensitivity analysis (Future Date) https://paperswithbacktest.com/wiki/sensitivity-analysis#implementing-sensitivity-analysis-with-build-alpha
 
-
         Backtesting:
-            ✔ Create .plot() (done) @done(24-09-08 17:50)
-            ✔ Make an optimize (done): @done(24-09-08 17:50)
-                Create a file that saves this data. save: trades, equity, dd, 
             ☐ Strategy Edition:
                 ☐ Add scale in & scale out
                 ☐ Trade on open
@@ -194,11 +163,7 @@ Backtest:
 
         Strategy:
 
-            BBANDS:
-                ✘ Find filters for BBANDS & MAStrat to improve PnL @cancelled(25-03-05 21:32)
 
-            Walk-Forward Optimization:
-                ✔ Add equity curve to WalkForwardAnalysis @done(25-03-02 12:39)
 
             Analysis:
                 ☐ Do some sort of analysis to see how liquidity (open interest, volume) affects bid/ask spread (maybe even strategy performance)
@@ -207,10 +172,6 @@ Backtest:
             Attribution:
                 ☐ Why is the Gamma negative?
 
-
-
-
-
 Live Trading:
 
     Portfolio Performance Class:
@@ -218,26 +179,17 @@ Live Trading:
         ☐ Calculate vol gamma
         ☐ Create Spot/Vol Scenario
 
-
-
-
 Database Management:
     General:
-        ✔ Save Timeseries and ) @done(24-09-08 17:53)
-        ✔ Save available option chain @done(25-02-05 06:26)
         ☐ Daily Price
-        ✔ Putting database on harddrive (done) @done(24-09-08 17:51)
         ☐ Write Reference for each table:
             Name, Data Provider, Data Contained, Product Type, Data Update Freq, Storage type, 
         ☐ Save the factors data to database 
         ☐ Add undl_type back to optiondata once I can source where to get it from.
-        ✔ For the options with bidask, use midpoint btwn bid & ask as close, then calc vol. Have a column for theoritical @done(24-09-16 11:21)
         ☐ Schedule data deletion
         ☐ Save splits to database (tick, date, split ratio)
         ☐ Add Vol_resolve column to database & old price. Replace old Price with price from Vol resolve
             ☐ add ask & bid columns for vol resolve
-
-    
 
     ThetaData Functions:
         ☐ What is causing the empty cells when run?
@@ -275,23 +227,9 @@ Database Management:
         ☐ Aggregate open interest & volume for options and store in database
 
     DataManager:
-        ✔ Create attribution table @done(25-03-05 21:30)
-        ✔ Clean up DataManager @done(25-04-25 11:08)
-        ✔ Create datamanager to save data to database @done(25-04-25 11:09)
-        ✔ Would it make sense to have a global data manager that can be used to query these data for multiple strikes/expirations. Obvs bpegged to ticker. But ultimately to avoid making multiple instances @done(25-04-25 11:09)
-        ✔ Extend DataManager to take variable on what to price on Available Options are 'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint', 'Open' @done(25-04-25 11:09)
-            ✔ Add Open greeks, Bid, Ask greeks to database @done(25-04-25 11:09)
-        ✔ Binomial Vol should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09)
-        ✔ BS Vol Should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09)
         ☐ Binomial Vol should have vol Resolve, add model name to Volsurface database ie when creating vol surface, if using binomial or  bs vols
         ☐ Extend DB connections to use pooling 
         ☐ Implement a caching to reduce dependency on DB. It will be like wrapper: stores in cache, checks for available data, merges, etc20:01:53.849 [error] Disposing session as kernel process died ExitCode: undefined, Reason: Fatal Python error: Segmentation fault
-
-
-
-
-
-
 
 Modules:
 
@@ -301,79 +239,42 @@ Modules:
         ☐ Return to chatgpt and get prepping sequence of vol data. Reference Chat:
             - Vol Surface preparation tips. Using Fitting Checklist from memory
         ☐ Verify forward interpolation is correct with ChatGPT
+        ☐ Slides calculation:
+            - Spot, Vol, Pnl & Greeks
 
     General:
-        ✔ Clean up as much as possible @done(24-10-13 17:29)
-        ✔ Calculate module is quite buggy, fix this. Especially attribution @done(24-10-13 17:29)
-        ✔ Move RESCLIENT to __init__ @done(24-09-16 11:19)
-        ✔ Make every timeseries have timestamp as index @done(24-09-16 11:22)
-        ✔ Calculate should have rates & vol scenarios @done(24-10-13 17:29)
-        ✔ Switch all pricing to use quantlib (done) @done(24-09-08 17:51)
-        ✔ Make sure context returns data as per date @done(24-10-28 21:49)
-            ✔ On options, it should rreturn spot, price, vol as of @done(24-10-28 21:49)
-            ✔ For stock, spot, dividends as of @done(24-10-28 21:49)
-        ✔ Stock: Source option Chain @done(24-10-16 22:08)
-        ✔ Add timeseries gen for Option, if not available, save: Also save latest date @done(24-10-13 17:28)
         ☐ Change the timeseries in Stock Module to intraday (Alpha Vantage)
-        ✔ Switch up spot in options to quote from theta data @done(24-10-13 17:28)
-        ✔ Change option Volga & Vanna in database @done(24-09-16 11:20)
-        ✔ Centralize everything to do with getting_option_timeseries @done(24-10-13 17:27)
-            ✔ Querying data @done(24-10-13 17:27)
-            ✔ Saving data @done(24-10-13 17:27)
-            ✔ Providing greeks @done(24-10-13 17:27)
-        ✔ Fix stock div_yield_history to return intraday @done(24-10-14 00:34)
-        ✔ Make time_distance_helper assist with intraday time as well @done(24-09-23 23:52)
-            ✔ Now adjust to make sure daily pricing is as at 16:00 @done(24-10-13 17:27)
-        ✔ In intraday of OptionDataManager, make sure the table is updated EOD for names saved that day @done(24-10-19 18:23)
-        ✔ Automate saving get risk free rate daily and switch code to query database @done(24-10-19 18:23)
         ☐ Create test files
-        ✔ Change all pricing place to use CHAIN PRICE @done(25-03-05 20:00)
         ☐ Add interest rate pricing choice to env, and vol surface tables as a column
         ☐ Scrape this site to get bool of stock splits: https://companiesmarketcap.com/nvidia/stock-splits/
         ☐ Optimize is_USHoliday to use a dictionary
 
-    New Modules:
-        ✔ Create a module for Option Structures @done(25-02-05 06:27)
 
-    OptionStructure:
-        ✘ Create singleton for OptionStructure @cancelled(25-03-05 21:32)
 
     Option:
         ☐ Allow passing different values to produce new PV
         ☐ create MarketOption, ModelOption
 
     Stock:
-        ✘ Make stock name change compatible. Eg (FB -> Meta) @cancelled(25-03-05 20:00)
-        ✔ Add vol surface @done(25-03-05 20:02)
         ☐ Add ATM Vol, Skew, Smile
         ☐ Create fixed strike vol (100, 95, 80, 105, 120)
             ☐ Switch to just calculting vol based on IV Function
             ☐ Switch Process to use imap
-            ✔ Save this to database @done(25-03-05 20:02)
         ☐ Create skew vol (100, 95, 80, 105, 120)
-        ✔ Build IV Manager @done(25-03-05 20:01)
-        ✘ What's causing the empty cells in the option_chain call? @cancelled(25-03-05 20:02)
-        ✘ Add unadjusted option for spot @cancelled(25-03-05 20:02)
-        ✔ What's causing the Stock to sometimes run the OptionChain when it shouldnt. Especially in datamanager. @done(25-03-05 20:02)
         ☐ Div yield sometimes returns an empty dataframe from OpenBB. Raise eerror. Add retry
         ☐ Raise non-intialied chain error instead of not ready error. Use run_chaim
         ☐ Fix prev_close in stock init
-
+        ☐ Fix thread locks for data querying.
 
     DocString:
         ☐ Modules
         ☐ WalkforwardAnalysis doc string
 
-    
     Rates:
         ☐ Speed up generation
         ☐ Add backoff to prevent errors
         
-
-
     Model:
-        ✔ Create model class @done(24-12-02 01:03)
-        ✔ Add the graphing and chart control stuff. @done(24-12-02 01:03)
         ☐ Switch to SSVI
         ☐ Learn SABR and Heston + Implement
         ☐ Midpoint greeks/vols Cannot have 0 values
@@ -412,26 +313,22 @@ Modules:
         ☐ Implement quotes on Bulk
 
     Helper:
-        ✔ Create an OptionStructure or Option Class from function @done(25-02-18 22:00)
+        ☐ Have change_to_last_busday enforce trading hours bool
 
     Rates:
         ☐ Clean up rates module
 
-
-    
     Calculate:
         ☐ Find a way to do attribution on passed data instead of API data
         ☐ Why GB method producing large Unexpected PnL
 
 Knowledge:
     ☐ Getting Implied Vol Surface
-    ✔ How to get one ATM vol btwn call & put @done(25-04-01 07:36)
     ☐ Learn what this local vol is
 
 Repo Presentation:
     ☐ Write a Sample
     
-
 Others:
     ☐ Populate Rates database with 5/8 & 5/9
     ☐ Add update daily routine to risk manager:
@@ -449,6 +346,74 @@ Vol Surface Plan:
         - If neither, calculate them
 
 Archive:
+  ✔ Create a module to hold general functions like get_class_attributes (done) @done(24-09-08 17:50) @project(General.General)
+  ✔ Creat universe holder @done(24-09-16 11:23) @project(General.General)
+  ✔ Look into openBB @done(24-09-08 17:52) @project(General.General)
+  ✔ Move to-do to new file type @done(24-09-16 11:23) @project(General.General)
+  ✔ Figure out how to save news for the time being @done(24-09-16 11:23) @project(General.General)
+  ✔ Create function for saving data (done) @done (9/8/2024, 5:31:58 PM) @project(General.Main Focus)
+  ✔ Create per position optimizer: @done(25-02-05 06:25) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ - Create settings in PTDataset (done) @done (9/8/2024, 5:32:33 PM) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ - Reset strategy class settings (done) @done (9/8/2024, 5:32:30 PM) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ Create a strategy (Done) @done (9/8/2024, 5:32:27 PM) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ Speed up optimizer & aggregate methods @done(24-09-08 17:52) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ Write PTBacktester docstring @done(25-02-21 09:51) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ Add name & runindex to strategy position optimize incase it's needed @done(25-03-02 12:18) @project(Backtest.Module.PTBacktester Improvements)
+  ✔ Add the recommeded changes. Choosing structure, risk manager etc @done(25-02-21 09:51) @project(Backtest.Module.Options Event Driven Backtesting)
+  ✔ Replace INTC with META after compatible in stock @done(25-03-02 12:33) @project(Backtest.Process.Backtest To-Do)
+  ✔ Create .plot() (done) @done(24-09-08 17:50) @project(Backtest.Process.Backtesting)
+  ✔ Make an optimize (done): @done(24-09-08 17:50) @project(Backtest.Process.Backtesting)
+    Create a file that saves this data. save: trades, equity, dd, 
+  ✘ Find filters for BBANDS & MAStrat to improve PnL @cancelled(25-03-05 21:32) @project(Backtest.Process.Strategy.BBANDS)
+  ✔ Add equity curve to WalkForwardAnalysis @done(25-03-02 12:39) @project(Backtest.Process.Strategy.Walk-Forward Optimization)
+  ✔ Save Timeseries and ) @done(24-09-08 17:53) @project(Database Management.General)
+  ✔ Save available option chain @done(25-02-05 06:26) @project(Database Management.General)
+  ✔ Putting database on harddrive (done) @done(24-09-08 17:51) @project(Database Management.General)
+  ✔ For the options with bidask, use midpoint btwn bid & ask as close, then calc vol. Have a column for theoritical @done(24-09-16 11:21) @project(Database Management.General)
+  ✔ Create attribution table @done(25-03-05 21:30) @project(Database Management.DataManager)
+  ✔ Clean up DataManager @done(25-04-25 11:08) @project(Database Management.DataManager)
+  ✔ Create datamanager to save data to database @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ Would it make sense to have a global data manager that can be used to query these data for multiple strikes/expirations. Obvs bpegged to ticker. But ultimately to avoid making multiple instances @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ Extend DataManager to take variable on what to price on Available Options are 'Midpoint', 'Bid', 'Ask', 'Close', 'Weighted Midpoint', 'Open' @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ Add Open greeks, Bid, Ask greeks to database @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ Binomial Vol should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ BS Vol Should have Midpoint Greeks, Weighted Midpoint Greeks, (Ask, Bid, Open) Greeks and corresponding IVs @done(25-04-25 11:09) @project(Database Management.DataManager)
+  ✔ Clean up as much as possible @done(24-10-13 17:29) @project(Modules.General)
+  ✔ Calculate module is quite buggy, fix this. Especially attribution @done(24-10-13 17:29) @project(Modules.General)
+  ✔ Move RESCLIENT to __init__ @done(24-09-16 11:19) @project(Modules.General)
+  ✔ Make every timeseries have timestamp as index @done(24-09-16 11:22) @project(Modules.General)
+  ✔ Calculate should have rates & vol scenarios @done(24-10-13 17:29) @project(Modules.General)
+  ✔ Switch all pricing to use quantlib (done) @done(24-09-08 17:51) @project(Modules.General)
+  ✔ Make sure context returns data as per date @done(24-10-28 21:49) @project(Modules.General)
+  ✔ On options, it should rreturn spot, price, vol as of @done(24-10-28 21:49) @project(Modules.General)
+  ✔ For stock, spot, dividends as of @done(24-10-28 21:49) @project(Modules.General)
+  ✔ Stock: Source option Chain @done(24-10-16 22:08) @project(Modules.General)
+  ✔ Add timeseries gen for Option, if not available, save: Also save latest date @done(24-10-13 17:28) @project(Modules.General)
+  ✔ Switch up spot in options to quote from theta data @done(24-10-13 17:28) @project(Modules.General)
+  ✔ Change option Volga & Vanna in database @done(24-09-16 11:20) @project(Modules.General)
+  ✔ Centralize everything to do with getting_option_timeseries @done(24-10-13 17:27) @project(Modules.General)
+  ✔ Querying data @done(24-10-13 17:27) @project(Modules.General)
+  ✔ Saving data @done(24-10-13 17:27) @project(Modules.General)
+  ✔ Providing greeks @done(24-10-13 17:27) @project(Modules.General)
+  ✔ Fix stock div_yield_history to return intraday @done(24-10-14 00:34) @project(Modules.General)
+  ✔ Make time_distance_helper assist with intraday time as well @done(24-09-23 23:52) @project(Modules.General)
+  ✔ Now adjust to make sure daily pricing is as at 16:00 @done(24-10-13 17:27) @project(Modules.General)
+  ✔ In intraday of OptionDataManager, make sure the table is updated EOD for names saved that day @done(24-10-19 18:23) @project(Modules.General)
+  ✔ Automate saving get risk free rate daily and switch code to query database @done(24-10-19 18:23) @project(Modules.General)
+  ✔ Change all pricing place to use CHAIN PRICE @done(25-03-05 20:00) @project(Modules.General)
+  ✔ Create a module for Option Structures @done(25-02-05 06:27) @project(Modules.New Modules)
+  ✘ Create singleton for OptionStructure @cancelled(25-03-05 21:32) @project(Modules.OptionStructure)
+  ✘ Make stock name change compatible. Eg (FB -> Meta) @cancelled(25-03-05 20:00) @project(Modules.Stock)
+  ✔ Add vol surface @done(25-03-05 20:02) @project(Modules.Stock)
+  ✔ Save this to database @done(25-03-05 20:02) @project(Modules.Stock)
+  ✔ Build IV Manager @done(25-03-05 20:01) @project(Modules.Stock)
+  ✘ What's causing the empty cells in the option_chain call? @cancelled(25-03-05 20:02) @project(Modules.Stock)
+  ✘ Add unadjusted option for spot @cancelled(25-03-05 20:02) @project(Modules.Stock)
+  ✔ What's causing the Stock to sometimes run the OptionChain when it shouldnt. Especially in datamanager. @done(25-03-05 20:02) @project(Modules.Stock)
+  ✔ Create model class @done(24-12-02 01:03) @project(Modules.Model)
+  ✔ Add the graphing and chart control stuff. @done(24-12-02 01:03) @project(Modules.Model)
+  ✔ Create an OptionStructure or Option Class from function @done(25-02-18 22:00) @project(Modules.Helper)
+  ✔ How to get one ATM vol btwn call & put @done(25-04-01 07:36) @project(Knowledge)
   ✔ Extend OptionSignalClass @done(25-01-27 00:25) @project(Portfolio File.Now)
   ✘ Use gen_option_trade trade/helpers/helper.py @cancelled(25-01-27 22:14) @project(Portfolio File.Now)
   ✔ Change option id structure to dict of long and short in the generate order place. @done(25-01-27 22:14) @project(Portfolio File.Now)

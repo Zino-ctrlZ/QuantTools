@@ -1,0 +1,248 @@
+"""
+Save Manager Subprocess Example
+
+This script demonstrates how to run a SaveManager-like background process using Python's multiprocessing module.
+It allows the subprocess to run independently from the main thread or notebook kernel.
+
+✅ Features:
+- SaveManager class runs in a subprocess
+- Communicates using multiprocessing.Queue
+- Supports clean shutdown via sentinel or Event
+- Logs task progress
+
+---
+
+HOW TO USE:
+
+1. Import or run this file as a script.
+2. Call `launch_save_manager()` from any script or notebook.
+3. Submit tasks to `queue.put(...)`.
+4. Shutdown by sending `queue.put(None)` or `stop_event.set()`.
+
+---
+
+💡 Sample use in another script or notebook:
+
+    from your_module import launch_save_manager
+
+    proc, queue, stop_event = launch_save_manager()
+
+    for i in range(10):
+        queue.put(f"Job-{i}")
+
+    # Clean shutdown:
+    queue.put(None)  # or stop_event.set()
+    proc.join()
+
+---
+
+❗ Notes:
+- Ensure all arguments to the queue are picklable.
+- The subprocess will not stop unless a sentinel (None) is received or the stop event is triggered.
+- You can also use `proc.terminate()` to forcefully kill the process.
+
+"""
+
+from multiprocessing import Process, Queue, Event
+import time
+import logging
+
+# Set up logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("SaveManager")
+
+class SaveManager:
+    MAX_QUEUE_SIZE = 100
+    _queue = None
+    _stop_event = None
+
+    @classmethod
+    def init(cls, queue: Queue, stop_event: Event):
+        cls._queue = queue
+        cls._stop_event = stop_event
+
+    @classmethod
+    def start(cls):
+        logger.info("[SaveManager] Starting worker loop...")
+        while not cls._stop_event.is_set():
+            try:
+                request = cls._queue.get(timeout=1)
+                if request is None:
+                    logger.info("[SaveManager] Shutdown signal received.")
+                    break
+                logger.info(f"[SaveManager] Processing: {request}")
+                time.sleep(1)  # Simulate work
+            except Exception:
+                continue
+        logger.info("[SaveManager] Worker exiting.")
+
+
+def launch_save_manager():
+    queue = Queue(maxsize=100)
+    stop_event = Event()
+    SaveManager.init(queue, stop_event)
+    proc = Process(target=SaveManager.start, daemon=False)
+    proc.start()
+    return proc, queue, stop_event
+
+
+if __name__ == "__main__":
+    # Launch subprocess
+    proc, queue, stop_event = launch_save_manager()
+
+    # Simulate adding tasks
+    for i in range(5):
+        queue.put(f"Request-{i}")
+        time.sleep(0.5)
+
+    # Stop via sentinel
+    queue.put(None)
+
+    # Wait for clean exit
+    proc.join()
+    print("Subprocess finished.")
+
+
+
+
+
+This is a **great design idea** — and yes, it's **absolutely possible** (and quite clean!) to run your `SaveManager` in a **dedicated subprocess**, letting it persist independently and handle a queue of save jobs without blocking or relying on the Jupyter/kernel lifecycle.
+
+Let’s break this down into practical ✅/**caution** steps:
+
+---
+
+## ✅ What you want to do
+
+### ✔️ 1. **Run `SaveManager` in a subprocess**
+```python
+from multiprocessing import Process
+
+def start_savemanager():
+    SaveManager.start_workers()  # your while True queue loop runs here
+
+p = Process(target=start_savemanager)
+p.daemon = False
+p.start()
+```
+
+- ✅ Now it lives in its own process
+- ✅ Survives your main app dying (if not `daemon=True`)
+
+---
+
+### ✔️ 2. **Push requests to the subprocess’s queue**
+
+You’ll need to use a **multiprocessing-aware queue**, e.g.:
+
+```python
+from multiprocessing import Queue
+
+shared_queue = Queue(maxsize=100)
+
+# Inject it into SaveManager
+SaveManager._queue = shared_queue
+```
+
+Now, in your main process:
+
+```python
+SaveManager._queue.put(data_request)
+```
+
+And in the subprocess, your worker loop keeps running as is.
+
+---
+
+### ✔️ 3. **Keep it alive indefinitely**
+
+No problem — your `while True` loop in `_worker()` already ensures this:
+
+```python
+while True:
+    request = cls._queue.get()
+    ...
+```
+
+It’ll run forever until:
+- You kill the process
+- Or `None` is sent (if you use that as a stop signal)
+
+---
+
+### ✔️ 4. **How to kill it cleanly?**
+
+There are 3 clean options:
+
+#### 🔹 a. Use a sentinel (`None`) to shut it down
+Send `None` into the queue and have the thread exit if it sees it:
+
+```python
+request = cls._queue.get()
+if request is None:
+    break
+```
+
+In main thread:
+
+```python
+SaveManager._queue.put(None)
+```
+
+---
+
+#### 🔹 b. Use `p.terminate()`
+
+Force-kill the subprocess:
+```python
+p.terminate()
+```
+
+⚠️ Unsafe if mid-write or DB op — use only if safe or caught.
+
+---
+
+#### 🔹 c. Use a shared `Event` or `Value` to control the loop
+
+```python
+from multiprocessing import Event
+
+stop_flag = Event()
+
+def start_savemanager():
+    while not stop_flag.is_set():
+        ...
+```
+
+From main:
+
+```python
+stop_flag.set()
+```
+
+---
+
+## ⚠️ Gotchas / Caveats
+
+| Issue                          | Fix                                  |
+|---------------------------------|---------------------------------------|
+| `Queue` not shared across processes | Use `multiprocessing.Queue`, not `queue.Queue` |
+| DataRequest object must be picklable | Ensure no bound methods/lambdas     |
+| Don't use Jupyter threading to control the subprocess | Use a script or real app loop         |
+
+---
+
+## ✅ TL;DR: Yes, you can safely:
+
+✔️ Run `SaveManager` in a subprocess  
+✔️ Feed it with a `multiprocessing.Queue`  
+✔️ Keep it running forever  
+✔️ Kill it with `.terminate()`, a sentinel (`None`), or an `Event`
+
+---
+
+Let me know if you want a plug-and-play template with:
+- SaveManager subprocess launcher
+- Safe queue management
+- Clean shutdown  
+and logging!

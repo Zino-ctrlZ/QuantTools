@@ -18,6 +18,8 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
+import yfinance as yf
+from pandas.tseries.offsets import BDay
 from datetime import datetime
 from trade.helpers.parse import parse_date, parse_time
 import yfinance as yf
@@ -27,6 +29,7 @@ from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from py_vollib.black_scholes_merton import black_scholes_merton
 from py_lets_be_rational.exceptions import BelowIntrinsicException
 from scipy.stats import norm
+from zoneinfo import ZoneInfo
 import yfinance as yf
 from openbb import obb
 import pandas as pd
@@ -37,6 +40,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.types import OptionTickMetaData
 from pathlib import Path
 import os
+import logging
 from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
 import traceback
 from pandas.tseries.holiday import USFederalHolidayCalendar
@@ -50,6 +54,9 @@ from pprint import pprint, pformat
 import atexit
 import signal
 import shortuuid
+from trade import get_pool_enabled
+from trade.helpers.pools import runProcesses
+from trade.helpers.threads import runThreads
 
 logger = setup_logger('trade.helpers.helper')
 
@@ -57,6 +64,21 @@ logger = setup_logger('trade.helpers.helper')
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
 option_keys = {}
+NY = ZoneInfo("America/New_York")
+def ny_now() -> datetime:
+    return datetime.now(tz=NY)
+
+def ny_now_busday() -> datetime:
+    return change_to_last_busday(ny_now())
+
+def get_parrallel_apply():
+    """
+    Get the parallel apply function based on the pool enabled flag.
+    """
+    if get_pool_enabled():
+        return runProcesses
+    else:
+        return runThreads
 
 
 def _ipython_shutdown(_callable):
@@ -225,6 +247,13 @@ class CustomCache(Cache):
 
     @property
     def register_location(self):
+        if not os.path.exists(self._register_location):
+            ## Ensure dir exists
+            os.makedirs(os.path.dirname(self._register_location), exist_ok=True)
+
+            ## Create empty json file
+            with open(self._register_location, 'w') as f: 
+                json.dump({}, f)
         return self._register_location
     
     def _install_handlers(self):
@@ -353,12 +382,13 @@ def check_missing_dates(x, _start, _end):
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
 
     """Check for errors in the input parameters for the vol backout function"""
-    assert isinstance(sigma, (int, float)), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
-    assert isinstance(K, (int, float)), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
-    assert isinstance(S0, (int, float)), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
-    assert isinstance(r, (int, float)), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
-    assert isinstance(q, (int, float)), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
-    assert isinstance(market_price, (int, float)), f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
+    import numbers
+    assert isinstance(sigma, numbers.Number), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
+    assert isinstance(K, numbers.Number), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
+    assert isinstance(S0, numbers.Number), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
+    assert isinstance(r, numbers.Number), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
+    assert isinstance(q, numbers.Number), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
+    assert isinstance(market_price, numbers.Number), f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
     assert isinstance(flag, str), f"Recieved '{type(flag)}' for flag. Expected 'str'"
 
     if sigma <= 0:
@@ -431,21 +461,33 @@ def filter_zeros(data):
     data = data.replace(0, np.nan)
     return data.ffill()
 
-@backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
+@backoff.on_exception(backoff.expo, 
+                      (OpenBBEmptyData, YFinanceEmptyData), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_timeseries(tick, 
                         start, 
                         end, 
                         interval = '1d', 
                         provider = 'yfinance', 
                         spot_type='close',
-                        **kwargs):
+                        **kwargs) -> pd.DataFrame:
     """
     Returns an OHLCV for provided ticker.
 
     Utilizes OpenBB historical api. Default provider is yfinance.
+    Args:
+        tick (str): Stock ticker
+        start (str): Start date in 'YYYY-MM-DD' format
+        end (str): End date in 'YYYY-MM-DD'
+        interval (str): Data interval (e.g., '1d', '1h', '15m')
+        provider (str): Data provider ('yfinance', 'fmp', etc.)
+        spot_type (str): 'close' for regular close price, 'chain_price' for adjusted close price considering splits
+    Returns:
+        pd.DataFrame: DataFrame with OHLCV data and additional columns for split adjustments
     """
     if spot_type == 'chain_price':
-        df = retrieve_timeseries(tick, end =change_to_last_busday(datetime.today()).strftime('%Y-%m-%d'), 
+        df = retrieve_timeseries(tick, end =(change_to_last_busday(datetime.today())+ BDay(1)).strftime('%Y-%m-%d'), 
                                     start = '1960-01-01', interval= interval, provider = provider)
         df.index = pd.to_datetime(df.index)
         df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
@@ -454,21 +496,58 @@ def retrieve_timeseries(tick,
         return df
     else:
         try:
-            res = obb.equity.price.historical(symbol=tick, start_date = start, end_date = end, provider=provider, interval =interval)
-        except:
-            raise OpenBBEmptyData(f"OpenBB raised an unexpected error for {tick} with {provider} provider. Check the logs for more details")
-        
-        
-        ## OpenBB has an issue where if a column is all None (incases of no splits witin the date range), it doesn't return the column
-        data = res.to_df()
-        if 'split_ratio' not in data.columns:
-            res_vs = [r.__dict__ for r in res.results]
-            data = pd.DataFrame(res_vs, index = [r['date'] for r in res_vs])
-            data['split_ratio'] = 0
 
+            ## yfinance needs end date to be + 1 day to be inclusive. Doing this before the function call because it's undone later
+            end = pd.to_datetime(end) + relativedelta(days=1)
+            def query_data(start, end, tick, interval):
+                data = yf.download(tick, start=start,  end = end, interval=interval, multi_level_index=False, progress=False, actions = True)
+                data.rename(columns={'Stock Splits': 'split_ratio', 'Dividends': 'dividends'}, inplace=True)
+                data = data.loc[:, ~data.columns.duplicated()] ## For some reason columns are duplicated sometimes
+                data.columns = data.columns.str.lower() 
+                return data
+            
+            data = query_data(start=start, end=end, tick=tick, interval=interval)
 
-        data.split_ratio.replace(0, 1, inplace = True)
-        data['cum_split'] = data.split_ratio.cumprod()
+            ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
+            if data.empty:
+                raise YFinanceEmptyData(f"OpenBB returned empty data for {tick} with {provider} provider")
+            
+            ## Retry logic for missing split_ratio column
+            if 'split_ratio' not in data.columns:
+
+                ## `close` spot type means split_ratio isn't important. Set to 1
+                if spot_type == 'close':
+                    data['split_ratio'] = 1
+                    logger.info(f"No splits found for {tick} between {start} and {end}. Added split_ratio column with 1s")
+
+                ## `chain_price` spot type means split_ratio is important. Retry up to 3 times
+                else:
+                    retry_counter = 0
+
+                    ## Retry up to 3 times
+                    while retry_counter < 3:
+                        data = query_data(start=start, end=end, tick=tick, interval=interval)
+
+                        ## If found, break
+                        if 'split_ratio' in data.columns:
+                            break
+                        
+                        ## Else, wait 2 seconds and retry
+                        time.sleep(2)
+                        retry_counter += 1
+                    
+                    ## Final check: if still not found, raise error
+                    if 'split_ratio' not in data.columns:
+                        raise YFinanceEmptyData(f"yfinance returned data without split_ratio column for {tick} after 3 retries")
+                    
+            ## Filter Data within range
+            data = data[(data.index.date >= pd.to_datetime(start).date()) & 
+                        (data.index.date <= (pd.to_datetime(end) - relativedelta(days=1)).date())]
+        except Exception as e: ## Unnecessary placeholder, I know. Will look for best idea for this.
+            raise e
+
+        data['split_ratio'].replace(0, 1, inplace = True)
+        data['cum_split'] = data['split_ratio'].cumprod()
         data['max_cum_split'] = data.cum_split.max()
         data['unadjusted_close'] = data.close * data.max_cum_split
         data['split_factor'] = data.max_cum_split / data.cum_split
@@ -979,8 +1058,29 @@ def optionPV_helper(
 
         # Market data
         spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot_price))
-        dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividend_yield, day_count))
-        risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
+        rate_dc = ql.Actual365Fixed()
+
+        dividend_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(
+                settlement_date,
+                float(dividend_yield),
+                rate_dc,
+                ql.Continuous,   # make it explicit for dividends
+                ql.Annual        # ignored for continuous but required by signature
+            )
+        )
+
+        risk_free_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(
+                settlement_date,
+                float(risk_free_rate),
+                rate_dc,
+                ql.Compounded,   # common convention for “risk-free” examples
+                ql.Annual
+            )
+        )
+
+        # risk_free_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, risk_free_rate, day_count))
         volatility_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatility, day_count))
 
         # Black-Scholes-Merton Process (with dividend yield)
@@ -1005,6 +1105,7 @@ def optionPV_helper(
             black_scholes_price = european_option.NPV()
             return black_scholes_price
     except Exception as e:
+        print(f"Error in optionPV_helper: {e}")
         logger.info('')
         logger.info('"optionPV_helper" raised the below error')
         logger.info(e)
@@ -1028,6 +1129,7 @@ def IV_handler(*args, **kwargs):
     """
     Calculate the Black-Scholes-Merton implied volatility.
 
+    :param price: option price
     :param S: underlying asset price
     :type S: float
     :param K: strike price
@@ -1258,7 +1360,6 @@ def change_to_last_busday(end, offset = 1):
     
     #Enfore time is passed
 
-
     if not isinstance(end, str):
         end = end.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -1268,14 +1369,21 @@ def change_to_last_busday(end, offset = 1):
     ## Make End Comparison Busday
     isBiz = is_busday(end)
     while not isBiz:
-
         end_dt = pd.to_datetime(end)
+        end_dt = end_dt.replace(hour=16, minute=0, second=0) ## Defaulting to EOD
         end = (end_dt - BDay( offset)).strftime('%Y-%m-%d %H:%M:%S')
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
     if pd.Timestamp(end).time() <pd.Timestamp('9:30').time():
         end = pd.to_datetime(end)-BDay(offset)
+        end = end.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
+    
+    ## Make End Comparison same day if after 16:00
+    elif pd.Timestamp(end).time() >= pd.Timestamp('16:00').time():
+        end_dt = pd.to_datetime(end)
+        end = end_dt.replace(hour=16, minute=0, second=0).strftime('%Y-%m-%d %H:%M:%S')
+    
 
     # Make End Comparison prev day if holiday
     while is_USholiday(end):
