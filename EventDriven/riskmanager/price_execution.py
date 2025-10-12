@@ -74,3 +74,23 @@ def limit_price(
 
     # 5) Tick-round
     return round((raw / tick) * tick, 2)
+
+def calculate_slippage_basic(side: str, lmt: float, mid: float) -> float:
+    """
+    Calculate slippage given side, limit price, and mid price.
+    Args:
+        side (str): 'BUY' or 'SELL'.
+        lmt (float): The limit price.
+        mid (float): The mid price.
+    Returns:
+        float: The calculated slippage.
+    """
+    if mid is None or mid == 0.0:
+        raise ValueError("Mid price is not provided or zero. Cannot calculate slippage.")
+    if side == Side.BUY.value or side == 'BUY':
+        slippage = max(0.0, lmt - mid)
+    elif side == Side.SELL.value or side == 'SELL':
+        slippage = max(0.0, mid - lmt)
+    else:
+        raise ValueError(f"Invalid side {side}. Cannot calculate slippage.")
+    return round(slippage, 2)
