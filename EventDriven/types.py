@@ -1,5 +1,6 @@
 from datetime import datetime, date
 from enum import Enum
+import pandas as pd
 
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
@@ -142,6 +143,6 @@ class Order:
             result=d['result'],
             signal_id=d['signal_id'],
             map_signal_id=d['map_signal_id'],
-            date=d['date'],
+            date=pd.to_datetime(d['date']).date(),
             data=order_data
         )
