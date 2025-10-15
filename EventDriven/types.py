@@ -24,6 +24,10 @@ class EventTypes(Enum):
   ROLL = 'ROLL'
   ADJUST = 'ADJUST'
   CLOSE = 'CLOSE'
+
+class PositionEffect(Enum):
+  OPEN = 'OPEN'
+  CLOSE = 'CLOSE'
   
 class SignalTypes(Enum):
   LONG = 'LONG'
@@ -123,7 +127,7 @@ class OrderData:
 
 @dataclass
 class Order:
-     """
+    """
     Represents a trading order with signal information and execution data.
     
     This class encapsulates all the information related to a trading order,
