@@ -24,6 +24,7 @@ class EventTypes(Enum):
   ROLL = 'ROLL'
   ADJUST = 'ADJUST'
   CLOSE = 'CLOSE'
+  OPEN = 'OPEN'
 
 class PositionEffect(Enum):
   OPEN = 'OPEN'
