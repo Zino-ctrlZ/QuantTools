@@ -26,6 +26,12 @@ class EventTypes(Enum):
   CLOSE = 'CLOSE'
   OPEN = 'OPEN'
 
+class OrderStatus(Enum):
+    FILLED = 'FILLED'
+    CANCELLED = 'CANCELLED'
+    EXPIRED = 'EXPIRED'
+    FAILED = 'FAILED'
+    CONFIRMED = 'CONFIRMED'
 class PositionEffect(Enum):
   OPEN = 'OPEN'
   CLOSE = 'CLOSE'
