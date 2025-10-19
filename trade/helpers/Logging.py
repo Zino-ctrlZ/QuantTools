@@ -80,6 +80,11 @@ def setup_logger(filename,stream_log_level = None, file_log_level = None, log_fi
     os.makedirs(project_root_log_dir, exist_ok=True)
     log_file = os.path.join(project_root_log_dir, f'{notebook_name}.log')
 
+    ## Create the log file if it doesn't exist
+    if not os.path.exists(log_file):
+        with open(log_file, 'w'):
+            pass  # Just create the file
+
 
     # Remove all existing handlers (in case the logger was already configured)
     logger.handlers = []

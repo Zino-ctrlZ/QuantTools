@@ -646,14 +646,14 @@ def get_vectorized_dividend_scehdule(
     return (schedules)
 
 def vector_convert_to_time_frac(
-        schedules: List[list],
+        schedules: List[Schedule],
         valuation_dates: List[datetime],
         end_dates: List[datetime]
 ):
     """
     Convert a list of schedules to a list of time fractions.
-    
-    schedules: List[list] - List of schedules where each schedule is a list of (amount, date) tuples.
+
+    schedules: List[Schedule] - List of schedules where each schedule is a list of (amount, date) tuples wrapped in a Schedule object.
     valuation_dates: List[datetime] - List of valuation dates corresponding to each schedule.
     end_dates: List[datetime] - List of end dates corresponding to each schedule.
     
@@ -697,7 +697,7 @@ def vectorized_discrete_pv(
 def get_vectorized_dividend_rate(
         tickers:str|List[str],
         spots: List[float],
-        valuation_dates: List[datetime]
+        valuation_dates: List[float]
 ):
     """
     Get the vectorized dividend rate for a list of tickers based on their historical dividend data.

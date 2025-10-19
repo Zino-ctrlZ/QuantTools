@@ -1,7 +1,7 @@
 from typing import List, Union, Literal
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
-import numpy as np
+from functools import lru_cache
 from ..pricing.black_scholes import black_scholes_vectorized, black_scholes_vectorized_scalar
 from ..pricing.bjs2002 import bjerksund_stensland_2002_vectorized
 from ..pricing.binomial import crr_binomial_pricing
@@ -25,12 +25,13 @@ def intrinsic_check(F, K, T, r, sigma, market_price, option_type) -> None:
     Returns:
     - None
     """
-    intrinsic_value = max(F - K if option_type == 'c' else K - F, 0)
+    df = np.exp(-r * T)
+    intrinsic_value = df * max(F - K if option_type == 'c' else K - F, 0)
 
     ##TODO: Take this out of objective function to avoid repeated logging during minimization
     if intrinsic_value < market_price:
         logger.warning("Market price exceeds intrinsic value, returning NaN.")
-        logger.info(f"Intrinsic Value: {intrinsic_value}, Market Price: {market_price}. Option Details: F={F}, K={K}, T={T}, r={r}, sigma={sigma}, option_type={option_type}")
+        logger.warning(f"Intrinsic Value: {intrinsic_value}, Market Price: {market_price}. Option Details: F={F}, K={K}, T={T}, r={r}, sigma={sigma}, option_type={option_type}")
 
 
 def bsm_vol_est_minimization(
@@ -104,7 +105,6 @@ def bsm_vol_est_brute_force(
     """
     intrinsic_check(F, K, T, r, 0.2, market_price, option_type)  # Check intrinsic value
     sigmas = np.linspace(0.001, 5, BRUTE_FORCE_MAX_ITERATIONS)  # Range of volatilities to test
-    # F, K, T, r, option_type = map(lambda x: np.repeat(x, BRUTE_FORCE_MAX_ITERATIONS), (F, K, T, r, option_type))
 
     prices = black_scholes_vectorized_scalar(
         F=F, 
@@ -150,7 +150,7 @@ def vector_vol_estimation(brute_callable: Union[callable, str],
     
     if args:
         for arg in args:
-            if not isinstance(args,(list, tuple, np.ndarray)):
+            if not isinstance(arg,(list, tuple, np.ndarray)):
                 raise ValueError("args must be a list, tuple, or numpy array.")
         list_input = list(zip(*args))  # Transpose args to create list of tuples
 
@@ -212,8 +212,20 @@ def vol_est_brute_force_bjs_2002(
     # Return the corresponding volatility
     return sigmas[min_index]  # Return the estimated volatility and corresponding price
 
+def _k(x, nd=4):
+    """
+    Helper function to round a number to a specified number of decimal places.
+    Parameters:
+    - x: Number to round
+    - nd: Number of decimal places (default is 4)
+    
+    Returns:
+    - Rounded number
+    """
+    return round(x, nd)
 
-def estimate_crr_implied_volatility(
+@lru_cache(maxsize=2048)
+def _estimate_crr_cached(
         S: float,
         K: float,
         T: float,
@@ -255,7 +267,6 @@ def estimate_crr_implied_volatility(
             option_type=option_type,
             american=american
         )
-        
         return (calculated_price - market_price) ** 2
     result = minimize_scalar(
         binomial_objective_function,
@@ -264,3 +275,46 @@ def estimate_crr_implied_volatility(
     )
     
     return result.x if result.success else None
+    
+
+
+def estimate_crr_implied_volatility(
+        S: float,
+        K: float,
+        T: float,
+        r: float,
+        market_price: float,
+        q: float = 0.0,
+        option_type: str = 'c',
+        N: int = 1000,
+        dividend_type: Literal['continuous', 'discrete'] = 'continuous',
+        american: bool = False
+) -> float:
+    """
+    Estimate implied volatility using optimization.
+    
+    Parameters:
+    - S: Spot price
+    - K: Strike price
+    - T: Time to maturity
+    - r: Risk-free interest rate
+    - market_price: Market price of the option
+    - q: Continuous dividend yield (default is 0.0)
+    - option_type: 'c' for call, 'p' for put
+    - N: Number of time steps in the binomial tree
+    
+    Returns:
+    - Estimated volatility
+    """
+    return _estimate_crr_cached(
+        S=_k(S),
+        K=_k(K),
+        T=_k(T, nd=6),
+        r=_k(r, nd=6),
+        market_price=_k(market_price),
+        q=_k(q, nd=6) if dividend_type == 'continuous' else q,
+        option_type=option_type,
+        N=N,
+        dividend_type=dividend_type,
+        american=american
+    )
