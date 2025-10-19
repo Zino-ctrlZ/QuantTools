@@ -50,7 +50,7 @@ from EventDriven.event import FillEvent
 from EventDriven.helpers import parse_signal_id
 from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
-from EventDriven.types import FillDirection, OpenPositionAction, ResultsEnum, SignalTypes
+from EventDriven.types import FillDirection, EventTypes, ResultsEnum, SignalTypes
 from threading import Thread, Lock
 from trade import POOL_ENABLED, register_signal
 import multiprocessing as mp

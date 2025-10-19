@@ -1,45 +1,39 @@
-from typing import TypedDict
 from enum import Enum
-
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
     MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
     NO_ORDERS = 'NO_ORDERS'
     UNSUCCESSFUL = 'UNSUCCESSFUL'
     IS_HOLIDAY = 'IS_HOLIDAY'
-    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS' 
+    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS'
     MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
     TOO_ILLIQUID = 'TOO_ILLIQUID'
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
     IS_WEEKEND = 'IS_WEEKEND'
     NO_CONTRACTS_FOUND = 'NO_CONTRACTS_FOUND'
-    
-class EventTypes(Enum): 
-  SIGNAL = 'SIGNAL'
-  ORDER = 'ORDER'
-  FILL = 'FILL'
-  MARKET = 'MARKET'
-  EXERCISE = 'EXERCISE'
-  ROLL = 'ROLL'
-  
-class SignalTypes(Enum):
-  LONG = 'LONG'
-  SHORT = 'SHORT'
-  CLOSE = 'CLOSE'
-  
-class FillDirection(Enum):
-  BUY = 'BUY'
-  SELL = 'SELL'
-  EXERCISE = 'EXERCISE'
 
-class OpenPositionAction(Enum):
-   ROLL = 'ROLL'
-   EXERCISE = 'EXERCISE'
-   HOLD = 'HOLD'
-   ADJUST = 'ADJUST'
-   CLOSE = 'CLOSE'
+class EventTypes(Enum):
+    SIGNAL = 'SIGNAL'
+    ORDER = 'ORDER'
+    FILL = 'FILL'
+    MARKET = 'MARKET'
+    EXERCISE = 'EXERCISE'
+    ROLL = 'ROLL'
+    ADJUST = 'ADJUST'
+    CLOSE = 'CLOSE'
+    HOLD = 'HOLD'
+
+class SignalTypes(Enum):
+    LONG = 'LONG'
+    SHORT = 'SHORT'
+    CLOSE = 'CLOSE'
+
+class FillDirection(Enum):
+    BUY = 'BUY'
+    SELL = 'SELL'
+    EXERCISE = 'EXERCISE'
 
 class PositionAdjustmentReason(Enum):
-   DTE_ROLL = 'DTE_ROLL'
-   MONEYNESS_ROLL = 'MONEYNESS_ROLL'
-   LIMIT_BREACH = 'LIMIT_BREACH'
+    DTE_ROLL = 'DTE_ROLL'
+    MONEYNESS_ROLL = 'MONEYNESS_ROLL'
+    LIMIT_BREACH = 'LIMIT_BREACH'

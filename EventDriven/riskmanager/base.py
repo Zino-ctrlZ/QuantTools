@@ -1515,15 +1515,15 @@ Quanitity Sizing Type: {self.sizing_type}
                         actions.append(actions_dicts[action][k])
                         reasons.append(action)
                     else:
-                        actions.append(OpenPositionAction.HOLD.value)
+                        actions.append(EventTypes.HOLD.value)
                         reasons.append('hold')
                 
                 sub_action_dict = {'action': '', 'quantity_diff': 0}
 
                 ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
-                if OpenPositionAction.ROLL.value in actions:
+                if EventTypes.ROLL.value in actions:
                     pos_action = ROLL(k, {})
-                    pos_action.reason = reasons[actions.index(OpenPositionAction.ROLL.value)]
+                    pos_action.reason = reasons[actions.index(EventTypes.ROLL.value)]
                     
                     event = RollEvent(
                         datetime = event_date,
@@ -1538,9 +1538,9 @@ Quanitity Sizing Type: {self.sizing_type}
                     continue
 
                 ## If exercise is needed, do that first, no need to check other actions or adjust quantity
-                elif OpenPositionAction.EXERCISE.value in actions:
+                elif EventTypes.EXERCISE.value in actions:
                     pos_action = EXERCISE(k, {})
-                    pos_action.reason = reasons[actions.index(OpenPositionAction.EXERCISE.value)]
+                    pos_action.reason = reasons[actions.index(EventTypes.EXERCISE.value)]
                     long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
                     
                     event = ExerciseEvent(
@@ -1562,7 +1562,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
             
                 ## If the position is a hold, check if it needs to be adjusted based on greeks
-                elif OpenPositionAction.HOLD.value in actions:
+                elif EventTypes.HOLD.value in actions:
                     pos_action = HOLD(k)
                     pos_action.reason = None
                     position_action_dict[k] = pos_action
@@ -1687,13 +1687,13 @@ Quanitity Sizing Type: {self.sizing_type}
 
                 if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
                     logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
-                    roll_dict[id] = OpenPositionAction.ROLL.value
+                    roll_dict[id] = EventTypes.ROLL.value
                 elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
                     logger.info(f"{id} exercising because {dte} == 0")
-                    roll_dict[id] = OpenPositionAction.EXERCISE.value
+                    roll_dict[id] = EventTypes.EXERCISE.value
                 else:
                     logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
-                    roll_dict[id] = OpenPositionAction.HOLD.value
+                    roll_dict[id] = EventTypes.HOLD.value
         return roll_dict
     
     def moneyness_check(self):
@@ -1737,7 +1737,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}, entry_date: {entry_date}")
                 logger.info(f"{id} moneyness bool list {[x > self.max_moneyness for x in strike_list]}")
                 
-                roll_dict[id] = OpenPositionAction.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else OpenPositionAction.HOLD.value
+                roll_dict[id] = EventTypes.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else EventTypes.HOLD.value
         return roll_dict
 
     def hedge_check(self,

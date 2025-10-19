@@ -40,7 +40,7 @@ from EventDriven.event import FillEvent
 from EventDriven.helpers import parse_signal_id
 from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
-from EventDriven.types import OpenPositionAction, ResultsEnum
+from EventDriven.types import EventTypes, ResultsEnum
 from threading import Thread, Lock
 from trade import POOL_ENABLED
 import multiprocessing as mp
@@ -1268,7 +1268,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 current_position = self.pm.current_positions[sym]
                 if 'position' not in current_position:
                     continue
-                roll_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
+                roll_dict[current_position['position']['trade_id']] = EventTypes.HOLD.value
 
         print("Roll Dict", roll_dict)
 
@@ -1282,7 +1282,7 @@ Quanitity Sizing Type: {self.sizing_type}
                 current_position = self.pm.current_positions[sym]
                 if 'position' not in current_position:
                     continue
-                moneyness_dict[current_position['position']['trade_id']] = OpenPositionAction.HOLD.value
+                moneyness_dict[current_position['position']['trade_id']] = EventTypes.HOLD.value
         print("Moneyness Dict", moneyness_dict)
 
         ## Check if the position needs to be adjusted based on greeks
@@ -1308,16 +1308,16 @@ Quanitity Sizing Type: {self.sizing_type}
             sub_action_dict = {'action': '', 'quantity_diff': 0}
 
             ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
-            if OpenPositionAction.ROLL.value in actions:
-                sub_action_dict['action'] = OpenPositionAction.ROLL.value
+            if EventTypes.ROLL.value in actions:
+                sub_action_dict['action'] = EventTypes.ROLL.value
                 continue
-            elif OpenPositionAction.EXERCISE.value in actions:
-                sub_action_dict['action'] = OpenPositionAction.EXERCISE.value
+            elif EventTypes.EXERCISE.value in actions:
+                sub_action_dict['action'] = EventTypes.EXERCISE.value
                 continue
 
             ## If the position is a hold, check if it needs to be adjusted based on greeks
-            elif OpenPositionAction.HOLD.value in actions:
-                sub_action_dict['action'] = OpenPositionAction.HOLD.value
+            elif EventTypes.HOLD.value in actions:
+                sub_action_dict['action'] = EventTypes.HOLD.value
 
             quantity_change_list = []
             for key, value in greek_dict.items():
@@ -1325,7 +1325,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     quantity_change_list.append(res['quantity_diff'])
             sub_action_dict['quantity_diff'] = min(quantity_change_list)
             if sub_action_dict['quantity_diff'] < 0:
-                sub_action_dict['action'] = OpenPositionAction.ADJUST.value
+                sub_action_dict['action'] = EventTypes.ADJUST.value
             action_dict[k] = sub_action_dict
         return action_dict
 
@@ -1413,11 +1413,11 @@ Quanitity Sizing Type: {self.sizing_type}
 
             
             if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
-                roll_dict[id] = OpenPositionAction.ROLL.value
+                roll_dict[id] = EventTypes.ROLL.value
             elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                roll_dict[id] = OpenPositionAction.EXERCISE.value
+                roll_dict[id] = EventTypes.EXERCISE.value
             else:
-                roll_dict[id] = OpenPositionAction.HOLD.value
+                roll_dict[id] = EventTypes.HOLD.value
         return roll_dict
     
     def moneyness_check(self):
@@ -1450,7 +1450,7 @@ Quanitity Sizing Type: {self.sizing_type}
                     option_meta = parse_option_tick(option_id)
                     strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
             
-            roll_dict[id] = OpenPositionAction.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else OpenPositionAction.HOLD.value
+            roll_dict[id] = EventTypes.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else EventTypes.HOLD.value
         return roll_dict
         
 
