@@ -27,6 +27,7 @@ class EventTypes(Enum):
   ADJUST = 'ADJUST'
   CLOSE = 'CLOSE'
   OPEN = 'OPEN'
+  HOLD = 'HOLD'
 
 class OrderStatus(Enum):
     FILLED = 'FILLED'
