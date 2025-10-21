@@ -1,6 +1,9 @@
 from datetime import datetime, date
 from enum import Enum
 import pandas as pd
+from dataclasses import dataclass
+from typing import Any, Dict
+
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
     MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
@@ -49,11 +52,6 @@ class PositionAdjustmentReason(Enum):
    DTE_ROLL = 'DTE_ROLL'
    MONEYNESS_ROLL = 'MONEYNESS_ROLL'
    LIMIT_BREACH = 'LIMIT_BREACH'
-
-
-from dataclasses import dataclass
-from typing import Any, Dict
-
 
 
 @dataclass
