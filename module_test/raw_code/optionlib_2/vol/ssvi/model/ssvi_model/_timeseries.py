@@ -156,6 +156,7 @@ class SsviTimeseriesEOD(BaseModel, SingletonMixin):
         # Create a new model if it doesn't exist
         new_model = EODMarketSSVIModel(valuation_date=valuation_date, symbol=self.symbol)
         new_model.fit() ## Load and save
+        logger.critical("Loaded model for Tick %s on %s", self.symbol, valuation_date)
         self._model_set[valuation_date] = new_model
         return new_model
     

@@ -203,9 +203,29 @@ def build_strategy(df, schema, spot, cache):
     builder = STRATEGY_MAP.get(schema["strategy"])
     return builder(df, schema, spot, cache) if builder else []
 
+
+def create_trade_id(legs: Dict[str, Any]) -> str:
+    def _iter_side(side):
+        if side is None:
+            return []
+        if isinstance(side, dict):
+            return [side]
+        if isinstance(side, (list, tuple)):
+            return list(side)
+        if isinstance(side, pd.Series):
+            return [side.to_dict()]
+        raise TypeError(f"legs['long'/'short'] must be dict or list[dict]. Recieved {type(side)}")
+
+    parts = []
+    for leg in _iter_side(legs.get("long")):
+        parts.append(f"&L:{leg['opttick']}")
+    for leg in _iter_side(legs.get("short")):
+        parts.append(f"&S:{leg['opttick']}")
+    return "".join(parts)
+
 def extract_order(obj):
     order = {}
-    id =''
+    pack=obj[0] ## This is because raw order is just a [1dict]
 
     ## If no contracts found, return early
     if not obj:
@@ -223,9 +243,8 @@ def extract_order(obj):
         for direction, data in pack.items():
             if direction not in ('long', 'short'):
                 continue
-            id+= f"&{direction[0].upper()}:{data['opttick']}"
             order['data'][direction].append(data["opttick"])
             mid = data["mid"]
             order['data']['close'] += mid if direction == 'long' else -mid
-    order['data']['trade_id'] = id
+    order['data']['trade_id'] = create_trade_id(pack)
     return order
