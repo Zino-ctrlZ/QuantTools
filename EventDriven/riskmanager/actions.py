@@ -1,13 +1,13 @@
 ## Actions classes
 from enum import Enum
 from abc import ABC, abstractmethod
-from EventDriven.types import OpenPositionAction
+from EventDriven.types import EventTypes
 
 class RMAction(ABC):
     def __init__(self, trade_id: str, action: str|dict):
         self.trade_id = trade_id
         self.action = action
-        self.type: OpenPositionAction = None
+        self.type: EventTypes = None
         self.name: str = None
         self.reason: str = None
         self.event = None
@@ -17,9 +17,9 @@ class RMAction(ABC):
 class HOLD(RMAction):
     def __init__(self, trade_id: str, action: str = 'hold'):
         super().__init__(trade_id, action)
-        self.name = OpenPositionAction.HOLD.value
+        self.name = EventTypes.HOLD.value
         self.reason = None
-        self.type = OpenPositionAction("HOLD")
+        self.type = EventTypes("HOLD")
 
     def __repr__(self):
         return f'HOLD({self.trade_id}) Reason: {self.reason})'
@@ -27,8 +27,8 @@ class HOLD(RMAction):
 class CLOSE(RMAction):
     def __init__(self, trade_id: str, action: str = 'close'):
         super().__init__(trade_id, action)
-        self.name = OpenPositionAction.CLOSE.value
-        self.type = OpenPositionAction("CLOSE")
+        self.name = EventTypes.CLOSE.value
+        self.type = EventTypes("CLOSE")
         self.reason = None
 
     def __repr__(self):
@@ -37,8 +37,8 @@ class CLOSE(RMAction):
 class ROLL(RMAction):
     def __init__(self, trade_id: str, action: dict):
         super().__init__(trade_id, action)
-        self.name = OpenPositionAction.ROLL.value
-        self.type = OpenPositionAction("ROLL")
+        self.name = EventTypes.ROLL.value
+        self.type = EventTypes("ROLL")
         self.reason = None
         self.quantity_change = action.get('quantity_diff', None)
     
@@ -50,8 +50,8 @@ class ADJUST(RMAction):
     def __init__(self, trade_id: str, action: dict):
         super().__init__(trade_id, action)
         self.quantity_change = action['quantity_diff']
-        self.name = OpenPositionAction.ADJUST.value
-        self.type = OpenPositionAction("ADJUST")
+        self.name = EventTypes.ADJUST.value
+        self.type = EventTypes("ADJUST")
         self.reason = None
     
     def __repr__(self):
@@ -61,8 +61,8 @@ class ADJUST(RMAction):
 class EXERCISE(RMAction):
     def __init__(self, trade_id: str, action: dict):
         super().__init__(trade_id, action)
-        self.name = OpenPositionAction.EXERCISE.value
-        self.type = OpenPositionAction("EXERCISE")
+        self.name = EventTypes.EXERCISE.value
+        self.type = EventTypes("EXERCISE")
         self.reason = None
     
     def __repr__(self):

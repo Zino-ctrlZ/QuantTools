@@ -1,14 +1,13 @@
 from datetime import datetime, date
 from enum import Enum
 import pandas as pd
-
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
     MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
     NO_ORDERS = 'NO_ORDERS'
     UNSUCCESSFUL = 'UNSUCCESSFUL'
     IS_HOLIDAY = 'IS_HOLIDAY'
-    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS' 
+    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS'
     MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
     TOO_ILLIQUID = 'TOO_ILLIQUID'
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
@@ -37,21 +36,14 @@ class PositionEffect(Enum):
   CLOSE = 'CLOSE'
   
 class SignalTypes(Enum):
-  LONG = 'LONG'
-  SHORT = 'SHORT'
-  CLOSE = 'CLOSE'
-  
-class FillDirection(Enum):
-  BUY = 'BUY'
-  SELL = 'SELL'
-  EXERCISE = 'EXERCISE'
+    LONG = 'LONG'
+    SHORT = 'SHORT'
+    CLOSE = 'CLOSE'
 
-class OpenPositionAction(Enum):
-   ROLL = 'ROLL'
-   EXERCISE = 'EXERCISE'
-   HOLD = 'HOLD'
-   ADJUST = 'ADJUST'
-   CLOSE = 'CLOSE'
+class FillDirection(Enum):
+    BUY = 'BUY'
+    SELL = 'SELL'
+    EXERCISE = 'EXERCISE'
 
 class PositionAdjustmentReason(Enum):
    DTE_ROLL = 'DTE_ROLL'

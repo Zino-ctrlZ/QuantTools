@@ -151,18 +151,37 @@ with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as f
     PRICING_CONFIG = json.load(f)
 
 
-def get_pricing_config():
+def get_pricing_config() -> dict:
     """
     Get the pricing configuration.
     """
+    MISSING_DEFAULTS = {
+        'VOL_SURFACE_MAX_DTE_THRESHOLD': 365,
+        'VOL_SURFACE_MIN_DTE_THRESHOLD': 0,
+        'VOL_SURFACE_MAX_MONEYNESS_THRESHOLD': 1,
+        'VOL_SURFACE_MIN_MONEYNESS_THRESHOLD': 0
+    }
+    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as f:
+        PRICING_CONFIG = json.load(f)
+
+    for key, value in MISSING_DEFAULTS.items():
+        if key not in PRICING_CONFIG:
+            PRICING_CONFIG[key] = value
+            logger.warning(f"Missing key {key} in pricing config. Setting default value {value}.")
     return PRICING_CONFIG
 
 def reload_pricing_config():
     """
     Reload the pricing configuration from the file.
     """
+
+
+
+    global PRICING_CONFIG
     with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as pricing_file:
         PRICING_CONFIG = json.load(pricing_file)
+
+    
     logger.info("Pricing configuration reloaded.")
 
 

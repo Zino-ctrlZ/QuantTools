@@ -6,8 +6,11 @@ import backoff
 from dotenv import load_dotenv
 load_dotenv()
 import sys
+from enum import Enum
+from typing import Any, Dict
 import pstats
 import warnings
+from pandas.tseries.offsets import BDay
 from typing import Union
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
@@ -45,7 +48,7 @@ from trade.helpers.exception import YFinanceEmptyData, OpenBBEmptyData
 import traceback
 from pandas.tseries.holiday import USFederalHolidayCalendar
 import pandas_market_calendars as mcal
-from trade import HOLIDAY_SET, PRICING_CONFIG
+from trade import HOLIDAY_SET, PRICING_CONFIG, get_pricing_config
 import json
 from dbase.utils import add_eod_timestamp, bus_range, enforce_bus_hours
 from pathlib import Path
@@ -79,6 +82,30 @@ def get_parrallel_apply():
         return runProcesses
     else:
         return runThreads
+
+def is_weekend(dt:str|datetime) -> bool:
+    """
+    Check if the given date is a weekend (Saturday or Sunday).
+    
+    Args:
+        dt (str | datetime): The date to check.
+        
+    Returns:
+        bool: True if the date is a weekend, False otherwise.
+    """
+    if isinstance(dt, str):
+        dt = pd.to_datetime(dt)
+    return dt.weekday() >= 5  # Saturday is 5, Sunday is 6
+
+def assert_member_of_enum(value: Any, enum_class: Enum) -> None:
+    """
+    Assert that the given value is a member of the specified Enum class.
+    Raises a ValueError if the value is not a valid member.
+    """
+    if value not in enum_class._value2member_map_:
+        raise ValueError(f"{value} is not a valid member of {enum_class.__name__}")
+    return enum_class(value)
+
 
 
 def _ipython_shutdown(_callable):
@@ -167,6 +194,7 @@ class CustomCache(Cache):
         self.fname = fname
         self.expiry_date = (datetime.today() + relativedelta(days=expire_days)).date().strftime('%Y-%m-%d')
         self._register_location = f'{os.environ["WORK_DIR"]}/trade/helpers/clear_dirs.json'
+        self._owner_pid = os.getpid()  # <- track creator
         
         ## Avoid non path like objects
         if isinstance(log_path, (str, os.PathLike)):
@@ -321,9 +349,19 @@ class CustomCache(Cache):
             f.write(f"Cache cleared by AtExit at {datetime.now()}\n")
 
     def _on_signal(self, signum, frame):
-        self.clear()
+        # Only the creating process should handle cleanup
+        if os.getpid() != self._owner_pid:
+            return
+
+        # Do cleanup once
         self._on_exit()
-        os.kill(os.getpid(), signum)
+
+        # Prevent recursive handler calls, then re-raise the signal
+        try:
+            signal.signal(signum, signal.SIG_DFL)
+        except Exception:
+            pass
+        os.kill(os.getpid(), signum)   # default handler runs now; no recursion
 
 def str_to_bool(value: str) -> bool:
     """
@@ -1354,9 +1392,43 @@ def is_USholiday(date):
     date = pd.to_datetime(date)
     return date.date().strftime('%Y-%m-%d') in HOLIDAY_SET
 
+def not_trading_day(date: str|datetime, time_aware: bool = False) -> bool:
+    """
+    Returns True if the date is not a trading day (weekend or holiday), False otherwise
+    If time_aware is True, also checks if the time is outside of trading hours (9:30 - 16:00)
+    params:
+        date: str or datetime
+        time_aware: bool, if True, also checks if the time is outside of trading
+        hours (9:30 - 16:00)
+    returns: bool
+    """
+    conf = get_pricing_config()
+    ret_bool = not is_busday(date) or is_USholiday(date)
+    open_time = pd.Timestamp(conf['MARKET_OPEN_TIME']).time()
+    close_time = pd.Timestamp(conf['MARKET_CLOSE_TIME']).time()
+    
+    if not time_aware:
+        return ret_bool
+    
+    ## If today, check if today is 9:30 <= time <= 16:00
+    if pd.to_datetime(date).date() == datetime.today().date():
+        if open_time <= pd.to_datetime(date).time() <= close_time:
+            ret_bool = False
+        else:
+            ret_bool = True
+
+    ## Time Check only if time != 00:00:00
+    elif pd.to_datetime(date).time() != pd.Timestamp('00:00:00').time():
+        if pd.to_datetime(date).time() < open_time or pd.to_datetime(date).time() > close_time:
+            ret_bool = True
+        else:
+            ret_bool = False
+    return ret_bool
+    
+
 
 def change_to_last_busday(end, offset = 1):
-    from pandas.tseries.offsets import BDay
+
     
     #Enfore time is passed
 
