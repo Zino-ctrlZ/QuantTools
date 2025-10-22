@@ -1,8 +1,8 @@
-from datetime import datetime, date
+from datetime import date
 from enum import Enum
 import pandas as pd
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
@@ -55,7 +55,7 @@ class PositionAdjustmentReason(Enum):
    LIMIT_BREACH = 'LIMIT_BREACH'
 
 
-@dataclass
+@dataclass(frozen=True)
 class OrderData:
     """
         Represents detailed execution data for a trading order.
@@ -82,8 +82,8 @@ class OrderData:
         ... )
     """
     trade_id: str
-    long: [str]
-    short: [str]
+    long: List[str]
+    short: List[str]
     close: float
     quantity: int
 
@@ -95,13 +95,18 @@ class OrderData:
         """Set item like a dict, dict[key] = value"""
         setattr(self, key, value)
 
+    def __repr__(self):
+        """String representation of OrderData"""
+        return (f"OrderData(trade_id={self.trade_id}, quantity={self.quantity})")
+                
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
         return getattr(self, key, default)
     
     def keys(self): 
         """Return keys like a dict"""
-        return [field.name for field in self.__dataclass_fields__.values()]
+        return self.__dict__.keys()
 
     def items(self):
         """Return items like a dict"""
@@ -123,7 +128,7 @@ class OrderData:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Order:
     """
     Represents a trading order with signal information and execution data.
@@ -176,13 +181,17 @@ class Order:
         """Set item like a dict, dict[key] = value"""
         setattr(self, key, value)
 
+    def __repr__(self):
+        """String representation of Order"""
+        return (f"Order(signal_id={self.signal_id}), data={self.data})")
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
         return getattr(self, key, default)
     
     def keys(self): 
         """Return keys like a dict"""
-        return [field.name for field in self.__dataclass_fields__.values()]
+        return self.__dict__.keys()
 
     def items(self):
         """Return items like a dict"""
