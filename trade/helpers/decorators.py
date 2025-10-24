@@ -1,4 +1,8 @@
+# pylint: disable=broad-exception-caught
 import time
+import numbers
+import asyncio
+from logging import Logger
 from functools import wraps
 import inspect
 import cProfile
@@ -6,64 +10,142 @@ import pstats
 import io
 import traceback
 import pandas as pd
-import numbers
+from trade.helpers.Logging import setup_logger
+logger = setup_logger('trade.helpers.decorators')
+failed_logger = setup_logger('trade.helpers.decorators.failed')
+time_logger = setup_logger('trade.helpers.decorators.time')
 
-def log_time(logger):
+
+def log_time(logger: Logger=None):
+    """
+    Log the execution time of the decorated function.
+    Args:
+        logger: The logger instance to use for logging execution time.
+    Returns:
+        A decorator that logs execution time for the decorated function.
+    """
+
+    if logger is None:
+        logger = time_logger
+
     def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start = time.time()
-            result = func(*args, **kwargs)
-            end = time.time()
-            args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
-            logger.info(f'{func.__name__} took {end - start} seconds')
-            logger.info(f'args {args}, kwargs: {kwargs}')
-            return result
-        return wrapper
+        iscoroutine = asyncio.iscoroutinefunction(func)
+        if iscoroutine:
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                start = time.time()
+                result = await func(*args, **kwargs)
+                end = time.time()
+                args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
+                logger.info(f'{func.__name__} took {end - start} seconds')
+                logger.info(f'args {args}, kwargs: {kwargs}')
+                return result
+            return wrapper
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                start = time.time()
+                result = func(*args, **kwargs)
+                end = time.time()
+                args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
+                logger.info(f'{func.__name__} took {end - start} seconds')
+                logger.info(f'args {args}, kwargs: {kwargs}')
+                return result
+            return wrapper
     return decorator
 
 
-def log_error(logger):
+def log_error(logger: Logger=None):
+    """
+    Log errors that occur in the decorated function.
+    Args:
+        logger: The logger instance to use for logging errors.
+    Returns:
+        A decorator that logs errors for the decorated function.
+    """
+    if logger is None:
+        logger = failed_logger
+
     def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logger.error('')
-                logger.error(f'{func.__name__} raise an error: {e}', exc_info = True)
-                logger.error(f'args {args}, kwargs: {kwargs}')
-                logger.error("Traceback:\n" + traceback.format_exc())
-                raise e
-        return wrapper
-    return decorator
-
-
-
-def log_error_with_stack(logger, raise_exception=True):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logger.error('')
-                logger.error(f'{func.__name__} raise an error: {e}\n{traceback.format_exc()}', exc_info = True)
-                logger.error(f'args {args}, kwargs: {kwargs}')
-                
-                stack = inspect.stack()
-                filtered_stack = [
-                    frame.function for frame in stack
-                    if not any(excluded in frame.function for excluded in (
-                        "<", "run_", "_run", "do_execute", "execute_request", "dispatch_shell",
-                        "process_one", "dispatch_queue", "start", "launch_instance"
-                    ))
-                ]
-                call_chain = " -> ".join(filtered_stack+[func.__name__])
-                logger.error(f'Call Chain: {call_chain}')
-                if raise_exception:
+        iscoroutine = asyncio.iscoroutinefunction(func)
+        if iscoroutine:
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    logger.error(f'\n{func.__name__} raised an error: {e}', exc_info = True)
+                    logger.error(f'args {args}, kwargs: {kwargs}')
+                    logger.error("Traceback:\n" + traceback.format_exc())
                     raise e
-        return wrapper
+            return wrapper
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    logger.error(f'\n{func.__name__} raised an error: {e}', exc_info = True)
+                    logger.error(f'args {args}, kwargs: {kwargs}')
+                    logger.error("Traceback:\n" + traceback.format_exc())
+                    raise e
+            return wrapper
+    return decorator
+
+
+
+def log_error_with_stack(_func=None, *, logger=None, raise_exception=True):
+    """
+    Log errors that occur in the decorated function along with the call stack.
+    Args:
+        logger: The logger instance to use for logging errors.
+        raise_exception (bool): Whether to re-raise the exception after logging.
+    Returns:
+        A decorator that logs errors and call stack for the decorated function.
+    """
+    if logger is None:
+        logger = failed_logger
+
+    def decorator(func):
+        def _log_exception(e, args, kwargs):
+            logger.error(f'\n{func.__name__} raised an error:', exc_info=True)
+            logger.error("Traceback:\n" + traceback.format_exc())
+            logger.error(f'args {args}, kwargs: {kwargs}')
+
+            stack = inspect.stack()
+            filtered_stack = [
+                frame.function for frame in stack
+                if not any(excluded in frame.function for excluded in (
+                    "<", "run_", "_run", "do_execute", "execute_request", "dispatch_shell",
+                    "process_one", "dispatch_queue", "start", "launch_instance"
+                ))
+            ]
+            call_chain = " -> ".join(filtered_stack + [func.__name__])
+            logger.error(f'Call Chain: {call_chain}')
+            if raise_exception:
+                raise e
+
+        iscoroutine = asyncio.iscoroutinefunction(func)
+        if iscoroutine:
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    _log_exception(e, args, kwargs)
+            return wrapper
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    _log_exception(e, args, kwargs)
+            return wrapper
+
+    if _func is not None:
+        return decorator(_func)
+
     return decorator
 
 

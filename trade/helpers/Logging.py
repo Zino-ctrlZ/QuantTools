@@ -45,10 +45,20 @@ def change_logger_stream_level(logger: logging.Logger, level: int):
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(level)
 
-def setup_logger(filename,stream_log_level = None, file_log_level = None, log_file=None, remove_root = True, custom_logger_name = None):
+def get_logger_base_location() -> Path:
+    """
+    Get the base location for log files.
+    """
+    return Path(find_project_root(os.getcwd()))/"logs"
+
+def setup_logger(filename,stream_log_level = None, 
+                 file_log_level = None, 
+                 log_file=None, 
+                 remove_root = True, 
+                 custom_logger_name = None) -> logging.Logger:
 
 
-    project_root_log_dir = Path(find_project_root(os.getcwd()))/"logs"
+    project_root_log_dir = get_logger_base_location()
 
     # If custom logger name is None, use filename:
 
