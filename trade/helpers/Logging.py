@@ -128,5 +128,5 @@ def setup_logger(filename,stream_log_level = None,
     return logger
 
 
-logger = setup_logger('trade.helpers.Logging', stream_log_level = logging.INFO)
-logger.info(f'Logging Root Directory: {Path(find_project_root(os.getcwd()))/"logs"}')
+_logger = setup_logger('trade.helpers.Logging', stream_log_level = logging.INFO)
+_logger.info(f'Logging Root Directory: {Path(find_project_root(os.getcwd()))/"logs"}')

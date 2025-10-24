@@ -11,9 +11,44 @@ import io
 import traceback
 import pandas as pd
 from trade.helpers.Logging import setup_logger
-logger = setup_logger('trade.helpers.decorators')
-failed_logger = setup_logger('trade.helpers.decorators.failed')
-time_logger = setup_logger('trade.helpers.decorators.time')
+_logger = setup_logger('trade.helpers.decorators')
+time_logger = setup_logger('trade.helpers.decorators.time_logger')
+failed_logger = setup_logger('trade.helpers.decorators.failed_logger')
+
+class PrintingLogger:
+    """
+    A simple logger that prints messages to the console.
+    """
+    def __init__(self, fmt: str = None):
+        self.name = "PrintingLogger"
+        self.format = fmt or "%(asctime)s %(levelname)s: %(message)s"
+
+    
+    def info(self, msg: str, exc_info: bool = False, *args, **kwargs):
+        print(f"[INFO] {msg}")
+        if exc_info:
+            traceback.print_exc()
+
+    def warning(self, msg: str, exc_info: bool = False, *args, **kwargs):
+        print(f"[WARNING] {msg}")
+        if exc_info:
+            traceback.print_exc()
+
+    def error(self, msg: str, exc_info: bool = False, *args, **kwargs):
+        print(f"[ERROR] {msg}")
+        if exc_info:
+            traceback.print_exc()
+
+    def critical(self, msg: str, exc_info: bool = False, *args, **kwargs):
+        print(f"[CRITICAL] {msg}")
+        if exc_info:
+            traceback.print_exc()
+
+    def debug(self, msg: str, exc_info: bool = False, *args, **kwargs):
+        print(f"[DEBUG] {msg}")
+        if exc_info:
+            traceback.print_exc()
+
 
 
 def log_time(logger: Logger=None):
@@ -55,13 +90,15 @@ def log_time(logger: Logger=None):
     return decorator
 
 
-def log_error(logger: Logger=None):
+def log_error(logger: Logger=None, raise_exception=True):
     """
     Log errors that occur in the decorated function.
     Args:
         logger: The logger instance to use for logging errors.
     Returns:
         A decorator that logs errors for the decorated function.
+    
+    Notes
     """
     if logger is None:
         logger = failed_logger
@@ -77,7 +114,8 @@ def log_error(logger: Logger=None):
                     logger.error(f'\n{func.__name__} raised an error: {e}', exc_info = True)
                     logger.error(f'args {args}, kwargs: {kwargs}')
                     logger.error("Traceback:\n" + traceback.format_exc())
-                    raise e
+                    if raise_exception:
+                        raise e
             return wrapper
         else:
             @wraps(func)
@@ -94,7 +132,7 @@ def log_error(logger: Logger=None):
 
 
 
-def log_error_with_stack(_func=None, *, logger=None, raise_exception=True):
+def log_error_with_stack(logger: Logger = None, raise_exception=True):
     """
     Log errors that occur in the decorated function along with the call stack.
     Args:
@@ -103,8 +141,6 @@ def log_error_with_stack(_func=None, *, logger=None, raise_exception=True):
     Returns:
         A decorator that logs errors and call stack for the decorated function.
     """
-    if logger is None:
-        logger = failed_logger
 
     def decorator(func):
         def _log_exception(e, args, kwargs):
@@ -142,9 +178,6 @@ def log_error_with_stack(_func=None, *, logger=None, raise_exception=True):
                 except Exception as e:
                     _log_exception(e, args, kwargs)
             return wrapper
-
-    if _func is not None:
-        return decorator(_func)
 
     return decorator
 
