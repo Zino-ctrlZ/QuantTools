@@ -1,4 +1,6 @@
 from enum import Enum
+from trade.helpers.Logging import setup_logger
+logger = setup_logger('algo.strategies.fill_optimizer')
 
 ALPHA_LEVELS = {
     1: 0.25,   # very passive
@@ -73,6 +75,7 @@ def limit_price(
     raw = passive + alpha * (aggressive - passive)
 
     # 5) Tick-round
+    logger.info(f"Limit price calc: side={side}, bid={bid}, ask={ask}, level={level}, day_volume={day_volume} => tick={tick}, price={raw}")
     return round((raw / tick) * tick, 2)
 
 def calculate_slippage_basic(side: str, lmt: float, mid: float) -> float:
