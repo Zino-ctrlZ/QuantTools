@@ -2,14 +2,24 @@
 from threading import Thread
 from datetime import datetime
 import datetime as dt
+import numpy as np
+from py_vollib.black_scholes import black_scholes as bs
+from scipy.stats import norm
 from trade.assets.Stock import Stock
-from trade.helpers.helper import time_distance_helper, vanna, volga, identify_interval, optionPV_helper
+from trade.helpers.helper import (
+    time_distance_helper, 
+    vanna, 
+    volga, 
+    identify_interval, 
+    optionPV_helper, 
+    vanna_decimal, 
+    volga_decimal
+)
 from trade.helpers.Context import Context
 from trade.assets.rates import get_risk_free_rate_helper
 from typing import Union
 import pandas as pd
 from py_vollib.black_scholes_merton.greeks.numerical import delta, vega, theta, rho, gamma
-from py_vollib.black_scholes import black_scholes as bs
 from dateutil.relativedelta import relativedelta
 import numpy as np
 from trade.helpers.Logging import setup_logger
@@ -18,9 +28,6 @@ from typing import Callable
 from pandas.tseries.offsets import BDay
 from trade.helpers.types import OptionModelAttributes
 from trade.helpers.helper import get_parrallel_apply
-
-
-
 logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICAL)
 
 
@@ -32,6 +39,90 @@ logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICA
 ## TODO: Speed up RV PnL calc with Processing
 ## TODO: Add logs for attribution returning zero values
 ## TODO: No need to calculate greeks if using RV for attribution
+
+
+
+def calculate_volga(S, K, T, r, sigma, option_type, q=0,  delta_sigma=0.0001):
+    """
+    Calculates Volga (Vomma) numerically.
+
+    Args:
+        S (float): Current stock price.
+        K (float): Strike price.
+        T (float): Time to expiration (in years).
+        r (float): Risk-free interest rate.
+        sigma (float): Implied volatility.
+        option_type (str): 'c' for call, 'p' for put.
+        delta_sigma (float): Small change in volatility for numerical approximation.
+
+    Returns:
+        float: The calculated Volga.
+    """
+    vega_plus = vega(flag=option_type.lower(), S=S, K=K, t=T, r=r, sigma=sigma + delta_sigma, q=q)
+    vega_minus = vega(flag=option_type.lower(), S=S, K=K, t=T, r=r, sigma=sigma - delta_sigma, q=q)
+    volga = (vega_plus - vega_minus) / (2 * delta_sigma)
+    return volga
+
+
+def black_scholes_call_price(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = d1(S, K, T, r, sigma, q)
+    d2 = d1 - sigma * np.sqrt(T)
+    call_price = S * norm.cdf(d1) - K * np.exp(-df * T) * norm.cdf(d2)
+    return call_price
+
+def black_scholes_delta_call(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = (np.log(S / K) + (df + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    delta = norm.cdf(d1)
+    return delta
+
+def black_scholes_vega(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = (np.log(S / K) + (df + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    vega = S * norm.pdf(d1) * np.sqrt(T)
+    return vega
+
+def calculate_vanna(s, k, t, r, sigma, q, h=0.001):
+    # Vanna as the derivative of Delta with respect to Volatility
+    delta_plus_h = black_scholes_delta_call(s, k, t, r, sigma + h, q)
+    delta_minus_h = black_scholes_delta_call(s, k, t, r, sigma - h, q)
+    vanna_delta_deriv = (delta_plus_h - delta_minus_h) / (2 * h)
+
+    # Vanna as the derivative of Vega with respect to Stock Price
+    vega_plus_h = black_scholes_vega(s + h, k, t, r, sigma, q)
+    vega_minus_h = black_scholes_vega(s - h, k, t, r, sigma, q)
+    vanna_vega_deriv = (vega_plus_h - vega_minus_h) / (2 * h)
+
+    # In theory, these two should be equal for Black-Scholes
+    return vanna_vega_deriv # Or vanna_vega_deriv
+
+def d1(s, k, t, r, sigma, q):
+    return (np.log(s/k) + (r - q + 0.5*sigma**2)*t) / (sigma*np.sqrt(t))
+
+def d2(s, k, t, r, sigma, q):
+    return d1(s, k, t, r, sigma, q) - sigma*np.sqrt(t)
+
+def vanna_from_vega(s, k, t, r, sigma, flag, q=0.0):
+    """
+    """
+    if t <= 0 or sigma <= 0 or s <= 0 or k <= 0:
+        return np.nan
+    v = vega(flag=flag, S=s, K=k, t=t, r=r, sigma=sigma, q=q)
+    ## From https://en.wikipedia.org/wiki/Greeks_(finance)#Vanna
+    return (v/s) * (1 - (d1(s, k, t, r, sigma, q)/(sigma * np.sqrt(t)))) 
+
+def volga_from_vega(s, k, t, r, sigma, flag, q=0.0):
+    """
+    Volga = ∂²V/(∂σ)²
+    Uses central difference on vega to compute volga.
+    Note: volga inherits whatever scaling py_vollib uses for vega.
+    """
+    v = vega(flag=flag, S=s, K=k, t=t, r=r, sigma=sigma, q=q)
+    _d1 = d1(s, k, t, r, sigma, q)
+    _d2 = d2(s, k, t, r, sigma, q)
+    ## From https://en.wikipedia.org/wiki/Greeks_(finance)#Vanna
+    return v * _d1 * _d2 / sigma
 
 
 def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_all = False, *args, **kwargs):
@@ -618,9 +709,14 @@ class Calculate:
             t = time_distance_helper(asset.exp, asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
-                d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                # d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = vanna_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
+                # d = vanna_decimal(S= args[0], K = args[1], T= t, r = args[2], sigma = args[3], q = args[4])
             elif model == 'binomial':
-                d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                
+                # d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = vanna_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
+                # d = vanna_decimal(S= args[0], K = args[1], T= t, r = args[2], sigma = args[3], q = args[4])
             elif model == 'mcs':
                 raise NotImplementedError("Monte Carlo Simulation not implemented yet")
             else:
@@ -631,9 +727,12 @@ class Calculate:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
             if model == 'bs':
-                d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                
+                # d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = vanna_from_vega(s= S, k= K, t= t, r= r, sigma= sigma, q= y, flag= flag.lower())
             elif model == 'binomial':
-                d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                # d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = vanna_from_vega(s= S, k= K, t= t, r= r, sigma= sigma, q= y, flag= flag.lower())
             elif model == 'mcs':
                 raise NotImplementedError("Monte Carlo Simulation not implemented yet")
             else:
@@ -666,18 +765,20 @@ class Calculate:
             t = time_distance_helper(asset.exp, asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
-                d = volga(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = volga_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
             elif model == 'binomial':
-                d = volga(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = volga_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
             if model == 'bs':
-                d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                # d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = volga_from_vega(s= S, k = K, t = t, r = r, sigma = sigma, q = y, flag= flag.lower())
             elif model == 'binomial':
-                d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                # d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = volga_from_vega(s= S, k = K, t = t, r = r, sigma = sigma, q = y, flag= flag.lower())
             elif model == 'mcs':
                 raise NotImplementedError("Monte Carlo Simulation not implemented yet")
             else:
@@ -860,11 +961,9 @@ class Calculate:
                 }
                 return greeks
             except Exception as e:
-                
-                logger.info('')
-                logger.info('Calculate.greeks raised this error')
-                logger.info(e,exc_info=True)
-                logger.info(f'Kwargs:{kwargs}')
+                logger.error('\nCalculate.greeks raised this error')
+                logger.error(e,exc_info=True)
+                logger.error(f'Kwargs:{kwargs}')
                 if isinstance(e, (AssertionError, NotImplementedError)):
                     raise e
                 return {'Delta': 0, 'Gamma': 0, 'Vega': 0, 'Theta': 0, 'Rho': 0, 'Vanna': 0, 'Volga':0}
