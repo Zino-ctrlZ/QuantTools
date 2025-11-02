@@ -19,7 +19,7 @@ num_workers = int(os.environ.get('NUM_WORKERS', str(cpu_count())).strip())
 
 
 
-def _change_global_stream_level(level: int):
+def _change_global_stream_level(level: str | int):
     """
     Change the global logger stream level.
     """

@@ -1,5 +1,7 @@
 ## To-Do: Switch Binomial Pricing to Leisen-Reimer Formulas
 import inspect
+import QuantLib as ql
+from datetime import datetime
 import time
 import os
 import backoff
@@ -1002,11 +1004,28 @@ def vanna(S, K, r, T, sigma, flag, q):
     return vanna
 
 
+def phi(x):
+    return norm.pdf(x)
 
-import QuantLib as ql
-from datetime import datetime
+def N(x):
+    return norm.cdf(x)
 
+def d1(S,K,r,T,sigma,q):
+    return (np.log(S/K) + (r - q + 0.5*sigma**2)*T) / (sigma*np.sqrt(T))
 
+def d2(S,K,r,T,sigma,q):
+    return d1(S,K,r,T,sigma,q) - sigma*np.sqrt(T)
+
+def vega_decimal(S,K,r,T,sigma,q):
+    return S*np.exp(-q*T)*phi(d1(S,K,r,T,sigma,q))*np.sqrt(T)
+
+def volga_decimal(S,K,r,T,sigma,q):
+    d_1 = d1(S,K,r,T,sigma,q); d_2 = d2(S,K,r,T,sigma,q)
+    return vega_decimal(S,K,r,T,sigma,q) * d_1 * d_2 / sigma
+
+def vanna_decimal(S,K,r,T,sigma,q):
+    d_1 = d1(S,K,r,T,sigma,q); d_2 = d2(S,K,r,T,sigma,q)
+    return np.exp(-q*T)*phi(d_1) * (-d_2) / sigma
 
 
 def optionPV_helper(
