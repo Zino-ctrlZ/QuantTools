@@ -66,6 +66,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
         self.events = events
         self.max_slippage_pct = max_slippage_pct
+        self.min_slippage_pct = max_slippage_pct / 2 # Minimum slippage is half of max slippage
         self.commission_rate = commission_rate
         
     def execute_order_naively(self, order_event: OrderEvent):
@@ -97,10 +98,10 @@ class SimulatedExecutionHandler(ExecutionHandler):
         ## Slippage improvement
         if order_event.direction == 'BUY':
             ## We want to increase the price for buys by slippage
-            slippage_pct = np.random.uniform(self.max_slippage_pct * 0.25, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
+            slippage_pct = np.random.uniform(self.min_slippage_pct, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
         elif order_event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
-            slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.max_slippage_pct * 0.25)
+            slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.min_slippage_pct) ## Ensure that slippage is always negative, and never 0 or less than -max_slippage_pct
         
         #slippage may increase or decrease intended price
         price = order_event.position['close'] * (1 + slippage_pct)          

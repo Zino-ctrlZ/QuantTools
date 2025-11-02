@@ -246,7 +246,11 @@ class OptionSignalPortfolio(Portfolio):
     def max_contract_price(self, max_contract_price):
         if isinstance(max_contract_price, int):
             max_contract_price = {s: max_contract_price for s in self.symbol_list}
-        assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
+        
+        for s in max_contract_price.keys():
+            if max_contract_price[s] > self.allocated_cash_map[s]:
+                raise ValueError(f'max_contract_price for {s} cannot be greater than allocated cash of {self.allocated_cash_map[s]}')
+        # assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
         self.__max_contract_price = deepcopy(max_contract_price)
         
 

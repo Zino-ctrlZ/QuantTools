@@ -225,7 +225,6 @@ def create_trade_id(legs: Dict[str, Any]) -> str:
 
 def extract_order(obj):
     order = {}
-    pack=obj[0] ## This is because raw order is just a [1dict]
 
     ## If no contracts found, return early
     if not obj:
@@ -233,6 +232,7 @@ def extract_order(obj):
         order['data'] = None
         return order
     
+    pack=obj[0] ## This is because raw order is just a [1dict]
     ## If contracts found, build the order
     order['result'] = ResultsEnum.SUCCESSFUL.value
     order['data'] = {"trade_id": "", 

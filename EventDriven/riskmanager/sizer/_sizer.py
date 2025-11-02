@@ -406,7 +406,8 @@ class ZscoreRVolSizer(BaseSizer):
             assert isinstance(kwargs['underlier_list'], list) and len(kwargs['underlier_list']) > 0, "underlier_list must be a non-empty list."
             self.underlier_list = kwargs['underlier_list']
         else:
-            self.underlier_list = []
+            logger.critical("ZscoreRVolSizer: underlier_list will be derived from the portfolio's allocated cash map keys.")
+            self.underlier_list = list(self.pm.allocated_cash_map.keys())
 
         self.__rvol_window = rvol_window
         self.__rolling_window = rolling_window

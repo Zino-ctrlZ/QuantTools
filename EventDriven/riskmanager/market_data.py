@@ -3,6 +3,7 @@ Responsible for loading and managing market timeseries data for equities, includ
 Utilizes OpenBB for data retrieval and supports additional data processing through user-defined callables.
 """
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Literal, Optional
 import pandas as pd
@@ -18,7 +19,10 @@ logger = setup_logger('EventDriven.riskmanager.market_data')
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals
 
-OPTION_TIMESERIES_START_DATE = '2017-01-01'
+OPTION_TIMESERIES_START_DATE: str|datetime = '2017-01-01'
+Y1_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=1)).strftime('%Y-%m-%d')
+Y2_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=2)).strftime('%Y-%m-%d')
+Y3_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=3)).strftime('%Y-%m-%d')
 TIMESERIES: Optional['MarketTimeseries'] = None
 
 

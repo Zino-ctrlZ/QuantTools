@@ -691,6 +691,7 @@ class RiskManager:
         self.id_meta = {}
         self.t_plus_n = t_plus_n ## T+N settlement for the orders, default is 0, meaning no settlement delay. Orders will be placed on the same day.
         self.max_slippage = 0.25
+        self.min_slippage = 0.16
         self.executor = executor
         self.re_update_on_roll = False ## If True, the limits will be re-evaluated on roll events. Default is False
         self.unadjusted_signals = unadjusted_signals ## Unadjusted signals for the risk manager, used for analysis and actions
@@ -821,6 +822,7 @@ Quanitity Sizing Type: {self.sizing_type}
             """
         print(msg)
         
+    @log_error_with_stack(logger)
     @log_time(time_logger)
     def get_order(self, *args, **kwargs):
         """
@@ -990,6 +992,10 @@ Quanitity Sizing Type: {self.sizing_type}
         else:
             logger.warning(f"Spread Ratio not available for position {position_id}, using default max slippage of {self.max_slippage}")
             self.executor.max_slippage_pct = self.max_slippage
+
+        ## Overriding to risk_manager set for now
+        self.executor.min_slippage_pct = self.min_slippage
+        self.executor.max_slippage_pct = self.max_slippage
     
     def update_order_close(self, position_id:str, date:str|datetime, order:dict)-> dict:
         """

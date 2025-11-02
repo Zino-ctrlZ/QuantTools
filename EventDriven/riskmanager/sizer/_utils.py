@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Literal, ClassVar
 import pandas as pd
 from EventDriven.riskmanager.utils import logger
-from ..market_data import get_timeseries_obj, OPTION_TIMESERIES_START_DATE
+from ..market_data import get_timeseries_obj, Y2_LAGGED_START_DATE
+
 
 
 def default_delta_limit(
@@ -163,7 +164,7 @@ class ZcoreScalar:
         return rvol_window
     
     def __repr__(self) -> str:
-        return f"ZcoreScalar(rvol_window={self.rvol_window}, syms={self.syms}"
+        return f"ZcoreScalar(rvol_window={self.rvol_window}, syms={self.syms})"
     
     def load_scalers(self, syms: list = None, force=False) -> None:
         """
@@ -214,7 +215,7 @@ class ZcoreScalar:
         ## Load timeseries for each symbol and calculate the z-score scaler
         for sym in syms:
             timeseries.load_timeseries(sym=sym, 
-                                       start_date=OPTION_TIMESERIES_START_DATE,
+                                       start_date=Y2_LAGGED_START_DATE,
                                        end_date=datetime.now(),
                                        interval=self.interval)
             

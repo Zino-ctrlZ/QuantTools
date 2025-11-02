@@ -1,3 +1,6 @@
+Todo Todo:
+    ☐ Review this file and cut down useless tasks
+
 Whole Codebase Routine:
     ☐ Add a Step by step guide to build env
     ☐ Build file/setup_env.py to set up the environment
@@ -8,95 +11,107 @@ Whole Codebase Routine:
         - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
         - Another Suggestion: Find a way to run a python script that directly appends to cron
 
-Portfolio File:
+EventDriven:
+    ☐ There should be global configs to be used across all modules/clsses. This should print out the values set and the values that are defaulted.
+    Portfolio File:
 
-    Long Term:
-        ☐ Implement buy on Open, Bid, Ask.
+        Long Term:
+            ☐ Implement buy on Open, Bid, Ask.
+            ☐ Getting divYield to have a max retries to factor in sporadic errors 
+            ☐ Add rebalancing
+            ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
+            ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
+            ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
+            ☐ Stop Loss, Scaling in & Out, Trailing Stop
+            ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
+            ☐ Handle the Exercise Properly
+            ☐ Hedging 
+            ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
+            ☐ Seperate whole get_order process to allow easy injection into backtest
+            ☐ For missing value, use intrinsic value are price
+            ☐ add a setter for roll_map & min_acceptable_dte_threshold:
+                - min_acceptable_dte_threshold cannot be less than roll_map
+                - Error message `min_acceptable_dte_threshold cannot be less than roll_map, this avoids placing a roll the same day as opening a trade`
+            ☐ Make trades dataframe multiindex, use the trade_id as the first index and sell quantity as the second index
+            ☐ Perform Reduced sell. 
+            ☐ Allow multiple positions for a single ticker and factor in resizing.
+            ☐ Execute order proxy: This produces the exact data of executing and ordeer and returns it. if less than 0, we reduce the quantity and try again.
+            ☐ Create basic Hedge Class with Calculate hedge ratio. (Should have an open & close method.)
+            ☐ Make Positions an object
+            ☐ Make PTBacktest cross-sectional or write a new one that is cross-sectional
+        
+    EventScheduler:
+        ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
+
+    Risk Manager:
+        ☐ Switch to using SlugConfig and StratConfiguration to build configs for backtest
+            - Use init_config load to extend to _SlugConfig with the aim of simplifying config management.
+        ☐ Go back to the order picking logic saved in .scheduling
+        ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
+        ☐ Get Close From Chain, with bulk
+        ☐ Improve speed of rm
+        ☐ Add RM Print Statement
+        ☐ Add Portfolio Print Statement
+        ☐ Implement The Bool for Analyze Position
+        ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
+        ☐ Get Close From Chain, with bulk
+        ☐ Improve speed of rm
+        ☐ Add RM Print Statement
+        ☐ Add Portfolio Print Statement
+        ☐ Implement The Bool for Analyze Position
+        ☐ Enforce scenario limits
+        ☐ Extend risk manager to enforce moneyness spread btwn contracts
+        ☐ Return none if no order found 
+        ☐ Handle Stop loss.
+        ☐ Scaling in
+        ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
+        ☐ (Consider) Add Vega, Gamma, Delta limits?
+        ☐ In add a min size filter
+        ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
+        ☐ Start using function from positions.analyze._analyze to ensure consistency
+        ☐ Start using functions from get_order to ensure consistency
+        ☐ Use SlugConfig and StratConfiguration to build configs for backtest
+        ☐ Seperate OrderPicker from RiskManager.base
+
+    General:
+        ☐ Switch to config classes for all
+        ☐ Implement buy on Open.
+        ☐ Add days lag and `trade_on`
         ☐ Getting divYield to have a max retries to factor in sporadic errors 
+        ☐ Enforce typedDicts for functions
         ☐ Add rebalancing
+        ☐ Implement enum for signal types, order types & event types
         ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
         ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
         ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
-        ☐ Stop Loss, Scaling in & Out, Trailing Stop
-        ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-        ☐ Handle the Exercise Properly
-        ☐ Hedging 
-        ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
-        ☐ Seperate whole get_order process to allow easy injection into backtest
-        ☐ For missing value, use intrinsic value are price
-        ☐ add a setter for roll_map & min_acceptable_dte_threshold:
-            - min_acceptable_dte_threshold cannot be less than roll_map
-            - Error message `min_acceptable_dte_threshold cannot be less than roll_map, this avoids placing a roll the same day as opening a trade`
-        ☐ Make trades dataframe multiindex, use the trade_id as the first index and sell quantity as the second index
-        ☐ Perform Reduced sell. 
-        ☐ Allow multiple positions for a single ticker and factor in resizing.
-        ☐ Execute order proxy: This produces the exact data of executing and ordeer and returns it. if less than 0, we reduce the quantity and try again.
-        ☐ Create basic Hedge Class with Calculate hedge ratio. (Should have an open & close method.)
-        ☐ Make Positions an object
-        ☐ Make PTBacktest cross-sectional or write a new one that is cross-sectional
-      
-EventScheduler:
-    ☐ For exercise, check if theres a lose on the same day, if there is, do not add exercise to queue, implement this check in the puts function
 
-Risk Manager:
-    ☐ Switch to using SlugConfig and StratConfiguration to build configs for backtest
-        - Use init_config load to extend to _SlugConfig with the aim of simplifying config management.
-    ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
-    ☐ Get Close From Chain, with bulk
-    ☐ Improve speed of rm
-    ☐ Add RM Print Statement
-    ☐ Add Portfolio Print Statement
-    ☐ Implement The Bool for Analyze Position
-    ☐ Switch to Bulk Orders (Use THreads to call OI & EOD Orders At the same time)
-    ☐ Get Close From Chain, with bulk
-    ☐ Improve speed of rm
-    ☐ Add RM Print Statement
-    ☐ Add Portfolio Print Statement
-    ☐ Implement The Bool for Analyze Position
-    ☐ Enforce scenario limits
-    ☐ Extend risk manager to enforce moneyness spread btwn contracts
-    ☐ Return none if no order found 
-    ☐ Handle Stop loss.
-    ☐ Scaling in
-    ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-    ☐ (Consider) Add Vega, Gamma, Delta limits?
-    ☐ In add a min size filter
-    ☐ (NEW) Save orders (Risk manager responsibility, can save the result of each order easily too )
-    ☐ Start using function from positions.analyze._analyze to ensure consistency
-    ☐ Start using functions from get_order to ensure consistency
-    ☐ Use SlugConfig and StratConfiguration to build configs for backtest
-    ☐ Seperate OrderPicker from RiskManager.base
+    Others:
+        ☐ Populate Rates database with 5/8 & 5/9
+        ☐ Add update daily routine to risk manager:
+            ☐ Total Greeks
+            ☐ PnL Attribution
+            ☐ Slide Profile (Vol & Spot)
+            ☐ Maybe VaR
+        ☐ Create a way to refresh intraday rates at hourly intervals
+    Additional Portfolio Attributes:
+        - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
+        - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
 
-General:
-    ☐ Implement buy on Open.
-    ☐ Add days lag and `trade_on`
-    ☐ Getting divYield to have a max retries to factor in sporadic errors 
-    ☐ Enforce typedDicts for functions
-    ☐ Add rebalancing
-    ☐ Implement enum for signal types, order types & event types
-    ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
-    ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
-    ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
+    Feb 10, 2025 updates: 
+        ☐ After fixing the above, push to main branch and focus on optimization for optionSignalBacktest 
 
-Additional Portfolio Attributes:
-    - Max spend: Max amount to spend on a single trade per symbol. Eg if AAPL Cash is 2000 & Max spend is .75, then max spend is 1500 on trades
-    - Quantity factor: When filtering for orders, we use a max close price to determine the order. If quantity factor is 4, that means we'd want to buy 4 contracts/spreads. Therefore, max close is available trading cash divided by 4.
+    List Contracts:
+        ☐ Should return error for no dates
 
-Feb 10, 2025 updates: 
-    ☐ After fixing the above, push to main branch and focus on optimization for optionSignalBacktest 
+    Backtest:
+        ☐ Re-run walkforward
+        ☐ Write doctrsing and type hint:
+            - WFA Codes
+            - Even b
+            - PTBacktester
 
-List Contracts:
-    ☐ Should return error for no dates
-
-Backtest:
-    ☐ Re-run walkforward
-    ☐ Write doctrsing and type hint:
-        - WFA Codes
-        - Even b
-        - PTBacktester
-
-Zino Convo 5/31/25:
-    - Add mkdir to custom cache
+    Zino Convo 5/31/25:
+        - Add mkdir to custom cache
 
 General:
 
@@ -241,6 +256,8 @@ Modules:
         ☐ Verify forward interpolation is correct with ChatGPT
         ☐ Slides calculation:
             - Spot, Vol, Pnl & Greeks
+        ☐ Add Vanna greeks
+        ☐ Once ready, move all functions/models to use binomial vol
 
     General:
         ☐ Change the timeseries in Stock Module to intraday (Alpha Vantage)
@@ -248,6 +265,7 @@ Modules:
         ☐ Add interest rate pricing choice to env, and vol surface tables as a column
         ☐ Scrape this site to get bool of stock splits: https://companiesmarketcap.com/nvidia/stock-splits/
         ☐ Optimize is_USHoliday to use a dictionary
+        ☐ Use TFP-Algo .pylintrc for every project
 
 
 
@@ -321,6 +339,10 @@ Modules:
     Calculate:
         ☐ Find a way to do attribution on passed data instead of API data
         ☐ Why GB method producing large Unexpected PnL
+        ☐ Switch to folder format
+        ☐ Implement FRV pnl
+            ☐ Implement skew pnl (ATM->Vega, Skew->ATM-At Strike)
+            ☐ 
 
 Knowledge:
     ☐ Getting Implied Vol Surface
@@ -329,14 +351,7 @@ Knowledge:
 Repo Presentation:
     ☐ Write a Sample
     
-Others:
-    ☐ Populate Rates database with 5/8 & 5/9
-    ☐ Add update daily routine to risk manager:
-        ☐ Total Greeks
-        ☐ PnL Attribution
-        ☐ Slide Profile (Vol & Spot)
-        ☐ Maybe VaR
-    ☐ Create a way to refresh intraday rates at hourly intervals
+
 
 Vol Surface Plan:
     ☐ First create two tables. Thetadat vols & calculated vols
