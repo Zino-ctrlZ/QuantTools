@@ -1,8 +1,5 @@
-import math
-from copy import deepcopy
 from typing import Callable, Dict, Union
 import numpy as np
-import pandas as pd
 from ...config.defaults import DAILY_BASIS
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('trade.optionlib.greeks.numerical.finite_diff')
@@ -55,7 +52,7 @@ def finite_diff_second_order_vec(x: str, price_func, params: dict, dx_thresh=0.0
     if x == 'T':
         dx = 1 / DAILY_BASIS
     else:
-        # dx = float(params[x]) * dx_thresh  # Ensure dx is float
+        # dx = float(params[x]) * dx_thresh  # Ensure dx is float # NOSONAR
         dx = (params[x]) * dx_thresh  # Ensure dx is float
 
     def to_float_copy(val):
