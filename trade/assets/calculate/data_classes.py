@@ -20,6 +20,8 @@ class TradePnlInfo:
     tmin0_close: float
     tmin1_close: float
     position_effect: PositionEffect
+    quantity: float = Field(default=1.0)
+    position_entry_price: float = Field(default=0.0)
     trade_pnl: Optional[float] = None
 
     def calculate_trade_pnl(self) -> float:
@@ -33,15 +35,15 @@ class TradePnlInfo:
             ## If it is an open position, trade pnl is T-1 close - entry price
             ## We're using this because the original attribution function calculates DoD
             ## T-1 Close - Entry Price adjustment is equivalent to Entry Price - T-0 Close for T-0 pnl
-            self.trade_pnl = (self.tmin1_close - self.position_effect_close)
+            self.trade_pnl = (self.tmin1_close - self.position_effect_close) * self.quantity
 
         elif self.position_effect == PositionEffect.CLOSE:
-            ## If it is a close position, trade pnl is position effect close - T-0 close
-            ## We're using this because the original attribution function calculates DoD
-            ## Exit Price - T-0 Close adjustment is equivalent to T-1 Close - Exit Price for T-0 pnl
-            self.trade_pnl = self.position_effect_close - self.tmin0_close
+            ## If it is a close position, trade pnl is position effect close - position_entry_price
+            ## This reflects the actual realized pnl on closing the position
+            self.trade_pnl = (self.position_effect_close - self.position_entry_price) * self.quantity
         else:
             raise ValueError("Invalid Position Effect")
+        # self.trade_pnl = 
         return self.trade_pnl
     
     def __repr__(self) -> str:

@@ -4,10 +4,11 @@ from trade.assets.calculate.data_classes import TradePnlInfo
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('trade.assets.calculate.adjustments')
 
+
+## Decomission for now - will reintroduce later
 def trade_pnl_adjustment(
     attribution_table: pd.DataFrame,
-    entry_info: List[TradePnlInfo],
-    scale_qty: float = 1.0
+    entry_info: List[TradePnlInfo]
 ):
     """
     Adjust the attribution table for trade PnL.
@@ -23,7 +24,7 @@ def trade_pnl_adjustment(
         attribution_table['trade_pnl_adjustment'] = 0.0
 
     for info in entry_info:
-        trade_pnl = info.calculate_trade_pnl() * scale_qty
+        trade_pnl = info.calculate_trade_pnl()
         effect_date = info.effect_date
 
         # Update the attribution table
