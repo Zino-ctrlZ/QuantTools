@@ -2,31 +2,127 @@
 from threading import Thread
 from datetime import datetime
 import datetime as dt
+import numpy as np
+from py_vollib.black_scholes import black_scholes as bs
+from scipy.stats import norm
 from trade.assets.Stock import Stock
-from trade.helpers.helper import time_distance_helper, vanna, volga, identify_interval, optionPV_helper
+from trade.helpers.helper import (
+    time_distance_helper, 
+    vanna, 
+    volga, 
+    identify_interval, 
+    optionPV_helper, 
+    vanna_decimal, 
+    volga_decimal
+)
 from trade.helpers.Context import Context
 from trade.assets.rates import get_risk_free_rate_helper
 from typing import Union
 import pandas as pd
 from py_vollib.black_scholes_merton.greeks.numerical import delta, vega, theta, rho, gamma
-from py_vollib.black_scholes import black_scholes as bs
 from dateutil.relativedelta import relativedelta
 import numpy as np
 from trade.helpers.Logging import setup_logger
 import logging
 from typing import Callable
+from pandas.tseries.offsets import BDay
+from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper import get_parrallel_apply
+logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICAL)
 
-logger = setup_logger('Calculate.py', stream_log_level=logging.CRITICAL)
+
+## TODO, recalculate the pv with the new vol values
+## TODO, add replace option. Either to fill close with midpoint, use only close or use only midpoint
+## TODO: Add volga, vanna, dividend attribution to GB
+## TODO: Streamline GB attribution columns with RV
+## TODO: Find a way to return data fill for GB
+## TODO: Speed up RV PnL calc with Processing
+## TODO: Add logs for attribution returning zero values
+## TODO: No need to calculate greeks if using RV for attribution
 
 
-## To-Do, recalculate the pv with the new vol values
-## Todo, add replace option. Either to fill close with midpoint, use only close or use only midpoint
-## To-Do: Add volga, vanna, dividend attribution to GB
-## To-Do: Streamline GB attribution columns with RV
-## To-Do: Find a way to return data fill for GB
-## To-Do: Speed up RV PnL calc with Processing
-## To-Do: Add logs for attribution returning zero values
 
+def calculate_volga(S, K, T, r, sigma, option_type, q=0,  delta_sigma=0.0001):
+    """
+    Calculates Volga (Vomma) numerically.
+
+    Args:
+        S (float): Current stock price.
+        K (float): Strike price.
+        T (float): Time to expiration (in years).
+        r (float): Risk-free interest rate.
+        sigma (float): Implied volatility.
+        option_type (str): 'c' for call, 'p' for put.
+        delta_sigma (float): Small change in volatility for numerical approximation.
+
+    Returns:
+        float: The calculated Volga.
+    """
+    vega_plus = vega(flag=option_type.lower(), S=S, K=K, t=T, r=r, sigma=sigma + delta_sigma, q=q)
+    vega_minus = vega(flag=option_type.lower(), S=S, K=K, t=T, r=r, sigma=sigma - delta_sigma, q=q)
+    volga = (vega_plus - vega_minus) / (2 * delta_sigma)
+    return volga
+
+
+def black_scholes_call_price(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = d1(S, K, T, r, sigma, q)
+    d2 = d1 - sigma * np.sqrt(T)
+    call_price = S * norm.cdf(d1) - K * np.exp(-df * T) * norm.cdf(d2)
+    return call_price
+
+def black_scholes_delta_call(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = (np.log(S / K) + (df + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    delta = norm.cdf(d1)
+    return delta
+
+def black_scholes_vega(S, K, T, r, sigma, q):
+    df = r - q
+    d1 = (np.log(S / K) + (df + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    vega = S * norm.pdf(d1) * np.sqrt(T)
+    return vega
+
+def calculate_vanna(s, k, t, r, sigma, q, h=0.001):
+    # Vanna as the derivative of Delta with respect to Volatility
+    delta_plus_h = black_scholes_delta_call(s, k, t, r, sigma + h, q)
+    delta_minus_h = black_scholes_delta_call(s, k, t, r, sigma - h, q)
+    vanna_delta_deriv = (delta_plus_h - delta_minus_h) / (2 * h)
+
+    # Vanna as the derivative of Vega with respect to Stock Price
+    vega_plus_h = black_scholes_vega(s + h, k, t, r, sigma, q)
+    vega_minus_h = black_scholes_vega(s - h, k, t, r, sigma, q)
+    vanna_vega_deriv = (vega_plus_h - vega_minus_h) / (2 * h)
+
+    # In theory, these two should be equal for Black-Scholes
+    return vanna_vega_deriv # Or vanna_vega_deriv
+
+def d1(s, k, t, r, sigma, q):
+    return (np.log(s/k) + (r - q + 0.5*sigma**2)*t) / (sigma*np.sqrt(t))
+
+def d2(s, k, t, r, sigma, q):
+    return d1(s, k, t, r, sigma, q) - sigma*np.sqrt(t)
+
+def vanna_from_vega(s, k, t, r, sigma, flag, q=0.0):
+    """
+    """
+    if t <= 0 or sigma <= 0 or s <= 0 or k <= 0:
+        return np.nan
+    v = vega(flag=flag, S=s, K=k, t=t, r=r, sigma=sigma, q=q)
+    ## From https://en.wikipedia.org/wiki/Greeks_(finance)#Vanna
+    return (v/s) * (1 - (d1(s, k, t, r, sigma, q)/(sigma * np.sqrt(t)))) 
+
+def volga_from_vega(s, k, t, r, sigma, flag, q=0.0):
+    """
+    Volga = ∂²V/(∂σ)²
+    Uses central difference on vega to compute volga.
+    Note: volga inherits whatever scaling py_vollib uses for vega.
+    """
+    v = vega(flag=flag, S=s, K=k, t=t, r=r, sigma=sigma, q=q)
+    _d1 = d1(s, k, t, r, sigma, q)
+    _d2 = d2(s, k, t, r, sigma, q)
+    ## From https://en.wikipedia.org/wiki/Greeks_(finance)#Vanna
+    return v * _d1 * _d2 / sigma
 
 
 def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_all = False, *args, **kwargs):
@@ -38,12 +134,13 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
     assert hasattr(Calculate, func.__name__), f"Function {func.__name__} not a member of {Calculate}"
     assert func.__name__ in alllowable_func, f"Function {func.__name__} not allowed for this operation"
     structure_dict = {'long': [], 'short': []}
-
+    return_both_data = False
     def get_func_values(leg, leg_name, *args, **kwargs):
         values = []
         with Context():
             for l in leg: 
-                assert isinstance(l, Option), "Leg must be an Option object"
+                assert isinstance(l, Option) or l.__class__.__name__ == 'Option', "Leg must be an Option object"
+
                 if leg_name == 'long':
                     values.append(func(l, *args, **kwargs))
                 else:
@@ -55,8 +152,8 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
     short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func.__name__}_long')
     long_leg_thread.start()
     short_leg_thread.start()
-    long_leg_thread.join()
-    short_leg_thread.join()
+    long_leg_thread.join(timeout = 3 * 60)
+    short_leg_thread.join(timeout = 3 * 60)
 
     ## Quick fix for pct_spot_slides, Need underlier_spot_slides column to NOT be summed
     
@@ -76,7 +173,10 @@ def PatchedCalculateFunc( func: Callable, long_leg = [], short_leg = [], return_
         structure_dict['total']['underlier_spot_slides'] = underlier_series
 
     else:
-        structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
+        if return_both_data:
+            structure_dict['total'] = sum([x[1] for x in structure_dict['long']]) + sum([x[1] for x in structure_dict['short']])
+        else:
+            structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
 
 
 
@@ -170,8 +270,7 @@ class Calculate:
         else:
             if asset.__class__.__name__ == 'Stock':
                 raise Exception("Stock can't be priced with options model. This method isn't utilized for a Stock Instance")
-            #elif isinstance(self.asset, Option):
-                ###pass variables from here to the variables to be used
+            
             if isinstance(asset, Option):
                     if K is None:
                         K = asset.K
@@ -180,7 +279,7 @@ class Calculate:
                     if sigma is None:
                         sigma = asset.sigma
                     if S0 is None:
-                        S0 = asset.S0
+                        S0 = asset.unadjusted_S0
                     if y is None:
                         y = asset.y
                     if put_call is None:
@@ -245,14 +344,14 @@ class Calculate:
         
         elif asset.__class__.__name__ == 'Option':
 
-            k = asset.K
-            exp_date = asset.exp
-            sigma = asset.sigma
-            s0 = asset.S0
-            y = asset.y
-            put_call = asset.put_call
-            r = asset.rf_rate
-            start = asset.end_date
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
             modelType = 'option'
             return Calculate.scenario_helper('spot', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
@@ -286,7 +385,6 @@ class Calculate:
         from trade.assets.Option import Option
         from trade.assets.OptionStructure import OptionStructure
 
-
         if asset is None:
             assert asset_type is not None, f'asset_type needed'
             assert asset_type.lower() in ['stock', 'option'], f'Invalid asset_type, expected "stock" or "option", recieved "{asset_type}"'
@@ -311,21 +409,21 @@ class Calculate:
                     
         elif isinstance(asset, Stock):
             raise TypeError('Cannot Calculate vol shocks for Stock')
-        elif isinstance(asset, Option):
-            k = asset.K
-            exp_date = asset.exp
-            sigma = asset.sigma
-            s0 = asset.S0
-            y = asset.y
-            put_call = asset.put_call
-            r = asset.rf_rate
-            start = asset.end_date
+        elif isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
             modelType = 'option'
             return Calculate.scenario_helper('vol', pct_spot, K = k,
                             S0=s0, exp_date=exp_date, sigma = sigma, y = y, put_call=put_call,
                             r = r, start = start, modelType = modelType, greeks_to_calc = greeks_to_calc).set_index('shocks')
 
-        elif isinstance(asset, OptionStructure):
+        elif isinstance(asset, OptionStructure) or asset.__class__.__name__ == 'OptionStructure':
             return_all = kwargs.get('return_all', False)
             return PatchedCalculateFunc(Calculate.pct_vol_slides, 
                                         long_leg = asset.long, 
@@ -333,7 +431,90 @@ class Calculate:
                                         return_all = return_all, 
                                         pct_spot = pct_spot, 
                                         greeks_to_calc = greeks_to_calc)
+        else:
+            raise TypeError(f'Invalid Asset Type. Recieved {asset}')
+
+    @staticmethod
+    def spot_vol_grid(asset = None, 
+                      vol_pct=[-0.05, -0.02, -0.01, 0, +0.01, +0.02, +0.05], 
+                      spot_pct=[0.8, 0.9, 0.95, 1, 1.05, 1.1, 1.2],
+                      greek_enum = 'pv',
+                      **kwargs):
+        """
+        Calculates a grid of spot and vol shocks
+        Returns a dataframe containing both PnL and price post shock
+        Parameters:
+        vol_pct_spot = An iterable with vol shocks
+        spot_pct_spot = An iterable with price shocks
+        **kwargs = Keyword arguments as seen in Calculate.PV()
+                For asset_type == 'stock' kwargs is S0
+                    
+        """
+        parrallel_apply_func = get_parrallel_apply()
+        if asset is None:
+            k = kwargs['K']
+            exp_date = kwargs['exp_date']
+            sigma = kwargs['sigma']
+            s0 = kwargs['S0']
+            put_call = kwargs['put_call']
+            r = kwargs['r']
+            y = kwargs['y']
+            start = kwargs['start']
+            modelType = 'option'
+        else:
+            assert asset.__class__.__name__ == 'Option', f'Invalid asset type, expected Option, recieved {asset.__class__.__name__}'
+            k = getattr(asset, OptionModelAttributes.K.value)
+            exp_date = getattr(asset, OptionModelAttributes.exp_date.value)
+            sigma = getattr(asset, OptionModelAttributes.sigma.value)
+            s0 = getattr(asset, OptionModelAttributes.S0.value)
+            y = getattr(asset, OptionModelAttributes.y.value)
+            put_call = getattr(asset, OptionModelAttributes.put_call.value)
+            r = getattr(asset, OptionModelAttributes.r.value)
+            start = getattr(asset, OptionModelAttributes.start.value)
+
+        def spot_vol_helper(spot_shock, vol_shock, greek_enum):
+            if greek_enum not in ['pv', 'delta', 'gamma', 'vega', 'rho', 'theta', 'vanna', 'volga','pnl']:
+                raise TypeError(f'Invalid greek_enum, expected one of ["pv", "delta", "gamma", "vega", "rho", "theta", "vanna", "volga"], recieved {greek_enum}')
             
+
+            if greek_enum == 'pnl':
+                fn = Calculate.pv
+            else:
+                fn = getattr(Calculate, greek_enum)
+            shocked_spot = spot_shock * s0
+            shocked_vol = sigma + vol_shock
+
+            ## Calculate shocked value
+            if greek_enum in ['pv', 'pnl']:
+                shocked_value = fn(K = k, exp_date = exp_date, sigma = shocked_vol, S0 = shocked_spot,
+                                            put_call = put_call, r =r, y = y, start = start)
+            else:
+                shocked_value = fn(K = k, exp = exp_date, sigma = shocked_vol, S = shocked_spot,
+                                    flag = put_call, r =r,start = start, y = y)
+            
+            ## Calculate base value for Pnl and set value to shocked - base
+            if greek_enum == 'pnl':
+                # print(f"Calculating PnL for spot shock {spot_shock} and vol shock {vol_shock}")
+                # print(f"k={k}, exp_date={exp_date}, sigma={sigma}, S0={s0}, put_call={put_call}, r={r}, y={y}, start={start}")
+                pv = fn(K = k, exp_date = exp_date, sigma = sigma, S0 = s0,
+                                        put_call = put_call, r =r, y = y, start = start)
+                value = shocked_value - pv
+                # print(f"Base PV: {pv}, Shocked PV: {shocked_value}, PnL: {value}")
+
+            ## Else just return shocked value
+            else: 
+                value = shocked_value
+            return value
+        
+        
+        ## Create dataframe
+        spv = pd.DataFrame(index = sorted(vol_pct), columns = sorted(spot_pct))
+        for v in vol_pct:
+            for s in spot_pct:
+                spv.loc[v, s] = spot_vol_helper(s, v, greek_enum)
+        spv.index.name = 'vol_shock'
+        spv.columns.name = 'spot_shock'
+        return spv
                                 
             
     @staticmethod
@@ -342,6 +523,7 @@ class Calculate:
         scenario_helper should return a dataframe with shocks as index
         This is a multi-purpose scenario calculator. It calculates the scenario for different shocks
         """
+        
         modelType = kwargs['modelType']
         if modelType == 'option':
             k = kwargs['K']
@@ -408,29 +590,50 @@ class Calculate:
 
 
     @staticmethod
-    def delta(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def delta(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
         
         """
         Returns the Delta of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
             
-            # print(f"Delta Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = delta(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            if model == 'bs':
+                d = delta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            elif model == 'binomial':
+                d = delta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
+            if sigma == 0:
+                logger.error("Sigma cannot be 0")
+                logger.error(f"Kwargs: {locals()}")
+                return 0.0
+            
+            if sigma == 0:
+                raise ValueError("Sigma cannot be 0")
             t = time_distance_helper(exp, start)
-            d = delta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                d = delta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'binomial':
+                d = delta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
             d = float(d)
             return float(d)
         else:
@@ -438,28 +641,45 @@ class Calculate:
 
 
     @staticmethod
-    def vega(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def vega(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
         Returns the Vega of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
             
-            # print(f"Vega Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
+
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = vega(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            if model == 'bs':
+                d = vega(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            elif model == 'binomial':
+                d = vega(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
-            d = vega(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                d = vega(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'binomial':
+                d = vega(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
+            
             d = float(d)
             return float(d)
         else:
@@ -468,110 +688,191 @@ class Calculate:
 
 
     @staticmethod
-    def vanna(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def vanna(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
-        Returns the Vanna of an option
+        Returns the vanna of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
  
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = vanna(flag = asset.put_call.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            if model == 'bs':
+                # d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = vanna_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
+                # d = vanna_decimal(S= args[0], K = args[1], T= t, r = args[2], sigma = args[3], q = args[4])
+            elif model == 'binomial':
+                
+                # d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+                d = vanna_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
+                # d = vanna_decimal(S= args[0], K = args[1], T= t, r = args[2], sigma = args[3], q = args[4])
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
-            d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                
+                # d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = vanna_from_vega(s= S, k= K, t= t, r= r, sigma= sigma, q= y, flag= flag.lower())
+            elif model == 'binomial':
+                # d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = vanna_from_vega(s= S, k= K, t= t, r= r, sigma= sigma, q= y, flag= flag.lower())
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
             d = float(d)
             return float(d)
         else:
             raise Exception(f"Vanna cannot be Calculated for {asset} type")
 
     @staticmethod
-    def volga(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def volga(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
-        Returns the Volga of an option
+        Returns the volga of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
             
-            # print(f"Volga Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
+    
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = volga(flag = asset.put_call.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
+            flag = getattr(asset, OptionModelAttributes.put_call.value)
+            if model == 'bs':
+                d = volga_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
+            elif model == 'binomial':
+                d = volga_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
-            d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                # d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = volga_from_vega(s= S, k = K, t = t, r = r, sigma = sigma, q = y, flag= flag.lower())
+            elif model == 'binomial':
+                # d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
+                d = volga_from_vega(s= S, k = K, t = t, r = r, sigma = sigma, q = y, flag= flag.lower())
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
             d = float(d)
             return float(d)
         else:
             raise Exception(f"Volga cannot be Calculated for {asset} type")
 
     @staticmethod
-    def gamma(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def gamma(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
-        Returns the Gamma of an option
+        Returns the gamma of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
             
-            # print(f"Gamma Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = gamma(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            if model == 'bs':
+                d = gamma(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            elif model == 'binomial':
+                d = gamma(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
+            if sigma == 0:
+                logger.error("Sigma cannot be 0")
+                logger.error(f"Kwargs: {locals()}")
+                return 0.0
+            
             t = time_distance_helper(exp, start)
-            d = gamma(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                d = gamma(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'binomial':
+                d = gamma(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'mcs':
+                raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+            else:
+                raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
+
             d = float(d)
             return float(d)
         else:
             raise Exception(f"Gamma cannot be Calculated for {asset} type")
     
     @staticmethod
-    def theta(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def theta(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
-        Returns the Theta of an option
+        Returns the theta of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if model =='mcs':
+            raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+        elif model not in ['bs', 'binomial']:
+            raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
+        
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
-            
-            # print(f"Theta Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = theta(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            if model == 'bs':
+                d = theta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            elif model == 'binomial':
+                d = theta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
-            d = theta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                d = theta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'binomial':
+                d = theta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             d = float(d)
             return float(d)
         else:
@@ -579,72 +880,92 @@ class Calculate:
 
 
     @staticmethod
-    def rho(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def rho(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
+        
         """
-        Returns the Rho of an option
+        Returns the rho of an option
         """
         from trade.assets.Option import Option
-        if isinstance(asset, Option):
-            args = [S, K, r, sigma, y]
-            args_str  = ['S0', 'K', 'rf_rate', 'sigma', 'y']
+        if model =='mcs':
+            raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+        elif model not in ['bs', 'binomial']:
+            raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
+        
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
+            args = [S, K, r, sigma, y, model]
+            args_str = [OptionModelAttributes.S0.value, 
+                        OptionModelAttributes.K.value, 
+                        OptionModelAttributes.r.value, 
+                        OptionModelAttributes.sigma.value, 
+                        OptionModelAttributes.y.value,
+                        'model']
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-                    #print(str(args_str[i]) + ": "+ str(args[i]))
-            
-            # print(f"Rho Vals: Start = {start}, Spot = {args[0]}, K = {args[1]}, r = {args[2]} sigma = {args[3]} ")
             t = time_distance_helper(asset.exp, asset.end_date)
-            d = rho(flag = asset.put_call.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            if model == 'bs':
+                d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
+            elif model == 'binomial':
+                d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             return d
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
             t = time_distance_helper(exp, start)
-            d = rho(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            if model == 'bs':
+                d = rho(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
+            elif model == 'binomial':
+                d = rho(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             d = float(d)
             return float(d)
         else:
             raise Exception(f"Rho cannot be Calculated for {asset} type")
 
     @staticmethod
-    def greeks(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None):
+    def greeks(asset = None, S = None, K = None, r = None, sigma = None, start = None, flag = None, exp = None, y = None, model = 'bs'):
 
         """
         Returns all the greeks of an option as dictionary
         """
         from trade.assets.Option import Option
         kwargs = locals()
-        if isinstance(asset, Option):
+        if model =='mcs':
+            raise NotImplementedError("Monte Carlo Simulation not implemented yet")
+        elif model not in ['bs', 'binomial']:
+            raise ValueError(f"Invalid Model Type, recieved {model}, expected 'bs', 'binomial' or 'mcs'")
+        if isinstance(asset, Option) or asset.__class__.__name__ == 'Option':
             try:
-                greeks = {'Delta': Calculate.delta(asset, S =S, K = K, r = r, sigma = sigma, start = start),
-                'Gamma': Calculate.gamma(asset, S =S, K = K, r = r, sigma = sigma, start = start),
-                'Vega': Calculate.vega(asset, S =S, K = K, r = r, sigma = sigma, start = start),
-                'Theta': Calculate.theta(asset, S =S, K = K, r = r, sigma = sigma, start = start) if Calculate.theta(asset, S =S, K = K, r = r, sigma = sigma, start = start) is not None else 0,
-                'Rho': Calculate.rho(asset, S =S, K = K, r = r, sigma = sigma, start = start),
-                'Vanna':Calculate.vanna(asset, S =S, K = K, r = r, sigma = sigma, start = start),
-                'Volga':Calculate.volga(asset, S =S, K = K, r = r, sigma = sigma, start = start)
+                greeks = {'Delta': Calculate.delta(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model),
+                'Gamma': Calculate.gamma(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model),
+                'Vega': Calculate.vega(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model),
+                'Theta': Calculate.theta(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model) if Calculate.theta(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model) is not None else 0,
+                'Rho': Calculate.rho(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model),
+                'Vanna':Calculate.vanna(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model),
+                'Volga':Calculate.volga(asset, S =S, K = K, r = r, sigma = sigma, start = start, model = model)
                 }
                 return greeks
                 
-            except:
+            except Exception as e:
+                print(e)
                 return {'Delta': 0.0, 'Gamma': 0.0, 'Vega': 0.0, 'Theta': 0.0, 'Rho': 0.0, 'Vanna': 0.0, 'Volga': 0.0}
             
         elif asset == None:
             try:
-                greeks = {'Delta': Calculate.delta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y),
-                'Gamma': Calculate.gamma(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y),
-                'Vega': Calculate.vega(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y),
-                'Theta': Calculate.theta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y) if Calculate.theta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y) is not None else 0,
-                'Rho': Calculate.rho(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y),
-                'Vanna':Calculate.vanna(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y),
-                'Volga':Calculate.volga(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y)
+                greeks = {'Delta': Calculate.delta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model),
+                'Gamma': Calculate.gamma(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model),
+                'Vega': Calculate.vega(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model),
+                'Theta': Calculate.theta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model) if Calculate.theta(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model) is not None else 0,
+                'Rho': Calculate.rho(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model),
+                'Vanna':Calculate.vanna(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model),
+                'Volga':Calculate.volga(S =S, K = K, r = r, sigma = sigma, start = start, flag = flag, exp = exp, y = y, model=model)
                 }
                 return greeks
             except Exception as e:
-                logger.info('')
-                logger.info('Calculate.greeks raised this error')
-                logger.info(e,exc_info=True)
-                logger.info(f'Kwargs:{kwargs}')
+                logger.error('\nCalculate.greeks raised this error')
+                logger.error(e,exc_info=True)
+                logger.error(f'Kwargs:{kwargs}')
+                if isinstance(e, (AssertionError, NotImplementedError)):
+                    raise e
                 return {'Delta': 0, 'Gamma': 0, 'Vega': 0, 'Theta': 0, 'Rho': 0, 'Vanna': 0, 'Volga':0}
         else:
             raise Exception(
@@ -682,13 +1003,13 @@ class Calculate:
 
         #GET OPTION TIMESERIES
         today = datetime.today()
-        start = ts_start if ts_start is not None else today - relativedelta(months=6)
-        end = ts_end if ts_end is not None else today
+        ## Dates to allow ffill
+        ts_start = ts_start if ts_start else asset.start_date
+        ts_end = ts_end if ts_end else asset.end_date
+        start = pd.to_datetime(ts_start) - BDay(2)
+        end = pd.to_datetime(ts_end) + BDay(2)
         if asset.__class__.__name__ == 'Option':
-
-
-
-
+    
             ## Designate the columns to be used
             vol_col = ['Bs_iv' if asset.model == 'bsm' else 'Binomial_iv']
             if asset.default_fill:
@@ -698,8 +1019,8 @@ class Calculate:
             greeks_col = ['Delta', 'Gamma', 'Vega', 'Theta', 'Rho', 'Vanna', 'Volga']
 
             ## GET OPTION TIMESERIES
-            spot_ts = asset.spot(ts_start= ts_start, 
-                                ts_end = ts_end,
+            spot_ts = asset.spot(ts_start= start, 
+                                ts_end = end,
                                 ts_timeframe= ts_timeframe,
                                 ts_timewidth= ts_timewidth,
                                 ts = True)[spot_col]
@@ -716,35 +1037,33 @@ class Calculate:
                 close_fill_mask = pd.Series([True]*len(full_data), index = full_data.index)
             else:
                 raise Exception(f"Invalid replace option. Expected 'partial', 'close', 'default_fill', recieved {replace}")
-            
+
             ## Fill missing data + Rename columns to Option_Close
             full_data.rename(columns = {'Close': 'Option_Close'}, inplace = True)
             full_data.loc[close_fill_mask, 'Option_Close'] = full_data.loc[close_fill_mask, asset.default_fill.capitalize()]
 
+
             ## Get Vol Timeseries
-            vol = asset.vol(ts_start= ts_start, 
-                                ts_end = ts_end,
+            vol = asset.vol(ts_start= start, 
+                                ts_end = end,
                                 ts_timeframe= ts_timeframe,
                                 ts_timewidth= ts_timewidth,
                                 ts = True)[vol_col]
             full_data[vol_col] = vol
-
             ## Fill missing Vol data
             full_data.loc[close_fill_mask, vol_col[0]] = full_data.loc[close_fill_mask, vol_col[1]]
 
             ## Fixing the vol values that are 0 with a fill forward
 
-            ## To-Do, recalculate the pv with the new vol values
+            ## TODO, recalculate the pv with the new vol values
             full_data[vol_col] = full_data[vol_col].replace(0.0, np.nan)
             full_data[vol_col] = full_data[vol_col].ffill()
-            
-            
 
-            
             # # GET STOCK TIMESERIES
             stock_ts = asset.asset.spot(ts = True,
-                                        ts_start = ts_start, ts_end = ts_end, ts_timewidth = ts_timewidth,
-                                        ts_timeframe= ts_timeframe)
+                                        ts_start = start, ts_end = end, ts_timewidth = ts_timewidth,
+                                        ts_timeframe= ts_timeframe,
+                                        spot_type = OptionModelAttributes.spot_type.value)
             stock_ts.rename(columns = {x: x.capitalize() for x in stock_ts.columns}, inplace = True)
             full_data['Stock_Close'] = stock_ts[['Close']]
             full_data.ffill(inplace = True)
@@ -766,49 +1085,57 @@ class Calculate:
             full_data['Option_Close_Change_Mark'] = full_data['Option_Close'] - full_data['Option_Close'].shift(1)
             full_data[[f'{x}_Change_Percent' for x in spot_col_2+['Stock_Close']] ] = full_data[spot_col_2+['Stock_Close']].pct_change()
             full_data[['RF_rate_Change_Mark']] = full_data[['RF_rate']] - full_data[['RF_rate']].shift(periods = 1)
-
-            ## ADD GREEKS. Make sure it is previous timestamp greeks
-            greeks = asset.greeks(ts_start= ts_start, 
-                                ts_end = ts_end,
-                                ts_timeframe= ts_timeframe,
-                                ts_timewidth= ts_timewidth,
-                                greek_type='greeks')
-            ## Fill missing greeks
-            greek_replace_col = [f'{asset.default_fill.capitalize()}_{greek.lower()}' for greek in greeks_col]
-            for index,replace_col in enumerate(greek_replace_col):
-                greeks.loc[close_fill_mask, greeks_col[index]] = greeks.loc[close_fill_mask, replace_col]
-
-            full_data = full_data.join(greeks.shift(1))
-            full_data.reset_index(inplace = True)
-            ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
-            full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
-            full_data.dropna(inplace = True)
-
+            
 
             if method == "GB":
+
+                ## ADD GREEKS. Make sure it is previous timestamp greeks
+                greeks = asset.greeks(ts_start= start, 
+                                    ts_end = end,
+                                    ts_timeframe= ts_timeframe,
+                                    ts_timewidth= ts_timewidth,
+                                    greek_type='greeks')
+                ## Fill missing greeks
+                greek_replace_col = [f'{asset.default_fill.capitalize()}_{greek.lower()}' for greek in greeks_col]
+                greeks = greeks[greeks.index.isin(full_data.index)]
+                for index,replace_col in enumerate(greek_replace_col):
+                    greeks.loc[close_fill_mask, greeks_col[index]] = greeks.loc[close_fill_mask, replace_col]
+                full_data = full_data.join(greeks.shift(1))
+                full_data.reset_index(inplace = True)
+                ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
+                full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
+
+
+
                 PnL_Data = pd.DataFrame(index = full_data.index)
-                
                 PnL_Data['Delta_PnL'] = (full_data['Delta']*100)*full_data['Stock_Close_Change_Mark']
                 PnL_Data['Gamma_PnL'] = (full_data['Gamma']*100)*((full_data['Stock_Close_Change_Mark'])**2)*0.5
                 PnL_Data['Vega_PnL'] = (full_data['Vega']*100)*full_data['Vol_Change_Mark'] * 100
                 PnL_Data['Theta_PnL'] = (full_data['Theta']*100) * full_data['total_seconds']
                 PnL_Data['Rho_PnL'] = (full_data['Rho']*100)*full_data['RF_rate_Change_Mark'] * 100
-                PnL_Data['Total'] = PnL_Data.sum(axis = 1)
+                PnL_Data['Volga_PnL'] = (full_data['Volga']*100)*((full_data['Vol_Change_Mark'])**2)
+                PnL_Data['Vanna_PnL'] = (full_data['Vanna']*100)*full_data['Stock_Close_Change_Mark']*full_data['Vol_Change_Mark']
+                PnL_Data['Total_PnL'] = PnL_Data.sum(axis = 1)
                 PnL_Data['Datetime'] = full_data['Datetime']
                 PnL_Data['Option_Close_Change_percent'] = full_data['Option_Close_Change_Percent']
                 PnL_Data['Stock_Close_Change_percent'] = full_data['Stock_Close_Change_Percent']
                 PnL_Data['Option_Close_Change_Mark'] = full_data['Option_Close_Change_Mark']*100
                 PnL_Data['Vol_Change_Diff'] = full_data['Vol_Change_Mark']   
-                PnL_Data['Unexplained'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total']
+                PnL_Data['Unexplained_PnL'] = PnL_Data['Option_Close_Change_Mark'] - PnL_Data['Total_PnL']
                 PnL_Data['Price'] = full_data['Option_Close']*100
                 PnL_Data['DATA_FILL'] = full_data['DATA_FILL']
                 PnL_Data.set_index('Datetime', inplace = True)
-                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL', 'Rho_PnL', 'Total', 'Unexplained', 'Option_Close_Change_Mark','Price' ]]
+                PnL_Data = PnL_Data[['Delta_PnL', 'Gamma_PnL', 'Theta_PnL', 'Vega_PnL','Volga_PnL', 'Vanna_PnL', 'Rho_PnL', 'Total_PnL', 'Unexplained_PnL', 'Option_Close_Change_Mark','Price' ]]
                 PnL_Data.rename(columns= {'Option_Close_Change_Mark': 'Actual_PnL'}, inplace = True)
-
+                PnL_Data = PnL_Data[(PnL_Data.index >= ts_start) & (PnL_Data.index <= ts_end)]
+                full_data = full_data[(full_data['Datetime'] >= ts_start) & (full_data['Datetime'] <= ts_end)]
+            
             elif method == "RV":
-                # full_data.reset_index(inplace = True)
+                full_data.reset_index(inplace = True)
+                ## Convert date/time change to seconds, then to days. This is most useful for intraday theta PnL
+                full_data['total_seconds'] = (full_data['Datetime']-full_data['Datetime'].shift(1)).dt.total_seconds()/(24*60*60)
                 full_data['prev_day_Datetime'] = full_data.Datetime.shift(1)
+
                 full_data.dropna(inplace = True)
                 PnL_Data = full_data.apply(lambda x: fullRevalPnL(
                                                                     {'S0': x['prev_day_Stock_Close'],
@@ -825,6 +1152,9 @@ class Calculate:
                                                                      'y' : asset.y, 'price' : x['Option_Close']})
                     , axis = 1, result_type = 'expand')
                 PnL_Data.set_index('Datetime', inplace = True)
+                PnL_Data.index = pd.to_datetime(PnL_Data.index)
+                full_data = full_data[(full_data['Datetime'] >= ts_start) & (full_data['Datetime'] <= ts_end)]
+                PnL_Data = PnL_Data[(PnL_Data.index >= ts_start) & (PnL_Data.index <= ts_end)]
         
         elif asset.__class__.__name__ == 'OptionStructure':
             return_all = kwargs.get('return_all', False)
@@ -890,9 +1220,6 @@ def fullRevalPnL(
     S0_bump_pnl = S0_pv_bump - pv0
     delta_pnl = (S1 - S0) * S0_bump_pnl * 1000000
     gamma_pnl = spot_change_pnl - delta_pnl
-    # print(f"Price0: {pv0}, Pv1: {pv1}, S0_pv_bump: {S0_pv_bump}, Spot Change PV: {spot_change_pv}")
-    # print(f"Spot Change PnL: {spot_change_pnl}, Spot Bump PnL: {S0_bump_pnl:.9f}")
-    # print(f'Delta PnL: {delta_pnl:.5f}, Gamma PnL: {gamma_pnl:.5f}')
 
 
     ## Vega PnL
@@ -909,40 +1236,24 @@ def fullRevalPnL(
     vega_pnl = (sigma1 - sigma0) * sigma_bump_pnl * 1/bump
     volga_pnl = sigma_change_pnl - vega_pnl
     vanna_pnl = sigma_plus_spot_pnl - delta_pnl - vega_pnl - gamma_pnl - volga_pnl
-    # print('')
-    # print(f'PV0: {pv0}, PV1: {pv1}')
-    # print(f"Sigm0: {sigma0}, Sigma1: {sigma1}, sigma0_pv_bump: {sigma0_pv_bump}, Sigma Change PV: {sigma_change_pv}")
-    # print(f"PnL from Sigma bump: {sigma_bump_pnl:.9f}, Sigma Change PnL: {sigma_change_pnl:.9f}")
-    # print(f'Vega PnL: {vega_pnl:.5f}, Volgamma PnL: {volga_pnl:.5f}')
-    # print(f'Vanna PnL: {vanna_pnl:.5f}')
-    # print(f'Vega Change: {sigma1 - sigma0}')
   
     ## Theta PnL
     pv0
     pv0_tplus1 = Calculate.pv(S0 = S0, K = K, r = r0, sigma = sigma0, start = end, put_call = put_call, exp_date = exp, y = y0)
-    theta_pnl = pv0_tplus1 - pv0
-    # print('')
-    # print(f'Theta PnL: {theta_pnl:.5f}')
+    theta_pnl = pv0_tplus1
 
     ## Rho PnL
     rho_tplus1 = Calculate.pv(S0 = S0, K = K, r = r1, sigma = sigma0, start = start, put_call = put_call, exp_date = exp, y = y0)
-    rho_pnl = rho_tplus1 - pv0
-    # print('')
-    # print(f'Rho PnL: {rho_pnl:.5f}')
+    rho_pnl = rho_tplus1
 
     ## Dividend PnL
     div_tplus1 = Calculate.pv(S0 = S0, K = K, r = r0, sigma = sigma0, start = start, put_call = put_call, exp_date = exp, y = y1)
-    div_pnl = div_tplus1 - pv0
-    # print('')
-    # print(f'Dividend PnL: {div_pnl:.5f}')
+    div_pnl = div_tplus1
 
     ## Total PnL
-    total_pnl = delta_pnl + gamma_pnl + vega_pnl + volga_pnl + theta_pnl + rho_pnl + vanna_pnl + div_pnl
-    # print('')
-    # print(f'Total PnL: {total_pnl:.5f}')
-    # print(f'Actual PnL: {pv1-pv0}')
-    # print(f'Unexplained PnL: {(pv1-pv0) - total_pnl}')
-
+    total_pnl = delta_pnl + gamma_pnl + vega_pnl + volga_pnl + theta_pnl + rho_pnl + vanna_pnl + d
+    pnl = pv1-pv0
+    pnl = price1 - price0
     return {'Delta_PnL': delta_pnl*100, 
             'Gamma_PnL': gamma_pnl* 100, 
             'Vega_PnL': vega_pnl*100, 
@@ -952,7 +1263,7 @@ def fullRevalPnL(
             'Vanna_PnL': vanna_pnl*100, 
             'Dividend_PnL': div_pnl*100, 
             'Total_PnL': total_pnl*100, 
-            'Unexplained_PnL': ((pv1-pv0)*100) - total_pnl*100, 
-            'Actual_PnL': ((pv1-pv0)*100), 
+            'Unexplained_PnL': ((pnl)*100) - total_pnl*100, 
+            'Actual_PnL': (pnl*100), 
             'Datetime': end,
-            'Price': pv0*100}
+            'Price': price1*100}

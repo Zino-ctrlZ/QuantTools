@@ -1,11 +1,9 @@
 import sys, os
 from dotenv import load_dotenv
-sys.path.extend([os.environ['WORK_DIR'], os.environ['DBASE_DIR']])
 from trade.assets.Option import Option
 import pandas as pd
 from datetime import datetime
 import numpy as np
-# from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
 from trade.helpers.Context import Context
@@ -13,10 +11,11 @@ from trade.assets.Option import Option
 from dateutil.relativedelta import relativedelta
 import yfinance as yf
 from threading import Thread
-from trade.helpers.helper import generate_option_tick, identify_interval
+from trade.helpers.helper import generate_option_tick_new, identify_interval
 
 structures = ['CallVertical', 'PutVertical', 'SyntheticForward', 'RiskReversal', 'Strangle', 'Straddle']
 
+##Add Naked Call, Naked Put
 def validate_leg(leg):
     assert isinstance(leg, list), "Leg must be a list of dictionaries"
     for opt in leg:
@@ -308,8 +307,8 @@ def PatchedOptionFunc( func_name: str, long_leg = [], short_leg = [], return_all
     short_leg_thread = Thread(target=get_func_values, args=(short_leg, 'short', *args), kwargs=kwargs, name = f'{func_name}_long')
     long_leg_thread.start()
     short_leg_thread.start()
-    long_leg_thread.join()
-    short_leg_thread.join()
+    long_leg_thread.join(timeout=2*60)
+    short_leg_thread.join(timeout=2*60)
     structure_dict['total'] = sum(structure_dict['long']) + sum(structure_dict['short'])
 
 
@@ -324,6 +323,15 @@ class OptionStructure:
     ## Will not be implementing singleton
 
     def __init__(self, structure, **kwargs):
+
+        """
+        Sample Strucutre:
+            sample = {
+                'long': [{'strike': 175.0, 'expiration': '2025-03-21', 'underlier': 'AAPL', 'right': 'c'},],
+                'short': [{'strike': 200.0, 'expiration': '2025-03-21', 'underlier': 'AAPL', 'right': 'p'},],
+            }
+        
+        """
         assert isinstance(structure, dict), "Structure must be a dictionary"
         assert only_one_underlier(structure), "Only one underlier is allowed"
         self.base_structure = structure
@@ -346,6 +354,7 @@ class OptionStructure:
         self.default_fill = kwargs.get('default_fill', 'midpoint')
         self.__sigma = None
         self.__pv = None
+        self.run_chain = kwargs.get('run_chain', False)
         self._init_structure()
         self.pv_set_thread = Thread(target=self.__set_pv, name = f'{self.ticker}_PV_Setter')
         self.sigma_set_thread = Thread(target=self.__set_sigma, name = f'{self.ticker}_Sigma_Setter')
@@ -411,8 +420,7 @@ class OptionStructure:
             legs_list = []
             legs_positions = self.base_structure[direction]
             for pos in legs_positions:
-                # with Context(end_date = self.end_date):
-                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right']))
+                legs_list.append(Option(pos['underlier'], pos['strike'], pos['expiration'], pos['right'], run_chain = self.run_chain, default_fill=self.default_fill))
                 self.asset = legs_list[0].asset
             setattr(self, direction, legs_list)
             self.Structure[direction] = legs_list

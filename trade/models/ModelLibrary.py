@@ -4,8 +4,6 @@ import math
 from scipy.stats import norm
 from dotenv import load_dotenv
 load_dotenv()
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger("ModelLibrary.py")
@@ -34,10 +32,7 @@ class ModelLibrary:
             
             # Compute model implied volatility using SVI-JW
             svijw_iv = (ModelLibrary.TotalVarSVIJW(S0, K[i], T[i], *params) / T[i])**0.5
-            # w = (1/(1+(np.log(K[i]/S0)**2 * alpha)))
             w = abs(1/(median_iv*100 - IV_[i]*100))
-            # print(w, K[i])
-            # Add the squared error
             MSE_IV += (svijw_iv - IV_[i])**2 #* w
         # Return the mean squared error
         return (MSE_IV / len(T))
@@ -77,7 +72,6 @@ class ModelLibrary:
         sigma = alpha * m
         a = v_tilde * t - b * sigma * np.sqrt(1 - rho**2)
         if (m == 0): sigma = (w - a) / b
-        # print(a, b, rho, sigma, m)
         return (a, b, rho, sigma, m )
     
     @staticmethod
@@ -116,8 +110,6 @@ class ModelLibrary:
         sigma = alpha * m
         a = v_tilde * t - b * sigma * np.sqrt(1 - rho**2)
         if (m == 0): sigma = (w - a) / b
-        # print(locals())
-        # print(v, psi, p, c, v_tilde)
         return (a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2)))
     
     # Black Scholes Call Price
@@ -188,6 +180,5 @@ class ModelLibrary:
         """
         k = np.log(K / S0)
         v = np.sqrt((a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))) / T)
-        # print(locals())
         return v
 

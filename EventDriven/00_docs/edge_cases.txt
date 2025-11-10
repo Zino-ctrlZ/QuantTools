@@ -1,0 +1,34 @@
+1: Roll and Close coinciding on same day. This places a roll before the actual sell signal. ROLL -> SELL. Which turns to, SELL -> SELL (First part of Roll) -> BUY
+Syntax:
+
+Trade  = 8	7	559	709	294.176019	320.299988	182.867782	0.088804	2021-03-23	2021-10-25	216	META
+
+EVB Params:
+evb_backtest.portfolio.initial_capital
+w_map = {x: w  * 0.85 for x, w in weights.items()} ## 75% of the weights for each stock
+evb_backtest.portfolio.weight_map = w_map
+evb_backtest.portfolio.weight_map
+evb_backtest.portfolio.risk_manager.OrderPicker.liquidity_threshold = 50
+evb_backtest.portfolio.risk_manager.OrderPicker.lookback = 10
+evb_backtest.portfolio.risk_manager.OrderPicker.data_availability_threshold = 0.5
+evb_backtest.portfolio.order_settings = {'type': 'naked',
+ 'specifics': [{'direction': 'long',
+   'rel_strike': .85,
+   'dte': 365,
+   'moneyness_width': 0.10},
+   {'direction': 'short',
+  'rel_strike': .80,
+  'dte': 365,
+  'moneyness_width': 0.10}
+],
+ 'name': 'vertical_spread'}
+
+
+evb_backtest.portfolio.max_contract_price = max_cash
+evb_backtest.executor.commission_rate = 0.65/100
+evb_backtest.portfolio.min_moneyness_threshold = 5
+evb_backtest.executor.max_slippage_pct = 0.075
+evb_backtest.portfolio.roll_map = 90
+evb_backtest.portfolio.moneyness_width_factor = .025
+evb_backtest.portfolio.dte_reduction_factor = 30
+evb_backtest.portfolio.min_acceptable_dte_threshold = 95

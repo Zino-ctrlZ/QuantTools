@@ -1,0 +1,2 @@
+obb.equity.price.historical intradauy (5min) does not return 16:00 timestamp, we will be resampling the last timestamp and ffill
+    - Will be fixing this directly in the retrieve_timeseries function to propagate

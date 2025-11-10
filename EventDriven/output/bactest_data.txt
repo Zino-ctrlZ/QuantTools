@@ -1,0 +1,38 @@
+         291176502 function calls (264139354 primitive calls) in 826.490 seconds
+
+   Ordered by: cumulative time
+   List reduced from 2981 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.000    0.000  826.504  413.252 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/IPython/core/interactiveshell.py:3541(run_code)
+        2    0.000    0.000  826.504  413.252 {built-in method builtins.exec}
+        1    0.000    0.000  826.504  826.504 /var/folders/j0/80hkbygd4lb27h9mw76gqzpw0000gn/T/ipykernel_43067/2161208997.py:1(<module>)
+        1    0.051    0.051  826.504  826.504 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/backtest.py:37(run)
+       62    0.001    0.000  664.107   10.711 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:270(update_signal)
+       62    0.012    0.000  664.102   10.711 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/portfolio.py:224(generate_order_new)
+    57/31    0.005    0.000  663.957   21.418 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/decorators.py:36(wrapper)
+       31    0.018    0.001  663.259   21.395 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:369(get_order)
+       31    0.006    0.000  346.795   11.187 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:281(produce_order_candidates)
+       61    0.033    0.001  346.789    5.685 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/riskmanager.py:149(chain_details)
+      400    0.122    0.000  243.027    0.608 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/helper.py:692(change_to_last_busday)
+      400    0.023    0.000  240.548    0.601 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/helper.py:680(is_USholiday)
+      400    0.016    0.000  239.325    0.598 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/calendars/nyse.py:1276(valid_days)
+      400    0.005    0.000  238.947    0.597 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/market_calendar.py:570(valid_days)
+      400   28.608    0.072  238.737    0.597 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas_market_calendars/market_calendar.py:553(holidays)
+      477    0.014    0.000  209.417    0.439 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:500(request)
+      433    0.018    0.000  207.544    0.479 /Users/chiemelienwanisobi/cloned_repos/FinanceDatabase/dbase/DataAPI/ThetaData.py:34(request_from_proxy)
+      433    0.009    0.000  207.508    0.479 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/api.py:14(request)
+      477    0.036    0.000  206.959    0.434 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/sessions.py:673(send)
+      477    0.019    0.000  196.730    0.412 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/requests/adapters.py:613(send)
+      477    0.019    0.000  196.187    0.411 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:594(urlopen)
+      477    0.020    0.000  195.996    0.411 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/urllib3/connectionpool.py:379(_make_request)
+     3137    0.031    0.000  193.569    0.062 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/socket.py:704(readinto)
+    22831  193.425    0.008  193.425    0.008 {method 'acquire' of '_thread.lock' objects}
+     3499    0.046    0.000  193.257    0.055 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:295(wait)
+     2956  191.850    0.065  191.850    0.065 {method 'recv_into' of '_socket.socket' objects}
+     2499    0.031    0.000  190.015    0.076 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/concurrent/futures/_base.py:428(result)
+      400    0.028    0.000  186.528    0.466 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas/tseries/holiday.py:443(holidays)
+      400    0.175    0.000  185.286    0.463 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas/tseries/holiday.py:476(<listcomp>)
+    11600    0.875    0.000  185.111    0.016 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pandas/tseries/holiday.py:249(dates)
+
+

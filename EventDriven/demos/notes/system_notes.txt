@@ -1,0 +1,23 @@
+- Due to added skips:
+    - In real trading, since we can't close position on close price, we will opt for close to close price.
+    - This will lead to event discrepancy in situations where "close-eod" price doesn't generate a skip, but eod price generates a skip bool.
+
+- Adding checks for ExitDate in RiskManager.analyze_position isn't lookahead bias.
+    - This is because we are first checking if position is meant to be closed. If yes, no analysis need. Close takes priority
+    - Since we are checking for this bool on a day to day basis. The underlying assumption is we are carrying out this operation on each specific day.
+    - In cases where t_plus_n is set to 1, we get a roll on ExitDate - 1, and placed for ExitDate, the roll will still enter queue. We need to enforce priortization at signal level
+
+- Considering adding `change_to_last_busday` with offset shifting forward in shifting EntryTime & ExitTime. This is for two reasons:
+    1. Our idea is to get signal on T-1 close, and open Option on T close. If T is a holiday, we skip. This could be handled by RiskManager
+    2. Because our trades dataframe follows a yearly interval, the final day to close all trades will usually be 12/31 on the Signals, but adding t_plus_n makes it 01/01 which is a holiday. Portfolio by default moves the trade to the next day
+       But event scheduler creates the daily queue based on min EntryTime & max ExitTime, max ExitTime being 01/01. To avoid `outside date range error`, solution is to shift forward by business day
+
+- Exit Date used in RiskManager:
+    - We are opting to use unadjusted t_plus_n date for risk manager when evaluating current date is and/or after exit signal date.
+    - This isn't look ahead because the trades dataframe acts as a signal dataframe. Therefore in real life. If we got Exit on T, even though we place trades on T+1, we stop evaluating on T not T+1
+
+- Conflict with contract search:
+    - There are situations when the current option chain isn't as enriched enough. This leads to picking an option that is above the max_moneyness limit. 
+    - This then creates a persistent roll situation. A situation where the only spread that works is already in the money and leads to continous rolls.
+
+- Might need to build a new stock backtest engine

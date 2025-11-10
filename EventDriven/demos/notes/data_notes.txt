@@ -1,0 +1,23 @@
+Per leg data cleans by ffilling 0 values
+Trade data adds skips based on 5 criteria's:
+    - Rolling Z-Score of absolute value
+    - Rolling Z-score of 1day change
+    - Median Absolute Deviation band
+    - abs 50% change in first n {window} days
+    - Zero values
+Skips are used to skip a trade on a specific date
+Splits:
+    - Position Data is labeled with pre-split option ID
+    - Leg Data is labeled with post splits.
+
+Limits Calculation: Eg Spot 3326.0198974609375, Cash 1095.4378642132353
+    - This yields a limit of very close to 0
+
+Entry on Skip Days:
+    - As mentioned before, skip days are calculated based on 5 criteria's. If paraventure a skip day were to fall on entry date, the entry close will be swapped with 3 Exponential Moving Average price to avoid under pricing or over pricing.
+
+Problematic dates for specific ticks are ffwd. This is for every child option from underlying
+Specific contracts from AAPL are causing issues with pulling data. We have filtered these ticks out and provided an avenue to handle this effortlessly in the future.
+
+
+##PS: There are too many data adjustments. It makes me wonder how efficient this backtest is.

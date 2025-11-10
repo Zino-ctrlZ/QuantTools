@@ -1,16 +1,30 @@
 from contextlib import contextmanager
 import datetime
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 from contextlib import contextmanager
 from trade.helpers.helper import change_to_last_busday
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
-# from trade.helpers.Configuration import Configuration, initialize_configuration
 from trade.helpers.Configuration import ConfigProxy, initialize_configuration
+from trade.helpers.helper import is_USholiday
 Configuration = ConfigProxy()
 
 ## Change to Class ContextManager
+def validate_dates(*args):
+    """
+    Validates if the input date is a valid datetime object.
+    """
+    for dt in args:
+        if not isinstance(dt, (datetime, pd.Timestamp, date)):
+            raise ValueError(f"Invalid date: {dt}. Expected a datetime object.")
+        
+        if is_USholiday(dt):
+            raise ValueError(f"Date {dt} is a US holiday. Please choose a different date.")
+        
+        if dt.weekday() in [5, 6]:
+            raise ValueError(f"Date {dt} falls on a weekend. Please choose a weekday.")
+
 
 
 @contextmanager
@@ -41,6 +55,8 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
 
     """
     initialize_configuration()
+    none_non_dates = [pd.to_datetime(x) for x in [start_date, end_date] if x is not None]
+    validate_dates(*none_non_dates)
     
     try:
         if timeframe is not None:
@@ -71,8 +87,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
 
         if end_date is not None:
             ## TEMP (MAYBE): Enforcing np Non-business day for now
-            end_date = change_to_last_busday(pd.to_datetime(end_date)
-)
+            end_date = change_to_last_busday(pd.to_datetime(end_date))
             ## If no time is passed and date is today set to current time if btwn 9:30 & 4pm
             if datetime.today().date() == end_date.date() and end_date.time() == pd.Timestamp('00:00').time():
                 end_date = datetime.now()
@@ -82,7 +97,6 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
                 ##TEMP: For now, all passed dates will be set to EOD
                 build_time = '16:00'
                 end_date = end_date.replace(hour=pd.Timestamp(build_time).time().hour, minute=pd.Timestamp(build_time).time().minute, second=pd.Timestamp(build_time).time().second, microsecond=0)
-
             Configuration.end_date = datetime.strftime(
                 end_date, format='%Y-%m-%d %H:%M:%S')
         else:
@@ -103,9 +117,7 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
             Configuration.end_date = datetime.strftime(
                 today, format='%Y-%m-%d %H:%M:%S')
 
-
         build_time = pd.Timestamp(build_time)
-
         if print_context:
             print(f"""
             Settings in this Context:
@@ -114,10 +126,10 @@ def Context(timewidth: str = None, timeframe: str = None, start_date: str = None
             Multiplier: {Configuration.timewidth}
             Timespan: {Configuration.timeframe}
             """)
-        #context_values = {'timewidth': timewidth, 'timeframe': timeframe, 'start_date': start_date, 'end_date': end_date}
         yield
 
     finally:
+        
         Configuration.timewidth = None
         Configuration.timeframe = None
         Configuration.start_date = None

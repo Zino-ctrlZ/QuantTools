@@ -1,10 +1,18 @@
-
-import datetime
-
+import math
+import numpy as np
 from abc import ABCMeta, abstractmethod
 
-from EventDriven.event import FillEvent, OrderEvent
+from EventDriven.event import ExerciseEvent, FillEvent, OrderEvent
+from trade.helpers.helper import parse_option_tick
+from trade.helpers.Logging import setup_logger
+from copy import deepcopy
 
+logger = setup_logger('EventDriven.execution')
+exec_cache = {
+    'order': {},
+    'fill': {},
+    'exercise': {}
+}
 # execution.py
 
 class ExecutionHandler(object):
@@ -23,7 +31,7 @@ class ExecutionHandler(object):
     __metaclass__ = ABCMeta
 
     @abstractmethod
-    def execute_order(self, event):
+    def execute_order_naively(self, event):
         """
         Takes an Order event and executes it, producing
         a Fill event that gets placed onto the Events queue.
@@ -46,17 +54,22 @@ class SimulatedExecutionHandler(ExecutionHandler):
     handler.
     """
     
-    def __init__(self, events):
+    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.00279):
         """
         Initialises the handler, setting the event queues
         up internally.
 
         Parameters:
         events - The Queue of Event objects.
+        max_slippage_pct - The slippage range for the market default is 0.002
+        commission_rate - The commission rate for the market default is 0.00279 per contract: https://robinhood.com/us/en/support/articles/trading-fees-on-robinhood/#Tradingactivityfee
         """
         self.events = events
-
-    def execute_order(self, event):
+        self.max_slippage_pct = max_slippage_pct
+        self.min_slippage_pct = max_slippage_pct / 2 # Minimum slippage is half of max slippage
+        self.commission_rate = commission_rate
+        
+    def execute_order_naively(self, order_event: OrderEvent):
         """
         Simply converts Order objects into Fill objects naively,
         i.e. without any latency, slippage or fill ratio problems.
@@ -64,7 +77,117 @@ class SimulatedExecutionHandler(ExecutionHandler):
         Parameters:
         event - Contains an Event object with order information.
         """
-        if event.type == 'ORDER':
-            fill_event = FillEvent(event.datetime, event.symbol,
-                                   'ARCA', event.quantity, event.direction, fill_cost=0, commission=None, option=event.option)
+
+        ##TODO: Need to add market_value here
+        if order_event.type == 'ORDER':
+            fill_event = FillEvent(order_event.datetime, order_event.symbol,
+                                   'ARCA', order_event.quantity, order_event.direction, fill_cost=0, commission=None, option=order_event.option, parent_event=order_event)
             self.events.put(fill_event)
+            
+    def execute_order_randomized_slippage(self, order_event: OrderEvent):
+        """
+        This method will execute an order with a random slippage
+        based on the max_slippage_pct attribute of the class.
+        Note: Quantity takes precedence if both quantity and cash are provided, else quantity is determined by cash / price_of_contract
+        """
+        assert order_event.type == 'ORDER', f"Event type must be 'ORDER' received {order_event.type}"
+        assert order_event.direction == 'BUY' or order_event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {order_event.direction}"
+        exec_cache['order'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(order_event)
+
+        # Generate slippage as a percentage
+        ## Slippage improvement
+        if order_event.direction == 'BUY':
+            ## We want to increase the price for buys by slippage
+            slippage_pct = np.random.uniform(self.min_slippage_pct, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
+        elif order_event.direction == 'SELL':
+            ## We want to decrease the price for sells by slippage
+            slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.min_slippage_pct) ## Ensure that slippage is always negative, and never 0 or less than -max_slippage_pct
+        
+        #slippage may increase or decrease intended price
+        price = order_event.position['close'] * (1 + slippage_pct)          
+        
+        # Ensuring cash doesn't go below zero
+        raw_quantity = order_event.quantity
+        
+        try:
+            if raw_quantity is not None:
+                # Recompute quantity downward if cost exceeds available cash
+                unit_cost = price + self.commission_rate
+                logger.info(f"Unit cost: {unit_cost}, Cash available: {order_event.cash}, Direction: {order_event.direction}, Signal ID: {order_event.signal_id}")
+                if order_event.direction == 'BUY':
+                    max_affordable_quantity = math.floor(order_event.cash / unit_cost)
+
+                    # Ensure we never exceed max affordable quantity
+                    quantity = min(raw_quantity, max_affordable_quantity)
+                    total_cost = quantity * price + self.commission_rate
+
+                    ## Clamp quantity to ensure we don't exceed available cash
+                    while total_cost > order_event.cash:
+                        quantity -= 1
+                        total_cost = quantity * price + self.commission_rate
+                    logger.info(f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {order_event.signal_id}, Total Cost: {quantity * price + self.commission_rate}, Cash: {order_event.cash}")
+
+                elif order_event.direction == 'SELL':
+                    # For SELL, we can only sell what we have in the position
+                    quantity = raw_quantity
+            else:
+                # Fall back to normal logic
+                quantity = math.floor(order_event.cash / (price + self.commission_rate))
+        except:
+            pass
+
+        commission = self.commission_rate * quantity * (len(order_event.position.get('trade_id', '&L:').split('&')) - 1) #commission is per trade(leg) there should always be a long in a position, naked or spread
+
+        market_value = (order_event.position['close'] * quantity) # market value is based on the position's close price, not the slippage adjusted price
+                                                            # This is to ensure that the market value is not affected by slippage, as slippage is a cost incurred after the market value is determined.
+
+        # Adjust price based on order direction
+        if order_event.direction == 'BUY':
+            fill_cost = (price * quantity) + commission ## Total Cost for BUY includes commission and slippage
+        elif order_event.direction == 'SELL':
+            fill_cost = (price * quantity) - commission
+
+        ##NOTE:
+        # - Market value is based on the position's close price, not the slippage adjusted price. This serves as entry market value
+        # - Fill cost is based on the slippage adjusted price and commission. This serves as entry cost
+        # - Market value != fill cost, as market value is based on the position's close price, not the slippage adjusted price.
+
+        slippage_diff = (price - order_event.position['close'] ) * quantity
+        fill_event = FillEvent(order_event.datetime, order_event.symbol, 'ARCA', quantity, order_event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=order_event.position, slippage=slippage_diff, signal_id=order_event.signal_id, parent_event=order_event)
+        exec_cache['fill'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}_{order_event.direction}'] = deepcopy(fill_event)
+        self.events.put(fill_event)
+        
+    def execute_exercise(self, exercise_event: ExerciseEvent):
+        """
+        This method will execute an exercise event, calculate the pnl of the exercise and put a fill event on the queue
+        """
+        assert exercise_event.type == 'EXERCISE', f"Event type must be 'EXERCISE' received {exercise_event.type}"       
+        long_pnl = 0.0
+        short_pnl = 0.0
+        if exercise_event.long_premiums and 'long' in exercise_event.position:
+            assert all(option in exercise_event.position['long'] for option in exercise_event.long_premiums.keys()), f"option_id in premiums must be present in position. long_premium: {exercise_event.long_premiums.keys()}  long position: {exercise_event.position['long']}"
+            assert len(exercise_event.long_premiums) == len(exercise_event.position['long']), f"number of options in long_premiums must be equal to number of options in long position. long_premium: {len(exercise_event.long_premiums)}  long position: {len(exercise_event.position['long'])}"
+            for option_id, premium in exercise_event.long_premiums.items():
+                option_meta = parse_option_tick(option_id)
+                long_pnl += self.__calculate_premium_pnl(option_meta, exercise_event.spot, premium)
+        
+        if exercise_event.short_premiums and 'short' in exercise_event.position:
+            assert all(option in exercise_event.position['short'] for option in exercise_event.short_premiums.keys()), f"option_id in premiums must be present in position. short_premium: {exercise_event.short_premiums.keys()}  short position: {exercise_event.position['short']}"
+            assert len(exercise_event.short_premiums) == len(exercise_event.position['short']), f"number of options in short_premiums must be equal to number of options in short position. short_premium: {len(exercise_event.short_premiums)}  short position: {len(exercise_event.position['short'])}"
+            for option_id, premium in exercise_event.short_premiums.items():
+                option_meta = parse_option_tick(option_id)
+                short_pnl += self.__calculate_premium_pnl(option_meta, exercise_event.spot, premium)
+                
+        total_pnl = long_pnl + short_pnl
+        market_value = exercise_event.spot * exercise_event.quantity
+        
+        fill_event = FillEvent(exercise_event.datetime, exercise_event.symbol, 'ARCA', exercise_event.quantity, 'EXERCISE', fill_cost=total_pnl, position=exercise_event.position,market_value=market_value, signal_id=exercise_event.signal_id, parent_event=exercise_event)
+        self.events.put(fill_event)
+        
+    def __calculate_premium_pnl(self, option_meta, spot, premium):
+        if option_meta['option_type'] == 'C':
+            return max(0, spot - option_meta['strike']) - premium
+        elif option_meta['option_type'] == 'P':
+            return max(0, option_meta['strike'] - spot) - premium
+        else:
+            raise ValueError(f"Invalid option type: {option_meta['option_type']}")

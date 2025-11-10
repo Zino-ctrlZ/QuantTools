@@ -1,12 +1,16 @@
 #Event indicate a change in the state of the strategy, market, portfolio or execution system.
 
+from datetime import datetime
+
+from EventDriven.types import EventTypes, SignalTypes
+from trade.helpers.helper import parse_option_tick
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 
     (inherited) events, that will trigger further events in the 
     trading infrastructure.   
     """
-    pass
+    pass    
 
 
 
@@ -16,20 +20,23 @@ class MarketEvent(Event):
     corresponding bars.
     """
 
-    def __init__(self):
+    def __init__(self, datetime):
         """
         Initialises the MarketEvent.
         """
         self.type = 'MARKET'
+        self.datetime = datetime
         
-        
+    def __str__(self):
+        return f"MarketEvent date:{self.datetime}"
+
 class SignalEvent(Event):
     """
     Handles the event of sending a Signal from a Strategy object.
     This is received by a Portfolio object and acted upon.
     """
     
-    def __init__(self, symbol, datetime, signal_type):
+    def __init__(self, symbol, datetime, signal_type: SignalTypes, signal_id: str = None, max_contract_price:int = None, order_settings = None, parent_event: Event = None):
         """
         Initialises the SignalEvent.
 
@@ -37,13 +44,34 @@ class SignalEvent(Event):
         symbol - The ticker symbol, e.g. 'GOOG'.
         datetime - The timestamp at which the signal was generated.
         signal_type - 'LONG' or 'SHORT'.
+        signal_id- A unique identifier for the signal 
+        max_contract_price - The maximum price for the contract
+        order_settings - specifically for Order signals, to specify the kind of contract to generate, 
+            example: {'type': 'naked',
+                        'specifics': [{'direction': 'long',
+                        'rel_strike': .900,
+                        'dte': 365,
+                        'moneyness_width': 0.15},
+                        {'direction': 'short',
+                        'rel_strike': .80,
+                        'dte': 365,
+                        'moneyness_width': 0.15}],
+
+                        'name': 'vertical_spread'}
+        parent_event - The parent event that triggered this signal, if any.
         """
         
         self.type = 'SIGNAL'
         self.symbol = symbol
         self.datetime = datetime
         self.signal_type = signal_type
-
+        self.signal_id = signal_id
+        self.max_contract_price = max_contract_price
+        self.order_settings = order_settings
+        self.parent_event = parent_event
+        
+    def __str__(self):
+        return f"SignalEvent type:{self.signal_type}, symbol={self.symbol}, date:{self.datetime}, Order Settings={self.order_settings},Max Contract Price:{self.max_contract_price} , signal_id:{self.signal_id}, parent_event:{self.parent_event}"
 
 class OrderEvent(Event):
     """
@@ -52,7 +80,7 @@ class OrderEvent(Event):
     quantity and a direction.
     """
 
-    def __init__(self, symbol, datetime, order_type, quantity, direction, option = None):
+    def __init__(self, symbol, datetime, order_type,  direction, cash:int | float = None ,quantity: int |float = None,position = None, signal_id: str = None, parent_event: Event = None):
         """
         Initialises the order type, setting whether it is
         a Market order ('MKT') or Limit order ('LMT'), has
@@ -61,28 +89,33 @@ class OrderEvent(Event):
 
         Parameters:
         symbol - The instrument to trade.
+        datetime - The bar-resolution when the order was created.
         order_type - 'MKT' or 'LMT' for Market or Limit.
+        cash - The cash available to spend on the order
         quantity - Non-negative integer for quantity.
         direction - 'BUY' or 'SELL' for long or short.
-        option - A pandas dataframe with columns: root, expiration, strike, right (option type)
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
+        parent_event - The parent event that triggered this order, if any.
         """
         
         self.type = 'ORDER'
         self.datetime = datetime
         self.symbol = symbol
         self.order_type = order_type
+        self.cash = cash
         self.quantity = quantity
         self.direction = direction
-        self.option = option
+        self.position = position #a dict with 'long' and 'short' keys 
+        self.signal_id = signal_id
+        self.parent_event = parent_event
 
-    def print_order(self):
+    def __str__(self):
         """
         Outputs the values within the Order.
         """
-        print("Order: Symbol=%s, Type=%s, Quantity=%s, Direction=%s, Option=%s \n",self.symbol, self.order_type, self.quantity, self.direction, self.option) 
+        return f"OrderEvent type={self.order_type}, symbol={self.symbol}, date:{self.datetime}, cash:{self.cash}, quantity={self.quantity}, direction={self.direction}, position={self.position}, signal_id={self.signal_id}, parent_event={self.parent_event}"
         
-
-
 class FillEvent(Event):
     """
     Encapsulates the notion of a Filled Order, as returned
@@ -91,8 +124,8 @@ class FillEvent(Event):
     the commission of the trade from the brokerage.
     """
 
-    def __init__(self, datetime, symbol, exchange, quantity, 
-                 direction, fill_cost, commission=None, option = None):
+    def __init__(self, datetime : datetime | str, symbol : str, exchange : str, quantity : int,
+                 direction: str, fill_cost: float, market_value: float = None, commission : float =None, slippage : float = None , position = None, signal_id: str = None, parent_event: Event = None):
         """
         Initialises the FillEvent object. Sets the symbol, exchange,
         quantity, direction, cost of fill and an optional 
@@ -110,6 +143,11 @@ class FillEvent(Event):
         direction - The direction of fill ('BUY' or 'SELL')
         fill_cost - The holdings value in dollars.
         commission - An optional commission sent from IB.
+        signal_id - A unique identifier for the signal that generated the order
+        market_value - The market value of the filled position, if available.
+        slippage - The slippage incurred during the fill, if available.
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        parent_event - The parent event that triggered this fill, if any.
         """
         
         self.type = 'FILL'
@@ -119,7 +157,11 @@ class FillEvent(Event):
         self.quantity = quantity
         self.direction = direction
         self.fill_cost = fill_cost
-        self.option = option
+        self.position = position
+        self.market_value = market_value
+        self.slippage = slippage
+        self.signal_id = signal_id
+        self.parent_event = parent_event
 
         # Calculate commission
         if commission is None:
@@ -127,20 +169,96 @@ class FillEvent(Event):
         else:
             self.commission = commission
 
-    def calculate_ib_commission(self):
+    def __str__(self):
+        return f"FillEvent symbol={self.symbol}, date:{self.datetime}, exchange={self.exchange}, quantity={self.quantity}, direction={self.direction}, fill_cost={self.fill_cost}, commission={self.commission}, market_value={self.market_value}, slippage={self.slippage}, position={self.position}, signal_id={self.signal_id}"        
+class ExerciseEvent(Event): 
+    """
+    Encapsulates the notion of an exercise event, as returned from a brokerage. 
+    Stores the quantity of an instrument actually exercised and at what price. In addition, stores the commission of the trade from the brokerage.
+    """
+    
+    def __init__(self, 
+                 datetime : datetime | str, 
+                 symbol : str, 
+                 quantity : int, 
+                 entry_date: datetime| str, 
+                 spot: float, 
+                 long_premiums: dict, 
+                 short_premiums:dict, 
+                 position = None, 
+                 signal_id: str = None,
+                 parent_event: Event = None):
         """
-        Calculates the fees of trading based on an Interactive
-        Brokers fee structure for API, in USD.
-
-        This does not include exchange or ECN fees.
-
-        Based on "US API Directed Orders":
-        https://www.interactivebrokers.com/en/index.php?f=commission&p=stocks2
+        Initialises the ExerciseEvent object. Sets the symbol, exchange, quantity, direction, cost of fill and an optional commission.
+        
+        Parameters:
+        datetime - The bar-resolution when the order was filled.
+        symbol - The instrument which was filled.
+        quantity - The filled quantity.
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
+        entry_date - The date when the position was entered
+        spot - The current spot price of the underlying asset  
+        long_premiums - A dict of option_id: premium for long options in the position
+        short_premiums - A dict of option_id: premium for short options in the position
+        parent_event - The parent event that triggered this exercise, if any.
         """
-        full_cost = 1.3
-        if self.quantity <= 500:
-            full_cost = max(1.3, 0.013 * self.quantity)
-        else: # Greater than 500
-            full_cost = max(1.3, 0.008 * self.quantity)
-        full_cost = min(full_cost, 0.5 / 100.0 * self.quantity * self.fill_cost)
-        return full_cost
+        
+        self.type = 'EXERCISE'
+        self.datetime = datetime
+        self.symbol = symbol
+        self.quantity = quantity
+        self.spot = spot
+        self.position = position
+        self.signal_id = signal_id
+        self.long_premiums = long_premiums
+        self.short_premiums = short_premiums
+        self.entry_date = entry_date
+        self.parent_event = parent_event
+        
+    def __str__(self):
+        return f"ExerciseEvent symbol={self.symbol}, date:{self.datetime} quantity={self.quantity}, long_premiums={self.long_premiums}, short_premiums={self.short_premiums}, position={self.position}, , entry_date={self.entry_date}, spot={self.spot}, signal_id={self.signal_id}, parent_event={self.parent_event}"
+    
+    
+class RollEvent(Event): 
+    """
+    Encapsulates the notion of a roll event, this event simply tells the portfolio to close its current position and open anew position
+    """
+    
+    def __init__(self, datetime: datetime | str, symbol: str, signal_type: SignalTypes, position: dict, signal_id: str = None, parent_event: Event = None):
+        """
+        Initialises the RollEvent object. Sets the symbol, exchange, signal_type, direction, cost of fill and an optional commission.
+        
+        Parameters:
+        datetime - The bar-resolution when the order was filled.
+        symbol - The instrument which was filled.
+        signal_type - 'LONG' or 'SHORT'.
+        position - A dict with 'long' and 'short' keys, just long if position is a naked option
+        signal_id - A unique identifier for the signal that generated the order
+        parent_event - The parent event that triggered this roll, if any.
+        """
+        
+        self.type = 'ROLL'
+        self.datetime = datetime
+        self.symbol = symbol
+        self.signal_type = signal_type
+        self.position = position
+        self.signal_id = signal_id
+        self.parent_event = parent_event
+    
+    def __str__(self):
+        return f"RollEvent symbol={self.symbol}, date:{self.datetime}, signal_type={self.signal_type}, position={self.position}, signal_id={self.signal_id}, parent_event={self.parent_event}"   
+    
+    
+        
+def get_event_ancestor(event: Event, target_ancestor_event_type: EventTypes) -> Event | None:
+    """
+    get if the event has a parent event of the specified type.
+    If found, return the first occurent parent event; otherwise, return None.
+    """
+    current_event = event
+    while current_event is not None:
+        if current_event.type == target_ancestor_event_type:
+            return current_event
+        current_event = current_event.parent_event
+    return None   

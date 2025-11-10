@@ -3,14 +3,16 @@
 ## To-Do: Add more details to the docstrings
 ## TO-DO: Apply Singleton pattern to OptionDataManager & Option
 ## To-Do: Create a structure class for Option with basic structures as key to picking it automaticall
+## To-Do: Write a setter for model attr
 ## To-Do: Add time out to all threads and error handling
+## To-Do: Remove options that are not fully loaded from _instances
 
 from trade.helpers.helper import  change_to_last_busday
 # from trade.helpers.Configuration import Configuration
 from trade.helpers.Configuration import ConfigProxy
 Configuration = ConfigProxy()
 from trade.assets.Stock import Stock
-from trade.helpers.helper import generate_option_tick, identify_interval
+from trade.helpers.helper import generate_option_tick, identify_interval, generate_option_tick_new
 from threading import Thread
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -18,13 +20,25 @@ from datetime import date
 import datetime as dt
 from datetime import datetime
 import yfinance as yf
+from trade.helpers.decorators import log_time
+import time
+from trade.helpers.Logging import setup_logger
 from trade.assets.helpers.DataManagers import OptionDataManager
+logger = setup_logger('trade.assets.Option') ## What does __name__ do here?
 
-
+##TO-DO: Extend option to take option_id or othervariables
 class Option:
     _instances = {}
 
-    def __new__(cls, ticker, strike, exp_date, put_call, *args, **kwargs):
+    @log_time(logger)
+    def __new__(cls, 
+                ticker = None, 
+                strike = None, 
+                exp_date = None, 
+                put_call = None, 
+                option_id = None,
+                *args, **kwargs):
+        
         today = datetime.today()
         end_date = datetime.strftime(today, format='%Y-%m-%d')
         _end_date = Configuration.end_date or end_date
@@ -44,13 +58,13 @@ class Option:
     def __str__(self):
         return f'Option(Strike: {self.K}, Expiration {self.exp}, Underlier: {self.ticker}, Right: {self.put_call}, Model: {self.model}, Build On: {self.end_date})'
 
-
+    @log_time(logger)
     def __init__(self, 
     ticker: str,
     strike: float,
     exp_date: str | datetime,
     put_call: str,
-    model: str = 'bt',
+    model: str = 'bsm',
     default_fill = 'midpoint',
     *args, **kwargs):
         """
@@ -71,6 +85,7 @@ class Option:
         ## Note: Monitor if this is the best approach
         end_date = change_to_last_busday(today).strftime('%Y-%m-%d %H:%M:%S')
         self.__end_date = Configuration.end_date or end_date
+        assert pd.to_datetime(exp_date) >= pd.to_datetime(self.__end_date), f"Cannot build option on date past expiration"
         self.__default_fill = default_fill
         self.__dataManager = OptionDataManager(ticker, exp_date, put_call, strike, self.default_fill)
 
@@ -88,15 +103,17 @@ class Option:
             start_date = datetime.strftime(start_date_date, format='%Y-%m-%d')
             end_date = datetime.strftime(today, format='%Y-%m-%d')
             self._initalized = False
-            asset_obj = Stock(ticker)
+            run_chain = kwargs.get('run_chain', False)
+            asset_obj = Stock(ticker, run_chain = run_chain)
             self.__asset = asset_obj
             self.__ticker = ticker.upper()
             self.timewidth = Configuration.timewidth or '1'
             self.timeframe = Configuration.timeframe or 'day'
             self.__start_date = Configuration.start_date or start_date
             self.__security = yf.Ticker(ticker.upper())
-            self.__S0 = self.__set__S0() # This should be current market spot for the underlier, should always be realtime.
-            self.__OptTick = generate_option_tick(ticker, put_call, exp_date, strike)
+            self.__S0 = self.__set__S0() # This should be current market spot for the underlier. The close as of that date.
+            self.__unadjusted_S0 = self.__set_unadjusted_S0() # This should be current market spot for the underlier. But not adjusted for splits and dividends
+            self.__OptTick = generate_option_tick_new(ticker, put_call, exp_date, strike)
             self.__prev_close = None # This should be previous DAY close of the OPTION
             self.__y = self.asset.y
             self.rf_rate = self.asset.rf_rate
@@ -119,9 +136,11 @@ class Option:
 
 
             self.__sigma = None
-            Thread(target = self.__set_pv).start()
+            self.sigma_thread = Thread(target = self.__set_sigma)
+            self.sigma_thread.start()
             self.__pv = None
-            Thread(target = self.__set_pv).start()
+            self.pv_thread = Thread(target = self.__set_pv)
+            self.pv_thread.start()
 
     @property
     def asset(self):
@@ -163,22 +182,33 @@ class Option:
     def default_fill(self):
         return self.__default_fill
     
+    @property
+    def unadjusted_S0(self):
+        return self.__unadjusted_S0
+    
 
 
 
     @property
+    @log_time(logger)
     def sigma(self):
         """
         Retrieve Vol of the option. Using the default fill PV to calculate sigma
 
         This is intended to retrieve real time vol if end_date is set to today
         """
-        self.__set_sigma()
+        # self.__set_sigma() This is useful for if dealing with live. Which won't be happening anytime soon
+        while self.sigma_thread.is_alive():
+            time.sleep(5)
         return self.__sigma
 
     
     def __set__S0(self):
         s0 = list(self.asset.spot(ts = False).values())[-1]
+        return s0
+    
+    def __set_unadjusted_S0(self):
+        s0 = list(self.asset.spot(ts = False, spot_type='chain_price').values())[-1]
         return s0
 
     
@@ -189,6 +219,7 @@ class Option:
 
 
     @property
+    @log_time(logger)
     def pv(self):
         """
         Retrieve PV of the option. Using the default fill as PV
@@ -196,7 +227,8 @@ class Option:
         This is intended to retrieve real time PV if end_date is set to today
 
         """
-        self.__set_pv()
+        while self.pv_thread.is_alive():
+            time.sleep(1)
         return self.__pv
 
 
@@ -217,7 +249,8 @@ class Option:
 
     
     def __set_pv(self):
-        self.__pv= self.spot()[f'{self.default_fill.capitalize()}'].values[0]
+        spot = self.spot()
+        self.__pv= spot[f'{self.default_fill.capitalize()}'].values[0]
 
 
 
@@ -264,9 +297,13 @@ class Option:
 
         if ts:
             data = self.__dataManager.get_timeseries(ts_start, ts_end, interval, type_ = 'spot', model = model)
+            if isinstance(data, dict):
+                raise ValueError(f"Data is not available for {self.ticker} {self.put_call} {self.K} {self.exp} {spot_type} {ts_timeframe} {ts_timewidth}")
+
         else:
             data = self.__dataManager.get_spot(spot_type, query_date = ts_end)
-
+            if isinstance(data, dict):
+                raise ValueError(f"Data is not available for {self.ticker} {self.put_call} {self.K} {self.exp} {spot_type} {ts_timeframe} {ts_timewidth}")
         return data
     
     def vol(self, 

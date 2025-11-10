@@ -77,18 +77,17 @@ def atr_trailing_stop(df: pd.DataFrame,
     else:
         raise ValueError(
             "Invalid average type. Choose 'wilders', 'exponential', 'hull', or 'simple'.")
-    # print('hi',loss)
     state = pd.Series(index=df.index, dtype='object')
     trail = pd.Series(index=df.index)
 
     for i in range(1, len(df)):
 
         if pd.isna(loss[i]):
-            # print(i, len(loss), len(true_range))
+    
             state.iloc[i] = 'init'
             trail.iloc[i] = np.nan
         else:
-            # print(loss[i])
+    
             if state.iloc[i - 1] == 'init':
                 if first_trade == 'long':
                     state.iloc[i] = 'long'

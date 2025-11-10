@@ -10,8 +10,6 @@ from backtesting import Backtest
 import pandas as pd
 import sys
 import os
-sys.path.append(
-    os.environ.get('WORK_DIR'))
 from trade.assets.Stock import Stock
 import plotly.io as pio
 import plotly.express as px
@@ -21,7 +19,7 @@ from itertools import product
 from collections.abc import Callable as callable_func
 import random
 import inspect
-from pathos.multiprocessing import ProcessingPool as Pool
+from trade._multiprocessing import ensure_global_start_method, PathosPool
 import threading
 
 
@@ -79,10 +77,7 @@ def plot_portfolio(_tr: pd.DataFrame,
     fig = make_subplots(rows = 4, cols = 2, subplot_titles= subplot_titles, 
                         shared_xaxes= True, vertical_spacing=0.05, horizontal_spacing= 0.05, specs = specs, row_heights=row_heights)
 
-    # hovertemplate =  '<b>%{text}</b><br><br>' +
-    # 'Date: %{x}<br>' +
-    # 'Size: %{marker.size:.2f}<br>' +
-    # 'PnL: %{y}<br>'
+
 
     fig.add_trace(go.Scatter( x= _eq.index, y = (round(_eq.Total, 2)/_eq.Total[0]), showlegend= True, name = 'Equity Curve'),
     row = 1, col = 1
@@ -301,7 +296,6 @@ def optimize(object: 'PTBacktester',
     import threading
     import os
     from functools import partial
-    # from pathos.multiprocessing import ProcessingPool as Pool
     max_ = 0
     combo = pd.DataFrame(columns=optimize_var.keys())
     cart_plane = np.array(list(product(*optimize_var.values())))
@@ -328,7 +322,8 @@ def optimize(object: 'PTBacktester',
         reset_dict[name] = [getattr(dataset.backtest._strategy, name) for dataset in object.datasets]
     
     partial_funct = partial(evaluate_plane, object = object, optimize_var = optimize_var, maximize = maximize, constraint = constraint )
-    pool = Pool()
+    ensure_global_start_method()
+    pool = PathosPool()
     pool.restart()
     results = pool.map(partial_funct, cart_plane )
     pool.close()

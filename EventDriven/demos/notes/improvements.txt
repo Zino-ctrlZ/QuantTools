@@ -1,0 +1,14 @@
+- RiskManager:
+    - Daily, by tick activities which will allow user to test other types of events
+    - Hedge extension
+    - Daily dynamic limits / scaling up & down
+
+- Portfolio:
+    - Hedge cash designation.
+
+
+- Portfolio & Risk Manager:
+    - Full fledge `option_price` use.
+        - Where can I add assert?
+        - Add columns function with factory format.
+        - Use names to assert. Create potential columns list.

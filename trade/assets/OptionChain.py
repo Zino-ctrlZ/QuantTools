@@ -1,8 +1,6 @@
 import time
 start_time = time.time() 
 import os, sys
-sys.path.append(os.environ['WORK_DIR'])
-sys.path.append(os.environ['DBASE_DIR'])
 from trade.models.VolSurface import SurfaceLab
 from dbase.database.SQLHelpers import DatabaseAdapter
 from trade.helpers.helper import (change_to_last_busday, 
@@ -12,6 +10,7 @@ from trade.helpers.helper import (change_to_last_busday,
                                   implied_volatility, 
                                   time_distance_helper, 
                                   generate_option_tick, 
+                                  generate_option_tick_new,
                                   setup_logger,
                                   binomial_implied_vol)
 
@@ -23,13 +22,14 @@ from dbase.DataAPI.ThetaData import (retrieve_quote_rt,
                                      list_contracts)
 
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore
-from pathos.multiprocessing import ProcessingPool as Pool
+from trade._multiprocessing import ensure_global_start_method, PathosPool
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, root_mean_squared_error
 from pprint import pprint
 import numpy as np
 import matplotlib.pyplot as plt
 from threading import Thread
-from trade.helpers.decorators import log_time, log_error
+from trade.helpers.decorators import log_time, log_error, log_error_with_stack
+from trade.helpers.types import OptionModelAttributes
 import pandas as pd
 logger = setup_logger('OptionChain')
 
@@ -43,7 +43,7 @@ shutdown_event = False
 def shutdown(pool):
     global shutdown_event
     shutdown_event = True
-    print('shutdown_event set')
+    logger.info('shutdown_event set')
     pool.terminate()
 
 
@@ -69,7 +69,7 @@ def get_df_set(split_df, id):
     if len(split_df) == 0:
         return pd.DataFrame()
     split_df[['expiration', 'build_date']] = split_df[['expiration', 'build_date']].astype(str)
-    # print(f'Size in ID {id} is {split_df.shape}')
+
     split_df[['price', 'vol']] = split_df.apply(lambda x: get_set(x['ticker'], x['build_date'], x['expiration'], x['right'], x['strike'], x['Spot'], x['r'], x['q']), axis = 1, result_type = 'expand')
     return split_df
 
@@ -77,10 +77,8 @@ def produce_chain_values(chain, date, ticker, stock):
     results = []
     global shutdown_event # To-do: Why after shut down event set in some situations, it is not being reset?
     shudown_event = False
-    # with Context(end_date = date):
-    # stk = Stock(ticker)
     stk = stock
-    spot = list(stk.spot(spot_type = 'chain_price').values())[0]
+    spot = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
     q = stk.div_yield()
     rf_rate = stk.rf_rate
     chain['Spot'] = spot
@@ -94,7 +92,8 @@ def produce_chain_values(chain, date, ticker, stock):
 
 
     #Multiprocessing to speed up chain retrieval
-    pool = Pool(nodes = workers)
+    ensure_global_start_method()
+    pool = PathosPool(nodes = workers)
     pool.restart()
     try:
         for result in pool.imap(get_df_set, split_data, [i for i in range(workers)]):
@@ -104,12 +103,12 @@ def produce_chain_values(chain, date, ticker, stock):
             
         
     except KeyboardInterrupt:
-        print('Interrupted by Keyboard')
+        logger.error('Interrupted by Keyboard')
         shutdown(pool)
         
 
     except Exception as e:
-        print('Exception:', e)
+        logger.error('Exception:', e)
         shutdown(pool)
         
 
@@ -152,7 +151,7 @@ class OptionChain:
     def __str__(self) -> str:
         return f"OptionChain({self.ticker}, {self.build_date})"
 
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def __initiate_chain(self):
         query = f"""
         SELECT * FROM vol_surface.option_chain 
@@ -174,7 +173,7 @@ class OptionChain:
         self.save_thread.start()
         return chain_new
 
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def get_chain(self, return_values = False):
         if return_values:
             return self.chain
@@ -183,7 +182,7 @@ class OptionChain:
             return self.simple_chain
 
     
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def __option_chain_bool(self):
 
         # Set build date
@@ -204,7 +203,7 @@ class OptionChain:
         return contracts_v2
     
    
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def initiate_lab(self):
         force_build = self.kwargs.get('force_build', False)
         if self.chain is None:
@@ -212,14 +211,14 @@ class OptionChain:
         self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width, force_build = force_build)
 
     
-    @log_error(logger)
+    @log_error_with_stack(logger, False)
     def _save_chain(self):
         if self.chain is None:
             self.get_chain(True)
         chain = self.chain.copy()
         chain.drop(columns = ['root'], inplace = True)
         chain['moneyness'] = chain['strike'] / chain['Spot']
-        chain['option_tick'] = chain.apply(lambda x: generate_option_tick(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
+        chain['option_tick'] = chain.apply(lambda x: generate_option_tick_new(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
         chain['build_date'] = self.build_date
         self.dbAdapter.save_to_database(chain, 'vol_surface', 'option_chain')
 

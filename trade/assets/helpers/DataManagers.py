@@ -10,8 +10,7 @@ from dotenv import load_dotenv
 import os
 import sys
 load_dotenv()
-sys.path.append(os.environ.get('DBASE_DIR'))
-sys.path.append(os.environ.get('WORK_DIR'))
+
 import logging
 from openpyxl import load_workbook
 from datetime import datetime, date
@@ -21,17 +20,19 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import concurrent.futures
 from trade.assets.Stock import Stock
-from trade.helpers.helper import generate_option_tick
+from trade.helpers.helper import generate_option_tick_new
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.helper import IV_handler, time_distance_helper, binomial_implied_vol, wait_for_response
-from trade.helpers.helper import extract_numeric_value, change_to_last_busday
+from trade.helpers.helper import extract_numeric_value, change_to_last_busday, parse_option_tick
 from trade.helpers.Logging import setup_logger
 from trade.assets.Calculate import Calculate
 from trade.helpers.Context import Context
 from dbase.DataAPI.ThetaData import retrieve_ohlc, retrieve_quote_rt, retrieve_eod_ohlc, resample, retrieve_quote
 from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
-from trade.helpers.decorators import log_error
+from trade.helpers.decorators import log_error, log_error_with_stack
+from trade.models.utils import resolve_missing_vol
+from trade.helpers.types import OptionModelAttributes
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
 logger = setup_logger('OptionDataManager.py', stream_log_level=logging.CRITICAL)
@@ -64,11 +65,13 @@ class OptionDataManager:
     tmfrms = [ 'h', 'd', 'w', 'M', 'q', 'y']
 
     def __init__(self,
-                symbol: str,
-                exp: str | datetime | date,
-                right: str,
-                strike: float,
-                default_fill: str = 'midpoint') -> None:
+                symbol: str = None,
+                exp: str | datetime | date = None,
+                right: str = None,
+                strike: float = None,
+                default_fill: str = 'midpoint',
+                opttick: str = None,
+                **kwargs) -> None:
         """
         Returns an object for querying data
 
@@ -78,25 +81,35 @@ class OptionDataManager:
         right: Put(P) or Call (C)
         strike: Option Strike
         default_fill: How to fill zero values for close. 'midpoint' or 'weighted_midpoint'
+        opttick: Option ticker, if provided, will ignore symbol, exp, right, strike and be initialized with the string
         """
-        assert isinstance(strike, float), f"Strike has to be type float, recieved {type(strike)}"
-        if default_fill not in ['midpoint', 'weighted_midpoint', None]:
-            raise ValueError("Expected default_fill to be one of: 'midpoint', 'weighted_midpoint', None ")
-        self.exp = exp
-        self.symbol = symbol
-        self.right = right.upper()
-        self.strike = strike
+
+        if opttick is not None:
+            assert isinstance(opttick, str), f"opttick has to be type str, recieved {type(opttick)}"
+            option_meta = parse_option_tick(opttick)
+            self.symbol = option_meta['ticker']
+            self.exp = option_meta['exp_date']
+            self.right = option_meta['put_call']
+            self.strike = option_meta['strike']
+            self.opttick = opttick
+
+        else:
+            assert isinstance(strike, float), f"Strike has to be type float, recieved {type(strike)}"
+            if default_fill not in ['midpoint', 'weighted_midpoint', None]:
+                raise ValueError("Expected default_fill to be one of: 'midpoint', 'weighted_midpoint', None ")
+            
+            assert all([symbol, exp, right, strike]), "symbol, exp, right, strike are required"
+            self.exp = exp
+            self.symbol = symbol
+            self.right = right.upper()
+            self.strike = strike
+            self.opttick = generate_option_tick_new(symbol, right, exp, strike)
+
         self.default_fill = default_fill
-        self.opttick = generate_option_tick(symbol, right, exp, strike)
-        self.Stock = Stock(symbol, run_chain = False)
+        self.Stock = Stock(self.symbol, run_chain = False)
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def get_timeseries(self, start: str, end: str, interval: str, type_ = 'spot', model = 'bs', **kwargs):
-
-        """
-        Method Res
-        """
-        
         type_ = type_.lower()
         assert type_ in ['spot', 'vol', 'vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek'], f'expected "spot", "vol", "vega", "vanna", "volga", "delta", "gamma", "theta", "rho", "greeks", "greek" for type_, got {type_}'
         range_filters, flag, data = self.__verify_data_completeness(interval, start, end)
@@ -125,7 +138,6 @@ class OptionDataManager:
                 unProcessedData.columns = [x.lower() for x in unProcessedData.columns]
                 cols = unProcessedData.columns
                 data.columns = [x.lower() for x in data.columns]
-                # print('In concat process')
                 unProcessedData = pd.concat([data,unProcessedData ])
             else:
                 OptDataManagerLogger.info(f"Data for {self.opttick} unavailable for query. It is not a dataframe, type: {type(unProcessedData)}")
@@ -149,8 +161,6 @@ class OptionDataManager:
         elif type_ == 'vol' or type_ in ['vega', 'vanna', 'volga', 'delta', 'gamma', 'theta', 'rho', 'greeks', 'greek']:
             organized_data = self.__vol_data_organize_handler(unProcessedData, flag, model = model)
 
-            # print("Organized Data")
-            # print(organized_data.head())
             if model == 'bs' or model == 'bsm':
                 metric = 'bs_iv'
             elif model == 'bt' or model == 'binomial':
@@ -163,6 +173,8 @@ class OptionDataManager:
 
             else:
                 unProcessedData = unProcessedData.set_index('datetime')
+                unProcessedData = unProcessedData[~unProcessedData.index.duplicated(keep = 'first')]
+                organized_data = organized_data[~organized_data.index.duplicated(keep = 'first')]
                 volColumns = [x.lower() for x in column_agg.keys()]
                 unProcessedData[volColumns] = organized_data[column_agg.keys()]
                 unProcessedData.reset_index(inplace = True)
@@ -176,7 +188,7 @@ class OptionDataManager:
         
         return resampled[(resampled.index >= start) & (resampled.index <= end)]
         
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __save_intra_to_update(self, start, end):
         data = pd.DataFrame({'symbol': [self.symbol], 'optiontick': [self.opttick], 'exp': [self.exp], 'right': [self.right],'default_fill': [self.default_fill], 'strike': [self.strike], 'start': [start], 'end': [end]})
         path  = f'{os.environ["JOURNAL_PATH"]}/Algo/InputFiles/IntraSaveLog.xlsx'
@@ -252,6 +264,7 @@ class OptionDataManager:
                                         strike = self.strike)
                 
                 if data is None:
+
                     OptDataManagerLogger.info(f"{self.opttick} doesn't quote have data for {query_date}")
                     return {datetime.now().strftime('%Y-%m-%d %H:%M:%S'): "DATA UNAVAILABLE"}
                 
@@ -259,6 +272,7 @@ class OptionDataManager:
 
                 return data[['Bid', 'Ask', 'Midpoint', 'Weighted_midpoint']]
             except Exception as e:
+                OptDataManagerLogger.error(f"Error in get_spot for {self.opttick}. Error: {e}")
                 return {datetime.now().strftime('%Y-%m-%d %H:%M:%S'): "DATA UNAVAILABLE"}
         else:
             raise ValueError(f"Expected 'close' or 'quote' for type_, got {type_}")
@@ -319,7 +333,7 @@ class OptionDataManager:
             stk = Stock(self.symbol, run_chain = False)
             y = stk.div_yield()
             r = stk.rf_rate
-            s0 = list(stk.spot().values())[0]
+            s0 = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
 
         for p in price_cols:
             if len(data) == 0 or isinstance(data, dict):
@@ -423,7 +437,7 @@ class OptionDataManager:
         self.__save_data(processed_data, timeAggType)
 
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __save_data(self, data, timeAggType) -> None:
         OptDataManagerLogger.info(f"OptionDataManager saving data for {self.opttick}")
         UseTable = self.tables[timeAggType]
@@ -440,7 +454,7 @@ class OptionDataManager:
 
 
 
-    @log_error(OptDataManagerLogger)
+    @log_error_with_stack(OptDataManagerLogger, True)
     def __verify_return_data_integrity(self, data, timeAggType):
 
         ## Check for missing dates
@@ -457,10 +471,11 @@ class OptionDataManager:
         if data.reset_index().duplicated().sum() > 0:
             name = f"{self.opttick}_{datetime.today().strftime('%Y%m%d_%H:%M:%S')}"
             OptDataManagerLogger.info(f"{self.opttick} is has duplicates for {timeAggType} agg")
-            OptDataManagerLogger.info(f"{self.opttick} data saved in ./DataForLogs/{name}.csv")
-            if not os.path.exists('DataForLogs'):
-                os.mkdir('DataForLogs')
-            data.to_csv(f'./DataForLogs/{name}.csv', index = True)
+            data = data[~data.index.duplicated(keep = 'first')]
+            # OptDataManagerLogger.info(f"{self.opttick} data saved in ./DataForLogs/{name}.csv")
+            # if not os.path.exists('DataForLogs'):
+            #     os.mkdir('DataForLogs')
+            # data.to_csv(f'./DataForLogs/{name}.csv', index = True)
         
         return data
 
@@ -606,6 +621,23 @@ class OptionDataManager:
                                                 r = x['rf_rate'],
                                                 q = x['dividend'],
                                                 flag = x['put/call'].lower()), axis = 1)
+        ## If after using Midpoint, we still have zero values, we will use resolve vols function
+        zero_mask = result == 0
+        if zero_mask.sum() > 0:
+            OptDataManagerLogger.info(f"Zero values found for {self.opttick}. Resolving missing vol")
+            print(f"{zero_mask.sum()} Zero values found for {self.opttick}. Resolving missing vol")
+            zero_result = data[zero_mask].apply(lambda x: resolve_missing_vol(
+                underlier = self.symbol,
+                expiration= pd.to_datetime(x['expiration']).strftime('%Y-%m-%d'),
+                strike = x['strike'],
+                put_call= x['put/call'],
+                datetime  = pd.to_datetime(x['datetime']).strftime('%Y-%m-%d'),
+                S = x['underlier_price'],   
+                r = x['rf_rate'],
+                q = x['dividend'],
+            ), axis = 1)
+            result[zero_mask] = zero_result
+
         return result
 
     def __greek_data_organizer_handler(self, data, timeAgg, greek):

@@ -1,0 +1,38 @@
+         179946728 function calls (179230715 primitive calls) in 771.171 seconds
+
+   Ordered by: cumulative time
+   List reduced from 2996 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.000    0.000  771.173  385.587 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\IPython\core\interactiveshell.py:3517(run_code)
+        2    0.000    0.000  771.173  385.587 {built-in method builtins.exec}
+        1    0.000    0.000  771.173  771.173 C:\Users\Zino\AppData\Local\Temp\ipykernel_28000\3226836942.py:1(<module>)
+        1    0.028    0.028  771.173  771.173 C:\Users\Zino\python-playground\QuantTools\EventDriven\backtest.py:37(run)
+       79    0.000    0.000  629.085    7.963 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:378(update_signal)
+       79    0.003    0.000  629.083    7.963 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:267(generate_order)
+       45    0.002    0.000  621.001   13.800 C:\Users\Zino\python-playground\QuantTools\EventDriven\portfolio.py:296(create_order)
+    90/45    0.006    0.000  620.970   13.799 C:\Users\Zino\python-playground\QuantTools\trade\helpers\decorators.py:37(wrapper)
+       45    0.011    0.000  620.926   13.798 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:463(get_order)
+    20753  464.060    0.022  464.060    0.022 {method 'acquire' of '_thread.lock' objects}
+     5026    0.038    0.000  463.357    0.092 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\threading.py:288(wait)
+     3736    0.034    0.000  460.912    0.123 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:430(result)
+       45    0.019    0.000  387.365    8.608 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:72(populate_cache)
+      176    0.007    0.000  386.928    2.198 C:\Users\Zino\python-playground\QuantTools\trade\helpers\threads.py:4(runThreads)
+     2892    0.016    0.000  384.527    0.133 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:614(result_iterator)
+     2716    0.006    0.000  384.509    0.142 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\concurrent\futures\_base.py:316(_result_or_cancel)
+       45    0.005    0.000  232.584    5.169 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:350(produce_order_candidates)
+       90    0.016    0.000  232.579    2.584 C:\Users\Zino\python-playground\QuantTools\EventDriven\riskmanager.py:217(chain_details)
+      140    0.003    0.000  161.314    1.152 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\sessions.py:500(request)
+      140    0.004    0.000  161.147    1.151 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\sessions.py:673(send)
+       82    0.002    0.000  159.095    1.940 C:\Users\Zino\python-playground\FinanceDatabase\FinanceDatabase\dbase\DataAPI\ThetaData.py:34(request_from_proxy)
+       82    0.001    0.000  159.091    1.940 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\api.py:14(request)
+     1359    0.008    0.000  157.182    0.116 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\socket.py:691(readinto)
+     1185  155.145    0.131  155.145    0.131 {method 'recv_into' of '_socket.socket' objects}
+      140    0.003    0.000  151.908    1.085 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\requests\adapters.py:613(send)
+      140    0.003    0.000  151.846    1.085 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connectionpool.py:594(urlopen)
+      140    0.004    0.000  151.816    1.084 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connectionpool.py:379(_make_request)
+      140    0.007    0.000  148.221    1.059 c:\Users\Zino\python-playground\QuantTools\.venv\lib\site-packages\urllib3\connection.py:481(getresponse)
+      140    0.002    0.000  148.182    1.058 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\http\client.py:1331(getresponse)
+      140    0.004    0.000  148.170    1.058 C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\http\client.py:311(begin)
+
+

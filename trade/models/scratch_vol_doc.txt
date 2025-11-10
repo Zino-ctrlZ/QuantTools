@@ -1,0 +1,12 @@
+- Vols are currently calculated with BSM
+- SVI is fit on Spot & not forward
+- All IV Error Defaults to 0
+- Resolve uses an arbitrarily picked MSE as threshold.
+    - Can use R2 to test maybe.
+- Vol resolve are saved in helpers/helper/vol_resolve
+
+
+
+OptionChain:
+- Build_date doesn't take into consideration time to avoid -1 DTE on 0 DTE days
+- SVI is fitted on Midpoint Vols, not Close Vols

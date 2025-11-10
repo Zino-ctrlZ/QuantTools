@@ -1,0 +1,42 @@
+{
+    "INTRADAY_AGG": "5m",
+    "MARKET_OPEN_TIME": "09:30",
+    "MARKET_CLOSE_TIME": "16:00",
+    "AVAILABLE_PRICING_MODELS": [
+        "bs",
+        "binomial",
+        "mc"
+    ],
+    "AVAILABLE_INTERVALS": [
+        "h",
+        "d",
+        "w",
+        "q",
+        "y",
+        "M",
+        "m"
+    ],
+    "AVAILABLE_GREEKS": [
+        "vega",
+        "vanna",
+        "volga",
+        "delta",
+        "gamma",
+        "theta",
+        "rho"
+    ],
+    "UPPER_BOUND_MONEYNESS": 2,
+    "LOWER_BOUND_MONEYNESS": 0.8,
+    "DAYS_IN_MONTH": 30,
+    "DAYS_IN_YEAR": 360,
+    "MIN_BAR_TIME_INTERVAL": "5m",
+    "QUOTE_DATA_START_TIME": "9:45:00",
+    "VOL_SURFACE_MIN_MONEYNESS_THRESHOLD": 0.1,
+    "VOL_SURFACE_MAX_MONEYNESS_THRESHOLD": 2.0,
+    "VOL_SURFACE_MIN_DTE_THRESHOLD": 30,
+    "VOL_SURFACE_MAX_DTE_THRESHOLD": 732,
+    "ATM_WIDTH": 0.05,
+    "VOL_SURFACE_SURFACE_LOSS_THRESHOLD": 0.1,
+    "VOL_SURFACE_ATM_LOSS_THRESHOLD": 0.05,
+    "DEFAULT_SSVI_PARAMS_ITERATION": 25000
+}

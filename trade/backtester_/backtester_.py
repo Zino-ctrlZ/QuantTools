@@ -7,8 +7,8 @@ from backtesting import Backtest
 import pandas as pd
 import sys
 import os
-sys.path.append(
-    os.environ.get('WORK_DIR'))
+# sys.path.append(
+#     os.environ.get('WORK_DIR'))
 from trade.assets.Stock import Stock
 import plotly.io as pio
 import plotly.express as px
@@ -40,6 +40,7 @@ class PTDataset:
         self.__param_settings = param_settings ## Making param_settings private
         self.name = name
         self.data = data
+        self.backtest = None
     
     def __repr__(self):
         return f"PTDataset({self.name})"
@@ -77,15 +78,22 @@ class PTBacktester(AggregatorParent):
         strategy (class): Strategy class to be used for backtesting
         cash (Union[int, float, dict]): Initial cash to be used for backtesting. If dict, must contain all tickers in the datalist
         strategy_settings (dict): Dictionary containing the tick as key and settings as value. Eg: {AAPL: {"entry_ma":10}}
-        **kwargs: Additional keyword arguments to be passed to the backtesting.py library
+        start_overwrite (Optional[str]): Start date to overwrite the backtest start date. If None, it will use the earliest date in the dataset
+            This is useful for when you have a strategy that starts at a certain date, which is greater than the earliest date in the dataset.
+            Typically to allow buffer to calculate indicators.
+        **kwargs: Additional keyword arguments to be passed to the Backtest class in backtesting.py
 
         Returns:
         None
+
+        Accessible Attributes In Strategy Class:
+        - _name: Name of the ticker
+        - _runIndex: Index of the ticker in the dataset list
             
         """
         
         self.datasets = []
-        self.strategy = deepcopy(strategy)
+        self.__strategy = deepcopy(strategy)
         self.__port_stats = None
         self._trades = None
         self._equity = None
@@ -93,7 +101,7 @@ class PTBacktester(AggregatorParent):
         self.strategy_settings = strategy_settings
         self.default_settings = {}
         self._names = [d.name for d in datalist]
-        datalist = deepcopy(datalist) ## To avoid changing the original datalist
+        datalist = deepcopy(datalist) ## To avoid changing the original datalist deepcopy
         self.update_settings(datalist) if self.strategy_settings else None
 
         assert isinstance(cash, dict) or isinstance(cash, int) or isinstance(cash, float), "Cash must be of type float, int, dict"
@@ -148,18 +156,32 @@ class PTBacktester(AggregatorParent):
         for settings, value in self.default_settings.items():
             setattr(self.strategy, settings, value)
 
+    @property
+    def strategy(self):
+        return self.__strategy
+    
+    @strategy.setter
+    def strategy(self, value):
+        self.__strategy = value
+        for d in self.datasets:
+            d.backtest._strategy = deepcopy(value)
+
 
     def run(self) -> pd.DataFrame:
+        """
+        Runs the backtest for each dataset in the list and returns a dataframe containing the results
+        
+        """
         results = []
         for i, d in enumerate(self.datasets):
             d.backtest._strategy._name = d.name
             d.backtest._strategy._runIndex = i
             if d.param_settings:
-                # print(d.name, "param_settings", d.param_settings)
                 if d.param_settings:
-                    for setting, value in d.param_settings.items():                    
+                    for setting, value in d.param_settings.items(): ## Set the settings for the strategy, per dataset                
                         setattr(self.strategy, setting, value)
             stats = d.backtest.run()
+            ## Since the strategy is uninitialized, we reset the settings to default, to avoid any carry over in the next run
             self.reset_settings() if d.param_settings else None
             try:
                 del d.backtest._strategy._name
@@ -173,7 +195,7 @@ class PTBacktester(AggregatorParent):
         names = [d.name for d in self.datasets]
         names = [d.name for d in self.datasets]
         self.__port_stats = {name:results[i] for i, name in enumerate(names)}
-        self._trades = self.trades()
+        self._trades = self.__trades()
         self._equity = self.pf_value_ts()
         dataframe = pd.DataFrame(results).transpose()
         dataframe.columns = names
@@ -218,6 +240,10 @@ class PTBacktester(AggregatorParent):
             port_equity_data = port_equity_data[port_equity_data.index.date >= pd.to_datetime(self.start_overwrite).date()]
         port_equity_data = port_equity_data[~port_equity_data.index.duplicated(keep = 'first')]
         return port_equity_data
+    
+    def __trades(self):
+        return self.trades()
+        
 
 
     def plot_portfolio(self,

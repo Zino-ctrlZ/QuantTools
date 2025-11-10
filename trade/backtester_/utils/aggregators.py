@@ -2,11 +2,10 @@
 ## To-do: Add Thorp Expectancy (from building a winning system book)
 ## To-do: Add skew
 ## To-do: Is sharpe annualized?
+## To-Do: Change BuyNHold to the function in EventDrive.portfolio.OptionSignalPortfolio
 
 import sys
 import os
-sys.path.append(
-    os.environ.get('WORK_DIR'))
 from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
@@ -162,9 +161,12 @@ def cagr(equity_timeseries: pd.DataFrame) -> float:
     float: Returns average annualize retruns for the portfolio. Cumulative Annual Growth Rate
     """
     ts = equity_timeseries
-    begin_val = ts['Total'][0]
-    end_val = ts['Total'][-1]
-    days = (ts.index.max() - ts.index.min()).days
+    begin_val = ts['Total'].iloc[0]
+    end_val = ts['Total'].iloc[-1]
+    if isinstance(ts.index, pd.DatetimeIndex):
+        days = (ts.index.max() - ts.index.min()).days
+    elif isinstance(ts.index, pd.RangeIndex):
+        days = (ts.index.max() - ts.index.min())
     return ((end_val/begin_val)**(365/days) - 1)*100
 
 
@@ -228,7 +230,6 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long 
     return excess_retrns/annualized_vol
 
 
-# YES
 def sortino(equity_timeseries: pd.DataFrame, risk_free_rate: float, MAR: Optional[float] = None) -> float:
     """
     Returns the Sortino ratio of the portfolio
@@ -360,7 +361,7 @@ def trades(port_stats) -> pd.DataFrame:
         holder = v['_trades']
         holder['Ticker'] = k
         trades_df = pd.concat([trades_df, holder])
-    return trades_df.sort_values(['EntryTime', 'ExitTime'])
+    return trades_df.sort_values(['EntryTime', 'ExitTime']).reset_index(drop = True)
 
 
 def numOfTrades(trades_df) -> int:
@@ -404,7 +405,8 @@ def avgPnL(trades_df: pd.DataFrame, Type_: str, value=True) -> float:
     PnL = trades_.PnL if value else trades_.ReturnPct
     WPnL = PnL[PnL > 0] if Type_.upper() == 'W' else PnL[PnL <=
                                                          0] if Type_.upper() == 'L' else PnL
-    return WPnL.mean() * 100
+
+    return WPnL.mean() * 100 if not WPnL.empty else 0
 
 
 def bestTrade(trades_df: pd.DataFrame) -> float:
@@ -434,7 +436,6 @@ def Expectancy(trades_df: pd.DataFrame) -> float:
     Returns the expected %pnl based on portfolio data
     """
     tr = trades_df
-
     return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
 
 
@@ -461,6 +462,7 @@ def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> fl
     time_in = pd.DataFrame(index=equity_timeseries.index)
     time_in['position'] = 0
     tr = trades_df
+    tr.dropna(subset=['EntryTime', 'ExitTime'], inplace=True)
     for index, row in tr.iterrows():
         entry = pd.to_datetime(row['EntryTime']).date()
         exit_ = pd.to_datetime(row['ExitTime']).date()
@@ -510,7 +512,7 @@ def holding_period(trades_df: pd.DataFrame, aggfunc: Callable, Type_: str = 'W')
     Returns:
     pd.Timedelta: Corresponding Value
     """
-    assert aggfunc.__name__.lower() in [
+    assert aggfunc.__name__.lower() in ['amax',
         'mean', 'max'], f"Function of type '{aggfunc.__name__}' cannot be used for this method. Please use a mean or max function"
     assert Type_.upper() in [
         'A', 'W', 'L'], f"Invalid type: {Type_}. Must be 'L', 'W' or 'A."
@@ -656,7 +658,6 @@ class AggregatorParent(ABC):
         # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
         return sharpe(self._equity, risk_free_rate)
 
-    # YES
     def sortino(self, risk_free_rate: float, MAR: Optional[float] = None) -> float:
         """
         Returns the Sortino ratio of the portfolio
@@ -847,12 +848,52 @@ class AggregatorParent(ABC):
         """
         assert self.get_port_stats(), f"Run Portfolio Backtest before aggregating"
         MAR = 0.0 if not MAR else MAR
-        # tr = trades(PortStats)
+        
+        ## Extending to ensure useability in other places. It was originally designed for PTBacktest,
+        ## But can be used in other places
+
+        ## Re-implement dates_. This is very specific to PTBacktest
+
+
         assert isinstance(
             MAR, float), f"Recieved MAR of type {type(MAR)} instead of Type float"
+        
+        try:
+            start_overwrite = getattr(self, 'start_overwrite')
+        except AttributeError:
+            start_overwrite = None
+
+        try:
+            strategy = list(self.get_port_stats().values())[0]['_strategy']
+        except AttributeError:
+            strategy = None
+
+        try: 
+            equity = self.pf_value_ts()
+        except AttributeError:
+            equity = self._equity
+        except Exception:
+            raise Exception('Either implement pf_value_ts method or self._equity')
+
+        try:
+            ## Function call for trades
+            trades = self.trades()
+        except TypeError:
+            ## If trades is not implemented, we can use the self._trades attribute
+            trades = self._trades
+        except Exception:
+            raise Exception('Either implement trades method or self._trades')
+
+        try:
+            tickers = [dataset.name for dataset in self.datasets]
+        except AttributeError:
+            tickers = self.symbol_list
+        except Exception:
+            raise Exception('Either implement datasets attribute with PTDataset or self.symbol_list')
+
         rtrn_ = self.rtrn()
         series1 = pd.Series({
-            'Start': self.start_overwrite if self.start_overwrite else self.dates_(True),
+            'Start': start_overwrite if start_overwrite else self.dates_(True),
             'End': self.dates_(False),
             'Duration': self.dates_(False) - self.dates_(True),
             'Exposure Time [%]': self.ExposureDays(),
@@ -860,11 +901,15 @@ class AggregatorParent(ABC):
             'Equity Peak [$]': self.peak_value_func(),
             'Return [%]': rtrn_,
             'Buy & Hold Return [%]': self.buyNhold(),
+            'Median Daily Return [%]': f"{self.daily_rtrns().median(): .4%}",
+            'VaR 95% [%]': f"{self.daily_rtrns().quantile(0.05): .2%}",
+            'VaR 05% [%]': f"{self.daily_rtrns().quantile(0.95): .2%}",
             'CAGR [%]':  self.cagr(),
             'Volatility Ann. [%]': self.vol_annualized(),
             'Sharpe Ratio': self.sharpe(risk_free_rate),
             'Sortino Ratio': self.sortino(risk_free_rate, MAR),
             'Skew': self._equity.Total.pct_change().skew(),
+            'Log Return Skew': np.log(self._equity.Total/self._equity.Total.shift(1)).skew(),
             'Calmar Ratio': self.calmar(),
             'Max. Drawdown [%]': self.mdd(),
             'Max. Drawdown Value [$]': self.mdd_value(),
@@ -898,10 +943,10 @@ class AggregatorParent(ABC):
         series3 = pd.Series({
             'Winning Streak': self.streak('W'),
             'Losing Streak': self.streak('L'),
-            '_strategy': list(self.get_port_stats().values())[0]['_strategy'],
-            'equity_curve': self.pf_value_ts(),
-            '_trades': self.trades(),
-            '_tickers': [dataset.name for dataset in self.datasets]
+            '_strategy': strategy,
+            'equity_curve': equity,
+            '_trades': trades,
+            '_tickers': tickers
 
         })
         return pd.concat([series1, rtrn_series, series3])
