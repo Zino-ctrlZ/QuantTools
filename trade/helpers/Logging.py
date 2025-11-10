@@ -2,6 +2,8 @@ import logging
 import sys
 import os
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo 
 from dotenv import load_dotenv
 load_dotenv()
 print("""
@@ -14,6 +16,19 @@ PROPAGATE_TO_ROOT_LOGGER = 'False'
 """)
 from logging.handlers import TimedRotatingFileHandler
 
+class TimezoneFormatter(logging.Formatter):
+    """Custom formatter that converts timestamps to a specific timezone."""
+    def __init__(self, fmt=None, datefmt=None, tz=None):
+        super().__init__(fmt, datefmt)
+        self.tz = ZoneInfo(tz) if tz else None
+
+    def converter(self, timestamp):
+        """Convert timestamp to timezone-aware datetime."""
+        dt = datetime.fromtimestamp(timestamp, tz=ZoneInfo('UTC'))
+        if self.tz:
+            dt = dt.astimezone(self.tz)
+        return dt.timetuple()
+
 def find_project_root(current_path: Path, marker=".git"):
     """
     Find the current project root by looking for a marker file in the parent directories.
@@ -21,6 +36,9 @@ def find_project_root(current_path: Path, marker=".git"):
     if isinstance(current_path, str):
         current_path = Path(current_path)
         
+    if (current_path / marker).exists():
+        return current_path
+
     for parent in current_path.parents:
         if (parent / marker).exists():
             return parent
@@ -55,7 +73,7 @@ def setup_logger(filename,stream_log_level = None,
                  file_log_level = None, 
                  log_file=None, 
                  remove_root = True, 
-                 custom_logger_name = None) -> logging.Logger:
+                 custom_logger_name = None, timezone = None) -> logging.Logger:
 
 
     project_root_log_dir = get_logger_base_location()
@@ -108,6 +126,9 @@ def setup_logger(filename,stream_log_level = None,
         f"%(asctime)s {notebook_name} %(levelname)s: %(message)s", 
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+
+    if timezone is not None: 
+        formatter = TimezoneFormatter(fmt=f"%(asctime)s {notebook_name} %(levelname)s: %(message)s", datefmt='%Y-%m-%d %H:%M:%S', tz=timezone)
 
     # Create a console handler (logs to stdout)
     console_handler = logging.StreamHandler(sys.stdout)
