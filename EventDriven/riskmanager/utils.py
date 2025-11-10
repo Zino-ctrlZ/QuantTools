@@ -50,7 +50,7 @@ from EventDriven.event import FillEvent
 from EventDriven.helpers import parse_signal_id
 from EventDriven.data import DataHandler
 from EventDriven.eventScheduler import EventScheduler
-from EventDriven.types import FillDirection, OpenPositionAction, ResultsEnum, SignalTypes
+from EventDriven.types import FillDirection, EventTypes, ResultsEnum, SignalTypes
 from threading import Thread, Lock
 from trade import POOL_ENABLED, register_signal
 import multiprocessing as mp
@@ -406,8 +406,7 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-# @log_time(time_logger)
-@dynamic_memoize
+# @dynamic_memoize
 def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
     """
     Populate the cache with chain data.
@@ -419,14 +418,25 @@ def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
         date,
         '16:00',
         'C',
-        print_url = print_url
+        print_url = False
     )
     logger.info(f"Retrieved chain for {tick} on {date}")
     logger.error(f"Retrieved chain for {tick} on {date}")
+    
+    prev = (pd.to_datetime(date) - BDay(1)).strftime('%Y-%m-%d')
+    oi = retrieve_bulk_open_interest(
+        symbol = tick,
+        exp = 0,
+        start_date = prev,
+        end_date = prev,
+        print_url = False
+    )
 
+    
 
     ## Clip Chain
-    chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    chain_clipped = chain.reset_index()#[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+    chain_clipped = chain_clipped.merge(oi[['Root', 'Expiration', 'Strike', 'Right', 'Open_interest']], on=['Root', 'Expiration', 'Strike', 'Right'], how='left')
     if PATCH_TICKERS:
         chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
 
@@ -459,6 +469,7 @@ def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
         chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot'] / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
         chain_clipped=chain_clipped[chain_clipped['moneyness'].between(0.01, 3)] ## Filter out extreme moneyness to reduce size
     chain_clipped.columns = chain_clipped.columns.str.lower()
+    chain_clipped["pct_spread"] = (chain_clipped["closeask"] - chain_clipped["closebid"]) / chain_clipped["midpoint"]
 
     return chain_clipped
 
@@ -1579,83 +1590,83 @@ def liquidity_check(id: str,
 
 
 
-import functools
-import pandas as pd
+# import functools
+# import pandas as pd
 
-def make_cache_key(func, args, kwargs):
-    # naïve example: you can improve by normalizing mutable inputs if needed
-    return (func.__name__, args, tuple(sorted(kwargs.items())))
+# def make_cache_key(func, args, kwargs):
+#     # naïve example: you can improve by normalizing mutable inputs if needed
+#     return (func.__name__, args, tuple(sorted(kwargs.items())))
 
-def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
-    """
-    Populate the cache with chain data.
-    """
-    cache = get_persistent_cache()  # resolved on every call
-    # build a key depending on the inputs that define uniqueness
-    key = make_cache_key(populate_cache_with_chain, (tick, date), {'chain_spot': chain_spot, 'print_url': print_url})
+# def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
+#     """
+#     Populate the cache with chain data.
+#     """
+#     cache = get_persistent_cache()  # resolved on every call
+#     # build a key depending on the inputs that define uniqueness
+#     key = make_cache_key(populate_cache_with_chain, (tick, date), {'chain_spot': chain_spot, 'print_url': print_url})
 
-    # Try fetch from cache manually
-    if key in cache:
-        logger.info(f"Cache hit for {tick} on {date}")
-        return cache[key]
+#     # Try fetch from cache manually
+#     if key in cache:
+#         logger.info(f"Cache hit for {tick} on {date}")
+#         return cache[key]
 
-    # Otherwise compute
-    chain = retrieve_chain_bulk(
-        tick,
-        '',
-        date,
-        date,
-        '16:00',
-        'C',
-        print_url=print_url
-    )
-    logger.info(f"Retrieved chain for {tick} on {date}")
+#     # Otherwise compute
+#     chain = retrieve_chain_bulk(
+#         tick,
+#         '',
+#         date,
+#         date,
+#         '16:00',
+#         'C',
+#         print_url=print_url
+#     )
+#     logger.info(f"Retrieved chain for {tick} on {date}")
 
-    ## Clip Chain
-    chain_clipped = chain.reset_index()[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
-    if PATCH_TICKERS:
-        chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
+#     ## Clip Chain
+#     chain_clipped = chain.reset_index()#[['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+#     if PATCH_TICKERS:
+#         chain_clipped['Root'] = chain_clipped['Root'].apply(swap_ticker)
 
-    ## Create ID
-    id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
-    ids = runThreads(
-        generate_option_tick_new,
-        id_params
-    )
-    chain_clipped['opttick'] = ids
-    filter_opt = get_avoid_opticks(tick)
-    chain_clipped = chain_clipped[~chain_clipped['opttick'].isin(filter_opt)]
-    chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
-    chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
+#     ## Create ID
+#     id_params = chain_clipped[['Root', 'Right', 'Expiration', 'Strike']].T.to_numpy()
+#     ids = runThreads(
+#         generate_option_tick_new,
+#         id_params
+#     )
+#     chain_clipped['opttick'] = ids
+#     filter_opt = get_avoid_opticks(tick)
+#     chain_clipped = chain_clipped[~chain_clipped['opttick'].isin(filter_opt)]
+#     chain_clipped['chain_id'] = chain_clipped['opttick'] + '_' + chain_clipped['datetime'].astype(str)
+#     chain_clipped['dte'] = (pd.to_datetime(chain_clipped['Expiration']) - pd.to_datetime(chain_clipped['datetime'])).dt.days
 
-    ## Save to cache (spot)
-    def save_to_cache(id_, date_, spot):
-        date_str = pd.to_datetime(date_).strftime('%Y-%m-%d')
-        save_id = f"{id_}_{date_str}"
-        if save_id not in get_cache('spot'):
-            spot_cache[save_id] = spot
-    save_params = chain_clipped[['opttick', 'datetime', 'Midpoint']].T.to_numpy()
-    runThreads(
-        save_to_cache,
-        save_params
-    )
+#     ## Save to cache (spot)
+#     def save_to_cache(id_, date_, spot):
+#         date_str = pd.to_datetime(date_).strftime('%Y-%m-%d')
+#         save_id = f"{id_}_{date_str}"
+#         if save_id not in get_cache('spot'):
+#             spot_cache[save_id] = spot
+#     save_params = chain_clipped[['opttick', 'datetime', 'Midpoint']].T.to_numpy()
+#     runThreads(
+#         save_to_cache,
+#         save_params
+#     )
 
-    if chain_spot:
-        chain_clipped['spot'] = chain_spot
-        chain_clipped['moneyness'] = 0
-        chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = (
-            chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike']
-            / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
-        )
-        chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = (
-            chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot']
-            / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
-        )
-        chain_clipped = chain_clipped[chain_clipped['moneyness'].between(0.1, 2)]
+#     if chain_spot:
+#         chain_clipped['spot'] = chain_spot
+#         chain_clipped['moneyness'] = 0
+#         chain_clipped.loc[chain_clipped['Right'] == 'C', 'moneyness'] = (
+#             chain_clipped.loc[chain_clipped['Right'] == 'C', 'Strike']
+#             / chain_clipped.loc[chain_clipped['Right'] == 'C', 'spot']
+#         )
+#         chain_clipped.loc[chain_clipped['Right'] == 'P', 'moneyness'] = (
+#             chain_clipped.loc[chain_clipped['Right'] == 'P', 'spot']
+#             / chain_clipped.loc[chain_clipped['Right'] == 'P', 'Strike']
+#         )
+#         chain_clipped = chain_clipped[chain_clipped['moneyness'].between(0.1, 2)]
 
-    chain_clipped.columns = chain_clipped.columns.str.lower()
+#     chain_clipped.columns = chain_clipped.columns.str.lower()
 
-    # Store result in cache
-    cache[key] = chain_clipped
+#     # Store result in cache
+#     cache[key] = chain_clipped
 
-    return chain_clipped
+#     return chain_clipped

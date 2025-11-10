@@ -13,7 +13,13 @@ from pandas.tseries.offsets import BDay
 import numpy as np
 import os
 from pathlib import Path
-
+from ._utils import (
+    ZcoreScalar,
+    default_delta_limit,
+    zscore_rvol_delta_limit,
+    delta_position_sizing,
+    raise_none
+)
 
 if TYPE_CHECKING:
     from EventDriven.riskmanager.base import RiskManager
@@ -22,6 +28,19 @@ if TYPE_CHECKING:
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager.sizer')
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache"
+
+
+    
+def override_calculate_position_size(**overrides) -> float:
+        try:
+            return delta_position_sizing(
+                cash_available=overrides.pop('current_cash'),
+                option_price_at_time=overrides.pop('option_price_at_time'),
+                delta=overrides.pop('delta'),
+                delta_limit=overrides.pop('delta_limit'),
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing required override parameter: {e}")
 
 class BaseSizer(ABC):
     """
@@ -39,8 +58,8 @@ class BaseSizer(ABC):
     }
 
     def __init__(self, 
-                 pm: OptionSignalPortfolio, 
-                 rm: RiskManager, 
+                 pm: OptionSignalPortfolio=None, 
+                 rm: RiskManager=None, 
                  sizing_lev=1.0):
         """
         Initialize the BaseSizer with a PowerManager and ResourceManager.
@@ -51,10 +70,11 @@ class BaseSizer(ABC):
         """
         self.pm = pm
         self.rm = rm
+        self._unavailable = (pm is None) and (rm is None)
         self.sizing_lev = sizing_lev
         self.signal_starting_cash = {}
         self.position_id_starting_cash = {} ## This is helpful to track the starting cash for each position ID, especially when calculating limits
-        self.ticker_starting_cash = pm.allocated_cash_map.copy()
+        self.ticker_starting_cash = pm.allocated_cash_map.copy() if not self._unavailable else {}
         self.cash_rule = self.__CASH_USE_RULES[1]
         self.re_update_on_roll = True  # Flag to control re-updating on roll
         self.delta_limit_log = {}
@@ -96,6 +116,7 @@ class BaseSizer(ABC):
             signal_id (str): The ID of the signal associated with the position.
             position_id (str): The ID of the position.
         """
+        
         if self.cash_rule == self.__CASH_USE_RULES[1]:
             return self.position_id_starting_cash.get(position_id, self.pm.allocated_cash_map[tick])
         elif self.cash_rule == self.__CASH_USE_RULES[2]:
@@ -111,6 +132,8 @@ class BaseSizer(ABC):
         Args:
             rule (int): The cash rule to set. Must be one of the keys in CASH_USE_RULES.
         """
+        logger.critical("Cash rule will always be USE_CASH_EVERY_NEW_POSITION_ID because it is difficult to maintain live ")
+        rule = 1
         if rule in self.__CASH_USE_RULES:
             self.cash_rule = self.__CASH_USE_RULES[rule]
         else:
@@ -180,10 +203,18 @@ class DefaultSizer(BaseSizer):
     Calculates position size based on delta limits and available cash.
     """
 
-    def __init__(self, pm, rm, sizing_lev):
+    def __init__(self, 
+                 pm=None, 
+                 rm=None, 
+                 sizing_lev=1.0):
+        
         super().__init__(pm, rm, sizing_lev)
         
-    def get_daily_delta_limit(self, signal_id:str, position_id:str, date:str|datetime) -> float:
+    def get_daily_delta_limit(self, 
+                              signal_id:str=None, 
+                              position_id:str=None, 
+                              date:str|datetime=None, 
+                              **overrides) -> float:
         """
         Returns the delta limit for a given signal ID and date.
         This method retrieves the delta limit for a specific signal ID and date, 
@@ -198,26 +229,48 @@ class DefaultSizer(BaseSizer):
             float: The delta limit for the specified signal ID and date.
         """
  
-        logger.info("DefaultSizer: Calculating Delta Limit for Signal ID: %s and Position ID: %s on Date: %s\n", signal_id, position_id, date)
-        id_details = parse_signal_id(signal_id)
-        self.register_signal_starting_cash(signal_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the signal
-        self.register_position_id_starting_cash(position_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the position ID
+        if self._unavailable:
+            try:
+                raise_none(signal_id, 'signal_id')
+                raise_none(position_id, 'position_id')
+                current_cash = overrides.pop('current_cash')
+                underlier_price_at_time = overrides.pop('underlier_price_at_time')
+            except KeyError as e:
+                raise ValueError(f"Missing required override parameter: {e}")
+            self.register_position_id_starting_cash(signal_id, current_cash)
+            self.register_signal_starting_cash(position_id, current_cash)
+            delta = default_delta_limit(
+                cash_available=current_cash,
+                sizing_lev=self.sizing_lev,
+                underlier_price_at_time=underlier_price_at_time
+            )
+            return delta
+
+        else:
+            logger.info("DefaultSizer: Calculating Delta Limit for Signal ID: %s and Position ID: %s on Date: %s\n", signal_id, position_id, date)
+            id_details = parse_signal_id(signal_id)
+            self.register_signal_starting_cash(signal_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the signal
+            self.register_position_id_starting_cash(position_id, self.pm.allocated_cash_map[id_details['ticker']])  ## Register the starting cash for the position ID
 
 
-        logger.info("Updating Greek Limits for Signal ID: %s and Position ID: %s", signal_id, position_id)
-        starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id)  ## Get the cash available for the ticker based on the cash rule
-        logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
-        delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  ## This is the delta at the time of purchase
-        s0_at_purchase = self.rm.position_data[position_id]['s'][date]  ## This is the delta at the time of purchase## As always, we use the chain spot data to account for splits
-        equivalent_delta_size = (starting_cash * self.sizing_lev) / (s0_at_purchase * 100) if s0_at_purchase != 0 else 0
-        logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {date}  ## This is the delta at the time of purchase")
-        logger.info(f"Delta at Purchase: {delta_at_purchase}")
-        logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {starting_cash}, and Leverage: {self.sizing_lev}")
-        return equivalent_delta_size
+            logger.info("Updating Greek Limits for Signal ID: %s and Position ID: %s", signal_id, position_id)
+            starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id)  ## Get the cash available for the ticker based on the cash rule
+            logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
+            delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  ## This is the delta at the time of purchase
+            s0_at_purchase = self.rm.position_data[position_id]['s'][date]  ## This is the delta at the time of purchase## As always, we use the chain spot data to account for splits
+            equivalent_delta_size = (starting_cash * self.sizing_lev) / (s0_at_purchase * 100) if s0_at_purchase != 0 else 0
+            logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {date}  ## This is the delta at the time of purchase")
+            logger.info(f"Delta at Purchase: {delta_at_purchase}")
+            logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {starting_cash}, and Leverage: {self.sizing_lev}")
+            return equivalent_delta_size
         
 
 
-    def update_delta_limit(self, signal_id:str, position_id:str, date:str|datetime) -> float:
+    def update_delta_limit(self, 
+                           signal_id:str=None, 
+                           position_id:str=None, 
+                           date:str|datetime=None, 
+                           **overrides) -> float:
         """
         Updates the limits associated with a signal
         ps: This should only be updated on first purchase of the signal
@@ -225,11 +278,22 @@ class DefaultSizer(BaseSizer):
         
         Limit Calc: (allocated_cash * lev)/(S0 * 100)
         """
+        if self._unavailable:
+            raise_none(signal_id, 'signal_id')
+            raise_none(position_id, 'position_id')
+            return self.get_daily_delta_limit(**overrides, signal_id=signal_id, position_id=position_id, date=date)
+        
         equivalent_delta_size = self.get_daily_delta_limit(signal_id, position_id, date)  ## Get the delta limit for the signal ID and date
         self.rm.greek_limits['delta'][signal_id] = equivalent_delta_size  ## Update the delta limit in the risk manager's greek limits
         return equivalent_delta_size
 
-    def calculate_position_size(self, signal_id:str, position_id:str, opt_price:str, date:str|datetime) -> float:
+    def calculate_position_size(self, 
+                                signal_id:str=None, 
+                                position_id:str=None, 
+                                opt_price:str=None, 
+                                date:str|datetime=None,
+                                side:int=1,
+                                **overrides) -> float:
         """
         Returns the quantity of the position that can be bought based on the sizing type
         Args:
@@ -237,32 +301,49 @@ class DefaultSizer(BaseSizer):
             position_id (str): The ID of the position.
             opt_price (float): The price of the option.
             date (str|datetime): The date for which the position size is calculated.
-        """
-        self.update_delta_limit(signal_id,position_id, date) ## Always calculate the delta limit first
-        logger.info(f"Calculating Quantity for Position ID: {position_id} and Signal ID: {signal_id} on Date: {date}")
-        if position_id not in self.rm.position_data: ## If the position data isn't available, calculate the greeks
-            self.rm.calculate_position_greeks(position_id, date)
-        
-        ## First get position info and ticker
-        position_dict, _ = self.rm.parse_position_id(position_id)
-        key = list(position_dict.keys())[0]
-        ticker = swap_ticker(position_dict[key][0]['ticker'])
+            side (int): The side of the position, 1 for long and -1 for short.
+        Raises:
+            ValueError: If side is not 1 or -1.
+            NotImplementedError: If side is -1 (short position sizing not implemented).
+        Note: This calculation only makes sense for long positions. No implementation for short positions yet.
+        Returns:
+            float: The quantity of the position that can be bought based on the sizing type.
 
-        ## Now calculate the max size cash can buy
-        cash_available = self.pm.allocated_cash_map[ticker]
-        purchase_date = pd.to_datetime(date)
-        s0_at_purchase = self.rm.position_data[position_id]['s'][purchase_date]  ## s -> chain spot, s0_close -> adjusted close
-        logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
-        logger.info(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
-        max_size_cash_can_buy = abs(math.floor(cash_available/(opt_price*100))) ## Assuming Allocated Cash map is already in 100s
-          
-        delta = self.rm.position_data[position_id]['Delta'][purchase_date]
-        target_delta = self.rm.greek_limits['delta'][signal_id]
-        logger.info(f"Target Delta: {target_delta}")
-        delta_size = (math.floor(target_delta/abs(delta)))
-        logger.info(f"Delta from Full Cash Spend: {max_size_cash_can_buy * delta}, Size: {max_size_cash_can_buy}")
-        logger.info(f"Delta with Size Limit: {delta_size * delta}, Size: {delta_size}")
-        return delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy
+        """
+        if side not in [1, -1]:
+            raise ValueError("side must be either 1 (long) or -1 (short).")
+        if side == -1:
+            raise NotImplementedError("Short position sizing is not implemented yet.")
+
+        if self._unavailable:
+            return override_calculate_position_size(**overrides)
+        
+        else:
+            self.update_delta_limit(signal_id,position_id, date) ## Always calculate the delta limit first
+            logger.info(f"Calculating Quantity for Position ID: {position_id} and Signal ID: {signal_id} on Date: {date}")
+            if position_id not in self.rm.position_data: ## If the position data isn't available, calculate the greeks
+                self.rm.calculate_position_greeks(position_id, date)
+            
+            ## First get position info and ticker
+            position_dict, _ = self.rm.parse_position_id(position_id)
+            key = list(position_dict.keys())[0]
+            ticker = swap_ticker(position_dict[key][0]['ticker'])
+
+            ## Now calculate the max size cash can buy
+            cash_available = self.pm.allocated_cash_map[ticker]
+            purchase_date = pd.to_datetime(date)
+            s0_at_purchase = self.rm.position_data[position_id]['s'][purchase_date]  ## s -> chain spot, s0_close -> adjusted close
+            logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
+            logger.info(f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}")
+            max_size_cash_can_buy = abs(math.floor(cash_available/(opt_price*100))) ## Assuming Allocated Cash map is already in 100s
+            
+            delta = self.rm.position_data[position_id]['Delta'][purchase_date]
+            target_delta = self.rm.greek_limits['delta'][signal_id]
+            logger.info(f"Target Delta: {target_delta}")
+            delta_size = (math.floor(target_delta/abs(delta)))
+            logger.info(f"Delta from Full Cash Spend: {max_size_cash_can_buy * delta}, Size: {max_size_cash_can_buy}")
+            logger.info(f"Delta with Size Limit: {delta_size * delta}, Size: {delta_size}")
+            return delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy
     
     def daily_update(self):
         """
@@ -281,10 +362,6 @@ class DefaultSizer(BaseSizer):
         Abstract method for daily updates.
         """
         pass
-
-
-
-
 
 
 class ZscoreRVolSizer(BaseSizer):
@@ -322,16 +399,32 @@ class ZscoreRVolSizer(BaseSizer):
         assert isinstance(weights, tuple) and len(weights) == 3, "weights must be a tuple of length 3"
         assert sum(weights) == 1, "weights must sum to 1"
         assert rolling_window > 0, "rolling_window must be a positive integer"
+        
+        ## Ensure underlier_list is provided if pm and rm are not provided
+        if self._unavailable:
+            assert 'underlier_list' in kwargs, "underlier_list must be provided in kwargs when pm and rm are not provided."
+            assert isinstance(kwargs['underlier_list'], list) and len(kwargs['underlier_list']) > 0, "underlier_list must be a non-empty list."
+            self.underlier_list = kwargs['underlier_list']
+        else:
+            logger.critical("ZscoreRVolSizer: underlier_list will be derived from the portfolio's allocated cash map keys.")
+            self.underlier_list = list(self.pm.allocated_cash_map.keys())
 
         self.__rvol_window = rvol_window
         self.__rolling_window = rolling_window
         self.rvol_timeseries = {} 
         self.z_i = {}
-        self.scaler = {}
         self.vol_type = vol_type
         self.norm_constant = kwargs.get('norm_constant', 1.0)  ## Normalization constant for the scaler
-
         self.weights = weights  ## Weights for the weighted mean calculation
+        self.scaler = ZcoreScalar(
+            rvol_window=self.rvol_window,
+            rolling_window=self.rolling_window,
+            weights=self.weights,
+            vol_type=self.vol_type,
+            norm_constant=self.norm_constant,
+            syms=self.underlier_list,
+
+        )
 
     def __rvol_window_assert(self, vol_type:str, rvol_window:int|tuple=None) -> int|tuple:
         """
@@ -373,7 +466,11 @@ class ZscoreRVolSizer(BaseSizer):
             raise ValueError("rolling_window must be a positive integer.")
         self.__rolling_window = value
 
-    def get_daily_delta_limit(self, signal_id:str, position_id:str, date:str|datetime) -> float:
+    def get_daily_delta_limit(self, 
+                              signal_id:str=None, 
+                              position_id:str=None, 
+                              date:str|datetime=None,
+                              **overrides) -> float:
         """
         Calculate the delta limit based on the percentile of the realized volatility.
         This method is called to get the delta limit for a given signal and position.
@@ -387,31 +484,51 @@ class ZscoreRVolSizer(BaseSizer):
 
         Limit Calc: (allocated_cash * lev)/(S0 * 100) * 1/(1+Zscore(rvol(30), window))
         """
-
-        logger.info(f"ZscoreRVolSizer: Calculating Delta Limit for Signal ID: {signal_id} and Position ID: {position_id} on Date: {date}\n")
         id_details = parse_signal_id(signal_id)
         symbol = swap_ticker(id_details['ticker'])
-        
-        ## Check if the scaler for the symbol is already calculated
-        if symbol not in self.scaler:
-            self.calculate_scaler(symbol)
+
+        ##NEED TO:
+            ## Load the rvol_timeseries for the symbol if not already loaded
+        if symbol not in self.scaler.scalers:
+            self.scaler.load_scalers([symbol])
+
 
         ## Get the scaler for the symbol and date
-        scaler = self.scaler[symbol][date]
+        scaler = self.scaler.get_scaler_on_date(symbol, date)
+        
 
-        id_details = parse_signal_id(signal_id)
-        starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id) 
-        logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
-        delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  
-        s0_at_purchase = self.rm.position_data[position_id]['s'][date]  
-        equivalent_delta_size = ((starting_cash * self.sizing_lev) / (s0_at_purchase * 100)) if s0_at_purchase != 0 else 0
-        scaled_delta_size = equivalent_delta_size * scaler
-        logger.info(f"Scaler for {symbol} on {date}: {scaler}")
-        logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {date}  ## This is the delta at the time of purchase")
-        logger.info(f"Delta at Purchase: {delta_at_purchase}")
-        logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {starting_cash}, Leverage: {self.sizing_lev} and Scaler: {scaler}")
-        logger.info(f"Scaled Delta Size: {scaled_delta_size}")
-        return scaled_delta_size
+        if self._unavailable:
+
+            ## Calculate the equivalent delta size as normal
+            try:
+                current_cash = overrides.pop('current_cash')
+                underlier_price_at_time = overrides.pop('underlier_price_at_time')
+            except KeyError as e:
+                raise ValueError(f"Missing required override parameter: {e}")
+            
+            equivalent_delta_size = zscore_rvol_delta_limit(
+                cash_available=current_cash,
+                sizing_lev=self.sizing_lev,
+                underlier_price_at_time=underlier_price_at_time,
+                _scaler=scaler
+            )
+            return equivalent_delta_size
+
+        else:
+            logger.info(f"ZscoreRVolSizer: Calculating Delta Limit for Signal ID: {signal_id} and Position ID: {position_id} on Date: {date}\n")
+            id_details = parse_signal_id(signal_id)
+            starting_cash = self.get_cash(id_details['ticker'], signal_id, position_id) 
+            logger.info(f"Starting Cash for {id_details['ticker']} on {date}: {starting_cash} vs Current Cash: {self.pm.allocated_cash_map[id_details['ticker']]}")
+            delta_at_purchase = self.rm.position_data[position_id]['Delta'][date]  
+            s0_at_purchase = self.rm.position_data[position_id]['s'][date]  
+            equivalent_delta_size = ((starting_cash * self.sizing_lev) / (s0_at_purchase * 100)) if s0_at_purchase != 0 else 0
+            scaled_delta_size = equivalent_delta_size * scaler
+            logger.info(f"Scaler for {symbol} on {date}: {scaler}")
+            logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {date}  ## This is the delta at the time of purchase")
+            logger.info(f"Delta at Purchase: {delta_at_purchase}")
+            logger.info(f"Equivalent Delta Size: {equivalent_delta_size}, with Cash Available: {starting_cash}, Leverage: {self.sizing_lev} and Scaler: {scaler}")
+            logger.info(f"Scaled Delta Size: {scaled_delta_size}")
+            return scaled_delta_size
     
     def update_delta_limit(self, signal_id:str, position_id:str, date:str|datetime) -> float:
         """
@@ -434,7 +551,13 @@ class ZscoreRVolSizer(BaseSizer):
         self.rm.greek_limits['delta'][signal_id] = abs(scaled_delta_size)
         return scaled_delta_size
 
-    def calculate_position_size(self, signal_id:str, position_id:str, opt_price:float, date:str|datetime) -> float:
+    def calculate_position_size(self, 
+                                signal_id:str=None, 
+                                position_id:str=None, 
+                                opt_price:float=None, 
+                                date:str|datetime=None,
+                                side:int=1,
+                                **overrides) -> float:
         """
         Calculate the position size based on the percentile of the realized volatility.
         This method calculates the position size for a given signal ID and position ID based on the available cash and the delta limit.
@@ -443,9 +566,21 @@ class ZscoreRVolSizer(BaseSizer):
             position_id (str): The ID of the position.
             opt_price (float): The price of the option.
             date (str|datetime): The date for which the position size is calculated.
+            side (int): The side of the position, 1 for long and -1 for short. Default is 1.
 
+        Returns:
+            float: The quantity of the position that can be bought based on the sizing type.
 
+        Note: This calculation only makes sense for long positions. No implementation for short positions yet.
         """
+        if side not in [1, -1]:
+            raise ValueError("side must be either 1 (long) or -1 (short).")
+        if side == -1:
+            raise NotImplementedError("Short position sizing is not implemented yet.")
+
+        if self._unavailable:
+            return override_calculate_position_size(**overrides)
+
         self.update_delta_limit(signal_id,position_id, date) ## Always calculate the delta limit first
         logger.info(f"Calculating Quantity for Position ID: {position_id} and Signal ID: {signal_id} on Date: {date}")
         if position_id not in self.rm.position_data: ## If the position data isn't available, calculate the greeks
@@ -476,6 +611,8 @@ class ZscoreRVolSizer(BaseSizer):
         """
         Calculate the scaler for the realized volatility timeseries.
         """
+        raise DeprecationWarning("This method is deprecated. Use the ZcoreScalar class for scaler calculations.")
+    
         if symbol not in self.rvol_timeseries:
             self.load_rvol_timeseries(symbol)
         
@@ -491,6 +628,9 @@ class ZscoreRVolSizer(BaseSizer):
         """
         Load the realized volatility timeseries for a given symbol.
         """
+
+        raise DeprecationWarning("This method is deprecated. Use the ZcoreScalar class for scaler calculations.")
+    
         logger.info(f"Loading realized volatility timeseries for {symbol} with vol_type: {self.vol_type} and rvol_window: {self.rvol_window}")
         def weighted_mean(series: pd.Series) -> pd.Series:
             """

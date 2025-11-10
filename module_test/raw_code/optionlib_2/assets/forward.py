@@ -357,7 +357,7 @@ def vectorized_market_forward_calc(ticks: List[str],
     r: List of risk-free rates (annualized)
     div_type: Type of dividend ('discrete' or 'continuous')
         if 'discrete', it returns the forward price, (dividend schedule & present value of dividends)
-        if 'continuous', it returns the forward price, (dividend rate & present value of dividends)
+        if 'continuous', it returns the forward price, (dividend rate & present value of dividend rate)
     Returns: Forward prices (array)
     """
         
