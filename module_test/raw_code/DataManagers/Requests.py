@@ -8,7 +8,7 @@ from trade.helpers.helper import generate_option_tick_new
 from typing import List, Union
 
 logger = setup_logger('DataManagers.Request.py')
-setup_shared_objects()
+# setup_shared_objects()
 
 
 

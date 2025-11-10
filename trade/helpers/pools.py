@@ -9,7 +9,7 @@ import time
 import logging
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade._multiprocessing import ensure_global_start_method, PathosPool
-from trade.helpers.Logging import setup_logger
+from trade.helpers.Logging import setup_logger, change_logger_stream_level
 from trade import get_pool_enabled
 
 logger = setup_logger('trade.helpers.pools', stream_log_level=logging.INFO)
@@ -17,14 +17,13 @@ logger = setup_logger('trade.helpers.pools', stream_log_level=logging.INFO)
 shutdown_event = False
 num_workers = int(os.environ.get('NUM_WORKERS', str(cpu_count())).strip())
 
-def change_logger_stream_level(level):
+
+
+def _change_global_stream_level(level: str | int):
     """
-    Change the logger stream level.
+    Change the global logger stream level.
     """
-    logger.setLevel(level)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(level)
+    change_logger_stream_level(logger, level)
 
 def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List:
     """
@@ -116,19 +115,19 @@ def parallel_apply(data: List[List], func: callable, timeout: int = 60, pool: Po
 
 
     if pool:
-        # logger.info("`parrallel_apply` using multiprocessing with %d workers", num_workers)
-        # logger.info("To change to threading, either set the environment POOL_ENABLED to False, or use `set_pool_enabled(False)` found in trade.__init__")
-        # logger.info("Logger stream level is set to %s. To change this behavior & reduce stream logs, use `change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
+        logger.info("`parrallel_apply` using multiprocessing with %d workers", num_workers)
+        logger.info("To change to threading, either set the environment POOL_ENABLED to False, or use `set_pool_enabled(False)` found in trade.__init__")
+        logger.info("Logger stream level is set to %s. To change this behavior & reduce stream logs, use `_change_global_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
         shutdown_event = False
         try:
             ensure_global_start_method()
             with PathosPool(num_workers) as p:
                 p.restart(force = True)
-               # logger.info("Starting Function with multiprocessing")
+                logger.info("Starting Function with multiprocessing")
                 start = time.time()
                 # func = reset_signals_wrapper(func)
                 results = p.map(func, *data.T.to_numpy())
-               # logger.info(f"Function completed in {time.time() - start} seconds")
+                logger.info(f"Function completed in {time.time() - start} seconds")
                 return results
         except KeyboardInterrupt:
             shutdown_event = True
@@ -147,9 +146,9 @@ def parallel_apply(data: List[List], func: callable, timeout: int = 60, pool: Po
         return results
 
     else:
-        # logger.info("`parrallel_apply` using threading with %d workers", num_workers)
-        # logger.info("To change to multiprocessing, either set the environment POOL_ENABLED to True, or use `set_pool_enabled(True)` found in trade.__init__")
-        # logger.info("Logger stream level is set to %s. To change, use `change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
+        logger.info("`parrallel_apply` using threading with %d workers", num_workers)
+        logger.info("To change to multiprocessing, either set the environment POOL_ENABLED to True, or use `set_pool_enabled(True)` found in trade.__init__")
+        logger.info("Logger stream level is set to %s. To change, use `_change_logger_stream_level` found in trade.helpers.pools", logging.getLevelName(logger.level))
         results = [None] * len(data)
         with ThreadPoolExecutor() as executor:
             future_to_idx = {executor.submit(func, *row): i for i, row in enumerate(data.itertuples(index=False, name=None))}
@@ -159,7 +158,7 @@ def parallel_apply(data: List[List], func: callable, timeout: int = 60, pool: Po
                 try:
                     results[i] = future.result(timeout=timeout)
                 except Exception as e:
-                    # logger.error(f"Failed on row {i} ({data.iloc[i].to_dict()}): {e}")
+                    logger.error(f"Failed on row {i} ({data.iloc[i].to_dict()}): {e}")
                     results[i] = 0.0  # or np.nan
 
         return results
