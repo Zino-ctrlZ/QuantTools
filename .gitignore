@@ -182,9 +182,12 @@ module_test/raw_code/DataManagers/scheduler/
 module_test/raw_code/DataManagers/requests_json/
 setup_process/
 
+
+
 ## Must be unique for each user
 trade/helpers/clear_dirs.json
 trade/helpers/clear_dirs.txt
+trade/helpers/cache_clear_log.txt
 
 ## Only relevant for me since I do the scheduling
 trade/helpers/*vol_resolve*.json
@@ -192,3 +195,4 @@ trade/helpers/*vol_resolve*.json
 ## Pickle files
 *.pkl
 \qtenv
+
