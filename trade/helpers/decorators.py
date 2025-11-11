@@ -59,7 +59,6 @@ def log_time(logger: Logger=None):
     Returns:
         A decorator that logs execution time for the decorated function.
     """
-
     if logger is None:
         logger = time_logger
 

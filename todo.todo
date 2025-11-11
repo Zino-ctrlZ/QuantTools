@@ -10,6 +10,7 @@ Whole Codebase Routine:
         - Suggestion: One script that registers a py file?: Issue is this script will be alive through out the day
         - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
         - Another Suggestion: Find a way to run a python script that directly appends to cron
+    ☐ Every model/algo with logic should have a model.md file explaining the logic
 
 EventDriven:
     ☐ There should be global configs to be used across all modules/clsses. This should print out the values set and the values that are defaulted.
