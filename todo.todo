@@ -10,6 +10,7 @@ Whole Codebase Routine:
         - Suggestion: One script that registers a py file?: Issue is this script will be alive through out the day
         - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
         - Another Suggestion: Find a way to run a python script that directly appends to cron
+    ☐ Every model/algo with logic should have a model.md file explaining the logic
 
 EventDriven:
     ☐ There should be global configs to be used across all modules/clsses. This should print out the values set and the values that are defaulted.
@@ -84,6 +85,21 @@ EventDriven:
         ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
         ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
         ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
+        ☐ Write documentation following similar schema as algo/00_docs files
+        ☐ Come up with a folder structure for new strategy testing.
+            - Refer to Building Winning Algorithmic Trading Systems by Kevin Davey for system layout ()
+            - Ideally it should have:
+                - Strategy Module
+                - Equity:
+                    - Idea Validation Notebook
+                    - Various In/Out sample tests for Equity
+                    - WFA (Run & Aggregation)
+                - Options:
+                    - Config Test
+                    - WFA (Run & Aggregation)
+                - Final Documentation
+        ☐ Construct a testing roadmap/framework for new strategies. Refer to Building Winning Algorithmic Trading Systems by Kevin Davey for reference.
+        ☐ Script to add new strategies to the repo with the above structure.
 
     Others:
         ☐ Populate Rates database with 5/8 & 5/9
@@ -258,6 +274,8 @@ Modules:
             - Spot, Vol, Pnl & Greeks
         ☐ Add Vanna greeks
         ☐ Once ready, move all functions/models to use binomial vol
+        ☐ Change all prod trading to binomial vol: Eg, default pnl attr is bs vol, change to binomial vol
+            ☐ Intraday pnl attr is still bs vol for now
 
     General:
         ☐ Change the timeseries in Stock Module to intraday (Alpha Vantage)
@@ -337,12 +355,11 @@ Modules:
         ☐ Clean up rates module
 
     Calculate:
-        ☐ Find a way to do attribution on passed data instead of API data
-        ☐ Why GB method producing large Unexpected PnL
         ☐ Switch to folder format
         ☐ Implement FRV pnl
             ☐ Implement skew pnl (ATM->Vega, Skew->ATM-At Strike)
             ☐ 
+        ☐ Have a global config for vol model to use in pnl attr
 
 Knowledge:
     ☐ Getting Implied Vol Surface
