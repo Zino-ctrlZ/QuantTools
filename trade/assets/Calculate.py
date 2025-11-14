@@ -26,7 +26,7 @@ from trade.helpers.Logging import setup_logger
 import logging
 from typing import Callable
 from pandas.tseries.offsets import BDay
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 from trade.helpers.helper import get_parrallel_apply
 logger = setup_logger('trade.assets.Calculate', stream_log_level=logging.CRITICAL)
 

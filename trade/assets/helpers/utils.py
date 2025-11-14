@@ -1,4 +1,4 @@
-from trade.helpers.types import TickerMap
+from trade.helpers.helper_types import TickerMap
 INVALID_TICKERS = {'FB': 'META'}
 TickerMap.invalid_tickers = INVALID_TICKERS
 

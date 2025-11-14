@@ -13,7 +13,7 @@ import pandas as pd
 from pydantic import Field, ConfigDict, BaseModel, PrivateAttr
 from pydantic.dataclasses import dataclass
 from trade.helpers.Logging import setup_logger
-from trade.helpers.types import SingletonMixin
+from trade.helpers.helper_types import SingletonMixin
 from module_test.raw_code.optionlib_2.vol.ssvi.types import DivType, VolType
 from module_test.raw_code.optionlib_2.vol.ssvi.global_config import SSVIGlobalConfig
 from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import chain_cache_key
