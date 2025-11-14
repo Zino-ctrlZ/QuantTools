@@ -25,6 +25,7 @@ def assert_missing_keys(config: dict) -> None:
         'open_missed_signals': bool,
         'executor_level': numbers.Number,
         'strat_slug': str,
+        'ruin_value': numbers.Number,
     }
 
     must_in_opt_settings = {

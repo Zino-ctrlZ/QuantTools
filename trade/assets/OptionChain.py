@@ -29,7 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from threading import Thread
 from trade.helpers.decorators import log_time, log_error, log_error_with_stack
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 import pandas as pd
 logger = setup_logger('OptionChain')
 

@@ -32,7 +32,7 @@ from trade.helpers.decorators import log_error_with_stack
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock, RLock
 from trade.assets.helpers.utils import swap_ticker
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 from dbase.utils import bus_range
 import traceback
 

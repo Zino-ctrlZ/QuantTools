@@ -42,7 +42,7 @@ import inspect
 from datetime import datetime
 from copy import deepcopy
 from trade.helpers.Logging import setup_logger
-from trade.helpers.types import OptionTickMetaData
+from trade.helpers.helper_types import OptionTickMetaData
 from pathlib import Path
 import os
 import logging
