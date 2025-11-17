@@ -21,7 +21,7 @@ from ..utils import (
     dynamic_memoize,
 )
 from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
-from EventDriven.dataclasses.orders import OrderPickerOrderRequest
+from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop  
 from EventDriven.types import Order
 
@@ -132,7 +132,7 @@ class OrderPicker:
         raw_order = build_strategy(chain, schema, spot, cache)
         return extract_order(raw_order)
 
-    def get_order(self, request: OrderPickerOrderRequest) -> Order:
+    def get_order(self, request: OrderRequest) -> Order:
         """
         Get the order based on the request.
         """
@@ -154,12 +154,12 @@ class OrderPicker:
             return {}
 
     def construct_inputs(self, 
-                        request: OrderPickerOrderRequest, 
+                        request: OrderRequest, 
                         schema: OrderSchema, 
                         order_resolution_config: OrderResolutionConfig = None
                         ) -> OrderInputs:
         """
-        Construct OrderInputs dataclass from OrderPickerOrderRequest and OrderSchema.
+        Construct OrderInputs dataclass from OrderRequest and OrderSchema.
         """
         if order_resolution_config is None:
             order_resolution_config = self._order_resolution_config
@@ -186,7 +186,7 @@ class OrderPicker:
 
 def _get_open_order_backtest(
     picker: OrderPicker,
-    request: OrderPickerOrderRequest,
+    request: OrderRequest,
     inputs: OrderInputs,
 ) -> Order:
     
@@ -196,7 +196,7 @@ def _get_open_order_backtest(
 
     params:
     picker: OrderPicker: The OrderPicker instance to use for getting the order.
-    request: OrderPickerOrderRequest: The order request containing necessary parameters.
+    request: OrderRequest: The order request containing necessary parameters.
     inputs: OrderInputs: The order inputs constructed from the request and schema.
 
     returns:

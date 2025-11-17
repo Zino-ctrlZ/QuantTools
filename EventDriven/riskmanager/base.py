@@ -294,7 +294,7 @@ class RiskManager:
         self.pm_end_date = end_date
         self.end_date = end
         self.symbol_list = self.bars.symbol_list
-        self.OrderPicker = OrderPicker(start, end)
+        self.order_picker = OrderPicker(start, end)
         
         ## Load data caches. USE_TEMP_CACHE == True means a reset every kernel refresh. Else persists over days.
         (
@@ -472,8 +472,8 @@ Quanitity Sizing Type: {self.sizing_type}
             """
         print(msg)
         
-    @log_error_with_stack(logger)
-    @log_time(time_logger)
+    # @log_error_with_stack(logger)
+    # @log_time(time_logger)
     def get_order(self, *args, **kwargs):
         """
         Compulsory variables for OrderSchema:
