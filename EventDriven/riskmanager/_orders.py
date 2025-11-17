@@ -9,7 +9,6 @@ from EventDriven.riskmanager.utils import get_persistent_cache, set_use_temp_cac
 if TYPE_CHECKING:
     from EventDriven.riskmanager.base import OrderPicker
 
-##TO
 logger = setup_logger('EventDriven.riskmanager._orders')
 
 def resolve_schema(schema: OrderSchema, 
@@ -188,3 +187,4 @@ def get_open_order(
     order['signal_id'] = inputs.signal_id
     order['map_signal_id'] = inputs.signal_id
     return order
+

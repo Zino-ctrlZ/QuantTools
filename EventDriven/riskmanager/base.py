@@ -259,213 +259,213 @@ class OrderPicker:
         return extract_order(raw_order)
     
 
-    @log_error_with_stack(logger)
-    def get_order(self, 
-                  tick: str, 
-                  date: str,
-                  right: str, 
-                  max_close: str,
-                  order_settings: dict) -> dict:
+    # @log_error_with_stack(logger)
+    # def get_order(self, 
+    #               tick: str, 
+    #               date: str,
+    #               right: str, 
+    #               max_close: str,
+    #               order_settings: dict) -> dict:
         
-        """
-        returns the order for the given tick, date, right, max_close, and order_settings
+    #     """
+    #     returns the order for the given tick, date, right, max_close, and order_settings
 
-        params:
-        tick: str: ticker to get the order for
-        date: str: date to get the order for
-        right: str: right of the option contract (P or C)
-        max_close: str: maximum close price
-        order_settings: dict: settings for the order
-            example: {'type': 'naked',
-                        'specifics': [{'direction': 'long',
-                        'rel_strike': .900,
-                        'dte': 365,
-                        'moneyness_width': 0.15},
-                        {'direction': 'short',
-                        'rel_strike': .80,
-                        'dte': 365,
-                        'moneyness_width': 0.15}],
+    #     params:
+    #     tick: str: ticker to get the order for
+    #     date: str: date to get the order for
+    #     right: str: right of the option contract (P or C)
+    #     max_close: str: maximum close price
+    #     order_settings: dict: settings for the order
+    #         example: {'type': 'naked',
+    #                     'specifics': [{'direction': 'long',
+    #                     'rel_strike': .900,
+    #                     'dte': 365,
+    #                     'moneyness_width': 0.15},
+    #                     {'direction': 'short',
+    #                     'rel_strike': .80,
+    #                     'dte': 365,
+    #                     'moneyness_width': 0.15}],
 
-                        'name': 'vertical_spread'}
+    #                     'name': 'vertical_spread'}
 
-        returns:
-        dict: order
-        """
-        global spot_cache, close_cache, oi_cache, chain_cache
-        order_cache = self.order_cache
-        order_cache.setdefault(date, {})
-        order_cache[date].setdefault(tick, {})
+    #     returns:
+    #     dict: order
+    #     """
+    #     global spot_cache, close_cache, oi_cache, chain_cache
+    #     order_cache = self.order_cache
+    #     order_cache.setdefault(date, {})
+    #     order_cache[date].setdefault(tick, {})
 
-        ## Create necessary data structures
-        direction_index = {}
+    #     ## Create necessary data structures
+    #     direction_index = {}
     
-        str_direction_index = {}
-        for indx, v in enumerate(order_settings['specifics']):
-            if v['direction'] == 'long':
-                str_direction_index[indx] = 'long'
-                direction_index[indx] = 1
-            elif v['direction'] == 'short':
-                str_direction_index[indx] = 'short'
-                direction_index[indx] = -1
+    #     str_direction_index = {}
+    #     for indx, v in enumerate(order_settings['specifics']):
+    #         if v['direction'] == 'long':
+    #             str_direction_index[indx] = 'long'
+    #             direction_index[indx] = 1
+    #         elif v['direction'] == 'short':
+    #             str_direction_index[indx] = 'short'
+    #             direction_index[indx] = -1
 
-        order_candidates = produce_order_candidates(order_settings, tick, date, right)
-        if any([x2 is None for x in order_candidates.values() for x2 in x]):
-            return_item = {
-                'result': "MONEYNESS_TOO_TIGHT",
-                'data': None
-            } 
-            order_cache[date][tick] = return_item
-            return return_item
+    #     order_candidates = produce_order_candidates(order_settings, tick, date, right)
+    #     if any([x2 is None for x in order_candidates.values() for x2 in x]):
+    #         return_item = {
+    #             'result': "MONEYNESS_TOO_TIGHT",
+    #             'data': None
+    #         } 
+    #         order_cache[date][tick] = return_item
+    #         return return_item
 
-        returned = populate_cache(order_candidates = order_candidates, 
-                                  target_date=date, 
-                                  start_date=self.start_date, 
-                                  end_date=self.end_date) 
-        refresh_cache()
+    #     returned = populate_cache(order_candidates = order_candidates, 
+    #                               target_date=date, 
+    #                               start_date=self.start_date, 
+    #                               end_date=self.end_date) 
+    #     refresh_cache()
     
-        if returned == 'holiday':
-            return_item = {
-                'result': "IS_HOLIDAY",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
+    #     if returned == 'holiday':
+    #         return_item = {
+    #             'result': "IS_HOLIDAY",
+    #             'data': None
+    #         }
+    #         order_cache[date][tick] = return_item
+    #         return return_item
         
-        elif returned == 'theta_data_error':
+    #     elif returned == 'theta_data_error':
 
-            return_item = {
-                'result': "UNAVAILABLE_CONTRACT",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
+    #         return_item = {
+    #             'result': "UNAVAILABLE_CONTRACT",
+    #             'data': None
+    #         }
+    #         order_cache[date][tick] = return_item
+    #         return return_item
         
-        elif returned == 'weekend':
-            return_item = {
-                'result': "IS_WEEKEND",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
+    #     elif returned == 'weekend':
+    #         return_item = {
+    #             'result': "IS_WEEKEND",
+    #             'data': None
+    #         }
+    #         order_cache[date][tick] = return_item
+    #         return return_item
     
 
-        SKIP_ORDER_CRITERIA = []
-        for s in order_settings['specifics']:
-            SKIP_ORDER_CRITERIA.append(s['moneyness_width'])
+    #     SKIP_ORDER_CRITERIA = []
+    #     for s in order_settings['specifics']:
+    #         SKIP_ORDER_CRITERIA.append(s['moneyness_width'])
             
-        SKIP_ORDER_CRITERIA = not all(SKIP_ORDER_CRITERIA)
-        if SKIP_ORDER_CRITERIA: ## We will return the order as is.
+    #     SKIP_ORDER_CRITERIA = not all(SKIP_ORDER_CRITERIA)
+    #     if SKIP_ORDER_CRITERIA: ## We will return the order as is.
 
-            return_order = {
-                'result': ResultsEnum.SUCCESSFUL.value,
-                'data':{}
-            }
-            id = ''
-            close = 0
-            for direction in order_candidates.keys():
-                return_order['data'][direction] = []
-                for data in order_candidates[direction]:
-                    optid = data["option_id"].unique()[0]
-                    return_order['data'][direction].append(optid)
-                    id+= f'&{direction.upper()[0]}:{optid}'
-                    spot = get_cache('spot')[f'{optid}_{date}'] if direction == 'long' else -get_cache('spot')[f'{optid}_{date}']
-                    close += spot
-            return_order['data']['trade_id'] = id
-            return_order['data']['close'] = close
-            return return_order
+    #         return_order = {
+    #             'result': ResultsEnum.SUCCESSFUL.value,
+    #             'data':{}
+    #         }
+    #         id = ''
+    #         close = 0
+    #         for direction in order_candidates.keys():
+    #             return_order['data'][direction] = []
+    #             for data in order_candidates[direction]:
+    #                 optid = data["option_id"].unique()[0]
+    #                 return_order['data'][direction].append(optid)
+    #                 id+= f'&{direction.upper()[0]}:{optid}'
+    #                 spot = get_cache('spot')[f'{optid}_{date}'] if direction == 'long' else -get_cache('spot')[f'{optid}_{date}']
+    #                 close += spot
+    #         return_order['data']['trade_id'] = id
+    #         return_order['data']['close'] = close
+    #         return return_order
 
         
-        for direction in order_candidates: ## Fix this to use .items()
-            for i,data in enumerate(order_candidates[direction]):
-                data['date_available'] = data.apply(lambda x: date_in_cache_index( date, x.option_id), axis=1)
-                data = data[data.date_available == True] ## Filter out contracts that are not available on the date.
-                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, pass_threshold=self.liquidity_threshold, lookback=self.lookback))
-                data = data[data.liquidity_check == True]
-                if data.empty:
-                    return_item = {
-                        'result': "TOO_ILLIQUID",
-                        'data': None
-                    }
-                    order_cache[date][tick] = return_item
-                    return return_item
+    #     for direction in order_candidates: ## Fix this to use .items()
+    #         for i,data in enumerate(order_candidates[direction]):
+    #             data['date_available'] = data.apply(lambda x: date_in_cache_index( date, x.option_id), axis=1)
+    #             data = data[data.date_available == True] ## Filter out contracts that are not available on the date.
+    #             data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, pass_threshold=self.liquidity_threshold, lookback=self.lookback))
+    #             data = data[data.liquidity_check == True]
+    #             if data.empty:
+    #                 return_item = {
+    #                     'result': "TOO_ILLIQUID",
+    #                     'data': None
+    #                 }
+    #                 order_cache[date][tick] = return_item
+    #                 return return_item
                 
-                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, threshold=self.data_availability_threshold))
-                data = data[data.available_close_check == True] ## Filter out contracts that do not have close data.
-                if data.empty:
-                    return_item = {
-                        'result': "NO_TRADED_CLOSE",
-                        'data': None
-                    }
-                    order_cache[date][tick] = return_item
-                    return return_item
+    #             data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, threshold=self.data_availability_threshold))
+    #             data = data[data.available_close_check == True] ## Filter out contracts that do not have close data.
+    #             if data.empty:
+    #                 return_item = {
+    #                     'result': "NO_TRADED_CLOSE",
+    #                     'data': None
+    #                 }
+    #                 order_cache[date][tick] = return_item
+    #                 return return_item
             
-                order_candidates[direction][i] = data
+    #             order_candidates[direction][i] = data
 
 
-        ## Filter Unique Combinations per leg.
-        unique_ids = {'long': [], 'short': []}
-        for direction in order_candidates:
-            for i,data in enumerate(order_candidates[direction]):
-                unique_ids[direction].append(data[(data.liquidity_check == True) & (data.available_close_check == True)].option_id.unique().tolist())
+    #     ## Filter Unique Combinations per leg.
+    #     unique_ids = {'long': [], 'short': []}
+    #     for direction in order_candidates:
+    #         for i,data in enumerate(order_candidates[direction]):
+    #             unique_ids[direction].append(data[(data.liquidity_check == True) & (data.available_close_check == True)].option_id.unique().tolist())
 
-        ## Produce Tradeable Combinations
-        tradeable_ids = list(product(*unique_ids['long'], *unique_ids['short']))
-        tradeable_ids, unique_ids 
+    #     ## Produce Tradeable Combinations
+    #     tradeable_ids = list(product(*unique_ids['long'], *unique_ids['short']))
+    #     tradeable_ids, unique_ids 
 
-        ## Keep only unique combinations. Not repeating a contract.
-        filtered = [t for t in tradeable_ids if len(set(t)) == len(t)]
-
-
-        ## Get the price of the structure
-        ## Using List Comprehension to sum the prices of the structure per index
-        results = [
-            (*items, sum([direction_index[i] * spot_cache[f'{item}_{date}'] for i, item in enumerate(items)])) for items in filtered
-        ]
-
-        ## Convert to DataFrame, and sort by the price of the structure.
-        return_dataframe = pd.DataFrame(results)
-        if return_dataframe.empty:
-            return_item = {
-                'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-
-            return return_item
-        cols = return_dataframe.columns.tolist()
-        cols[-1] = 'close'
-        return_dataframe.columns= cols
-        return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
+    #     ## Keep only unique combinations. Not repeating a contract.
+    #     filtered = [t for t in tradeable_ids if len(set(t)) == len(t)]
 
 
-        if return_dataframe.empty:
-            return_item = {
-                'result': ResultsEnum.MAX_PRICE_TOO_LOW.value,
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
+    #     ## Get the price of the structure
+    #     ## Using List Comprehension to sum the prices of the structure per index
+    #     results = [
+    #         (*items, sum([direction_index[i] * spot_cache[f'{item}_{date}'] for i, item in enumerate(items)])) for items in filtered
+    #     ]
+
+    #     ## Convert to DataFrame, and sort by the price of the structure.
+    #     return_dataframe = pd.DataFrame(results)
+    #     if return_dataframe.empty:
+    #         return_item = {
+    #             'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
+    #             'data': None
+    #         }
+    #         order_cache[date][tick] = return_item
+
+    #         return return_item
+    #     cols = return_dataframe.columns.tolist()
+    #     cols[-1] = 'close'
+    #     return_dataframe.columns= cols
+    #     return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
+
+
+    #     if return_dataframe.empty:
+    #         return_item = {
+    #             'result': ResultsEnum.MAX_PRICE_TOO_LOW.value,
+    #             'data': None
+    #         }
+    #         order_cache[date][tick] = return_item
+    #         return return_item
             
-        ## Rename the columns to the direction names
-        return_dataframe.columns = list(str_direction_index.values()) + ['close']
-        return_order = return_dataframe[list(str_direction_index.values())].to_dict(orient = 'list')
-        return_order
+    #     ## Rename the columns to the direction names
+    #     return_dataframe.columns = list(str_direction_index.values()) + ['close']
+    #     return_order = return_dataframe[list(str_direction_index.values())].to_dict(orient = 'list')
+    #     return_order
 
-        ## Create the trade_id with the direction and the id of the contract.
-        id = ''
-        for k, v in return_order.items():
-            if len(v) > 0:
-                id += f"&{k[0].upper()}:{v[0]}"
-        return_order['trade_id'] = id
-        return_order['close'] = return_dataframe.close.values[0]
+    #     ## Create the trade_id with the direction and the id of the contract.
+    #     id = ''
+    #     for k, v in return_order.items():
+    #         if len(v) > 0:
+    #             id += f"&{k[0].upper()}:{v[0]}"
+    #     return_order['trade_id'] = id
+    #     return_order['close'] = return_dataframe.close.values[0]
         
-        return_dict = {
-            'result': ResultsEnum.SUCCESSFUL.value,
-            'data': return_order
-        }
-        order_cache[date][tick] = return_dict
+    #     return_dict = {
+    #         'result': ResultsEnum.SUCCESSFUL.value,
+    #         'data': return_order
+    #     }
+    #     order_cache[date][tick] = return_dict
 
-        return return_dict
+    #     return return_dict
 
 class RiskManager:
     """
@@ -759,7 +759,7 @@ class RiskManager:
             self.dividend_timeseries.clear()
             get_persistent_cache().clear() ## Ensures any caching with `.memoize` is cleared as well.
         else:
-            logger.critical(f"USE_TEMP_CACHE set to False. Cache will not be cleared")
+            logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
     
     @property

@@ -4,9 +4,12 @@ import pandas as pd
 import numbers
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker import STRATEGY_MAP
 from EventDriven.riskmanager.market_data import get_timeseries_obj, OPTION_TIMESERIES_START_DATE
 from EventDriven.riskmanager.picker import OrderSchema
+
+logger = setup_logger('EventDriven.riskmanager._order_validator', stream_log_level='WARNING')
 
 @dataclass(kw_only=True)
 class _SlugConfig(ABC):
@@ -58,8 +61,8 @@ INPUTS = {
 
 
 class OrderInputs:
-    __slots__ = list(INPUTS.keys())
 
+    __slots__ = list(INPUTS.keys())
     if TYPE_CHECKING:
         tick: str
         date: Union[str, pd.Timestamp, datetime]
@@ -87,7 +90,14 @@ class OrderInputs:
         for k in kwargs:
             if k in self.__slots__:
                 setattr(self, k, kwargs.get(k))
+            else:
+                logger.warning(f"Unknown input key: {k}. This key will be ignored.")
 
+OrderInputs.__doc__ = f"""
+Order Container that holds all necessary variables in one place.
+Args:
+{chr(10).join([f"    {key} ({' | '.join([t.__name__ if isinstance(t, type) else str(t) for t in (types if isinstance(types, list) else [types])])}): {desc}" for key, (types, desc, *_) in INPUTS.items()])}
+"""
 
 def verify_order_selection_inputs(**kwargs):
     ## Key:

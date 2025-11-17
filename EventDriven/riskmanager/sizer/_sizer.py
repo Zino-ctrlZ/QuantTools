@@ -40,7 +40,7 @@ def override_calculate_position_size(**overrides) -> float:
                 delta_limit=overrides.pop('delta_limit'),
             )
         except KeyError as e:
-            raise ValueError(f"Missing required override parameter: {e}")
+            raise ValueError(f"Missing required override parameter: {e}") from e
 
 class BaseSizer(ABC):
     """

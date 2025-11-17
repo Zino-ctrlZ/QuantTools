@@ -1,0 +1,2 @@
+class BacktesterIncorrectTypeError(Exception):
+    pass

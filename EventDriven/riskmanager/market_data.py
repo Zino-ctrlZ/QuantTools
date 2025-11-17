@@ -3,7 +3,6 @@ Responsible for loading and managing market timeseries data for equities, includ
 Utilizes OpenBB for data retrieval and supports additional data processing through user-defined callables.
 """
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Literal, Optional
 import pandas as pd
@@ -12,6 +11,7 @@ from dbase.DataAPI.ThetaData import resample
 from trade.helpers.helper import retrieve_timeseries, ny_now
 from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
+from EventDriven._vars import OPTION_TIMESERIES_START_DATE
 
 
 logger = setup_logger('EventDriven.riskmanager.market_data')
@@ -19,11 +19,7 @@ logger = setup_logger('EventDriven.riskmanager.market_data')
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals
 
-OPTION_TIMESERIES_START_DATE: str|datetime = '2017-01-01'
-Y1_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=1)).strftime('%Y-%m-%d')
-Y2_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=2)).strftime('%Y-%m-%d')
-Y3_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=3)).strftime('%Y-%m-%d')
-TIMESERIES: Optional['MarketTimeseries'] = None
+OPTIMESERIES: Optional['MarketTimeseries'] = None
 
 
 @dataclass 
@@ -54,6 +50,7 @@ class MarketTimeseries:
     _last_refresh: Optional[datetime] = field(default_factory=ny_now)
     _start: str = OPTION_TIMESERIES_START_DATE
     _end: str = datetime.now().strftime('%Y-%m-%d')
+    should_refresh: bool = True
 
     def load_timeseries(self, 
                         sym: str, 
@@ -81,11 +78,14 @@ class MarketTimeseries:
         divs.index = pd.to_datetime(divs.index)
         divs = divs.reindex(pd.bdate_range(start=self._start, end=self._end, freq='1D'), method='ffill')
         divs = resample(divs['amount'], method='ffill', interval=interval)
-        self.spot[sym] = spot
-        self.chain_spot[sym] = chain_spot
-        self.dividends[sym] = divs
+        self.spot[interval] = {}
+        self.chain_spot[interval] = {}
+        self.dividends[interval] = {}
+        self.spot[interval][sym] = spot
+        self.chain_spot[interval][sym] = chain_spot
+        self.dividends[interval][sym] = divs
 
-    def get_at_index(self, sym: str, index: pd.Timestamp) -> AtIndexResult:
+    def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = '1d') -> AtIndexResult:
         """
         Retrieve the spot price, chain spot price, and dividends for a given symbol at a specific index (date).
         Args:
@@ -102,7 +102,7 @@ class MarketTimeseries:
         )
 
         ## If refresh is due, reload all timeseries
-        if refresh:
+        if refresh and self.should_refresh:
             logger.info("Refreshing market timeseries data...")
             for s in self.spot.keys():
                 self.load_timeseries(
@@ -114,16 +114,16 @@ class MarketTimeseries:
             self._last_refresh = ny_now()
                     
 
-        if isinstance(index, (str|datetime)):
+        if isinstance(index, (str, datetime)):
             index = pd.Timestamp(index)
-        if sym not in self.spot:
+        if sym not in self.spot.get(interval, {}):
             raise ValueError(f"Symbol {sym} not found in timeseries data.")
         if not (isinstance(index, pd.Timestamp) or isinstance(index, datetime)):
             raise ValueError("Index must be a pandas Timestamp or datetime object.")
         index = index.strftime('%Y-%m-%d')
-        spot = self.spot[sym].loc[index] if sym in self.spot else None
-        chain_spot = self.chain_spot[sym].loc[index] if sym in self.chain_spot else None
-        dividends = self.dividends[sym].loc[index] if sym in self.dividends else None
+        spot = self.spot[interval][sym].loc[index] if sym in self.spot.get(interval, {}) else None
+        chain_spot = self.chain_spot[interval][sym].loc[index] if sym in self.chain_spot.get(interval, {}) else None
+        dividends = self.dividends[interval][sym].loc[index] if sym in self.dividends.get(interval, {}) else None
         rates = self.rates.loc[index] if self.rates is not None else None
         return AtIndexResult(spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index, rates=rates)
     
