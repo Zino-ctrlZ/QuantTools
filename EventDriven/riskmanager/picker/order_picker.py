@@ -1,4 +1,4 @@
-# from ..utils import *
+
 from datetime import datetime
 import pandas as pd
 
@@ -24,9 +24,6 @@ from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_
 from EventDriven.dataclasses.orders import OrderPickerOrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop  
 from EventDriven.types import Order
-# from ..actions import *
-# from ..picker import *
-
 
 
 
@@ -98,7 +95,6 @@ class OrderPicker:
         chain_spot = spot
         return self._get_order(schema, date, spot, chain_spot, print_url=print_url)
 
-    @staticmethod
     @dynamic_memoize
     def _get_order(
         self,
