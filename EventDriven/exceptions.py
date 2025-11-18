@@ -1,2 +1,10 @@
 class BacktesterIncorrectTypeError(Exception):
     pass
+
+class EVBacktestError(Exception):
+    """Custom exception for Backtest-related errors."""
+    pass
+
+class UnaccessiblePropertyError(Exception):
+    """Custom exception for unaccessible property errors."""
+    pass
