@@ -1,13 +1,88 @@
 from trade.helpers.Logging import setup_logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 from weakref import WeakSet
-from typing import get_origin, get_args, Union
+from typing import get_origin, get_args, Union, get_type_hints
 from EventDriven.exceptions import BacktesterIncorrectTypeError
+import types
+from dataclasses import fields
 from EventDriven.configs.vars import get_class_config_descriptions
 
 
 logger = setup_logger(__name__, stream_log_level="DEBUG")
+
+def validate_inputs(self):
+    type_hints = get_type_hints(type(self))
+
+    for f in fields(self):
+        field_name = f.name
+        field_value = getattr(self, field_name)
+
+        type_hint = type_hints.get(field_name)
+        if type_hint is None:
+            continue  # no annotation, skip
+
+        origin = get_origin(type_hint)
+        args = get_args(type_hint)
+
+        # --- Handle Literal[...] ---
+        if origin is Literal:
+            # e.g. name: Literal["LimitsCog", "OtherCog"]
+            allowed_values = args  # tuple of literals
+
+            if field_value is None:
+                # If you want to allow None here, add it to the Literal.
+                logger.warning(f"Configuration '{field_name}' is None but expected one of {allowed_values}.")
+            elif field_value not in allowed_values:
+                raise BacktesterIncorrectTypeError(
+                    f"Configuration '{field_name}' expected one of {allowed_values}, " f"but got {field_value!r}."
+                )
+            continue
+
+        # --- Handle Optional / Union[...] ---
+        if origin in (Union, types.UnionType):
+            allows_none = any(arg is type(None) for arg in args)
+            if field_value is None:
+                if not allows_none:
+                    logger.warning(
+                        f"Configuration '{field_name}' is not set (None) and is not Optional. Please review."
+                    )
+                continue
+
+            valid_types = tuple(arg for arg in args if arg is not type(None))
+            if not isinstance(field_value, valid_types):
+                raise BacktesterIncorrectTypeError(
+                    f"Configuration '{field_name}' expected types {valid_types}, " f"but got {type(field_value)}."
+                )
+            continue
+
+        # --- Simple (non-generic) types ---
+        if origin is None:
+            if field_value is None:
+                logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
+                continue
+
+            if not isinstance(field_value, type_hint):
+                raise BacktesterIncorrectTypeError(
+                    f"Configuration '{field_name}' expected type {type_hint}, " f"but got {type(field_value)}."
+                )
+            continue
+
+        # --- Other generics (List, Dict, etc.) – shallow check ---
+        if field_value is None:
+            logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
+            continue
+
+        try:
+            if not isinstance(field_value, origin):
+                raise BacktesterIncorrectTypeError(
+                    f"Configuration '{field_name}' expected type {origin}, " f"but got {type(field_value)}."
+                )
+        except TypeError:
+            logger.warning(
+                f"Could not validate field '{field_name}' with value '{field_value}' against type '{type_hint}' due to TypeError."
+            )
+            pass
 
 
 @pydantic_dataclass
@@ -20,36 +95,9 @@ class BaseConfigs:
         pass
 
     def validate_inputs(self):
-        for field_name, field_value in self.__dict__.items():
-            if field_value is None:
-                logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
+        """Validate configuration inputs based on type hints."""
+        validate_inputs(self)
 
-            type_hint = self.__annotations__.get(field_name)
-            origin = get_origin(type_hint)
-            args = get_args(type_hint)
-
-            ## No origin, simple type
-            if origin is None:
-                if not isinstance(field_value, type_hint) and field_value is not None:
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {type_hint}, but got {type(field_value)}."
-                    )
-                continue
-
-            ## Handle Union types
-            if isinstance(origin, Union.__class__):
-                valid_types = tuple(arg for arg in args if arg is not type(None))
-                if not isinstance(field_value, valid_types) and field_value is not None:
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected types {valid_types}, but got {type(field_value)}."
-                    )
-                continue
-
-            ## Handle other generic types (e.g., List, Dict)
-            if not isinstance(field_value, origin) and field_value is not None:
-                raise BacktesterIncorrectTypeError(
-                    f"Configuration '{field_name}' expected type {origin}, but got {type(field_value)}."
-                )
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -136,3 +184,13 @@ Configuration Descriptions for {self.__class__.__name__}:
             print(f"\n=== Configuration Class: {config_cls.__name__} ===")
             instance = config_cls()
             instance.display_and_describe_configs()
+
+
+class _CustomFrozenBaseConfigs(BaseConfigs):
+    """Base configuration class for all modules with frozen attributes."""
+
+    def __setattr__(self, name, value):
+        logger.warning(f"Attempting to set attribute '{name}' to '{value}' in {self.__class__.__name__}...")
+        if name in self.__dict__:
+            raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}.")
+        super().__setattr__(name, value)
