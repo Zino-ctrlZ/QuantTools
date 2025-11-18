@@ -1,11 +1,15 @@
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict
 import numbers
-from typing import Union, Tuple
+from typing import Union, Tuple, List, Optional, Literal
 from datetime import datetime, date
 import pandas as pd
 from abc import ABC
-from EventDriven.configs.base import BaseConfigs
+from pydantic import Field
+from EventDriven.configs.base import (
+    BaseConfigs,
+    _CustomFrozenBaseConfigs,
+    )
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE
 
 
@@ -55,12 +59,13 @@ class OrderPickerConfig(BaseConfigs):
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class BaseSizerConfigs(BaseConfigs, ABC):
+class BaseSizerConfigs(_CustomFrozenBaseConfigs, ABC):
     """
     Base configuration class for Sizer modules.
     """
 
     pass
+    
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -96,3 +101,61 @@ class OrderResolutionConfig(BaseConfigs):
     max_close: float = 10.0
     max_tries: int = 6
     max_dte_tolerance: int = 120
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class UndlTimeseriesConfig(BaseConfigs):
+    """
+    Configuration class for underlying timeseries data.
+    """
+    interval: str = '1d'
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class OptionPriceConfig(BaseConfigs):
+    """
+    Configuration class for option price data retrieval.
+    """
+    use_price: str = "midpoint"  # Options: "close", "bid", "ask", "midpoint"
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class SkipCalcConfig(BaseConfigs):
+    """
+    When calculating option data for trades, skip calculations for options that meet certain criteria.
+    These skips are used to determine if we should trade on a specific date or move to the next date.
+    """
+
+    window: int = 20
+    skip_threshold: float = 3.0
+    skip_enabled: bool = True
+    abs_zscore_threshold: bool = False
+    pct_zscore_threshold: bool = False
+    spike_flag: bool = False
+    std_window_bool: bool = False
+    zero_filter: bool = True
+    add_columns: List[Tuple[str, str]] = Field(default_factory=list, description="List of tuples where each tuple contains (column_name, function_name) to add additional calculated columns. Function will be fetched from ADD_COLUMNS_FACTORY.")
+    skip_columns: List[str] = Field(default_factory=lambda: ["Delta", "Gamma", "Vega", "Theta", "Midpoint"])
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class LimitsEnabledConfig:
+    """Flags to enable/disable enforcement of specific limit types for a strategy."""
+
+    name: str = "LimitsEnabledCog"
+    enabled: bool = True
+    delta: bool = True
+    delta_lmt_type: Literal["default", "zscore"] = "default"
+    vega: bool = True
+    gamma: bool = True
+    theta: bool = True
+    dte: Optional[numbers.Number] = 120
+    moneyness: Optional[numbers.Number] = 1.15
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class PositionAnalyzerConfig(BaseConfigs):
+    """
+    Global configuration for the PositionAnalyzer itself.
+    """
+
+    enabled: bool = True
+    enabled_cogs: List[str] = Field(default_factory=list)
