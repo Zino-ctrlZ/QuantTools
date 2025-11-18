@@ -425,6 +425,16 @@ class ZscoreRVolSizer(BaseSizer):
             syms=self.underlier_list,
 
         )
+        self._initialize = True
+    
+    def __setattr__(self, name, value):
+        reload_scaler_attrs = ['rvol_window', 'rolling_window', 'weights', 'vol_type', 'norm_constant']
+        if name in reload_scaler_attrs and getattr(self, '_initialize', False):
+            logger.info(f"Attribute {name} changed, reloading scalers.")
+            self.scaler.__setattr__(name, value)
+            self.scaler.reload()
+            self.rvol_timeseries = {}  # Clear the cache if the window changes
+        return super().__setattr__(name, value)
 
     def __rvol_window_assert(self, vol_type:str, rvol_window:int|tuple=None) -> int|tuple:
         """
@@ -478,6 +488,9 @@ class ZscoreRVolSizer(BaseSizer):
             signal_id (str): The ID of the signal.
             position_id (str): The ID of the position.
             date (str|datetime): The date for which the delta limit is calculated.
+        Overrides:
+            current_cash (float): The current cash available for the position.
+            underlier_price_at_time (float): The price of the underlier at the time of calculation.
 
         Returns:
             float: The scaled delta size based on the realized volatility scaler.
@@ -567,6 +580,11 @@ class ZscoreRVolSizer(BaseSizer):
             opt_price (float): The price of the option.
             date (str|datetime): The date for which the position size is calculated.
             side (int): The side of the position, 1 for long and -1 for short. Default is 1.
+        Overrides:
+            current_cash (float): The current cash available for the position.
+            option_price_at_time (float): The price of the option at the time of calculation.
+            delta (float): The delta of the position at the time of calculation.
+            delta_limit (float): The delta limit for the position.
 
         Returns:
             float: The quantity of the position that can be bought based on the sizing type.
