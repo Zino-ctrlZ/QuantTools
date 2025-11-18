@@ -49,6 +49,9 @@ class OrderPicker:
         self._order_schema_config = OrderSchemaConfigs()
         self._order_resolution_config = OrderResolutionConfig()
 
+    def __repr__(self):
+        return f"OrderPicker(start_date={self.start_date}, end_date={self.end_date})"
+
     @property
     def lookback(self):
         return self.__lookback
@@ -168,7 +171,7 @@ class OrderPicker:
             tick=request.symbol,
             date=request.date,
             option_type=request.option_type,
-            signal_id="N/A",
+            signal_id=request.signal_id,
             spot=request.spot,
             option_strategy=schema["strategy"],
             structure_direction=schema["structure_direction"],
@@ -178,7 +181,7 @@ class OrderPicker:
             max_moneyness=schema.data.get("max_moneyness", float("inf")),
             target_dte=schema.data.get("target_dte", 0),
             min_total_price=schema.data.get("min_total_price", 0),
-            direction="N/A",
+            direction=request.direction,
             tick_cash=request.tick_cash,
             **order_resolution_config.__dict__,
         )
