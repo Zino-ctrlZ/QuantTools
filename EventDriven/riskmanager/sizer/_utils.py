@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Literal, ClassVar
 import pandas as pd
 from EventDriven.riskmanager.utils import logger
-from ..market_data import get_timeseries_obj, Y2_LAGGED_START_DATE
+from ..._vars import Y2_LAGGED_START_DATE
+from ..market_data import get_timeseries_obj
 
 
 
@@ -143,6 +144,12 @@ class ZcoreScalar:
         assert sum(self.weights) == 1, "weights must sum to 1"
         assert self.rolling_window > 0, "rolling_window must be a positive integer"
 
+    def reload(self):
+        """
+        Reload the scalers for all symbols in self.syms
+        """
+        self.scalers = {}
+
 
 
 
@@ -218,6 +225,7 @@ class ZcoreScalar:
                                        start_date=Y2_LAGGED_START_DATE,
                                        end_date=datetime.now(),
                                        interval=self.interval)
+            ts = timeseries.get_timeseries(sym=sym, interval=self.interval)
             
             if self.vol_type == 'window':
                 func = lambda x: realized_vol(x, self.rvol_window)
@@ -228,10 +236,9 @@ class ZcoreScalar:
             else:
                 raise ValueError(f"Unknown vol_type: {self.vol_type}")
 
-            def _callable(x):
+            def _callable(x, func=func):
                 return scaler(func(x), self.norm_constant, self.rolling_window)
-            
-            self.scalers[sym] = _callable(timeseries.spot[sym]['close'])
+            self.scalers[sym] = _callable(ts.spot['close'])
             
 
 
@@ -262,14 +269,26 @@ class ZcoreScalar:
             self.load_scalers(syms=syms)
 
     def get_scaler(self, sym: str) -> pd.Series:
-        """Get the z-score scaler for a specific symbol."""
+        """
+        Get the z-score scaler for a specific symbol.
+        
+        args:
+        -------
+        sym: Symbol to get the scaler for
+        
+        returns:
+        --------
+        pd.Series: Z-score scaler for the symbol
+        """
         if sym not in self.scalers:
             self.append_syms(sym)
         
         return self.scalers[sym]
     
     def get_scaler_on_date(self, sym: str, date: pd.Timestamp|str|datetime) -> float:
-        """Get the z-score scaler for a specific symbol on a specific date."""
+        """
+        Get the z-score scaler for a specific symbol on a specific date.
+        """
         if isinstance(date, str):
             date = pd.Timestamp(date)
         
