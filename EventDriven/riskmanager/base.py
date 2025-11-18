@@ -42,7 +42,9 @@ from dateutil.relativedelta import relativedelta
 import yaml
 from ._orders import resolve_schema
 from EventDriven.riskmanager.picker.order_picker import OrderPicker
+from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 
+## IMPORT FROM _vars
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
@@ -85,24 +87,6 @@ def load_riskmanager_cache():
             dividend_timeseries, 
             splits_raw, 
             special_dividend)
-
-def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
-    """
-    Apply an exponential weighted moving average to a series.
-    """
-    window = CONFIG.get('smooth_ewn_span', window)
-    return series.ewm(span=window).mean()
-
-ADD_COLUMNS_FACTORY = {'ewm_smooth': ewm_smooth_data}
-
-def add_columns(series:pd.Series, col_to_add:int, factory=ADD_COLUMNS_FACTORY):
-    """
-    Add new columns to a DataFrame using a factory function.
-    """
-    return factory[col_to_add](series)
-
-
-
 
 
 
@@ -349,6 +333,7 @@ class RiskManager:
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
         self.limits_meta = {}
+        self.market_data = BacktestTimeseries(_start=self.start_date, _end=self.end_date)
 
     @property 
     def option_data(self):
