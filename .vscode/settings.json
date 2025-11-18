@@ -1,5 +1,4 @@
 {
-    "ruff.format.enable": false,
     "[python]":{
         "editor.defaultFormatter": null
     },
