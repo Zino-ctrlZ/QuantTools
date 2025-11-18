@@ -332,10 +332,10 @@ class CustomCache(Cache):
         """
         return [key for key in self.keys() if x(key)]
     
-    
     def __repr__(self):
-        sample = dict(list(self.items())[:10])
-        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+        sample_keys = list(self)[:10]
+        return f"<CustomCache {len(self)} entries; sample_keys={sample_keys}>"
+
     def __str__(self):
         sample = dict(list(self.items())[:10])
         return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
@@ -417,6 +417,25 @@ def check_missing_dates(x, _start, _end):
     missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
     missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
     x.drop(columns=['Datetime'], inplace=True, errors='ignore')
+    return missing_dates_fourth_check
+
+def get_missing_dates(x:pd.Series|pd.DataFrame, _start: datetime, _end: datetime):
+    """
+    Check for missing business days in the Series or DataFrame x within the specified date range. This also skips US market holidays.
+    It also ensures there are no weekends
+    Args:
+        x (pd.Series or pd.DataFrame): Series or DataFrame with a DatetimeIndex.
+        _start (str or datetime): Start date of the range.
+        _end (str or datetime): End date of the range.
+    Returns:
+        list: List of missing business days in the range.
+    """
+    assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
+    date_range = bus_range(_start, _end, freq="1B")
+    dates_available = x.index
+    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
+    missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
     return missing_dates_fourth_check
 
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
