@@ -8,3 +8,7 @@ class EVBacktestError(Exception):
 class UnaccessiblePropertyError(Exception):
     """Custom exception for unaccessible property errors."""
     pass
+
+class BacktestConfigAttributeError(Exception):
+    """Custom exception for missing Backtest configuration attributes or invalid attribute access."""
+    pass

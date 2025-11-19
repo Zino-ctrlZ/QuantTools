@@ -6,7 +6,6 @@ from .base import (
     CogOpinion,
     StrategyChangeMeta,
 )
-from .cogs.limits import LimitsCog
 from EventDriven.configs.core import PositionAnalyzerConfig
 from EventDriven.dataclasses.states import NewPositionState
 
@@ -26,10 +25,6 @@ class PositionAnalyzer:
 
         self.config = config
         self._cogs: Dict[str, BaseCog] = {}
-        lmt_cog = LimitsCog()
-
-        ## Default Cog
-        self._cogs[lmt_cog.name] = lmt_cog
 
         for cog in cogs:
             if not isinstance(cog, BaseCog):
@@ -51,6 +46,22 @@ class PositionAnalyzer:
         Returns the list of cogs in registration order.
         """
         return list(self._cogs.values())
+    
+    def add_cog(self, cog: BaseCog) -> None:
+        """
+        Adds a new cog to the PositionAnalyzer.
+        """
+        # if not isinstance(cog, BaseCog) or not issubclass(cog.__class__, BaseCog):
+        #     raise TypeError(f"Cog must subclass BaseCog; got {type(cog)}")
+        if cog.name in self._cogs:
+            raise ValueError(f"Duplicate cog name detected: {cog.name}")
+        if not cog.enabled:
+            logger.warning(f"Attempted to add disabled cog: {cog.name}. It will not be active.")
+        if not cog.name:
+            raise ValueError("Cog must have a valid name.")
+        self._cogs[cog.name] = cog
+        logger.info(f"Added Cog: {cog.name}")
+        
 
     def _iter_active_cogs(self) -> Iterable[BaseCog]:
         """
@@ -118,10 +129,20 @@ class PositionAnalyzer:
             raw_opinions=all_opinions,
         )
 
-    def on_new_position(self, new_position_state: NewPositionState) -> None:
+    def on_new_position(self, new_position_state: NewPositionState) -> NewPositionState:
         """
         Hook method called when a new position is detected.
         Delegates to all registered cogs.
+        Args:
+            new_position_state (NewPositionState): The new position state containing order, request, and position data.
+        Returns:
+            NewPositionState: The updated position state after all cogs have processed it.
+
+        What this does:
+            - It iterates through all registered cogs and calls their `on_new_position` method.
+            - Each cog can modify the `new_position_state` as needed.   
+            - Finally, it returns the potentially modified `new_position_state`.
         """
         for cog in self._cogs.values():
             cog.on_new_position(new_position_state)
+        return new_position_state

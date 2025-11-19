@@ -6,6 +6,7 @@ from EventDriven.types import Order
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager.market_data import AtIndexResult
 from EventDriven.dataclasses.timeseries import AtTimePositionData
+from EventDriven.dataclasses.limits import PositionLimits
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class NewPositionState:
@@ -14,6 +15,7 @@ class NewPositionState:
     request: OrderRequest
     at_time_data: AtTimePositionData
     undl_at_time_data: AtIndexResult
+    limits: Optional[PositionLimits] = None
 
     def __repr__(self):
         return f"NewPositionState(trade_id={self.trade_id})"

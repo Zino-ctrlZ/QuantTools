@@ -12,7 +12,10 @@ from EventDriven.riskmanager.utils import (
 )
 from trade.helpers.decorators import log_time
 from trade.helpers.threads import runThreads
-from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new
+from trade.helpers.helper import (
+    compare_dates, 
+    parse_option_tick, 
+    generate_option_tick_new)
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
 from trade.assets.rates import get_risk_free_rate_helper
 from threading import Lock
@@ -25,6 +28,9 @@ from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionD
 logger = setup_logger('EventDriven.riskmanager.market_timeseries')
 
 class BacktestTimeseries:
+    """
+    Class for managing and retrieving market timeseries data for options and positions during backtesting.
+    """
     def __init__(self, _start: Union[datetime, str], _end: Union[datetime, str]):
         self.start_date = _start
         self.end_date = _end
@@ -38,6 +44,18 @@ class BacktestTimeseries:
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
         self.lock = Lock()
+
+    def set_splits(self, d):
+        """
+        Setter for splits
+        """
+        splits_dict = {}
+        for k, v in d.items():
+            splits_dict[k] = []
+            for d in v:
+                if compare_dates.inbetween(d[0], self.start_date, self.end_date):
+                    splits_dict[k].append(d)
+        return splits_dict
 
     def get_option_data(self, opttick: str) -> pd.DataFrame:
         """

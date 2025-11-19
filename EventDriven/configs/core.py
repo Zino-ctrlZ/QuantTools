@@ -58,17 +58,17 @@ class OrderPickerConfig(BaseConfigs):
             self.end_date = pd.to_datetime(self.end_date).date()
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class BaseSizerConfigs(_CustomFrozenBaseConfigs, ABC):
     """
     Base configuration class for Sizer modules.
     """
 
-    pass
+    delta_lmt_type: Literal["default", "zscore"] = "default"
     
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class DefaultSizerConfigs(BaseSizerConfigs):
     """
     Default configuration class for Sizer modules.
@@ -77,7 +77,7 @@ class DefaultSizerConfigs(BaseSizerConfigs):
     sizing_lev: numbers.Number = 1.0
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class ZscoreSizerConfigs(BaseSizerConfigs):
     """
     Z-score based configuration class for Sizer modules.
@@ -89,6 +89,7 @@ class ZscoreSizerConfigs(BaseSizerConfigs):
     weights: Tuple[numbers.Number, numbers.Number, numbers.Number] = (0.5, 0.3, 0.2)
     vol_type: str = "mean"
     norm_const: numbers.Number = 1.0
+    delta_lmt_type: Literal["default", "zscore"] = "zscore"
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class OrderResolutionConfig(BaseConfigs):
@@ -96,11 +97,11 @@ class OrderResolutionConfig(BaseConfigs):
     Configuration class for Order Resolution settings.
     """
     resolve_enabled: bool = True
-    otm_moneyness_width: float = 0.1
-    itm_moneyness_width: float = 0.1
+    otm_moneyness_width: float = 0.45
+    itm_moneyness_width: float = 0.45
     max_close: float = 10.0
-    max_tries: int = 6
-    max_dte_tolerance: int = 120
+    max_tries: int = 20
+    max_dte_tolerance: int = 90
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class UndlTimeseriesConfig(BaseConfigs):
@@ -135,12 +136,23 @@ class SkipCalcConfig(BaseConfigs):
     add_columns: List[Tuple[str, str]] = Field(default_factory=list, description="List of tuples where each tuple contains (column_name, function_name) to add additional calculated columns. Function will be fetched from ADD_COLUMNS_FACTORY.")
     skip_columns: List[str] = Field(default_factory=lambda: ["Delta", "Gamma", "Vega", "Theta", "Midpoint"])
 
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
+class BaseCogConfig(BaseConfigs):
+    """
+    Base configuration for any PositionAnalyzer cog.
+    Each cog will usually subclass this for its specific settings.
+    """
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class LimitsEnabledConfig:
+    name: str = None
+    enabled: bool = True
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
+class LimitsEnabledConfig(BaseCogConfig):
     """Flags to enable/disable enforcement of specific limit types for a strategy."""
 
     name: str = "LimitsEnabledCog"
+    cache_actions: bool = True
     enabled: bool = True
     delta: bool = True
     delta_lmt_type: Literal["default", "zscore"] = "default"
@@ -159,3 +171,21 @@ class PositionAnalyzerConfig(BaseConfigs):
 
     enabled: bool = True
     enabled_cogs: List[str] = Field(default_factory=list)
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class BacktestConfig(BaseConfigs):
+    """
+    Configuration class for Backtest related settings.
+    """
+
+    t_plus_n: int = 0  # T+N settlement for orders
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class RiskManagerConfig(BaseConfigs):
+    """
+    Configuration class for Risk Manager related settings.
+    """
+
+    max_slippage: float = 0.25
+    min_slippage: float = 0.16

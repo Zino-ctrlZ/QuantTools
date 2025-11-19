@@ -60,7 +60,8 @@ class BaseSizer(ABC):
     def __init__(self, 
                  pm: OptionSignalPortfolio=None, 
                  rm: RiskManager=None, 
-                 sizing_lev=1.0):
+                 sizing_lev=1.0,
+                 *args, **kwargs):
         """
         Initialize the BaseSizer with a PowerManager and ResourceManager.
         Args:
@@ -206,9 +207,10 @@ class DefaultSizer(BaseSizer):
     def __init__(self, 
                  pm=None, 
                  rm=None, 
-                 sizing_lev=1.0):
+                 sizing_lev=1.0,
+                 *args, **kwargs):
         
-        super().__init__(pm, rm, sizing_lev)
+        super().__init__(pm, rm, sizing_lev, *args, **kwargs)
         
     def get_daily_delta_limit(self, 
                               signal_id:str=None, 

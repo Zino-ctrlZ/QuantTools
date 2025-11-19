@@ -146,15 +146,11 @@ class OrderPicker:
         inputs = self.construct_inputs(request=request, 
                                        schema=schema, 
                                        order_resolution_config=self._order_resolution_config)
-        try:
-            return _get_open_order_backtest(
-                picker=self,
-                request=request,
-                inputs=inputs,
-            )
-        except Exception as e:
-            logger.error(f"Error getting order: {e}")
-            return {}
+        return _get_open_order_backtest(
+            picker=self,
+            request=request,
+            inputs=inputs,
+        )
 
     def construct_inputs(self, 
                         request: OrderRequest, 

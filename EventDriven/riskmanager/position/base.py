@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 from datetime import datetime
-from EventDriven.configs.base import BaseConfigs
+from EventDriven.configs.core import BaseCogConfig
 from EventDriven.types import EventTypes, Order
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.states import PortfolioState
@@ -83,7 +83,8 @@ class BaseCog:
       with the cog's name.
     """
 
-    def __init__(self, config: BaseConfigs):
+    def __init__(self, config: BaseCogConfig):
+        assert isinstance(config, BaseCogConfig), "config must be an instance of BaseCogConfig or its subclass"
         self.config = config
 
     @property

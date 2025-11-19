@@ -1,9 +1,13 @@
 from trade.helpers.Logging import setup_logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic import ConfigDict, Field
 from typing import ClassVar, Literal
 from weakref import WeakSet
 from typing import get_origin, get_args, Union, get_type_hints
-from EventDriven.exceptions import BacktesterIncorrectTypeError
+from EventDriven.exceptions import (
+    BacktesterIncorrectTypeError, 
+    BacktestConfigAttributeError
+)
 import types
 from dataclasses import fields
 from EventDriven.configs.vars import get_class_config_descriptions
@@ -85,12 +89,26 @@ def validate_inputs(self):
             pass
 
 
-@pydantic_dataclass
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class BaseConfigs:
     """Base configuration class for all modules."""
 
     _registry: ClassVar[WeakSet[type]] = WeakSet()
+    run_name: str = Field(default="", description="A name identifier for this run/session.")
+    
+    def set(self, **kwargs):
+        """Set multiple configuration attributes at once."""
+        for key, value in kwargs.items():
+            if not hasattr(self, key):
+                raise BacktestConfigAttributeError(f"Configuration has no attribute named '{key}'.")
+            setattr(self, key, value)
 
+    def get(self, key: str):
+        """Get a configuration attribute by name."""
+        if not hasattr(self, key):
+            raise BacktestConfigAttributeError(f"Configuration has no attribute named '{key}'.")
+        return getattr(self, key)
+    
     def __post_init__(self, ctx=None):
         pass
 
@@ -105,9 +123,9 @@ class BaseConfigs:
         ## Validate inputs after setting attribute
         self.validate_inputs()
 
-    # def __init_subclass__(cls, **kwargs):
-    #     super().__init_subclass__(**kwargs)
-    #     BaseConfigs._registry.add(cls)
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        BaseConfigs._registry.add(cls)
 
     def display_configs(self):
         """Display the current configuration settings."""
@@ -190,7 +208,11 @@ class _CustomFrozenBaseConfigs(BaseConfigs):
     """Base configuration class for all modules with frozen attributes."""
 
     def __setattr__(self, name, value):
-        logger.warning(f"Attempting to set attribute '{name}' to '{value}' in {self.__class__.__name__}...")
+        allow_name_changes = ["run_name"]
+        if name in allow_name_changes:
+            logger.warning(f"Attempting to set attribute '{name}' to '{value}' in {self.__class__.__name__}...")
+            super().__setattr__(name, value)
+            return
         if name in self.__dict__:
             raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}.")
         super().__setattr__(name, value)

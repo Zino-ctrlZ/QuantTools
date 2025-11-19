@@ -7,7 +7,8 @@ from EventDriven.event import *
 from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
-from EventDriven.riskmanager import RiskManager
+# from EventDriven.riskmanager import RiskManager
+from EventDriven.riskmanager.new_base import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday
