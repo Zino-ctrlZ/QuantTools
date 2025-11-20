@@ -814,6 +814,7 @@ Quanitity Sizing Type: {self.sizing_type}
                                   y=self.dividend_timeseries[meta['ticker']],
                                   s0_close=self.spot_timeseries[meta['ticker']],)
 
+
     def enrich_data(self, data, ticker) -> pd.DataFrame:
         """
         Enrich the data with additional information.
@@ -917,6 +918,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         ## Sort the splits by date
         to_adjust_split.sort(key=lambda x: x[0])  ## Sort by date
+        logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
         logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
 
         ## If there are no splits, we can just load the data

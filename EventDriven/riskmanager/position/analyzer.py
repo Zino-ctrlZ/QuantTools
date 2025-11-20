@@ -2,12 +2,14 @@ from typing import Iterable, List, Dict
 from trade.helpers.Logging import setup_logger
 from .base import (
     BaseCog,
-    PositionAnalysisContext,
-    CogOpinion,
-    StrategyChangeMeta,
 )
 from EventDriven.configs.core import PositionAnalyzerConfig
 from EventDriven.dataclasses.states import NewPositionState
+from EventDriven.dataclasses.states import (
+    PositionAnalysisContext,
+    StrategyChangeMeta,
+    CogActions,
+)
 
 
 logger = setup_logger('EventDriven.riskmanager.position.analyzer', stream_log_level="DEBUG")
@@ -71,15 +73,9 @@ class PositionAnalyzer:
         if not self.config.enabled:
             return []
 
-        if self.config.enabled_cogs:
-            for name in self.config.enabled_cogs:
-                cog = self._cogs.get(name)
-                if cog and cog.enabled:
-                    yield cog
-        else:
-            for cog in self._cogs.values():
-                if cog.enabled:
-                    yield cog
+        for cog in self._cogs.values():
+            if cog.enabled:
+                yield cog
 
     def analyze(self, context: PositionAnalysisContext) -> StrategyChangeMeta:
         """
@@ -90,11 +86,11 @@ class PositionAnalyzer:
         - We'll replace this with the full Cog Process reconciler later.
         """
 
-        all_opinions: List[CogOpinion] = []
+        all_actions: List[CogActions] = []
 
         for cog in self._iter_active_cogs():
-            opinions = cog.analyze(context)
-            all_opinions.extend(opinions)
+            actions = cog.analyze(context)
+            all_actions.extend(actions)
 
         # --- Minimal reconciliation for now: NO_CHANGE everywhere ---
         strategy_changes: List[StrategyChangeMeta] = []
@@ -126,7 +122,7 @@ class PositionAnalyzer:
 
         return StrategyChangeMeta(
             strategy_changes=strategy_changes,
-            raw_opinions=all_opinions,
+            raw_opinions=all_actions,
         )
 
     def on_new_position(self, new_position_state: NewPositionState) -> NewPositionState:

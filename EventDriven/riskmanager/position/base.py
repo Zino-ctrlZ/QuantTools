@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from typing import List
-from datetime import datetime
 from EventDriven.configs.core import BaseCogConfig
-from EventDriven.types import EventTypes, Order
+from EventDriven.types import Order
 from EventDriven.dataclasses.orders import OrderRequest
-from EventDriven.dataclasses.states import PortfolioState
+from EventDriven.dataclasses.states import (
+    PositionAnalysisContext,
+    CogActions,
+)
 
 
 
@@ -22,37 +24,6 @@ class PositionKey:
     signal_id: str
 
 
-@dataclass
-class PositionAnalysisContext:
-    """
-    Read-only snapshot of everything a cog needs to reason about positions.
-    This is passed into every cog on each analysis run.
-    """
-
-    timestamp: datetime
-    portfolio: PortfolioState
-
-
-@dataclass
-class CogOpinion:
-    """
-    A single cog's 'vote' about what a given (strategy, underlying) target should be.
-
-    This is the core schema all cogs must adhere to.
-    """
-
-    key: PositionKey
-    event_action: EventTypes
-    position_change: float  # positive = increase position, negative = decrease position
-
-    # Provenance & diagnostics
-    reason_code: str = ""
-    message: str = ""
-    source_cog: str = ""  # filled in by BaseCog so we always know who said it
-
-    # For reconciliation: higher priority may override lower, or be used differently.
-    priority: int = 0
-    weight: float = 1.0
 
 
 @dataclass
@@ -64,7 +35,7 @@ class StrategyChangeMeta:
 
     key: PositionKey
     ## Actions proposed by various cogs.
-    strategy_changes: List[CogOpinion]
+    strategy_changes: List[CogActions]
 
 
 # ======================================================================
@@ -79,51 +50,67 @@ class BaseCog:
     Responsibilities:
     - Holds a config (all knobs live there).
     - Exposes a public 'analyze' method with fixed signature.
-    - Ensures all outputs are well-formed CogOpinion instances and tagged
+    - Ensures all outputs are well-formed CogActions instances and tagged
       with the cog's name.
     """
+    default_config_class = BaseCogConfig
+    default_config_class_attr_name = "default_config"
 
     def __init__(self, config: BaseCogConfig):
         assert isinstance(config, BaseCogConfig), "config must be an instance of BaseCogConfig or its subclass"
-        self.config = config
+        self._config = config
+
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+
+        ## Enforce that subclasses have a '_config' attribute of type BaseCogConfig
+        if not hasattr(cls, cls.default_config_class_attr_name):
+            raise AttributeError(f"Subclass {cls.__name__} must have a '{cls.default_config_class_attr_name}' attribute.")
+
+        
+        if not isinstance(cls.default_config, BaseCogConfig):
+            raise TypeError(
+                f"Subclass {cls.__name__}.{cls.default_config_class_attr_name} must be an instance of BaseCogConfig or its subclass. Received type: {type(cls.default_config_class)}"
+            )
+        
+
+    @property
+    def config(self) -> BaseCogConfig:
+        return self._config
+
 
     @property
     def name(self) -> str:
-        return self.config.name
+        return self._config.name
 
     @property
     def enabled(self) -> bool:
         return self.config.enabled
 
-    def analyze(self, context: PositionAnalysisContext) -> List[CogOpinion]:
+    def analyze(self, context: PositionAnalysisContext) -> CogActions:
         """
         Template method: checks enabled flag, calls the subclass implementation,
         and guarantees that all returned opinions are tagged with source_cog.
         """
         if not self.enabled:
-            return []
+            return CogActions(date=context.date, source_cog=self.name, opinions=[])
 
-        opinions = self._analyze_impl(context) or []
+        cog_actions = self._analyze_impl(context) or []
 
         # Ensure schema invariants (minimal for now; can be extended later).
-        tagged: List[CogOpinion] = []
-        for op in opinions:
-            if op.source_cog and op.source_cog != self.name:
-                # You *can* override this behavior if you ever need a "proxy" cog,
-                # but by default we enforce self.name for clarity.
-                pass
-            else:
-                op.source_cog = self.name
-            tagged.append(op)
-
-        return tagged
+        if cog_actions.source_cog and cog_actions.source_cog != self.name:
+            raise ValueError(f"CogActions source_cog {cog_actions.source_cog} does not match cog name {self.name}")
+        
+        return cog_actions
 
     # ---- to be implemented by subclasses ----
-    def _analyze_impl(self, context: PositionAnalysisContext) -> List[CogOpinion]:
+    def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
         """
-        Subclasses implement this. Must return a list of CogOpinion objects.
+        Subclasses implement this. Must return a CogActions object.
         """
         raise NotImplementedError("Subclasses must implement _analyze_impl().")
+    
+
 
     def on_new_position(self, order: Order, request: OrderRequest) -> None:
         """

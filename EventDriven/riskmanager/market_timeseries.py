@@ -23,9 +23,12 @@ from typing import Dict, Any, Union
 import pandas as pd
 import numpy as np
 from trade.helpers.Logging import setup_logger
+from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
 
-logger = setup_logger('EventDriven.riskmanager.market_timeseries')
+logger = setup_logger('EventDriven.riskmanager.market_timeseries', stream_log_level="DEBUG")
+logger.info("Changing pools log level to WARNING for market_timeseries module")
+_change_global_stream_level("WARNING")
 
 class BacktestTimeseries:
     """

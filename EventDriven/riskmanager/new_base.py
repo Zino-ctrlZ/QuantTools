@@ -280,8 +280,8 @@ class RiskManager:
         symbol_list = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'JNJ', 'V', 'WMT']
 
         ## Backtest Window
-        self.start = bkt_start
-        self.end = bkt_end
+        self.start_date = bkt_start
+        self.end_date = bkt_end
 
         ## Configs
         self.config = RiskManagerConfig()
@@ -303,8 +303,6 @@ class RiskManager:
 
         ## Misc Attributes
         self.initial_capital = initial_capital
-        self.start_date = start
-        self.end_date = end
         self.symbol_list = symbol_list
         self.order_cache = {}
         self.unadjusted_signals = unadjusted_signals
@@ -321,49 +319,6 @@ class RiskManager:
         else:
             logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
-    
-
-    def submit_add_columns(self, columns: Tuple[str, str]):
-        """
-        Submits additional columns to be added to the risk manager's data.
-        Args:
-            columns (Tuple[str, str]): A tuple containing the column names to be added.
-        Raises:
-            AssertionError: If the first column is not one of the recognized columns or if the second column is not in the ADD_COLUMNS_FACTORY.
-        """
-        raise DeprecationWarning("submit_add_columns is deprecated, please use SkipCalcConfig.add_columns instead.")
-        assert isinstance(columns, tuple) and len(columns) == 2, "columns must be a tuple of two strings"
-        assert columns[0] in ['Midpoint', 'Delta', 'Open', 'Close', 'Closeask', 'Closebid'], f"Column {columns[0]} not recognized, expected 'Midpoint', 'Delta', 'Open', 'Close', 'Closeask', or 'Closebid'"
-        assert columns[1] in ADD_COLUMNS_FACTORY.keys(), f"Column {columns[1]} not recognized, expected {ADD_COLUMNS_FACTORY.keys()}"
-        ## Check if the columns already exist in the add_columns list
-        if columns in self.add_columns:
-            logger.info(f"Column {columns} already exists in add_columns, skipping addition")
-            return
-        self.add_columns.append(columns)
-
-
-
-
-    def print_settings(self):
-        raise DeprecationWarning("print_settings is deprecated, please use the RiskManager's __str__ method instead.")
-        msg = f"""
-Risk Manager Settings:
-Start Date: {self.pm_start_date}
-End Date: {self.pm_end_date}
-Current Limits State (Position Adjusted when these thresholds are reached):
-    Delta: {self.limits['delta']}
-    Gamma: {self.limits['gamma']}
-    Vega: {self.limits['vega']}
-    Theta: {self.limits['theta']}
-    Roll On DTE: {self.limits['dte']}
-        Min DTE Threshold: {self.pm.min_acceptable_dte_threshold}
-    Roll On Moneyness: {self.limits['moneyness']}
-        Max Moneyness: {self.max_moneyness}
-Quanitity Sizing Type: {self.sizing_type}
-            """
-        print(msg)
-
-
     def get_order(self, req: OrderRequest) -> NewPositionState:
         """
         Generates an order based on the provided OrderRequest dataclass and returns
@@ -374,7 +329,7 @@ Quanitity Sizing Type: {self.sizing_type}
         To learn more about the OrderRequest dataclass, refer to EventDriven.dataclasses.orders.OrderRequest.
         To learn more about the NewPositionState dataclass, refer to EventDriven.dataclasses.states.NewPositionState.
         To learn more about the configs used in order generation, refer to EventDriven.configs.core
-        
+
         Args:
             req (OrderRequest): The order request containing parameters for order generation.
         Returns:
@@ -437,9 +392,443 @@ Quanitity Sizing Type: {self.sizing_type}
         logger.info(f"Processing new position state through analyzer: {new_pos_state}")
         updated_pos_state = self.analyzer.on_new_position(new_position_state=new_pos_state)
         logger.info(f"Quantity after analysis: {updated_pos_state.order.data['quantity']}")
+
+        if self.config.cache_orders:
+            logger.info(f"Caching order for position ID: {position_id}")
+            self.order_cache[position_id] = updated_pos_state.order
+            
         order = updated_pos_state.order.to_dict()
 
         return updated_pos_state
+
+    def append_option_data(
+        self,
+        option_id: str = None,
+        position_data: pd.DataFrame = None,
+        data_pack: dict | CustomCache = None,
+    ):
+        """
+        Append option data to the processed_position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if option_id:
+            assert position_data is not None, "position_data must be provided if option_id is given"
+            self.market_data.options_cache[option_id] = position_data
+
+        elif isinstance(data_pack, (CustomCache, dict)):
+            for k, v in data_pack.items():
+                self.market_data.options_cache[k] = v
+
+        else:
+            raise ValueError("Either option_id or data_pack must be provided to append_option_data")
+
+    def append_position_data(
+        self,
+        position_id: str = None,
+        position_data: pd.DataFrame = None,
+        data_pack: dict | CustomCache = None,
+    ):
+        """
+        Append position data to the position_data cache.
+        Parameters:
+        position_id: str: ID of the position
+        position_data: pd.DataFrame: DataFrame containing the position data
+        data_pack: dict|CustomCache: Data pack containing the position data
+        """
+        if position_id:
+            assert position_data is not None, "position_data must be provided if position_id is given"
+            self.market_data.position_data_cache[position_id] = position_data
+
+        elif data_pack:
+            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
+            for k, v in data_pack.items():
+                self.market_data.position_data_cache[k] = v
+
+        else:
+            raise ValueError("Either position_id or data_pack must be provided to append_position_data")
+
+    def analyze_position(self):
+        """
+        Analyze the current positions and determine if any need to be rolled, closed, or adjusted
+        """
+        position_action_dict = {}  ## This will be used to store the actions for each position
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
+        if date in self.__analyzed_date_list:  ## If the date has already been analyzed, return
+            logger.info(f"Positions already analyzed on {date}, skipping")
+            return "ALREADY_ANALYZED"
+
+        self.__analyzed_date_list.append(date)  ## Add the date to the analyzed list
+        event_date = pd.to_datetime(date) + BDay(
+            self.t_plus_n
+        )  ## Order date is the next business day after the current date
+        logger.info(f"Analyzing Positions on {date}")
+        is_holiday = is_USholiday(date)
+        if is_holiday:
+            self.pm.logger.warning(f"Market is closed on {date}, skipping")
+            logger.info(f"Market is closed on {date}, skipping")
+            return "IS_HOLIDAY"
+
+        ## First check if the position needs to be rolled
+        if self.limits["dte"]:
+            roll_dict = self.dte_check()
+        else:
+            logger.info("Roll Check Not Enabled")
+            roll_dict = {}
+            for sym in self.pm.symbol_list:
+                current_position = self.pm.current_positions[sym]
+                if "position" not in current_position:
+                    continue
+                roll_dict[current_position["position"]["trade_id"]] = HOLD(current_position["position"]["trade_id"])
+
+        logger.info(f"Roll Dict {roll_dict}")
+
+        ## Check if the position needs to be adjusted based on moneyness
+        if self.limits["moneyness"]:
+            moneyness_dict = self.moneyness_check()
+        else:
+            logger.info("Moneyness Check Not Enabled")
+            moneyness_dict = {}
+            for sym in self.pm.symbol_list:
+                current_position = self.pm.current_positions[sym]
+                if "position" not in current_position:
+                    continue
+                moneyness_dict[current_position["position"]["trade_id"]] = HOLD(
+                    current_position["position"]["trade_id"]
+                )
+        logger.info(f"Moneyness Dict: {moneyness_dict}")
+
+        ## Check if the position needs to be adjusted based on greeks
+        greek_dict = self.limits_check()
+        logger.info(f"Greek Dict {greek_dict}")
+
+        check_dicts = [roll_dict, moneyness_dict, greek_dict]
+        all_empty = all([len(x) == 0 for x in check_dicts])
+
+        if all_empty:  ## Return if all are empty
+            self.pm.logger.info(f"No positions need to be adjusted on {date}")
+            print(f"No positions need to be adjusted on {date}")
+            return "NO_POSITIONS_TO_ADJUST"
+
+        actions_dicts = {"dte": roll_dict, "moneyness": moneyness_dict, "greeks": greek_dict}
+        ## Aggregate the results
+        trades_df = self.unadjusted_signals
+        bars_trade = self.bars.trades_df
+        for sym in self.pm.symbol_list:
+            position = self.pm.current_positions[sym]
+            for signal_id, current_position in position.items():
+                if "position" not in current_position:
+                    continue
+                k = current_position["position"]["trade_id"]
+                exit_signal_date = trades_df[trades_df["signal_id"] == signal_id].ExitTime.values[
+                    0
+                ]  ## This is not look ahead because Signal is gotten on bars_df - t_plus_n
+                entry_signal_date = trades_df[trades_df["signal_id"] == signal_id].EntryTime.values[
+                    0
+                ]  ## This is not look ahead because Signal is gotten on bars_df - t_plus_n
+                exit_date, entry_date = (
+                    bars_trade[bars_trade["signal_id"] == signal_id].ExitTime.values[0],
+                    bars_trade[bars_trade["signal_id"] == signal_id].EntryTime.values[0],
+                )
+                if compare_dates.is_on_or_after(date, exit_signal_date) or compare_dates.is_on_or_before(
+                    date, entry_date
+                ):
+                    logger.info(
+                        f"Position has exited on {exit_signal_date} or not yet entered on {entry_date}, skipping"
+                    )
+                    continue
+
+                ## There are 4 possible actions: roll, Hold, Exercise, Adjust
+                ## Roll happens on DTE & Moneyness. Exercise happens on DTE. Adjust happens on Greeks
+                actions = []
+                reasons = []
+                for action in actions_dicts:
+                    if k in actions_dicts[action]:
+                        actions.append(actions_dicts[action][k])
+                        reasons.append(action)
+                    else:
+                        actions.append(EventTypes.HOLD.value)
+                        reasons.append("hold")
+
+                sub_action_dict = {"action": "", "quantity_diff": 0}
+
+                ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
+                if EventTypes.ROLL.value in actions:
+                    pos_action = ROLL(k, {})
+                    pos_action.reason = reasons[actions.index(EventTypes.ROLL.value)]
+
+                    event = RollEvent(
+                        datetime=event_date,
+                        symbol=sym,
+                        signal_type=parse_signal_id(signal_id)["direction"],
+                        position=current_position,
+                        signal_id=signal_id,
+                    )
+                    pos_action.event = event
+                    position_action_dict[k] = pos_action
+                    continue
+
+                ## If exercise is needed, do that first, no need to check other actions or adjust quantity
+                elif EventTypes.EXERCISE.value in actions:
+                    pos_action = EXERCISE(k, {})
+                    pos_action.reason = reasons[actions.index(EventTypes.EXERCISE.value)]
+                    long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position["position"], date)
+
+                    event = ExerciseEvent(
+                        datetime=date,  ## Exercise happens on the same day as the action.
+                        symbol=sym,
+                        quantity=current_position["quantity"],
+                        entry_date=date,
+                        spot=self.chain_spot_timeseries[sym][
+                            date
+                        ],  ## Using chain spot because strikes are unadjusted for splits
+                        long_premiums=long_premiums,
+                        short_premiums=short_premiums,
+                        position=current_position,
+                        signal_id=signal_id,
+                    )
+                    pos_action.event = event
+                    sub_action_dict[k] = pos_action
+
+                    continue
+
+                ## If the position is a hold, check if it needs to be adjusted based on greeks
+                elif EventTypes.HOLD.value in actions:
+                    pos_action = HOLD(k)
+                    pos_action.reason = None
+                    position_action_dict[k] = pos_action
+
+                quantity_change_list = [0]  ## Initialize the quantity change list with 0
+                value = greek_dict.get(k, {})  ## Get the greek dict for each position
+                for greek, res in value.items():  ## Looping through each greek adjustments
+                    quantity_change_list.append(res["quantity_diff"])
+                sub_action_dict["quantity_diff"] = min(
+                    quantity_change_list
+                )  ## Ultimate adjustment would be the minimum reduction factor because they're all negative values
+                if (
+                    sub_action_dict["quantity_diff"] < 0
+                ):  ## If the quantity needs to be reduced, set the action to adjust
+                    pos_action = ADJUST(k, sub_action_dict)
+                    pos_action.reason = "greek_limit"
+
+                    event = OrderEvent(
+                        symbol=sym,
+                        datetime=event_date,
+                        order_type="MKT",
+                        quantity=abs(sub_action_dict["quantity_diff"]),
+                        direction="SELL" if sub_action_dict["quantity_diff"] < 0 else "BUY",
+                        position=current_position["position"],
+                        signal_id=signal_id,
+                    )
+                    pos_action.event = event
+                    position_action_dict[k] = pos_action  ## If adjust position, override HOLD.
+        self._actions[date] = position_action_dict
+        logger.info(f"Position Action Dict: {position_action_dict}")
+        for id, action in position_action_dict.items():
+            logger.info(f"Position ID: {id}, Action: {action}, Reason: {action.reason}")
+            if not isinstance(action, HOLD):
+                logger.info(f"Event: {action.event}")
+                logger.info(
+                    (f"Risk Manager Scheduling Action: Position ID: {id}, Action: {action}, Reason: {action.reason}")
+                )
+                self.pm.eventScheduler.schedule_event(event_date, action.event)
+
+        return position_action_dict
+
+    def limits_check(self):
+        limits = self.limits
+        delta_limit = limits["delta"]
+        position_limit = {}
+
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
+        if is_USholiday(date):
+            self.pm.logger.warning(f"Market is closed on {date}, skipping")
+            return
+
+        for symbol in self.pm.symbol_list:
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if "position" not in current_position:
+                    continue
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for Greek Limits on {date}")
+                trade_id = current_position["position"]["trade_id"]
+                quantity = current_position["quantity"]
+                signal_id = signal_id
+                max_delta = self.greek_limits["delta"][signal_id]
+                pos_data = self.position_data[trade_id]
+
+                status = {"status": False, "quantity_diff": 0}
+                greek_limit_bool = dict(delta=status, gamma=status, vega=status, theta=status)
+
+                if delta_limit:
+                    delta_val = abs(pos_data.at[date, "Delta"])
+                    skip = pos_data.at[date, "Delta_skip_day"] if "Delta_skip_day" in pos_data.columns else False
+
+                    if skip or delta_val == 0:
+                        continue
+
+                    current_delta = delta_val * quantity
+                    if current_delta > max_delta:
+                        # Compute how many contracts to reduce
+                        required_quantity = max(
+                            int(max_delta // delta_val), 1
+                        )  ## Ensure at least 1 contract is required. If last contract exceeds delta limit, we will still hold it.
+                        quantity_diff = required_quantity - quantity
+                        logger.info(
+                            f"Position {trade_id} exceeds delta limit. Current Delta: {current_delta}, Max Delta: {max_delta}, Required Quantity: {required_quantity}, Current Quantity: {quantity}"
+                        )
+                        greek_limit_bool["delta"] = {"status": True, "quantity_diff": quantity_diff}
+
+                    position_limit[trade_id] = greek_limit_bool
+
+        return position_limit
+
+    def dte_check(self):
+        """
+        Analyze the current positions and determine if any need to be rolled
+        """
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
+        logger.info(f"Checking DTE on {date}")
+        if is_USholiday(date):
+            self.pm.logger.warning(f"Market is closed on {date}, skipping")
+            return
+
+        roll_dict = {}
+        for symbol in self.pm.symbol_list:
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if "position" not in current_position:
+                    continue
+
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for DTE on {date}")
+                id = current_position["position"]["trade_id"]
+                expiry_date = ""
+
+                if "long" in current_position["position"]:
+                    for option_id in current_position["position"]["long"]:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta["exp_date"]
+                        break
+                elif "short" in current_position["position"]:
+                    for option_id in current_position["position"]["short"]:
+                        option_meta = parse_option_tick(option_id)
+                        expiry_date = option_meta["exp_date"]
+                        break
+
+                dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
+                logger.info(f"ID: {id}, DTE: {dte}, Expiry: {expiry_date}, Date: {date}")
+
+                if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
+                    logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
+                    roll_dict[id] = EventTypes.ROLL.value
+                elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
+                    logger.info(f"{id} exercising because {dte} == 0")
+                    roll_dict[id] = EventTypes.EXERCISE.value
+                else:
+                    logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
+                    roll_dict[id] = EventTypes.HOLD.value
+        return roll_dict
+
+    def moneyness_check(self):
+        """
+        Analyze the current positions and determine if any need to be rolled based on moneyness
+        """
+        date = pd.to_datetime(self.pm.eventScheduler.current_date)
+        logger.info(f"Checking Moneyness on {date}")
+        if is_USholiday(date):
+            self.pm.logger.warning(f"Market is closed on {date}, skipping")
+            return
+
+        roll_dict = {}
+        for symbol in self.pm.symbol_list:
+            strike_list = []
+            position = self.pm.current_positions[symbol]
+            for signal_id, current_position in position.items():
+                if "position" not in current_position:
+                    continue
+
+                logger.info(f"Checking Position {current_position['position']['trade_id']} for Moneyness on {date}")
+                id = current_position["position"]["trade_id"]
+                try:
+                    entry_date = self.pm.trades_map[id].entry_date
+                except Exception as e:
+                    logger.error(f"Error getting entry date for position {id}: {e}")
+                    entry_date = date
+                spot = self.chain_spot_timeseries[symbol][
+                    date
+                ]  ## Use the spot price on the date (from chain cause of splits)
+
+                if "long" in current_position["position"]:
+                    for option_id in current_position["position"]["long"]:
+                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
+                        strike_list.append(
+                            option_meta["strike"] / spot
+                            if option_meta["put_call"] == "P"
+                            else spot / option_meta["strike"]
+                        )
+
+                if "short" in current_position["position"]:
+                    for option_id in current_position["position"]["short"]:
+                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
+                        strike_list.append(
+                            option_meta["strike"] / spot
+                            if option_meta["put_call"] == "P"
+                            else spot / option_meta["strike"]
+                        )
+
+                logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}, entry_date: {entry_date}")
+                logger.info(f"{id} moneyness bool list {[x > self.max_moneyness for x in strike_list]}")
+
+                roll_dict[id] = (
+                    EventTypes.ROLL.value
+                    if any([x > self.max_moneyness for x in strike_list])
+                    else EventTypes.HOLD.value
+                )
+        return roll_dict
+
+    def submit_add_columns(self, columns: Tuple[str, str]):
+        """
+        Submits additional columns to be added to the risk manager's data.
+        Args:
+            columns (Tuple[str, str]): A tuple containing the column names to be added.
+        Raises:
+            AssertionError: If the first column is not one of the recognized columns or if the second column is not in the ADD_COLUMNS_FACTORY.
+        """
+        raise DeprecationWarning("submit_add_columns is deprecated, please use SkipCalcConfig.add_columns instead.")
+        assert isinstance(columns, tuple) and len(columns) == 2, "columns must be a tuple of two strings"
+        assert columns[0] in ['Midpoint', 'Delta', 'Open', 'Close', 'Closeask', 'Closebid'], f"Column {columns[0]} not recognized, expected 'Midpoint', 'Delta', 'Open', 'Close', 'Closeask', or 'Closebid'"
+        assert columns[1] in ADD_COLUMNS_FACTORY.keys(), f"Column {columns[1]} not recognized, expected {ADD_COLUMNS_FACTORY.keys()}"
+        ## Check if the columns already exist in the add_columns list
+        if columns in self.add_columns:
+            logger.info(f"Column {columns} already exists in add_columns, skipping addition")
+            return
+        self.add_columns.append(columns)
+
+
+
+
+    def print_settings(self):
+        raise DeprecationWarning("print_settings is deprecated, please use the RiskManager's __str__ method instead.")
+        msg = f"""
+Risk Manager Settings:
+Start Date: {self.pm_start_date}
+End Date: {self.pm_end_date}
+Current Limits State (Position Adjusted when these thresholds are reached):
+    Delta: {self.limits['delta']}
+    Gamma: {self.limits['gamma']}
+    Vega: {self.limits['vega']}
+    Theta: {self.limits['theta']}
+    Roll On DTE: {self.limits['dte']}
+        Min DTE Threshold: {self.pm.min_acceptable_dte_threshold}
+    Roll On Moneyness: {self.limits['moneyness']}
+        Max Moneyness: {self.max_moneyness}
+Quanitity Sizing Type: {self.sizing_type}
+            """
+        print(msg)
+
+
         
     # @log_error_with_stack(logger)
     # @log_time(time_logger)
@@ -818,52 +1207,7 @@ Quanitity Sizing Type: {self.sizing_type}
         raise DeprecationWarning("generate_spot_greeks is deprecated, please use generate_spot_greeks from BacktestTimeseries instead.")
         ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
         return generate_spot_greeks(opttick, self.start_date, self.end_date)
-    
-    def append_option_data(self, 
-                             option_id: str=None,
-                             position_data: pd.DataFrame=None,
-                             data_pack: dict|CustomCache=None,):
-        """
-        Append option data to the processed_position_data cache.
-        Parameters:
-        position_id: str: ID of the position
-        position_data: pd.DataFrame: DataFrame containing the position data
-        data_pack: dict|CustomCache: Data pack containing the position data
-        """
-        if option_id:
-            assert position_data is not None, "position_data must be provided if option_id is given"
-            self.market_data.options_cache[option_id] = position_data
-        
-        
-        elif isinstance(data_pack, (CustomCache, dict)):
-            for k, v in data_pack.items():
-                self.market_data.options_cache[k] = v
-        
-        else:
-            raise ValueError("Either option_id or data_pack must be provided to append_option_data")
-        
-    def append_position_data(self, 
-                             position_id: str=None,
-                             position_data: pd.DataFrame=None,
-                             data_pack: dict|CustomCache=None,):
-        """
-        Append position data to the position_data cache.
-        Parameters:
-        position_id: str: ID of the position
-        position_data: pd.DataFrame: DataFrame containing the position data
-        data_pack: dict|CustomCache: Data pack containing the position data
-        """
-        if position_id:
-            assert position_data is not None, "position_data must be provided if position_id is given"
-            self.market_data.position_data_cache[position_id] = position_data
-        
-        elif data_pack:
-            assert isinstance(data_pack, (dict, CustomCache)), "data_pack must be a dict or CustomCache"
-            for k, v in data_pack.items():
-                self.market_data.position_data_cache[k] = v
-        
-        else:
-            raise ValueError("Either position_id or data_pack must be provided to append_position_data")
+
 
     def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """
@@ -1053,320 +1397,7 @@ Quanitity Sizing Type: {self.sizing_type}
         
         else:
             raise ValueError(f"Sizing Type {self.sizing_type} not recognized")
-        
-    def analyze_position(self):
-        """
-        Analyze the current positions and determine if any need to be rolled, closed, or adjusted
-        """
-        position_action_dict = {} ## This will be used to store the actions for each position
-        date = pd.to_datetime(self.pm.eventScheduler.current_date)
-        if date in self.__analyzed_date_list: ## If the date has already been analyzed, return
-            logger.info(f"Positions already analyzed on {date}, skipping")
-            return "ALREADY_ANALYZED"
-        
-        self.__analyzed_date_list.append(date) ## Add the date to the analyzed list
-        event_date = pd.to_datetime(date) + BDay(self.t_plus_n) ## Order date is the next business day after the current date
-        logger.info(f"Analyzing Positions on {date}")
-        is_holiday = is_USholiday(date)
-        if is_holiday:
-            self.pm.logger.warning(f"Market is closed on {date}, skipping")
-            logger.info(f"Market is closed on {date}, skipping")
-            return "IS_HOLIDAY"
 
-        ## First check if the position needs to be rolled
-        if self.limits['dte']:
-            roll_dict = self.dte_check()
-        else:
-            logger.info("Roll Check Not Enabled")
-            roll_dict = {}
-            for sym in self.pm.symbol_list:
-                current_position = self.pm.current_positions[sym]
-                if 'position' not in current_position:
-                    continue
-                roll_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
-
-        logger.info(f"Roll Dict {roll_dict}")
-
-        ## Check if the position needs to be adjusted based on moneyness
-        if self.limits['moneyness']:
-            moneyness_dict = self.moneyness_check()
-        else:
-            logger.info("Moneyness Check Not Enabled")
-            moneyness_dict = {}
-            for sym in self.pm.symbol_list:
-                current_position = self.pm.current_positions[sym]
-                if 'position' not in current_position:
-                    continue
-                moneyness_dict[current_position['position']['trade_id']] = HOLD(current_position['position']['trade_id'])
-        logger.info(f"Moneyness Dict: {moneyness_dict}")
-
-        ## Check if the position needs to be adjusted based on greeks
-        greek_dict = self.limits_check()
-        logger.info(f"Greek Dict {greek_dict}")
-
-        check_dicts = [roll_dict, moneyness_dict, greek_dict]
-        all_empty = all([len(x)==0 for x in check_dicts])
-
-        if all_empty: ## Return if all are empty
-            self.pm.logger.info(f"No positions need to be adjusted on {date}")
-            print(f"No positions need to be adjusted on {date}")
-            return "NO_POSITIONS_TO_ADJUST"
-        
-        actions_dicts = {
-            'dte': roll_dict,
-            'moneyness': moneyness_dict,
-            'greeks': greek_dict
-        }
-        ## Aggregate the results
-        trades_df = self.unadjusted_signals
-        bars_trade = self.bars.trades_df
-        for sym in self.pm.symbol_list:
-            position = self.pm.current_positions[sym]
-            for signal_id, current_position in position.items():
-                if 'position' not in current_position:
-                    continue
-                k = current_position['position']['trade_id']
-                exit_signal_date = trades_df[trades_df['signal_id'] == signal_id].ExitTime.values[0] ## This is not look ahead because Signal is gotten on bars_df - t_plus_n
-                entry_signal_date = trades_df[trades_df['signal_id'] == signal_id].EntryTime.values[0] ## This is not look ahead because Signal is gotten on bars_df - t_plus_n        
-                exit_date, entry_date = bars_trade[bars_trade['signal_id'] == signal_id].ExitTime.values[0], bars_trade[bars_trade['signal_id'] == signal_id].EntryTime.values[0]
-                if compare_dates.is_on_or_after(date, exit_signal_date) or compare_dates.is_on_or_before(date, entry_date):
-                    logger.info(f"Position has exited on {exit_signal_date} or not yet entered on {entry_date}, skipping")
-                    continue
-                
-
-                ## There are 4 possible actions: roll, Hold, Exercise, Adjust
-                ## Roll happens on DTE & Moneyness. Exercise happens on DTE. Adjust happens on Greeks
-                actions = []
-                reasons = []
-                for action in actions_dicts:
-                    if k in actions_dicts[action]:
-                        actions.append(actions_dicts[action][k])
-                        reasons.append(action)
-                    else:
-                        actions.append(EventTypes.HOLD.value)
-                        reasons.append('hold')
-                
-                sub_action_dict = {'action': '', 'quantity_diff': 0}
-
-                ## If the position needs to be rolled or exercised, do that first, no need to check other actions or adjust quantity
-                if EventTypes.ROLL.value in actions:
-                    pos_action = ROLL(k, {})
-                    pos_action.reason = reasons[actions.index(EventTypes.ROLL.value)]
-                    
-                    event = RollEvent(
-                        datetime = event_date,
-                        symbol = sym,
-                        signal_type = parse_signal_id(signal_id)['direction'],
-                        position = current_position,
-                        signal_id = signal_id
-
-                    )
-                    pos_action.event = event
-                    position_action_dict[k] = pos_action
-                    continue
-
-                ## If exercise is needed, do that first, no need to check other actions or adjust quantity
-                elif EventTypes.EXERCISE.value in actions:
-                    pos_action = EXERCISE(k, {})
-                    pos_action.reason = reasons[actions.index(EventTypes.EXERCISE.value)]
-                    long_premiums, short_premiums = self.pm.get_premiums_on_position(current_position['position'], date)
-                    
-                    event = ExerciseEvent(
-                        datetime = date, ## Exercise happens on the same day as the action.
-                        symbol = sym,
-                        quantity = current_position['quantity'],
-                        entry_date = date,
-                        spot = self.chain_spot_timeseries[sym][date], ## Using chain spot because strikes are unadjusted for splits
-                        long_premiums = long_premiums,
-                        short_premiums = short_premiums,
-                        position = current_position,
-                        signal_id = signal_id
-                        
-                    )
-                    pos_action.event = event
-                    sub_action_dict[k] = pos_action
-                    
-                    continue
-
-            
-                ## If the position is a hold, check if it needs to be adjusted based on greeks
-                elif EventTypes.HOLD.value in actions:
-                    pos_action = HOLD(k)
-                    pos_action.reason = None
-                    position_action_dict[k] = pos_action
-
-                quantity_change_list = [0] ## Initialize the quantity change list with 0
-                value = greek_dict.get(k, {}) ## Get the greek dict for each position
-                for greek, res in value.items(): ## Looping through each greek adjustments
-                    quantity_change_list.append(res['quantity_diff'])
-                sub_action_dict['quantity_diff'] = min(quantity_change_list) ## Ultimate adjustment would be the minimum reduction factor because they're all negative values
-                if sub_action_dict['quantity_diff'] < 0: ## If the quantity needs to be reduced, set the action to adjust
-                    pos_action = ADJUST(k, sub_action_dict)
-                    pos_action.reason = "greek_limit"
-
-                    event = OrderEvent(
-                        symbol = sym,
-                        datetime = event_date,
-                        order_type = 'MKT',
-                        quantity= abs(sub_action_dict['quantity_diff']),
-                        direction = 'SELL' if sub_action_dict['quantity_diff'] < 0 else 'BUY',
-                        position = current_position['position'],
-                        signal_id = signal_id
-                    )
-                    pos_action.event = event
-                    position_action_dict[k] = pos_action ## If adjust position, override HOLD.
-        self._actions[date] = position_action_dict
-        logger.info(f"Position Action Dict: {position_action_dict}")
-        for id, action in position_action_dict.items():
-            logger.info(f"Position ID: {id}, Action: {action}, Reason: {action.reason}")
-            if not isinstance(action, HOLD):
-                logger.info(f"Event: {action.event}")
-                logger.info((f"Risk Manager Scheduling Action: Position ID: {id}, Action: {action}, Reason: {action.reason}"))
-                self.pm.eventScheduler.schedule_event(event_date, action.event)
-
-        return position_action_dict
-
-                
-
-        
-
-    def limits_check(self):
-        limits = self.limits
-        delta_limit = limits['delta']
-        position_limit = {}
-
-        date = pd.to_datetime(self.pm.eventScheduler.current_date)
-        if is_USholiday(date):
-            self.pm.logger.warning(f"Market is closed on {date}, skipping")
-            return 
-
-        for symbol in self.pm.symbol_list:
-            position = self.pm.current_positions[symbol]
-            for signal_id, current_position in position.items():
-                if 'position' not in current_position:
-                    continue
-                logger.info(f"Checking Position {current_position['position']['trade_id']} for Greek Limits on {date}")
-                trade_id = current_position['position']['trade_id']
-                quantity = current_position['quantity']
-                signal_id = signal_id
-                max_delta = self.greek_limits['delta'][signal_id]
-                pos_data = self.position_data[trade_id]
-
-                status = {'status': False, 'quantity_diff': 0}
-                greek_limit_bool = dict(delta=status, gamma=status, vega=status, theta=status)
-
-                if delta_limit:
-                    delta_val = abs(pos_data.at[date, 'Delta'])
-                    skip = pos_data.at[date, 'Delta_skip_day'] if 'Delta_skip_day' in pos_data.columns else False
-
-                    if skip or delta_val == 0:
-                        continue
-
-                    current_delta = delta_val * quantity
-                    if current_delta > max_delta:
-                        # Compute how many contracts to reduce
-                        required_quantity = max(int(max_delta // delta_val), 1) ## Ensure at least 1 contract is required. If last contract exceeds delta limit, we will still hold it.
-                        quantity_diff = required_quantity - quantity
-                        logger.info(f"Position {trade_id} exceeds delta limit. Current Delta: {current_delta}, Max Delta: {max_delta}, Required Quantity: {required_quantity}, Current Quantity: {quantity}")
-                        greek_limit_bool['delta'] = {'status': True, 'quantity_diff': quantity_diff}
-
-                    position_limit[trade_id] = greek_limit_bool
-
-        return position_limit
-
-
-
-
-    def dte_check(self):
-        """
-        Analyze the current positions and determine if any need to be rolled
-        """
-        date = pd.to_datetime(self.pm.eventScheduler.current_date)
-        logger.info(f"Checking DTE on {date}")
-        if is_USholiday(date):
-            self.pm.logger.warning(f"Market is closed on {date}, skipping")
-            return
-        
-        roll_dict = {}
-        for symbol in self.pm.symbol_list:
-            position = self.pm.current_positions[symbol]
-            for signal_id, current_position in position.items():
-                if 'position' not in current_position:
-                    continue
-            
-                logger.info(f"Checking Position {current_position['position']['trade_id']} for DTE on {date}")
-                id = current_position['position']['trade_id']
-                expiry_date = ''
-                
-                if 'long' in current_position['position']:
-                    for option_id in current_position['position']['long']:
-                        option_meta = parse_option_tick(option_id)
-                        expiry_date = option_meta['exp_date']
-                        break
-                elif 'short' in current_position['position']:
-                    for option_id in current_position['position']['short']:
-                        option_meta = parse_option_tick(option_id)
-                        expiry_date = option_meta['exp_date']
-                        break
-
-
-                dte = (pd.to_datetime(expiry_date) - pd.to_datetime(date)).days
-                logger.info(f"ID: {id}, DTE: {dte}, Expiry: {expiry_date}, Date: {date}")
-
-                if symbol in self.pm.roll_map and dte <= self.pm.roll_map[symbol]:
-                    logger.info(f"{id} rolling because {dte} <= {self.pm.roll_map[symbol]}")
-                    roll_dict[id] = EventTypes.ROLL.value
-                elif symbol not in self.pm.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                    logger.info(f"{id} exercising because {dte} == 0")
-                    roll_dict[id] = EventTypes.EXERCISE.value
-                else:
-                    logger.info(f"{id} holding because {dte} > {self.pm.roll_map[symbol]}")
-                    roll_dict[id] = EventTypes.HOLD.value
-        return roll_dict
-    
-    def moneyness_check(self):
-        """
-        Analyze the current positions and determine if any need to be rolled based on moneyness
-        """
-        date = pd.to_datetime(self.pm.eventScheduler.current_date)
-        logger.info(f"Checking Moneyness on {date}")
-        if is_USholiday(date):
-            self.pm.logger.warning(f"Market is closed on {date}, skipping")
-            return
-        
-        
-        roll_dict = {}
-        for symbol in self.pm.symbol_list:
-            strike_list = []
-            position = self.pm.current_positions[symbol]
-            for signal_id, current_position in position.items():
-                if 'position' not in current_position:
-                    continue
-                
-                logger.info(f"Checking Position {current_position['position']['trade_id']} for Moneyness on {date}")
-                id = current_position['position']['trade_id']
-                try:
-                    entry_date = self.pm.trades_map[id].entry_date
-                except Exception as e:
-                    logger.error(f"Error getting entry date for position {id}: {e}")
-                    entry_date = date
-                spot = self.chain_spot_timeseries[symbol][date] ## Use the spot price on the date (from chain cause of splits)
-                
-                if 'long' in current_position['position']:
-                    for option_id in current_position['position']['long']:
-                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
-                        strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
-
-                if 'short' in current_position['position']:
-                    for option_id in current_position['position']['short']:
-                        option_meta = self.adjust_for_events(entry_date, date, parse_option_tick(option_id))
-                        strike_list.append(option_meta['strike']/spot if option_meta['put_call'] == 'P' else spot/option_meta['strike'])
-                
-                logger.info(f"{id} moneyness list {strike_list}, spot: {spot}, date: {date}, entry_date: {entry_date}")
-                logger.info(f"{id} moneyness bool list {[x > self.max_moneyness for x in strike_list]}")
-                
-                roll_dict[id] = EventTypes.ROLL.value if any([x > self.max_moneyness for x in strike_list]) else EventTypes.HOLD.value
-        return roll_dict
 
     def hedge_check(self,
                     hedge_func: callable,

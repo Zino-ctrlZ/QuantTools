@@ -172,7 +172,7 @@ def get_persistent_cache() -> CustomCache:
     Returns:
         CustomCache: The persistent cache instance.
     """
-    if USE_TEMP_CACHE:
+    if get_use_temp_cache():
         logger.info("Using temporary cache. This cache will be cleared on exit.")
         return CustomCache(location/'temp', fname='temp_cache', clear_on_exit= True)
     else:
@@ -193,6 +193,9 @@ def dynamic_memoize(func):
             cache._memoized_wrappers[func] = cache.memoize()(func)
 
         memoized_func = cache._memoized_wrappers[func]
+        if get_use_temp_cache():
+            logger.info(f"Using temporary cache for function: {func.__name__}")
+            
         return memoized_func(*args, **kwargs)
 
     return wrapper
@@ -406,7 +409,7 @@ def get_cache(name: str) -> CustomCache:
     else:
         raise ValueError(f"Invalid cache name: {name}")
 
-# @dynamic_memoize
+@dynamic_memoize
 def populate_cache_with_chain(tick, date, chain_spot=None, print_url = True):
     """
     Populate the cache with chain data.

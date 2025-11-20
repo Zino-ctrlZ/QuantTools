@@ -1,16 +1,26 @@
 
+import pandas as pd
+from datetime import datetime
 from EventDriven.configs.core import LimitsEnabledConfig
 from EventDriven.dataclasses.states import NewPositionState
 from EventDriven.types import Order
 from EventDriven.exceptions import EVBacktestError
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from trade.helpers.Logging import setup_logger
-from EventDriven.tests import BaseCog
-from EventDriven.riskmanager.utils import parse_option_tick, swap_ticker
-from trade.helpers.helper import compare_dates
+from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.riskmanager.sizer._sizer import DefaultSizer, BaseSizer, ZscoreRVolSizer
 from EventDriven.configs.core import ZscoreSizerConfigs, DefaultSizerConfigs
 from EventDriven.dataclasses.limits import PositionLimits
+from EventDriven.dataclasses.states import (
+    PositionAnalysisContext,
+    CogActions,
+)
+from .analyze_utils import (
+    analyze_position,
+    get_dte_from_trade_id,
+    get_moneyness_from_trade_id,
+)
+from .vars import MEASURES
 logger = setup_logger('EventDriven.riskmanager.position.cogs.limits', stream_log_level="DEBUG")
 
 
@@ -18,6 +28,7 @@ class LimitsAndSizingCog(BaseCog):
     """
     Class for Managing Position Limits and Sizing based on various risk metrics
     """
+    default_config = LimitsEnabledConfig()
 
     def __init__(
         self,
@@ -26,8 +37,11 @@ class LimitsAndSizingCog(BaseCog):
         underlier_list: Optional[List[str]] = None,
     ):
         self._sizer_configs: Optional[Union[DefaultSizerConfigs, ZscoreSizerConfigs]] = sizer_configs
-        self.position_limits: dict = {}
+        self.position_limits: Dict[str, PositionLimits] = {}
         self.underlier_list = underlier_list if underlier_list is not None else []
+        if config is None:
+            config = LimitsEnabledConfig()
+            
         super().__init__(config)
         self._load_sizers_and_configs()
 
@@ -110,7 +124,7 @@ class LimitsAndSizingCog(BaseCog):
             underlier_price_at_time=undl_data.chain_spot["close"],
         )
         logger.info(f"Calculated limits for position {order['data']['trade_id']}: {limits}")
-        pos_lmts = PositionLimits(delta=limits, dte=self.config.dte, moneyness=self.config.moneyness)
+        pos_lmts = PositionLimits(delta=limits, dte=self.config.default_dte, moneyness=self.config.default_moneyness)
         self.position_limits[order["data"]["trade_id"]] = pos_lmts
         new_pos_state.limits = pos_lmts
         return pos_lmts.delta
@@ -129,27 +143,70 @@ class LimitsAndSizingCog(BaseCog):
         order = new_position_state.order
         order_dict = order.to_dict()
         order_dict["data"]["quantity"] = q
+        if q == 0:
+            logger.warning(f"Calculated position size is 0 for order {order['data']['trade_id']}. Delta per contract ({delta}) exceeds limit {delta_lmt}.")
         new_position_state.order = Order.from_dict(order_dict)
 
-    def adjust_for_events(
-        self,
-        start: str,
-        date: str,
-        option: str | dict,
-    ):
+
+    def _analyze_impl(self, portfolio_context: PositionAnalysisContext) -> CogActions:
         """
-        Adjusts the option tick for events like splits or dividends.
+        Analyze the given portfolio state and print relevant metrics.
         """
-        if isinstance(option, str):
-            meta = parse_option_tick(option)
-        elif isinstance(option, dict):
-            meta = option
-        else:
-            raise ValueError("Option must be a string or a dictionary.")
-        split = self.splits.get(swap_ticker(meta["ticker"]), None)
-        if split is None:
-            return meta
-        for pack in split:
-            if compare_dates.is_before(start, pack[0]) and compare_dates.is_after(date, pack[0]):
-                meta["strike"] /= pack[1]
-        return meta
+        positions = portfolio_context.portfolio.positions
+        portfolio_state = portfolio_context.portfolio
+        bkt_info = portfolio_context.portfolio_meta
+        opinions = []
+
+        for position in positions:
+            strat_enabled_limits = self.config.enabled_limits
+            trade_id = position.trade_id
+            dte_limit = self.position_limits[trade_id].dte
+            moneyness_limit = self.position_limits[trade_id].moneyness
+            greeks_limit = self.position_limits[trade_id].__dict__
+            greeks_limit = {k: v for k, v in greeks_limit.items() if k in MEASURES}
+            greek_exposure = position.current_position_data.__dict__
+            greek_exposure = {k: v for k, v in greek_exposure.items() if k in MEASURES}
+            qty = position.quantity
+            moneyness_list = get_moneyness_from_trade_id(
+                trade_id=trade_id,
+                check_price=position.current_underlier_data.chain_spot["close"],
+                check_date=position.last_updated,
+                start=bkt_info.start_date,
+            )
+            dte = get_dte_from_trade_id(
+                trade_id=trade_id,
+                check_date=position.last_updated,
+            )
+
+            ## Analyze position
+            action = analyze_position(
+                trade_id=trade_id,
+                dte=dte,
+                position_greek_limit=greeks_limit,
+                dte_limit=dte_limit,
+                moneyness_limit=moneyness_limit,
+                greeks=greek_exposure,
+                qty=qty,
+                moneyness_list=moneyness_list,
+                strategy_enabled_actions=strat_enabled_limits,
+                t_plus_n=bkt_info.t_plus_n,
+            )
+
+            ## Update analysis_date
+            action.analysis_date = portfolio_state.last_updated
+            action.effective_date = portfolio_state.last_updated + pd.Timedelta(days=bkt_info.t_plus_n)
+            action.verbose_info = f"""
+            Analysis Date: {action.analysis_date}
+            Effective Date: {action.effective_date}
+            Trade ID: {trade_id}
+            DTE: {dte}
+            Moneyness List: {moneyness_list}
+            Greek Exposure: {greek_exposure}
+            Position Quantity: {qty}
+            Action: {action.action}
+            Limits Applied: DTE Limit - {dte_limit}, Moneyness Limit - {moneyness_limit}, Greek Limits - {greeks_limit}
+            Analysis performed on {datetime.now()}
+            Analysis generated by LimitsAndSizingCog
+            """
+            opinions.append(action)
+        return CogActions(opinions=opinions, strategy_id="", date=portfolio_context.date, source_cog=self.name)
