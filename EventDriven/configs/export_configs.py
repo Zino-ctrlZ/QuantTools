@@ -13,6 +13,12 @@ class RunConfigBundle:
 
     
     def save_exported_configs(self, filename: str):
+        """
+        Save the exported configs to a YAML file.
+        
+        Args:
+            filename (str): The path to the file where configs will be saved.
+        """
         with open(filename, "w") as f:
             yaml.dump(self.configs, f)
 
