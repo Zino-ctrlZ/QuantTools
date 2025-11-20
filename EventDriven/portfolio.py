@@ -463,7 +463,7 @@ class OptionSignalPortfolio(Portfolio):
         #                                                           **self.order_settings)  
         position_state = self.risk_manager.get_order(OrderRequest(date=date_str, symbol=signal_event.symbol, option_type=position_type, max_close=max_contract_price, tick_cash=cash_at_hand, direction=signal_event.signal_type, signal_id=signal_event.signal_id))
         self.position_cache[signal_event.signal_id] = position_state
-        position = position_state.order
+        position = position_state.order.data
             # if position is None :
         #     if self.resolve_orders == True :
         #         self.resolve_order_result(position_result['result'], signal_event)
@@ -919,7 +919,8 @@ class OptionSignalPortfolio(Portfolio):
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position 
         """
-        return self.risk_manager.position_data[position['trade_id']][self.option_price.capitalize()][pd.to_datetime(self.eventScheduler.current_date)]
+        return self.risk_manager.market_data.get_at_time_position_data(position['trade_id'], self.eventScheduler.current_date).get_price()
+        # return self.risk_manager.position_data[position['trade_id']][self.option_price.capitalize()][pd.to_datetime(self.eventScheduler.current_date)]
 
     
     
