@@ -766,24 +766,24 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['signal_id'] = fill_event.signal_id
                 
                 #retain long legs options_data dictionary for future use 
-                if 'long' in fill_event.position: 
-                    for option_id in fill_event.position['long']: 
-                        option_meta = parse_option_tick(option_id)
-                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                        if option_data is not None: 
-                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                        else:
-                            self.logger.warning(f'No data found for {option_id}')
+                # if 'long' in fill_event.position: 
+                for option_id in fill_event.position['long']: 
+                    option_meta = parse_option_tick(option_id)
+                    option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                    if option_data is not None: 
+                        self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                    else:
+                        self.logger.warning(f'No data found for {option_id}')
                 
                 #retain short legs options_data dictionary for future use 
-                if 'short' in fill_event.position: 
-                    for option_id in fill_event.position['short']: 
-                        option_meta = parse_option_tick(option_id)
-                        option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                        if option_data is not None: 
-                            self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                        else:
-                            self.logger.warning(f'No data found for {option_id}')
+                # if 'short' in fill_event.position: 
+                for option_id in fill_event.position['short']: 
+                    option_meta = parse_option_tick(option_id)
+                    option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                    if option_data is not None: 
+                        self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                    else:
+                        self.logger.warning(f'No data found for {option_id}')
             
                     
         if fill_event.direction == 'SELL':
