@@ -1,7 +1,7 @@
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict
 import numbers
-from typing import Union, Tuple, List, Optional, Literal
+from typing import Union, Tuple, List, Literal
 from datetime import datetime, date
 import pandas as pd
 from abc import ABC
@@ -64,8 +64,7 @@ class BaseSizerConfigs(_CustomFrozenBaseConfigs, ABC):
     Base configuration class for Sizer modules.
     """
 
-    delta_lmt_type: Literal["default", "zscore"] = "default"
-    
+    delta_lmt_type: Literal["default", "zscore"] = "default"    
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
@@ -147,20 +146,35 @@ class BaseCogConfig(BaseConfigs):
     enabled: bool = True
 
 
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class StrategyLimitsEnabled(BaseConfigs):
+    """
+    Configuration class to hold enabled limit types for a strategy.
+    Each attribute corresponds to a specific limit type.
+    """
+
+    delta: bool = True
+    vega: bool = False
+    gamma: bool = False
+    theta: bool = False
+    dte: bool = True
+    moneyness: bool = True
+    exercise: bool = False
+
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class LimitsEnabledConfig(BaseCogConfig):
-    """Flags to enable/disable enforcement of specific limit types for a strategy."""
+    """
+    Flags to enable/disable enforcement of specific limit types for a strategy.
+    """
 
     name: str = "LimitsEnabledCog"
     cache_actions: bool = True
     enabled: bool = True
-    delta: bool = True
     delta_lmt_type: Literal["default", "zscore"] = "default"
-    vega: bool = True
-    gamma: bool = True
-    theta: bool = True
-    dte: Optional[numbers.Number] = 120
-    moneyness: Optional[numbers.Number] = 1.15
+    default_dte: int = 120
+    default_moneyness: float = 1.15
+    enabled_limits: StrategyLimitsEnabled = Field(default_factory=StrategyLimitsEnabled)
+
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -189,3 +203,4 @@ class RiskManagerConfig(BaseConfigs):
 
     max_slippage: float = 0.25
     min_slippage: float = 0.16
+    cache_orders: bool = False
