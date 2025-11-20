@@ -214,5 +214,5 @@ class _CustomFrozenBaseConfigs(BaseConfigs):
             super().__setattr__(name, value)
             return
         if name in self.__dict__:
-            raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}.")
+            raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}. If you need to change it within a class, create a new instance.")
         super().__setattr__(name, value)
