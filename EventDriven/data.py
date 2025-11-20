@@ -3,18 +3,19 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from EventDriven.helpers import generate_signal_id
-from EventDriven.types import SignalTypes
-load_dotenv()
 import datetime
 import os, os.path
 import pandas as pd
 import sys
+from EventDriven.types import SignalTypes
 from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
 from EventDriven.event import MarketEvent, SignalEvent
 from EventDriven.eventScheduler import EventScheduler
+from trade.helpers.helper import HOLIDAY_SET
+load_dotenv()
 logger = setup_logger('EventDriven.data')
 
 
@@ -281,6 +282,7 @@ class HistoricTradeDataHandler(DataHandler):
         self.start_date = self.trades_df['EntryTime'].min()
         self.end_date = self.trades_df['ExitTime'].max()
         date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
+        date_range = date_range[~date_range.isin(HOLIDAY_SET)]
         #initialize signal dataframe
         self.signal_df = pd.DataFrame({'Date': date_range})
         

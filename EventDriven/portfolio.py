@@ -454,7 +454,7 @@ class OptionSignalPortfolio(Portfolio):
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
-        position_result = self.risk_manager.get_order(tick = signal_event.symbol, 
+        position_result = self.risk_manager.get_order(tick = signal_event.symbol, ## changes to order request. new_state.order
                                                                   date = date_str, 
                                                                   right = position_type, 
                                                                   option_type = position_type, 
