@@ -19,6 +19,6 @@ class OrderRequest:
     tick_cash: numbers.Number
     direction: Literal["LONG", "SHORT"]
     signal_id: str
-    option_type: Literal["c", "p"]
+    option_type: Literal["C", "P"]
     spot: numbers.Number = None
     chain_spot: numbers.Number = None

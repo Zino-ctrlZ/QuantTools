@@ -6,22 +6,20 @@
 # - 
 
 from copy import deepcopy
-import math
 from abc import ABCMeta, abstractmethod
 import pandas as pd
-import numpy as np
+from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
 from trade.helpers.helper import parse_option_tick
 from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
-from EventDriven.riskmanager import RiskManager
+from EventDriven.riskmanager.new_base import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 
-from EventDriven.event import  Event, ExerciseEvent, FillEvent, MarketEvent, OrderEvent, RollEvent, SignalEvent, get_event_ancestor
+from EventDriven.event import  ExerciseEvent, FillEvent, MarketEvent, OrderEvent, RollEvent, SignalEvent, get_event_ancestor
 from EventDriven.data import HistoricTradeDataHandler
-from EventDriven.riskmanager import RiskManager
 from trade.helpers.helper import is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
@@ -169,6 +167,7 @@ class OptionSignalPortfolio(Portfolio):
             'CLOSE': {},
             'OPEN': {}
         }
+        self.position_cache = {}
 
     @property
     def order_settings(self):
@@ -449,36 +448,37 @@ class OptionSignalPortfolio(Portfolio):
         position_type: C|P
         """
         date_str = signal_event.datetime.strftime('%Y-%m-%d')
-        position_type = 'C' if signal_event.signal_type == 'LONG' else 'P'
+        position_type = 'c' if signal_event.signal_type == 'LONG' else 'p'
         # position_type = 'P'
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
-        position_result = self.risk_manager.get_order(tick = signal_event.symbol, ## changes to order request. new_state.order
-                                                                  date = date_str, 
-                                                                  right = position_type, 
-                                                                  option_type = position_type, 
-                                                                  max_close = max_contract_price, 
-                                                                  order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
-                                                                  signal_id = signal_event.signal_id,
-                                                                  **self.order_settings)  
+        # position_result = self.risk_manager.get_order(tick = signal_event.symbol, ## changes to order request. new_state.order
+        #                                                           date = date_str, 
+        #                                                           right = position_type, 
+        #                                                           option_type = position_type, 
+        #                                                           max_close = max_contract_price, 
+        #                                                           order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
+        #                                                           signal_id = signal_event.signal_id,
+        #                                                           **self.order_settings)  
+        position_state = self.risk_manager.get_order(OrderRequest(date=date_str, symbol=signal_event.symbol, option_type=position_type, max_close=max_contract_price, tick_cash=cash_at_hand, direction=signal_event.signal_type, signal_id=signal_event.signal_id))
+        self.position_cache[signal_event.signal_id] = position_state
+        position = position_state.order
+            # if position is None :
+        #     if self.resolve_orders == True :
+        #         self.resolve_order_result(position_result['result'], signal_event)
+        #     else:
+        #         self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal_event}')
+        #     return None
         
-        position = None if position_result['result'] == ResultsEnum.NO_CONTRACTS_FOUND.value else position_result['data'] #if no contracts found, position is None
-        if position is None :
-            if self.resolve_orders == True :
-                self.resolve_order_result(position_result['result'], signal_event)
-            else:
-                self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal_event}')
-            return None
-        
-        self.moneyness_tracker[signal_event.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
-        self.logger.info(f'Buying LONG contract for {signal_event.symbol} at {signal_event.datetime} Position: {position}')
-        print("===========================")
-        print("Buy Details")
-        print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
-        print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
-        print("Cash at Hand", cash_at_hand, "Close", position['close'])
-        print("===========================")
+        # self.moneyness_tracker[signal_event.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
+        # self.logger.info(f'Buying LONG contract for {signal_event.symbol} at {signal_event.datetime} Position: {position}')
+        # print("===========================")
+        # print("Buy Details")
+        # print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
+        # print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
+        # print("Cash at Hand", cash_at_hand, "Close", position['close'])
+        # print("===========================")
         return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
         
     def __reduce_order_settings_dte_by_factor(self, order_settings):
