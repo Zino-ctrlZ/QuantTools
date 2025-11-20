@@ -3,6 +3,31 @@ from enum import Enum
 import pandas as pd
 from dataclasses import dataclass
 from typing import Any, Dict, List
+from typing_extensions import TypedDict
+
+
+
+
+class OrderDataDict(TypedDict):
+    trade_id: str
+    long: List[str]
+    short: List[str]
+    close: float
+    quantity: int
+
+class OrderDict(TypedDict):
+    result: str
+    signal_id: str
+    map_signal_id: str
+    date: date
+    data: OrderDataDict
+
+class PositionsDict(TypedDict):
+    position: OrderDataDict
+    quantity: int
+    entry_price: float
+    market_value: float
+    signal_id: str
 
 class ResultsEnum(Enum):
     SUCCESSFUL = 'SUCCESSFUL'
@@ -55,7 +80,7 @@ class PositionAdjustmentReason(Enum):
    LIMIT_BREACH = 'LIMIT_BREACH'
 
 
-@dataclass(frozen=True)
+@dataclass
 class OrderData:
     """
         Represents detailed execution data for a trading order.
@@ -117,18 +142,21 @@ class OrderData:
         """Convert dictionary to OrderData dataclass"""
         return OrderData(**d)
 
-    def to_dict(self) -> Dict[str, Any]: 
+    def to_dict(self) -> OrderDataDict: 
         """Convert OrderData dataclass to dictionary"""
-        return {
-            'trade_id': self.trade_id,
-            'long': self.long,
-            'short': self.short,
-            'close': self.close,
-            'quantity': self.quantity
-        }
+        return OrderDataDict(
+            trade_id=self.trade_id,
+            long=self.long,
+            short=self.short,
+            close=self.close,
+            quantity=self.quantity
+        )
 
 
-@dataclass(frozen=True)
+
+
+
+@dataclass
 class Order:
     """
     Represents a trading order with signal information and execution data.
@@ -197,7 +225,7 @@ class Order:
         """Return items like a dict"""
         return [(key, getattr(self, key)) for key in self.keys()]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> OrderDict:
         """Convert Order dataclass to dictionary"""
         # Convert the nested OrderData object to dict
         data_dict = {
@@ -207,15 +235,17 @@ class Order:
             'close': self.data.close,
             'quantity': self.data.quantity
         }
+        data_dict = OrderDataDict(**data_dict)
+        order_dict = OrderDict(
+            result=self.result,
+            signal_id=self.signal_id,
+            map_signal_id=self.map_signal_id,
+            date=self.date,
+            data=data_dict
+        )
         
         # Return the main dictionary
-        return {
-            'result': self.result,
-            'signal_id': self.signal_id,
-            'map_signal_id': self.map_signal_id,
-            'date': self.date,
-            'data': data_dict
-        }
+        return order_dict
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> 'Order':

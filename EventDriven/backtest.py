@@ -17,6 +17,7 @@ from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
 from pandas.tseries.offsets import BDay
+import time
 
 
 class OptionSignalBacktest():
@@ -68,7 +69,11 @@ class OptionSignalBacktest():
         self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
-        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
+        self.risk_manager = RiskManager(symbol_list=self.bars.symbol_list,
+                                        bkt_start=self.start_date,
+                                        bkt_end=self.end_date,
+                                        initial_capital=initial_capital,)
+        
         self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1]).strftime('%Y%m%d')
         self.risk_free_rate = 0.055
@@ -103,9 +108,8 @@ class OptionSignalBacktest():
             while True:  # Avoid blocking. Loops through the event queue
                 try:
                     if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                        ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
-                        actions = self.risk_manager.analyze_position() 
-                        print("Risk Manager Actions: ", actions)
+                        meta = self.portfolio.analyze_positions()
+                        print(f"Position Analysis Meta: {meta}")
 
                     event = current_event_queue.get_nowait()
 
@@ -138,8 +142,8 @@ class OptionSignalBacktest():
                                 continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
-                            self.order_cache.setdefault(event.direction, {})\
-                                .setdefault(event.datetime, []).append(event)
+                            # self.order_cache.setdefault(event.direction, {})\
+                            #     .setdefault(event.datetime, []).append(event)
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)

@@ -8,11 +8,14 @@ from EventDriven.dataclasses.states import NewPositionState
 from EventDriven.dataclasses.states import (
     PositionAnalysisContext,
     StrategyChangeMeta,
-    CogActions,
+    CogActions, # noqa
+    PositionState,
 )
+from EventDriven.riskmanager.actions import RMAction # noqa
+from .cogs.vars import ACTION_PRIORITY
 
 
-logger = setup_logger('EventDriven.riskmanager.position.analyzer', stream_log_level="DEBUG")
+logger = setup_logger('EventDriven.riskmanager.position.analyzer', stream_log_level="WARNING")
 class PositionAnalyzer:
     """
     Orchestrates cogs:
@@ -86,43 +89,27 @@ class PositionAnalyzer:
         - We'll replace this with the full Cog Process reconciler later.
         """
 
-        all_actions: List[CogActions] = []
+        all_actions: List[PositionState] = []
 
         for cog in self._iter_active_cogs():
             actions = cog.analyze(context)
-            all_actions.extend(actions)
+            all_actions.extend(actions.opinions)
 
-        # --- Minimal reconciliation for now: NO_CHANGE everywhere ---
-        strategy_changes: List[StrategyChangeMeta] = []
-        for key, baseline in context.baseline_targets.items():
-            current = context.current_notional.get(key, 0.0)
 
-            # For now, if baseline == current, we say NO_CHANGE;
-            # we are not yet applying opinions (that comes next).
-            if baseline == current:
-                action = "NO_CHANGE"
-                final_target = current
-            else:
-                action = "SCALE_TO_TARGET"
-                final_target = baseline
+        ## Get unique trade IDs from all actions
+        unique_trade_ids = set(action.trade_id for action in all_actions)
+        strategy_changes: List[PositionState] = []
 
-            strategy_changes.append(
-                StrategyChangeMeta(
-                    key=key,
-                    action=action,
-                    baseline_target=baseline,
-                    final_target=final_target,
-                    hard_min=None,
-                    hard_max=None,
-                    contributing_cogs=[],
-                    reasons=[],
-                    raw_opinion_codes=[],
-                )
-            )
+        ## Get the most important action for each trade ID
+        for trade_id in unique_trade_ids:
+            trade_actions = [action for action in all_actions if action.trade_id == trade_id]
+            trade_actions.sort(key=lambda x: ACTION_PRIORITY.get(x.action.type, float('inf')))
+            most_important_action = trade_actions[0]
+            strategy_changes.append(most_important_action)
 
         return StrategyChangeMeta(
-            strategy_changes=strategy_changes,
-            raw_opinions=all_actions,
+            date=context.date,
+            actionables=strategy_changes,
         )
 
     def on_new_position(self, new_position_state: NewPositionState) -> NewPositionState:

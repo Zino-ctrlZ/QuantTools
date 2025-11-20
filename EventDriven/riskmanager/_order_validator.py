@@ -91,7 +91,7 @@ class OrderInputs:
             if k in self.__slots__:
                 setattr(self, k, kwargs.get(k))
             else:
-                logger.warning(f"Unknown input key: {k}. This key will be ignored.")
+                logger.info(f"Unknown input key: {k}. This key will be ignored.")
 
 OrderInputs.__doc__ = f"""
 Order Container that holds all necessary variables in one place.

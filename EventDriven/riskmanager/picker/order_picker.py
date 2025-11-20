@@ -17,14 +17,14 @@ from EventDriven.configs.core import (
 )
 
 from ..utils import (
-    logger,
     dynamic_memoize,
 )
+from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop  
 from EventDriven.types import Order
-
+logger = setup_logger('EventDriven.riskmanager.picker.order_picker')
 
 
 

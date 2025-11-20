@@ -10,6 +10,7 @@ from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('EventDriven._vars')
 
+CONTRACT_MULTIPLIER = 100
 def ewm_smooth_data(series: pd.Series, window: int = 3) -> pd.Series:
     """
     Apply an exponential weighted moving average to a series.
@@ -69,7 +70,9 @@ with open(f'{os.environ["WORK_DIR"]}/EventDriven/riskmanager/config.yaml', "r") 
     CONFIG = yaml.safe_load(f)
 
 
-def load_riskmanager_cache(target: str = None)  -> CustomCache|Tuple[CustomCache, ...]:
+def load_riskmanager_cache(target: str = None, 
+                           create_on_missing: bool = False,
+                           **kwargs)  -> CustomCache|Tuple[CustomCache, ...]:
 
     """ 
     Load the risk manager cache based on the USE_TEMP_CACHE setting.
@@ -114,6 +117,10 @@ def load_riskmanager_cache(target: str = None)  -> CustomCache|Tuple[CustomCache
             case 'special_dividend':
                 return special_dividend
             case _:
+                if create_on_missing:
+                    logger.warning(f"Creating new cache for unknown target: {target}")
+                    clear_on_exit = kwargs.get('clear_on_exit', True)
+                    return CustomCache(BASE, fname = f"rm_{target}", clear_on_exit=clear_on_exit)
                 raise ValueError(f"Unknown target: {target}")   
             
     return (spot_timeseries, 

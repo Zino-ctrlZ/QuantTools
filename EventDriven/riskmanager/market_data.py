@@ -19,7 +19,7 @@ from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cac
 from EventDriven.exceptions import UnaccessiblePropertyError
 
 
-logger = setup_logger('EventDriven.riskmanager.market_data', stream_log_level="DEBUG")
+logger = setup_logger('EventDriven.riskmanager.market_data', stream_log_level="WARNING")
 
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals

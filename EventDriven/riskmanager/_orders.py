@@ -10,7 +10,7 @@ from EventDriven.dataclasses.orders import OrderRequest
 if TYPE_CHECKING:
     from EventDriven.riskmanager.base import OrderPicker
 
-logger = setup_logger('EventDriven.riskmanager._orders', stream_log_level="DEBUG")
+logger = setup_logger('EventDriven.riskmanager._orders', stream_log_level="WARNING")
 
 def resolve_schema(schema: OrderSchema, 
                    tries: int, 

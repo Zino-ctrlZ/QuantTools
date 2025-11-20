@@ -10,10 +10,10 @@ from EventDriven.exceptions import (
 )
 import types
 from dataclasses import fields
-from EventDriven.configs.vars import get_class_config_descriptions
+from EventDriven.configs.vars import get_class_config_descriptions, get_config_class_description
 
 
-logger = setup_logger(__name__, stream_log_level="DEBUG")
+logger = setup_logger(__name__, stream_log_level="WARNING")
 
 def validate_inputs(self):
     type_hints = get_type_hints(type(self))
@@ -160,6 +160,9 @@ Configuration Descriptions for {self.__class__.__name__}:
     
     def display_and_describe_configs(self):
         """Display and describe the configuration settings."""
+        class_desc = get_config_class_description(self.__class__.__name__)
+        if class_desc:
+            print(f"\n{class_desc}\n")
         msg1 = self.display_configs()
         msg2 = self.describe_configs()
         print(msg1)
@@ -199,7 +202,14 @@ Configuration Descriptions for {self.__class__.__name__}:
             print("No configuration classes registered.")
             return
         for config_cls in cls._registry:
-            print(f"\n=== Configuration Class: {config_cls.__name__} ===")
+            class_desc = get_config_class_description(config_cls.__name__)
+            print(f"\n{'='*80}")
+            print(f"Configuration Class: {config_cls.__name__}")
+            if class_desc:
+                print(f"Description: {class_desc}")
+            else:
+                logger.warning(f"No class description found for {config_cls.__name__}")
+            print('='*80)
             instance = config_cls()
             instance.display_and_describe_configs()
 

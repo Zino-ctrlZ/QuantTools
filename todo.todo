@@ -350,6 +350,10 @@ Modules:
 
     Helper:
         ☐ Have change_to_last_busday enforce trading hours bool
+        ☐ Add a clearer to clear custom cache files based on expire days
+
+    Decorator:
+        ☐ log_time should save to a csv/xlsx file for analysis later
 
     Rates:
         ☐ Clean up rates module

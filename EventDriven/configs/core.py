@@ -188,12 +188,12 @@ class PositionAnalyzerConfig(BaseConfigs):
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class BacktestConfig(BaseConfigs):
+class PortfolioManagerConfig(BaseConfigs):
     """
     Configuration class for Backtest related settings.
     """
 
-    t_plus_n: int = 0  # T+N settlement for orders
+    t_plus_n: int = 1  # T+N settlement for orders
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class RiskManagerConfig(BaseConfigs):
@@ -204,3 +204,4 @@ class RiskManagerConfig(BaseConfigs):
     max_slippage: float = 0.25
     min_slippage: float = 0.16
     cache_orders: bool = False
+    cache_position_analysis: bool = False

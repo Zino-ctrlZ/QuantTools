@@ -17,14 +17,32 @@ from EventDriven.riskmanager.new_base import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
-
-from EventDriven.event import  ExerciseEvent, FillEvent, MarketEvent, OrderEvent, RollEvent, SignalEvent, get_event_ancestor
+from EventDriven.event import  (
+    ExerciseEvent, #noqa
+    FillEvent, 
+    MarketEvent, # noqa 
+    OrderEvent, 
+    RollEvent, 
+    SignalEvent, 
+    get_event_ancestor, 
+    Event
+)
 from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.helper import is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
 from typing import Optional
 import plotly
+from EventDriven.dataclasses.states import (
+    PositionState,
+    PortfolioMetaInfo,
+    PortfolioState,
+    PositionAnalysisContext
+)
+from EventDriven.dataclasses.states import StrategyChangeMeta
+from EventDriven.configs.core import PortfolioManagerConfig
+from EventDriven.portfolio_utils import extract_events
+from EventDriven.exceptions import BacktestNotImplementedError
 
 
 class Portfolio(AggregatorParent):
@@ -134,7 +152,6 @@ class OptionSignalPortfolio(Portfolio):
         self.resolve_orders = True 
         self.allow_multiple_trades = True # allow multiple trades for the same signal_id
         self.finalize_trades = finalize_trades # whether to finalize trades or not
-        self.risk_manager.pm = self 
         self._order_settings =  {
             'type': 'spread',
             'specifics': [
@@ -168,6 +185,7 @@ class OptionSignalPortfolio(Portfolio):
             'OPEN': {}
         }
         self.position_cache = {}
+        self.config = PortfolioManagerConfig()
 
     @property
     def order_settings(self):
@@ -422,7 +440,10 @@ class OptionSignalPortfolio(Portfolio):
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position)
-            skip = self.risk_manager.position_data[position['trade_id']].Midpoint_skip_day[signal_event.datetime]
+
+            ## Access skip from risk_manager market data
+            skip = self.risk_manager.market_data.skip(position_id=position['trade_id'],
+                                                      date=signal_event.datetime)
             ## on the off case where close price is negative, move sell to next trading day
             if position['close'] < 0 or skip == True:
                 if isinstance(signal_event.parent_event, RollEvent): ## If rolling, do not move to next trading day
@@ -461,6 +482,7 @@ class OptionSignalPortfolio(Portfolio):
         #                                                           order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
         #                                                           signal_id = signal_event.signal_id,
         #                                                           **self.order_settings)  
+        print(f"Cash at Hand: {cash_at_hand}, Max Contract Price: {max_contract_price} for Signal: {signal_event.signal_id}")
         position_state = self.risk_manager.get_order(OrderRequest(date=date_str, symbol=signal_event.symbol, option_type=position_type, max_close=max_contract_price, tick_cash=cash_at_hand, direction=signal_event.signal_type, signal_id=signal_event.signal_id))
         self.position_cache[signal_event.signal_id] = position_state
         position = position_state.order.data
@@ -482,6 +504,7 @@ class OptionSignalPortfolio(Portfolio):
         return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
         
     def __reduce_order_settings_dte_by_factor(self, order_settings):
+        raise DeprecationWarning('This method is deprecated')
         new_order_settings = deepcopy(order_settings)
         initial_dte = new_order_settings['specifics'][0]['dte']
         initial_dte = initial_dte - self.dte_reduction_factor
@@ -500,6 +523,7 @@ class OptionSignalPortfolio(Portfolio):
         UNSUCCESSFUL: log warning
         UNAVAILABLE_CONTRACT: log warning
         """
+        raise DeprecationWarning('This method is deprecated')
         if position_result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: 
             order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) 
             order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] 
@@ -615,55 +639,104 @@ class OptionSignalPortfolio(Portfolio):
         if order_event is not None:
             self.eventScheduler.put(order_event)
                 
-    def analyze_positions(self, market_event: MarketEvent): 
+    def analyze_positions(self): 
         """
         Analyze the current positions and determine if any need to be rolled
         """
-        if is_USholiday(market_event.datetime):
-            self.logger.warning(f"Market is closed on {market_event.datetime}, skipping")
+        dt = pd.to_datetime(self.eventScheduler.current_date)
+        if is_USholiday(dt):
+            self.logger.warning(f"Market is closed on {dt}, skipping")
             return
         
-        for symbol in self.symbol_list:
-            for signal_id in self.current_positions[symbol]: 
-                current_position = self.current_positions[symbol][signal_id]
-                if 'position' not in current_position:
-                    continue
-                
-                expiry_date = ''
-                
-                if 'long' in current_position['position']:
-                    for option_id in current_position['position']['long']:
-                        option_meta = parse_option_tick(option_id)
-                        expiry_date = option_meta['exp_date']
-                        break
-                elif 'short' in current_position['position']:
-                    for option_id in current_position['position']['long']:
-                        option_meta = parse_option_tick(option_id)
-                        expiry_date = option_meta['exp_date']
-                        break
-                
-                dte = (pd.to_datetime(expiry_date) - pd.to_datetime(market_event.datetime)).days
+        ## Create Context for current positions
+        ctx = self._create_ctx(dt)
 
-                
-                if symbol in self.roll_map and dte <= self.roll_map[symbol]:
-                    self.logger.warning(f"On {market_event.datetime}, DTE for {symbol} is {dte}")
-                    direction = SignalTypes.LONG.value if option_meta['put_call'] == 'C' else SignalTypes.SHORT.value
-                    rollEvent = RollEvent(symbol=symbol, datetime=market_event.datetime, signal_type=direction, position=current_position, signal_id=signal_id)
-                    self.eventScheduler.put(rollEvent)
+        ## Analyze positions using RiskManager
+        meta_changes = self.risk_manager.analyze_position(ctx)
 
-                elif symbol not in self.roll_map and dte == 0:  # exercise contract if symbol not in roll map
-                    position = current_position['position']
-                    trade_data = self.trades_map[position['trade_id']]
-                    quantity = position['quantity']
-                    entry_date = trade_data['entry_date']
-                    underlier = self.__get_underlier_data(symbol)
-                    spot = underlier.spot(ts = True, ts_start = entry_date, ts_end = entry_date)['close']
-                    long_premiums, short_premiums = self.get_premiums_on_position(current_position['position'], entry_date)
-                    self.logger.warning(f'Exercising contract for {symbol} at {market_event.datetime}')
-                    print(f'Exercising contract for {symbol} at {market_event.datetime}')
-                    self.eventScheduler.put(ExerciseEvent(market_event.datetime, symbol, 'EXERCISE', quantity, entry_date, spot, long_premiums, short_premiums, position, trade_data['signal_id']))
-                    ## if exercising, open new position if trade not closed yet.
-                    continue
+        ## Extract events from meta changes and schedule them
+        events = self.extract_events(meta_changes)
+        if not events:
+            self.logger.info(f'No events to schedule for position analysis on {dt}')
+            return meta_changes
+
+        ## Loop through events and schedule them
+        for event in events:
+            self.eventScheduler.schedule_event(event.datetime, event)
+        return meta_changes
+        
+    def _create_ctx(self, date: pd.Timestamp) -> PositionAnalysisContext:
+        """
+        Create a Context object for the given date
+        """
+
+        ## Create PositionState objects for all current positions
+        positions = self.current_positions
+        positions_states = []
+        for tick, pos_pack in positions.items():
+            for signal_id, position in pos_pack.items():
+                trade_id = position["position"]["trade_id"]
+                qty = position["position"]["quantity"]
+                entry_price = position["entry_price"] / qty
+                current_position_data = self.risk_manager.market_data.get_at_time_position_data(position_id=trade_id, date=date)
+                current_underlier_data = self.risk_manager.market_data.market_timeseries.get_at_index(sym=tick, index=date)
+                current_price = position["market_value"] / qty
+                pnl = (current_price - entry_price) * qty
+
+                pos_state = PositionState(
+                    trade_id=trade_id,
+                    underlier_tick=tick,
+                    signal_id=signal_id,
+                    quantity=qty,
+                    entry_price=entry_price,
+                    current_position_data=current_position_data,
+                    current_underlier_data=current_underlier_data,
+                    pnl=pnl,
+                    last_updated=date,
+                )
+                positions_states.append(pos_state)
+        
+        ## Create Portfolio State
+        cash = sum(self.allocated_cash_map.values())
+        positions = positions_states
+        pnl = sum([x.pnl for x in positions_states])
+        total_value = cash + pnl
+        last_updated = date
+
+        portfolio_state = PortfolioState(
+            total_value=total_value,
+            cash=cash,
+            positions=positions,
+            pnl=pnl,
+            last_updated=last_updated,
+        )
+        
+        ## Create PortfolioMetaInfo
+        meta = PortfolioMetaInfo(
+            portfolio_name="bkt_test_11",
+            initial_cash=self.initial_capital,
+            start_date=self.risk_manager.start_date,
+            end_date=self.risk_manager.end_date,
+            t_plus_n=self.config.t_plus_n,
+            is_backtest=True,
+        )
+
+        ## Create AnalysisContext
+        ctx = PositionAnalysisContext(
+            date=date,
+            portfolio=portfolio_state,
+            portfolio_meta=meta,
+        )
+        
+        return ctx
+    
+    def extract_events(self, meta_changes: StrategyChangeMeta) -> list[Event]:
+        """
+        Extract events from the strategy meta changes
+        """
+        events = extract_events(actionables=meta_changes.actionables,
+                                current_positions=self.current_positions)
+        return events
             
     def execute_roll(self, roll_event: RollEvent):
         """
@@ -692,6 +765,7 @@ class OptionSignalPortfolio(Portfolio):
         get the premium of each contract in a position
         return [long_premiums | None, short_premiums | None]
         """
+        raise DeprecationWarning('This method is deprecated')
         long_premiums = {}
         short_premiums = {}
         if 'long' in position:
@@ -746,6 +820,7 @@ class OptionSignalPortfolio(Portfolio):
         fill - The FillEvent object to update the positions with.
         """
         # Check whether the fill is a buy or sell
+        ##TODO (CLEAN UP): Stop using self.get_options_data_on_contract
         new_position_data = {}
         
         if fill_event.position['trade_id'] not in self.trades_map:
@@ -765,25 +840,26 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
                 
-                #retain long legs options_data dictionary for future use 
-                # if 'long' in fill_event.position: 
-                for option_id in fill_event.position['long']: 
-                    option_meta = parse_option_tick(option_id)
-                    option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                    if option_data is not None: 
-                        self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                    else:
-                        self.logger.warning(f'No data found for {option_id}')
+                ## Clean up: Remove commented code
+                # #retain long legs options_data dictionary for future use 
+                # # if 'long' in fill_event.position: 
+                # for option_id in fill_event.position['long']: 
+                #     option_meta = parse_option_tick(option_id)
+                #     option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                #     if option_data is not None: 
+                #         self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                #     else:
+                #         self.logger.warning(f'No data found for {option_id}')
                 
-                #retain short legs options_data dictionary for future use 
-                # if 'short' in fill_event.position: 
-                for option_id in fill_event.position['short']: 
-                    option_meta = parse_option_tick(option_id)
-                    option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                    if option_data is not None: 
-                        self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                    else:
-                        self.logger.warning(f'No data found for {option_id}')
+                # #retain short legs options_data dictionary for future use 
+                # # if 'short' in fill_event.position: 
+                # for option_id in fill_event.position['short']: 
+                #     option_meta = parse_option_tick(option_id)
+                #     option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
+                #     if option_data is not None: 
+                #         self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
+                #     else:
+                #         self.logger.warning(f'No data found for {option_id}')
             
                     
         if fill_event.direction == 'SELL':
@@ -798,6 +874,7 @@ class OptionSignalPortfolio(Portfolio):
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
 
         if fill_event.direction == 'EXERCISE':
+            raise BacktestNotImplementedError('Exercise fill handling not implemented yet')
             if fill_event.position is not None:
                 new_position_data['position'] = fill_event.position
                 new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
@@ -986,6 +1063,7 @@ class OptionSignalPortfolio(Portfolio):
         params: option_id: str The option_id the contract was saved with during the fill process 
         returns: a series with columns: ms_of_day,open,high,low,close,volume,count,date
         """
+        raise DeprecationWarning('This method is deprecated')
         
         current_date = pd.to_datetime(self.eventScheduler.current_date)
         option_data_df = self.get_option_data(option_id)
@@ -1000,6 +1078,7 @@ class OptionSignalPortfolio(Portfolio):
         """
         Updates the option data based on the fill contract
         """ 
+        raise DeprecationWarning('This method is deprecated')
         start_date = self.bars.start_date.strftime('%Y%m%d')
         end_date = self.bars.end_date.strftime('%Y%m%d')
         exp = pd.to_datetime(exp).strftime('%Y%m%d')
@@ -1013,6 +1092,7 @@ class OptionSignalPortfolio(Portfolio):
         """
          returns a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
         """
+        raise DeprecationWarning('This method is deprecated')
         if option_id in self.options_data:
             return self.options_data[option_id]
         else :

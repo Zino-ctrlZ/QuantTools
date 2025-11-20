@@ -26,7 +26,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
 
-logger = setup_logger('EventDriven.riskmanager.market_timeseries', stream_log_level="DEBUG")
+logger = setup_logger('EventDriven.riskmanager.market_timeseries', stream_log_level="WARNING")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
 _change_global_stream_level("WARNING")
 
@@ -47,6 +47,18 @@ class BacktestTimeseries:
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
         self.lock = Lock()
+
+    def skip(self, position_id:str, date:Union[datetime, str], column:str = 'Midpoint') -> bool:
+        """
+        Check if a specific position should be skipped on a given date based on skip calculation configuration.
+        """
+        at_time = self.get_at_time_position_data(position_id, date)
+        if at_time is None:
+            return False
+        skips_meta = at_time.skips
+        skip = skips_meta.get(column.capitalize())
+        
+        return skip.get('skip_day', False)
 
     def set_splits(self, d):
         """

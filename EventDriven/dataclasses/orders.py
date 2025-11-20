@@ -19,6 +19,7 @@ class OrderRequest:
     tick_cash: numbers.Number
     direction: Literal["LONG", "SHORT"]
     signal_id: str
-    option_type: Literal["C", "P"]
+    option_type: Literal["c", "p"]
     spot: numbers.Number = None
     chain_spot: numbers.Number = None
+    is_tick_cash_scaled: bool = False

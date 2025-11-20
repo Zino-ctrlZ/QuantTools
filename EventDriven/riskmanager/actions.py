@@ -1,11 +1,16 @@
 ## Actions classes
 from datetime import datetime
 from EventDriven.types import EventTypes
+from typing_extensions import TypedDict, Union
+class Changes(TypedDict):
+    quantity_diff: int
+    new_quantity: int
 
+action_hint = Union[str, Changes]
 class RMAction:
-    def __init__(self, trade_id: str, action: str|dict):
+    def __init__(self, trade_id: str, action: action_hint = None):
         self.trade_id = trade_id
-        self.action = action
+        self.action = action if action is not None else {}
         self.type: EventTypes = None
         self.name: str = None
         self.reason: str = None
@@ -17,7 +22,7 @@ class RMAction:
 
 
 class HOLD(RMAction):
-    def __init__(self, trade_id: str, action: str = 'hold'):
+    def __init__(self, trade_id: str, action: action_hint = None):
         super().__init__(trade_id, action)
         self.name = EventTypes.HOLD.value
         self.reason = None
@@ -27,7 +32,7 @@ class HOLD(RMAction):
         return f'HOLD({self.trade_id}) Reason: {self.reason})'
 
 class CLOSE(RMAction):
-    def __init__(self, trade_id: str, action: str = 'close'):
+    def __init__(self, trade_id: str, action: action_hint = None):
         super().__init__(trade_id, action)
         self.name = EventTypes.CLOSE.value
         self.type = EventTypes("CLOSE")
@@ -37,7 +42,7 @@ class CLOSE(RMAction):
         return f'CLOSE({self.trade_id}), Reason: {self.reason})'
 
 class ROLL(RMAction):
-    def __init__(self, trade_id: str, action: dict):
+    def __init__(self, trade_id: str, action: action_hint = None):
         super().__init__(trade_id, action)
         self.name = EventTypes.ROLL.value
         self.type = EventTypes("ROLL")
@@ -49,7 +54,7 @@ class ROLL(RMAction):
 
 
 class ADJUST(RMAction):
-    def __init__(self, trade_id: str, action: dict):
+    def __init__(self, trade_id: str, action: action_hint = None):
         super().__init__(trade_id, action)
         self.quantity_change = action['quantity_diff']
         self.name = EventTypes.ADJUST.value
@@ -61,7 +66,7 @@ class ADJUST(RMAction):
     
 
 class EXERCISE(RMAction):
-    def __init__(self, trade_id: str, action: dict):
+    def __init__(self, trade_id: str, action: action_hint = None):
         super().__init__(trade_id, action)
         self.name = EventTypes.EXERCISE.value
         self.type = EventTypes("EXERCISE")

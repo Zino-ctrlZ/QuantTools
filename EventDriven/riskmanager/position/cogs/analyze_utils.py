@@ -1,14 +1,18 @@
 import pandas as pd
 from EventDriven.riskmanager.utils import parse_position_id
-from EventDriven.riskmanager.actions import HOLD, ROLL, EXERCISE, ADJUST, RMAction
+from EventDriven.riskmanager.actions import HOLD, ROLL, EXERCISE, ADJUST, RMAction, Changes
 from trade.assets.helpers.utils import swap_ticker
 from trade.helpers.helper import compare_dates, parse_option_tick
 from .vars import ACTION_PRIORITY, MEASURES
 from EventDriven.configs.core import StrategyLimitsEnabled
 from EventDriven._vars import load_riskmanager_cache
 from trade.helpers.Logging import setup_logger
+
+
+
+
 SPLITS_CACHE = load_riskmanager_cache("splits_raw")
-logger = setup_logger("EventDriven.riskmanager.position.cogs.analyze_utils", stream_log_level="DEBUG")
+logger = setup_logger("EventDriven.riskmanager.position.cogs.analyze_utils", stream_log_level="WARNING")
 
 
 def get_dte_from_trade_id(trade_id: str, check_date: pd.Timestamp) -> int:
@@ -33,7 +37,6 @@ def get_moneyness_from_trade_id(
         for meta in meta_list:
             ## Adjust for corporate events if start and end dates are provided
             if start:
-                print("Adjusting for corporate events...")
                 meta = adjust_for_events(start=start, date=check_date, option=meta)
 
             strike = meta["strike"]
@@ -145,7 +148,11 @@ def analyze_position(
     ## DTE Check
     if strategy_enabled_actions.dte:
         if dte_check(dte, dte_limit):
-            action = ROLL(trade_id=trade_id, action=dict())
+            changes: Changes = {
+                "quantity_diff": 0,
+                "new_quantity": qty,
+            }
+            action = ROLL(trade_id=trade_id, action=changes)
             action.reason = f"not enough DTE ({dte} < {dte_limit})"
             logger.debug(f"Added ROLL action for {trade_id} due to DTE check.")
             position_actions.append(action)
@@ -153,7 +160,11 @@ def analyze_position(
     ## Exercise Check
     if strategy_enabled_actions.exercise:
         if exercise_check(dte, t_plus_n):
-            action = EXERCISE(trade_id=trade_id, action=dict())
+            changes = Changes(
+                quantity_diff=qty,
+                new_quantity=0,
+            )
+            action = EXERCISE(trade_id=trade_id, action=changes)
             action.reason = f"position is expiring (DTE: {dte} <= {t_plus_n})"
             logger.debug(f"Added EXERCISE action for {trade_id} due to Exercise check.")
             position_actions.append(action)
@@ -161,7 +172,11 @@ def analyze_position(
     ## Moneyness Check
     if strategy_enabled_actions.moneyness:
         if moneyness_check(moneyness_list, moneyness_limit):
-            action = ROLL(trade_id=trade_id, action=dict(quantity_diff=qty))
+            changes: Changes = {
+                "quantity_diff": 0,
+                "new_quantity": qty,
+            }
+            action = ROLL(trade_id=trade_id, action=changes)
             action.reason = f"position is too ITM (moneyness exceeds {moneyness_limit})"
             position_actions.append(action)
 
@@ -197,7 +212,11 @@ def analyze_position(
         ## Negative q_diff if qty is positive (long position is reduced by selling)
         q_diff = abs(q_diff) if qty < 0 else -abs(q_diff)
         if _greek_bool:  ## Only upper limits for now
-            action = ADJUST(trade_id=trade_id, action=dict(quantity_diff=q_diff))
+            changes = Changes(
+                quantity_diff=q_diff,
+                new_quantity=qty + q_diff,
+            )
+            action = ADJUST(trade_id=trade_id, action=changes)
             action.reason = f"position {greek} exceeds limit ({greeks[greek]} > {position_greek_limit[greek]})"
             position_actions.append(action)
             logger.debug(f"Added ADJUST action for {trade_id} due to {greek} limit exceedance.")
@@ -205,7 +224,7 @@ def analyze_position(
     ## Finalize action
     ## If no actions, HOLD
     if not position_actions:
-        action = HOLD(trade_id=trade_id)
+        action = HOLD(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
         action.reason = "position within limits"
         return action
 

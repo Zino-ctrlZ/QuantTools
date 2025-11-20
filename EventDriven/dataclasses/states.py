@@ -49,7 +49,8 @@ class PositionState:
     current_position_data: AtTimePositionData
     current_underlier_data: AtIndexResult
     pnl: float
-    last_updated: Optional[datetime] = None
+    last_updated: datetime
+    action: Optional[RMAction] = None
 
     def __repr__(self):
         return f"PositionState(date={self.last_updated}, trade_id={self.trade_id}, quantity={self.quantity}, pnl={self.pnl}, signal_id={self.signal_id})"
@@ -85,7 +86,7 @@ class CogActions:
     """
     date: datetime
     source_cog: str
-    opinions: List[RMAction]
+    opinions: List[PositionState]
 
     def __repr__(self):
         return f"CogActions(source={self.source_cog}, date={self.date}, num_opinions={len(self.opinions)})"
@@ -97,6 +98,9 @@ class StrategyChangeMeta:
     Metadata about changes made to a strategy's positions during analysis.
     """
 
-    strategy_id: str
     date: datetime
-    actionables: List[RMAction] 
+    actionables: List[PositionState] 
+
+    def __repr__(self):
+        actionables = [x for x in self.actionables if x.action.type.value != "HOLD"]
+        return f"StrategyChangeMeta(date={self.date}, num_actions={len(actionables)})"

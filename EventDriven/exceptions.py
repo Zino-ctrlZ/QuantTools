@@ -12,3 +12,8 @@ class UnaccessiblePropertyError(Exception):
 class BacktestConfigAttributeError(Exception):
     """Custom exception for missing Backtest configuration attributes or invalid attribute access."""
     pass
+
+class BacktestNotImplementedError(Exception):
+    """Exception raised for unimplemented backtest features."""
+
+    pass
