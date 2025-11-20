@@ -1,16 +1,18 @@
 ## Actions classes
-from enum import Enum
-from abc import ABC, abstractmethod
+from datetime import datetime
 from EventDriven.types import EventTypes
 
-class RMAction(ABC):
+class RMAction:
     def __init__(self, trade_id: str, action: str|dict):
         self.trade_id = trade_id
         self.action = action
         self.type: EventTypes = None
         self.name: str = None
         self.reason: str = None
-        self.event = None
+        self.event: EventTypes = None
+        self.analysis_date: datetime | str = None
+        self.effective_date: datetime | str = None
+        self.verbose_info: str = None
 
 
 
