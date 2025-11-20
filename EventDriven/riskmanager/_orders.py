@@ -5,11 +5,12 @@ from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker import OrderSchema, ResultsEnum
 from EventDriven.riskmanager._order_validator import OrderInputs
 from EventDriven.riskmanager.utils import get_persistent_cache, set_use_temp_cache
+from EventDriven.dataclasses.orders import OrderRequest
 
 if TYPE_CHECKING:
     from EventDriven.riskmanager.base import OrderPicker
 
-logger = setup_logger('EventDriven.riskmanager._orders')
+logger = setup_logger('EventDriven.riskmanager._orders', stream_log_level="DEBUG")
 
 def resolve_schema(schema: OrderSchema, 
                    tries: int, 
@@ -83,7 +84,8 @@ def order_resolve_loop(
         logger,
         signalID: str,
         schema_cache: dict,
-        picker: "OrderPicker"
+        picker: "OrderPicker",
+        request: OrderRequest = None,
 ):
     """
     Attempt to resolve an order schema until a successful order is produced or maximum tries are exceeded.
@@ -101,6 +103,7 @@ def order_resolve_loop(
         logger: Logger object for logging information.
         signalID (str): Unique identifier for the signal/order.
         schema_cache (dict): Cache to store resolved schemas for specific dates and signal IDs. It will store in place.
+        picker (OrderPicker): The OrderPicker instance to use for getting the order.
 
     Returns:
         Dict[str, Any]: The final order dictionary, either successful or indicating failure.
@@ -109,6 +112,22 @@ def order_resolve_loop(
         raise ValueError("picker must be an instance of OrderPicker")
     
     tries = 0
+    use_request = False
+
+
+    if request is not None:
+        ## This is a patch to use new get order method with request
+        ## Technically it is still relevant to the previous method, but we use request to get schema
+        ## And transform to tuple for old method
+        logger.info(f"Attempting to resolve order for request: {request}")
+        schema = picker.get_order_schema(
+            ticker=request.symbol, 
+            option_type=request.option_type, 
+            max_total_price=request.max_close
+        )
+        schema_as_tuple = tuple(schema.data.items())
+        use_request = True
+
     while order['result'] != ResultsEnum.SUCCESSFUL.value:
         logger.info(f"Failed to produce order with schema: {schema}, trying to resolve schema, on try {tries}")
         pack = resolve_schema(schema,
@@ -128,7 +147,21 @@ def order_resolve_loop(
                 'data': None
             }
         logger.info(f"Resolved Schema: {schema}, tries: {tries}")
-        order = picker.get_order_new(schema, date, spot, print_url = False) ## Get the order from the OrderPicker
+
+        if use_request:
+            ## When using request, we have to use the _get_order method directly
+            ## Previously, .get_order_new took in schema as a dict, converted to tuple internally
+            ## And then called _get_order. But here we already have the tuple form
+            ## So we call _get_order directly
+            order = picker._get_order(
+                schema=schema_as_tuple, 
+                date=request.date, 
+                spot=request.spot, 
+                chain_spot=request.chain_spot, 
+                print_url=False
+            )
+        else:
+            order = picker.get_order_new(schema, date, spot, print_url = False) ## Get the order from the OrderPicker
     schema_cache.setdefault(date, {}).update({signalID: schema})
     return order
 
