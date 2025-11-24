@@ -193,3 +193,7 @@ trade/helpers/*vol_resolve*.json
 ## Pickle files
 *.pkl
 \qtenv
+
+# Adhoc Path
+EventDriven/notebooks/riskmanager_streamline/
+EventDriven/tests.py
