@@ -22,8 +22,11 @@ def get_tick_increments(mid: float, volume: float | None)-> float:
     
 class Side(str, Enum):
     """Enum for order sides."""
+    ## Side should be LONG/SHORT. Meanwhilem PositionEffect is OPEN/CLOSE
     BUY = "LONG"
     SELL = "SHORT"
+    LONG = "LONG"
+    SHORT = "SHORT"
 
 class SideInt(int, Enum):
     """Enum for order sides as integers."""
