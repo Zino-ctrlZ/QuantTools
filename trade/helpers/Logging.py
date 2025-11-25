@@ -99,6 +99,10 @@ def setup_logger(filename,stream_log_level = None,
     # Create a custom logger (root logger)
     logger = logging.getLogger(custom_logger_name)
     
+    # If logger already has handlers, it's already configured (prevents duplicate handlers on autoreload)
+    if logger.handlers:
+        return logger
+    
     ## Ensure file name - to some capacity - exists.
     assert filename, f'Please Create a FILENAME Variable'
     notebook_name = filename
@@ -115,6 +119,7 @@ def setup_logger(filename,stream_log_level = None,
 
 
     # Remove all existing handlers (in case the logger was already configured)
+    # NOTE: This should not be needed now with the early return above, but kept for safety
     logger.handlers = []
 
 

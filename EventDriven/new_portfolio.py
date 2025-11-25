@@ -191,17 +191,17 @@ class OptionSignalPortfolio(Portfolio):
         return LOGGER
 
     @property
-    def order_settings(self):
+    def order_settings(self): #CUTTING
         return self._order_settings
 
     @property
-    def option_price(self):
+    def option_price(self): #CUTTING
         """
         Getter for Option Price. Option price is the price trades will be executed at.
         """
         return self.risk_manager.option_price
     
-    @order_settings.setter
+    @order_settings.setter #CUTTING
     def order_settings(self, settings, *args, **kwargs):
 
         if isinstance(settings, dict):
@@ -216,7 +216,7 @@ class OptionSignalPortfolio(Portfolio):
             raise ValueError('Order Settings can either be a callable or a dicitonary')
         self._order_settings = _setting
             
-    def __enfore_order_settings(self, settings):
+    def __enfore_order_settings(self, settings): #CUTTING
         self.logger.warning('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
         available_types = ['spread', 'naked', 'stock']
         assert 'type' in settings.keys() and 'specifics' in settings.keys() and 'name' in settings.keys(), f'Expected both of `type`, `name` and `specifics` in settings keys'
@@ -276,15 +276,15 @@ class OptionSignalPortfolio(Portfolio):
 
         
     @property
-    def roll_map(self):
+    def roll_map(self): #Cutting
         return self.__roll_map
     
-    @roll_map.setter
+    @roll_map.setter #Cutting
     def roll_map(self, roll_map: int | dict):
         self.__construct_roll_map(roll_map)
     
     # internal functions to construct key portfolio data
-    def __construct_roll_map(self, roll: int | dict = 30): 
+    def __construct_roll_map(self, roll: int | dict = 30): #Cutting
         if isinstance(roll, int): 
             roll_map = {s: roll for s in self.symbol_list}
         else: 
@@ -339,14 +339,14 @@ class OptionSignalPortfolio(Portfolio):
         self.weighted_holdings = [d]
         
     #lazy intialize Stock objects
-    def __get_underlier_data(self, symbol: str):
+    def __get_underlier_data(self, symbol: str): #CUTTING
         if symbol not in self.underlier_list_data:
             self.underlier_list_data[symbol] = Stock(symbol, run_chain = False)
         
         return self.underlier_list_data[symbol]
         
     @property
-    def get_underlier_data(self):
+    def get_underlier_data(self): #CUTTING
         return self.__get_underlier_data
 
     @property

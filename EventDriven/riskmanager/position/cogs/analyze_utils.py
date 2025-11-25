@@ -235,7 +235,7 @@ def analyze_position(
     ## P3. ADJUST
     else:
         action_priority = ACTION_PRIORITY
-        position_actions = sorted(position_actions, key=lambda x: action_priority[type(x)])
+        position_actions = sorted(position_actions, key=lambda x: action_priority[x.type])
 
         ## If multiple adjust actions, keep only one with max abs quantity diff
         if type(position_actions[0]) in [EXERCISE, ROLL]:

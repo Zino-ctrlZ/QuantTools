@@ -433,10 +433,48 @@ def get_missing_dates(x:pd.Series|pd.DataFrame, _start: datetime, _end: datetime
     assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
     date_range = bus_range(_start, _end, freq="1B")
     dates_available = x.index
-    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
-    missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
-    missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
-    return missing_dates_fourth_check
+    
+    # Numpy optimized version - O(n log n) vs O(n²)
+    date_range_arr = np.array(date_range, dtype='datetime64[ns]')
+    dates_available_arr = np.array(dates_available, dtype='datetime64[ns]')
+    
+    # Check which dates are missing from available dates
+    missing_mask = ~np.isin(date_range_arr, dates_available_arr)
+    missing_dates_arr = date_range_arr[missing_mask]
+    
+    # Filter out holidays using numpy
+    holiday_arr = np.array(list(HOLIDAY_SET), dtype='datetime64[ns]')
+    not_holiday_mask = ~np.isin(missing_dates_arr, holiday_arr)
+    missing_dates_no_holidays_arr = missing_dates_arr[not_holiday_mask]
+    
+    # Filter out weekends using vectorized weekday check
+    if len(missing_dates_no_holidays_arr) > 0:
+        missing_dates_idx = pd.DatetimeIndex(missing_dates_no_holidays_arr)
+        weekdays = missing_dates_idx.weekday.values
+        missing_dates_fourth_check = missing_dates_idx[weekdays < 5]
+    else:
+        missing_dates_fourth_check = pd.DatetimeIndex(missing_dates_no_holidays_arr)
+    
+    return missing_dates_fourth_check.tolist()
+
+# def get_missing_dates(x:pd.Series|pd.DataFrame, _start: datetime, _end: datetime):
+#     """
+#     Check for missing business days in the Series or DataFrame x within the specified date range. This also skips US market holidays.
+#     It also ensures there are no weekends
+#     Args:
+#         x (pd.Series or pd.DataFrame): Series or DataFrame with a DatetimeIndex.
+#         _start (str or datetime): Start date of the range.
+#         _end (str or datetime): End date of the range.
+#     Returns:
+#         list: List of missing business days in the range.
+#     """
+#     assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
+#     date_range = bus_range(_start, _end, freq="1B")
+#     dates_available = x.index
+#     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+#     missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
+#     missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
+#     return missing_dates_fourth_check
 
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
 

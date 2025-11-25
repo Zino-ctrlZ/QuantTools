@@ -4,8 +4,9 @@ Utilizes OpenBB for data retrieval and supports additional data processing throu
 """
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Tuple
 import pandas as pd
+from pandas.tseries.offsets import BDay
 from openbb import obb
 from dbase.DataAPI.ThetaData import resample
 from trade.helpers.helper import (
@@ -59,16 +60,13 @@ class TimeseriesData:
 @dataclass
 class MarketTimeseries:
     """Class to manage market timeseries data for equities."""
-    _spot: dict = field(default_factory=dict)
-    _chain_spot: dict = field(default_factory=dict)
-    _dividends: dict = field(default_factory=dict)
     additional_data: Dict[str, Any] = field(default_factory=dict)
     rates: pd.DataFrame = field(default_factory=get_risk_free_rate_helper)
     DEFAULT_NAMES: ClassVar[List[str]] = ['spot', 'chain_spot', 'dividends']
     _refresh_delta: Optional[timedelta] = timedelta(minutes=30)
     _last_refresh: Optional[datetime] = field(default_factory=ny_now)
     _start: str = OPTION_TIMESERIES_START_DATE
-    _end: str = datetime.now().strftime('%Y-%m-%d')
+    _end: str = (datetime.now() - BDay(1)).strftime('%Y-%m-%d')
     should_refresh: bool = True
 
     @property
@@ -83,13 +81,26 @@ class MarketTimeseries:
     def dividends(self) -> dict:
         raise UnaccessiblePropertyError("The 'dividends' property is not accessible directly. Use 'get_timeseries' method instead. Or access via 'get_at_index' method.")
 
-    def already_loaded(self, 
+    @property
+    def _spot(self) -> CustomCache:
+        return SPOT_CACHE
+    
+    @property
+    def _chain_spot(self) -> CustomCache:
+        return CHAIN_SPOT_CACHE
+    
+    @property
+    def _dividends(self) -> CustomCache:
+        return DIVIDEND_CACHE
+
+    def _already_loaded(self, 
                        sym: str, 
                        interval: str = '1d', 
                        start: str|datetime = None, 
-                       end: str|datetime = None) -> bool:
+                       end: str|datetime = None) -> Tuple[bool, List[pd.Timestamp]]:
         """
         Check if the timeseries for a given symbol and interval is already loaded.
+        Hidden method that also returns missing dates if not fully loaded.
         """
         start = start or self._start
         end = end or self._end
@@ -102,16 +113,44 @@ class MarketTimeseries:
             self._chain_spot.get(interval, {}).get(sym),
             self._dividends.get(interval, {}).get(sym)
         ]
-
+        
+        missing_dates_set = set()
+        all_dates_present = False
         for data in data_to_check:
             if data is not None:
                 missing_dates = get_missing_dates(data, start, end)
+                missing_dates_set.update(missing_dates)
                 if not missing_dates:
                     all_dates_present = True
                 else:
                     all_dates_present = False
+        ## If all dates not present, return missing dates
+        return_dates = list(missing_dates_set)
+        if not all_dates_present:
+            
+            ## If missing dates is empty, return start and end
+            if not return_dates:
+                return_dates = [pd.Timestamp(start), pd.Timestamp(end)]
+            else:
+                return_dates = [min(return_dates), max(return_dates)]
+        
+        ## If all dates present, return empty list
+        else:
+            return_dates = []
+            
                     
-        return sym_available and interval_available and all_dates_present   
+        return (sym_available and interval_available and all_dates_present), return_dates
+    
+    def already_loaded(self, 
+                       sym: str, 
+                       interval: str = '1d', 
+                       start: str|datetime = None, 
+                       end: str|datetime = None) -> bool:
+        """
+        Public method to check if the timeseries for a given symbol and interval is already loaded.
+        """
+        already_loaded, _ = self._already_loaded(sym, interval, start, end)
+        return already_loaded
 
             
 
@@ -122,14 +161,14 @@ class MarketTimeseries:
                         end_date: str|datetime = None, 
                         interval='1d',
                         force: bool = False) -> None:
-        already_loaded = self.already_loaded(sym, interval, start_date, end_date)
+        already_loaded, dt_range = self._already_loaded(sym, interval, start_date, end_date)
         
         if already_loaded and not force:
             logger.info("Timeseries for %s already loaded. Use force=%s to reload.", sym, force)
             return
         
-        start_date = start_date or self._start
-        end_date = end_date or self._end
+        start_date = min(dt_range)
+        end_date = max(dt_range)
         
         spot = retrieve_timeseries(sym, start_date, end_date, interval)
         chain_spot = retrieve_timeseries(sym, start_date, end_date, interval, spot_type='chain_price')
@@ -138,18 +177,49 @@ class MarketTimeseries:
             divs.set_index('ex_dividend_date', inplace = True)
         except Exception:
             logger.error("Failed to retrieve dividends for symbol %s", sym)
-            divs = pd.DataFrame({'amount':[0]}, index = pd.bdate_range(start=self._start, end=self._end, freq='1Q'))
+            divs = pd.DataFrame({'amount':[0]}, index = pd.bdate_range(start=self._start, end=self._end, freq=interval))
         
         ## Ensure datetime index
         divs.index = pd.to_datetime(divs.index)
-        divs = divs.reindex(pd.bdate_range(start=self._start, end=self._end, freq='1D'), method='ffill')
+        divs = divs.reindex(pd.bdate_range(start=self._start, end=self._end, freq=interval), method='ffill')
         divs = resample(divs['amount'], method='ffill', interval=interval)
-        self._spot[interval] = {}
-        self._chain_spot[interval] = {}
-        self._dividends[interval] = {}
-        self._spot[interval][sym] = spot
-        self._chain_spot[interval][sym] = chain_spot
-        self._dividends[interval][sym] = divs
+
+
+        ## Interval Dict
+        spot_dict = self._spot.get(interval, {})
+        chain_spot_dict = self._chain_spot.get(interval, {})
+        div_dict = self._dividends.get(interval, {})
+
+        ## Current Data
+        current_spot = spot_dict.get(sym)
+        current_chain_spot = chain_spot_dict.get(sym)
+        current_divs = div_dict.get(sym)
+
+        ## We are moving from overwritting prev data to merging new data
+        if current_spot is not None:
+            spot = pd.concat([current_spot, spot]).sort_index()
+            spot = spot[~spot.index.duplicated(keep='last')]
+        else:
+            logger.info("No previous spot data for symbol %s, adding new data.", sym)
+        if current_chain_spot is not None:
+            chain_spot = pd.concat([current_chain_spot, chain_spot]).sort_index()
+            chain_spot = chain_spot[~chain_spot.index.duplicated(keep='last')]
+        if current_divs is not None:
+            divs = pd.concat([current_divs, divs]).sort_index()
+            divs = divs[~divs.index.duplicated(keep='last')]
+
+        
+        ## Assign data to regular dicts. Caveat (Potentially large data in memory)
+        spot_dict[sym] = spot
+        chain_spot_dict[sym] = chain_spot
+        div_dict[sym] = divs
+        
+        ## Store data in caches. CustomCaches do not support in-place assignments
+        ## So we have to retrieve the dict, modify it, and then reassign it.
+        self._spot[interval] = spot_dict
+        self._chain_spot[interval] = chain_spot_dict
+        self._dividends[interval] = div_dict
+
 
     def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = '1d') -> AtIndexResult:
         """
@@ -163,7 +233,7 @@ class MarketTimeseries:
         already_available = self.already_loaded(sym, interval)
 
         if not already_available:
-            logger.info("Reloading timeseries data for symbol %s.", sym)
+            print("Reloading timeseries data for symbol %s.", sym)
             self.load_timeseries(
                 sym=sym,
                 start_date=self._start,
@@ -269,15 +339,18 @@ class MarketTimeseries:
             return TimeseriesData(spot=None, chain_spot=None, dividends=None, additional_data={additional_data_name: data})
         
         elif factor in self.DEFAULT_NAMES:
+            factor = '_'+factor
             data = getattr(self, factor).get(interval, {}).get(sym)
             if data is None:
                 raise ValueError(f"No data found for factor {factor} and symbol {sym}.")
-            if factor == 'spot':
+            if factor == '_spot':
                 return TimeseriesData(spot=data, chain_spot=None, dividends=None)
-            elif factor == 'chain_spot':
+            elif factor == '_chain_spot':
                 return TimeseriesData(spot=None, chain_spot=data, dividends=None)
-            elif factor == 'dividends':
+            elif factor == '_dividends':
                 return TimeseriesData(spot=None, chain_spot=None, dividends=data)
+            else:
+                raise ValueError(f"Unhandled factor {factor}.")
         
         elif factor is None:
             spot = self._spot.get(interval, {}).get(sym)

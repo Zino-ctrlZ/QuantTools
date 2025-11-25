@@ -19,7 +19,7 @@ import traceback
 from pandas.tseries.offsets import BDay
 import time
 
-
+LOGGER = setup_logger("OptionSignalBacktest")
 class OptionSignalBacktest():
     """
     Encapsulates the settings and components for carrying out an event-driven backtest
@@ -39,7 +39,7 @@ class OptionSignalBacktest():
             t_plus_n: int
                 Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
-        self.logger = setup_logger('OptionSignalBacktest')
+        
         self.t_plus_n = t_plus_n
         trades = trades.copy()
         unadjusted = trades.copy() ## Store unadjusted trades for reference
@@ -58,6 +58,10 @@ class OptionSignalBacktest():
         self.finalize_trades = finalize_trades
         self.__construct_data(trades, initial_capital, symbol_list)
         
+    @property
+    def logger(self):
+        return LOGGER
+    
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
         self.start_date = pd.to_datetime(trades['EntryTime']).min() - BDay(1)
         self.end_date = pd.to_datetime(trades['ExitTime']).max()
