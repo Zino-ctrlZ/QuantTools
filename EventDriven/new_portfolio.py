@@ -11,12 +11,10 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from trade.helpers.helper import parse_option_tick
 from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
 from EventDriven.riskmanager.new_base import RiskManager
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
-from dbase.DataAPI.ThetaData import  is_theta_data_retrieval_successful, retrieve_eod_ohlc #type: ignore
 from EventDriven.event import  (
     ExerciseEvent, #noqa
     FillEvent, 
@@ -40,7 +38,7 @@ from EventDriven.dataclasses.states import (
     PositionAnalysisContext
 )
 from EventDriven.dataclasses.states import StrategyChangeMeta
-from EventDriven.configs.core import PortfolioManagerConfig
+from EventDriven.configs.core import PortfolioManagerConfig, CashAllocatorConfig
 from EventDriven.portfolio_utils import extract_events
 from EventDriven.exceptions import BacktestNotImplementedError
 LOGGER = setup_logger("OptionSignalPortfolio")
@@ -89,7 +87,9 @@ class OptionSignalPortfolio(Portfolio):
                  risk_manager : RiskManager, 
                  weight_map = None, 
                  initial_capital = 10000,
-                 finalize_trades: bool = True): 
+                 *,
+                 cash_allocator_config: CashAllocatorConfig | None = None,
+                 t_plus_n: int = 1): 
         """
         Portfolio class for managing option trading strategies based on signals.
         Handles position tracking, order generation, portfolio valuation, and trade management.
@@ -132,41 +132,17 @@ class OptionSignalPortfolio(Portfolio):
         update_fill(event): Updates portfolio positions and holdings from fill events.
         [Additional methods documented in their definitions]
         """
+        self.t_plus_n = t_plus_n
         self.bars = bars
         self.eventScheduler = eventScheduler
-        self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1])
         self.symbol_list = self.bars.symbol_list
         self.start_date = bars.start_date.strftime("%Y%m%d")
         self.initial_capital = initial_capital
         self.risk_manager = risk_manager
-        self.dte_reduction_factor = 60 ## CUTTING
-        self.min_acceptable_dte_threshold = 90 #CUTTING
-        self.moneyness_width_factor = 0.05 #CUTTING
-        self.min_moneyness_threshold = 5 #CUTTING
-        self.max_contract_price_factor = 1.2  #CUTTING
-        self.options_data = {} #CUTTING
-        self.underlier_list_data = {} #CUTTING
-        self.moneyness_tracker = {} #CUTTING
+        self.cash_allocator_config = cash_allocator_config or CashAllocatorConfig()
+        self.underlier_list_data = {}
         self.unprocessed_signals = []
-        self.resolve_orders = True #CUTTING
         self.allow_multiple_trades = True # allow multiple trades for the same signal_id
-        self.finalize_trades = finalize_trades # whether to finalize trades or not
-        self._order_settings =  { #CUTTING
-            'type': 'spread',
-            'specifics': [
-                {'direction': 'long', 'rel_strike': 1.0, 'dte': 365, 'moneyness_width': 0.1},
-                {'direction': 'short', 'rel_strike': 0.85, 'dte': 365, 'moneyness_width': 0.1} 
-            ],
-            'name': 'vertical_spread',
-            'strategy': 'vertical',
-            'target_dte': 365,
-            'structure_direction': 'long',
-            'spread_ticks': 1,
-            'dte_tolerance': 60,
-            'min_moneyness': 0.75,
-            'max_moneyness': 1.25,
-            'min_total_price': 0.5
-        }
         self.__equity = None
         self.__transactions = []
         # call internal functions to construct key portfolio data
@@ -175,13 +151,12 @@ class OptionSignalPortfolio(Portfolio):
         self.__construct_weight_map(weight_map = weight_map)
         self.__construct_current_weighted_holdings()
         self.__construct_weighted_holdings()
-        self.__construct_roll_map()
         self.trades_df = None
         self.trades_map = {}
         self.current_cash = {}
         self.order_cache = {
             'CLOSE': {},
-            'OPEN': {}
+            'OPEN': {},
         }
         self.position_cache = {}
         self.config = PortfolioManagerConfig()
@@ -189,64 +164,6 @@ class OptionSignalPortfolio(Portfolio):
     @property
     def logger(self):
         return LOGGER
-
-    @property
-    def order_settings(self): #CUTTING
-        return self._order_settings
-
-    @property
-    def option_price(self): #CUTTING
-        """
-        Getter for Option Price. Option price is the price trades will be executed at.
-        """
-        return self.risk_manager.option_price
-    
-    @order_settings.setter #CUTTING
-    def order_settings(self, settings, *args, **kwargs):
-
-        if isinstance(settings, dict):
-            _setting = settings
-            self.__enfore_order_settings(_setting)
-            
-        elif isinstance(settings, callable):
-            _settings = settings(*args, **kwargs)
-            self.__enfore_order_settings(_settings)
-
-        else:
-            raise ValueError('Order Settings can either be a callable or a dicitonary')
-        self._order_settings = _setting
-            
-    def __enfore_order_settings(self, settings): #CUTTING
-        self.logger.warning('Each index in specifics list should have: `direction`: str, `rel_strike`: float, `dte`: int, `moneyness_width`: float')
-        available_types = ['spread', 'naked', 'stock']
-        assert 'type' in settings.keys() and 'specifics' in settings.keys() and 'name' in settings.keys(), f'Expected both of `type`, `name` and `specifics` in settings keys'
-        assert settings['type'] in available_types, f'`type` must be one of {available_types}'
-        assert isinstance(settings['specifics'], list), f'Order Specifics should be a list'
-        
-        necessary_keys = {
-            'strategy': str,
-            'target_dte': int,
-            'structure_direction': str,
-        }
-
-        optional_keys = {
-            'spread_ticks': int,
-            'dte_tolerance': int,
-            'min_moneyness': (float, int),  # can be float or int for moneyness
-            'max_moneyness': (float, int),
-            'min_total_price': (float, int),
-        }
-        if settings['type'] == 'spread' and len(settings['specifics']) < 2:
-                raise ValueError(f'Expected 2 legs for spreads')
-
-        for key, value_type in necessary_keys.items():
-            assert key in settings.keys(), f'Expected `{key}` in order settings'
-            assert isinstance(settings[key], value_type), f'Expected `{key}` to be of type {value_type}, got {type(settings[key])}'
-        
-        for key, value_type in optional_keys.items():
-            if key in settings.keys():
-                assert isinstance(settings[key], value_type), f'Expected `{key}` to be of type {value_type}, got {type(settings[key])}'
-            
     
     @property
     def weight_map(self): 
@@ -270,28 +187,17 @@ class OptionSignalPortfolio(Portfolio):
         for s in max_contract_price.keys():
             if max_contract_price[s] > self.allocated_cash_map[s]:
                 raise ValueError(f'max_contract_price for {s} cannot be greater than allocated cash of {self.allocated_cash_map[s]}')
-        # assert all(x <= self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s]) for s, x in max_contract_price.items()), f'max_contract_price must be less than or equal to allocated cash'
         self.__max_contract_price = deepcopy(max_contract_price)
-        
 
-        
+    def __get_underlier_data(self, symbol: str):
+        if symbol not in self.underlier_list_data:
+            self.underlier_list_data[symbol] = Stock(symbol, run_chain=False)
+        return self.underlier_list_data[symbol]
+
     @property
-    def roll_map(self): #Cutting
-        return self.__roll_map
-    
-    @roll_map.setter #Cutting
-    def roll_map(self, roll_map: int | dict):
-        self.__construct_roll_map(roll_map)
-    
-    # internal functions to construct key portfolio data
-    def __construct_roll_map(self, roll: int | dict = 30): #Cutting
-        if isinstance(roll, int): 
-            roll_map = {s: roll for s in self.symbol_list}
-        else: 
-            assert isinstance(roll, dict), f'Roll must be an integer or a dictionary'
-            roll_map = deepcopy(roll)
-        
-        self.__roll_map = roll_map
+    def get_underlier_data(self):
+        return self.__get_underlier_data
+
         
     def __construct_weight_map(self, weight_map): 
         unprocessed_symbols = []
@@ -300,9 +206,8 @@ class OptionSignalPortfolio(Portfolio):
                 if s not in self.symbol_list:
                     unprocessed_symbols.append(s)
             if len(unprocessed_symbols) > 0:
-                print(f"The following symbols: {unprocessed_symbols} are not being processed but present in weight_map" )
-                self.logger.warning(f"The following symbols: {unprocessed_symbols} are not being processed but present in weight_map")
-            weight_map = {x : weight_map[x] for x in self.symbol_list}
+                self.logger.critical(f"The following symbols: {unprocessed_symbols} are not being processed but present in weight_map")
+            weight_map = {x : weight_map[x] * (1 - self.config.weights_haircut) for x in self.symbol_list}
             weight_total = round(sum(weight_map.values()), 4)
             assert weight_total <= 1.0, f"Sum of weights must be less than or equal to 1.0, got {weight_total}"
             
@@ -311,7 +216,31 @@ class OptionSignalPortfolio(Portfolio):
         
         self.__weight_map = weight_map
         self.allocated_cash_map = {s: self.__weight_map[s] * self.initial_capital for s in self.symbol_list}
-        self.__max_contract_price = {s: self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s] * .5) for s in self.symbol_list} # default max contract price is 50% of allocated cash divided by 100
+        self.__max_contract_price = self.__construct_max_contract_price()
+
+    def __construct_max_contract_price(self):
+        # Try config-driven buckets first; fallback to legacy behavior
+        if self.cash_allocator_config is not None:
+            try:
+                max_cash_map = self.cash_allocator_config.build_max_cash_map(
+                    weights=self.__weight_map,
+                    cash=self.initial_capital,
+                )
+                return {
+                    s: max_cash_map.get(
+                        s,
+                        self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s] * 0.5),
+                    )
+                    for s in self.symbol_list
+                }
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.warning(
+                    f"Falling back to default max_contract_price due to allocator error: {exc}"
+                )
+        return {
+            s: self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[s] * 0.5)
+            for s in self.symbol_list
+        }  # default max contract price is 50% of allocated cash divided by 100
     
     def __construct_current_positions(self):
         d = {s: {} for s in self.symbol_list}
@@ -338,17 +267,6 @@ class OptionSignalPortfolio(Portfolio):
         d['total'] = self.initial_capital
         self.weighted_holdings = [d]
         
-    #lazy intialize Stock objects
-    def __get_underlier_data(self, symbol: str): #CUTTING
-        if symbol not in self.underlier_list_data:
-            self.underlier_list_data[symbol] = Stock(symbol, run_chain = False)
-        
-        return self.underlier_list_data[symbol]
-        
-    @property
-    def get_underlier_data(self): #CUTTING
-        return self.__get_underlier_data
-
     @property
     def transactions(self):
         return pd.DataFrame(self.__transactions)
@@ -423,23 +341,27 @@ class OptionSignalPortfolio(Portfolio):
             self.order_cache['OPEN'].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
             return order
         elif signal_type == 'CLOSE':
+
+            ## Check if we have signal_id in current positions. If not, log warning and skip. 
             if signal_event.signal_id not in self.current_positions[symbol]:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
                 unprocess_dict = signal_event.__dict__
-                unprocess_dict['reason'] = (f'Signal not held in current positions at that time')
+                unprocess_dict['reason'] = ('Signal not held in current positions at that time')
                 self.unprocessed_signals.append(unprocess_dict)
                 return None
             
             current_position = self.current_positions[symbol][signal_event.signal_id]
-            if is_USholiday(signal_event.datetime): # check if trading day is holdiay before selling
+            ## Check if market is holiday
+            if is_USholiday(signal_event.datetime):
                 self.resolve_order_result({'result': ResultsEnum.IS_HOLIDAY.value}, signal_event)
                 return None
             
+            ## Check if we have position to close
             if 'position' not in current_position:
                 self.logger.warning(f'No contracts held for {symbol} to sell at {signal_event.datetime}, Inputs {locals()}')
                 return None
             
-            
+            ## Prepare order details
             position =  deepcopy(current_position['position'])
             self.logger.info(f'Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}')
             position['close'] = self.calculate_close_on_position(position)
@@ -447,24 +369,35 @@ class OptionSignalPortfolio(Portfolio):
             ## Access skip from risk_manager market data
             skip = self.risk_manager.market_data.skip(position_id=position['trade_id'],
                                                       date=signal_event.datetime)
-            ## on the off case where close price is negative, move sell to next trading day
-            if position['close'] < 0 or skip == True:
-                if isinstance(signal_event.parent_event, RollEvent): ## If rolling, do not move to next trading day
+            
+            ## If skip is true, either move to next trading day or skip if rolling
+            if skip:
+
+                ## If rolling, do not move to next trading day. Let it fall through
+                if isinstance(signal_event.parent_event, RollEvent): 
                     self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, skipping sell for roll event')
-                    print(f'Not generating ROLL order because: CLOSE price is negative {signal_event}, skipping sell for roll event')
                     return None
-                # move signal to next day 
+                
+                # Move signal to next day 
                 new_signal = deepcopy(signal_event)
                 next_trading_day = new_signal.datetime + pd.offsets.BusinessDay(1)
                 new_signal.datetime = next_trading_day
                 self.logger.warning(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
-                print(f'Not generating order because: CLOSE price is negative {signal_event}, moving event to {next_trading_day}')
                 self.eventScheduler.schedule_event(next_trading_day, new_signal)
                 return None
+            
+            ## Create sell order if not skipping and return.
             order = OrderEvent(symbol, signal_event.datetime, order_type, quantity=current_position['quantity'],direction= 'SELL', position = position, signal_id=signal_event.signal_id, parent_event=signal_event)
             self.order_cache['CLOSE'].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
             return order
+        
         return None
+
+    def resolve_order_result(self, position_result, signal):
+        """
+        Placeholder for legacy resolve_order_result logic.
+        """
+        self.logger.warning(f"resolve_order_result not implemented for {position_result}, {signal}")
     
     def create_order(self, signal_event : SignalEvent, position_type: str, order_type: str = 'MKT'):
         """
@@ -473,31 +406,14 @@ class OptionSignalPortfolio(Portfolio):
         """
         date_str = signal_event.datetime.strftime('%Y-%m-%d')
         position_type = 'c' if signal_event.signal_type == 'LONG' else 'p'
-        # position_type = 'P'
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
-        max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand 
-        # position_result = self.risk_manager.get_order(tick = signal_event.symbol, ## changes to order request. new_state.order
-        #                                                           date = date_str, 
-        #                                                           right = position_type, 
-        #                                                           option_type = position_type, 
-        #                                                           max_close = max_contract_price, 
-        #                                                           order_settings= signal_event.order_settings if signal_event.order_settings is not None else self._order_settings,
-        #                                                           signal_id = signal_event.signal_id,
-        #                                                           **self.order_settings)  
+        max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand  
         print(f"Cash at Hand: {cash_at_hand}, Max Contract Price: {max_contract_price} for Signal: {signal_event.signal_id}")
         position_state = self.risk_manager.get_order(OrderRequest(date=date_str, symbol=signal_event.symbol, option_type=position_type, max_close=max_contract_price, tick_cash=cash_at_hand, direction=signal_event.signal_type, signal_id=signal_event.signal_id))
         self.position_cache[signal_event.signal_id] = position_state
         position = position_state.order.data
-            # if position is None :
-        #     if self.resolve_orders == True :
-        #         self.resolve_order_result(position_result['result'], signal_event)
-        #     else:
-        #         self.logger.warning(f'resolve_orders is {self.resolve_orders} hence not generating order because:{position_result["result"]} {signal_event}')
-        #     return None
-        
-        # self.moneyness_tracker[signal_event.signal_id] = 0 #reset moneyness tracker for signal after successful order generation
-        # self.logger.info(f'Buying LONG contract for {signal_event.symbol} at {signal_event.datetime} Position: {position}')
+
         # print("===========================")
         # print("Buy Details")
         # print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
@@ -505,117 +421,6 @@ class OptionSignalPortfolio(Portfolio):
         # print("Cash at Hand", cash_at_hand, "Close", position['close'])
         # print("===========================")
         return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
-        
-    def __reduce_order_settings_dte_by_factor(self, order_settings):
-        raise DeprecationWarning('This method is deprecated')
-        new_order_settings = deepcopy(order_settings)
-        initial_dte = new_order_settings['specifics'][0]['dte']
-        initial_dte = initial_dte - self.dte_reduction_factor
-        new_order_settings['specifics'] = [{**x, 'dte': initial_dte} for x in new_order_settings['specifics']] #reduce dte by 1 day
-        return new_order_settings
-    
-    def resolve_order_result(self, position_result: ResultsEnum, signal: SignalEvent): 
-        """
-        Analyze the results of the order and update the portfolio or event scheduler accordingly
-        
-        MONEYNESS_TOO_TIGHT: adjust moneyness width by adding moneyness_width factor (default at 0.5) and add to queue
-        MAX_PRICE_TOO_LOW: adjust max_price by multiplying max_contract_price factor (default at 20%) on max_price dict and add to queue
-        IS_HOLIDAY: move signal to next trading day
-        NO_TRADED_CLOSE: move signal to next trading day
-        NO_ORDERS: log warning
-        UNSUCCESSFUL: log warning
-        UNAVAILABLE_CONTRACT: log warning
-        """
-        raise DeprecationWarning('This method is deprecated')
-        if position_result == ResultsEnum.MONEYNESS_TOO_TIGHT.value: 
-            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) 
-            order_settings['specifics'] = [{**x, 'moneyness_width': x['moneyness_width'] + self.moneyness_width_factor} for x in order_settings['specifics']] 
-            new_signal = deepcopy(signal)
-            new_signal.order_settings = order_settings
-            
-            moneyness_tracker_index = self.moneyness_tracker.get(signal.signal_id, 0)
-
-            if moneyness_tracker_index == 0:
-                self.moneyness_tracker[signal.signal_id] = moneyness_tracker_index + 1
-            else:
-                self.moneyness_tracker[signal.signal_id] += 1
-            
-            
-            if moneyness_tracker_index > self.min_moneyness_threshold: 
-                new_max_price = self.__max_contract_price[signal.symbol]
-                new_signal_on_dte = deepcopy(signal) 
-                new_signal_on_dte.order_settings = deepcopy(self.order_settings) if moneyness_tracker_index == self.min_moneyness_threshold + 1 else signal.order_settings 
-                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width {self.__max_contract_price[signal.symbol]}')
-                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial moneyness width cash {self.__max_contract_price[signal.symbol]}')
-                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
-                return None
-            
-
-            
-                
-
-            self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
-            print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted moneyness. specifics: {order_settings["specifics"]}')
-            self.eventScheduler.put(new_signal)
-           
-            
-                
-        elif position_result == ResultsEnum.IS_HOLIDAY.value or position_result == ResultsEnum.NO_TRADED_CLOSE.value: 
-            next_trading_day = signal.datetime + pd.offsets.BusinessDay(1)
-            new_signal = deepcopy(signal)
-            new_signal.datetime = next_trading_day
-            self.logger.warning(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
-            print(f'Not generating order because:{position_result} {signal}, moving event to {next_trading_day}')
-            self.eventScheduler.schedule_event(next_trading_day, new_signal)
-            
-                
-        elif position_result == ResultsEnum.MAX_PRICE_TOO_LOW.value: 
-            initial_contract_max_price = self.__max_contract_price[signal.symbol] if signal.max_contract_price is None else signal.max_contract_price
-            new_max_price = initial_contract_max_price * self.max_contract_price_factor
-            allocated_cash =  self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]) 
-            
-            if new_max_price > allocated_cash:
-                new_max_price = self.__max_contract_price[signal.symbol]
-                new_signal_on_dte = deepcopy(signal)
-                new_signal_on_dte.max_contract_price = None
-                self.logger.warning(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
-                print(f'Not generating order because:{position_result} {signal}, performing resolve on reduced dte with intial max cash {self.__max_contract_price[signal.symbol]}')
-                self.resolve_order_result(ResultsEnum.TOO_ILLIQUID.value, new_signal_on_dte)
-                return None
-            
-            new_max_price = min(new_max_price, self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal.symbol]))
-            new_signal = deepcopy(signal)
-            new_signal.max_contract_price = new_max_price
-            self.logger.warning(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
-            print(f'Not generating order because:{position_result} at {initial_contract_max_price}, adjusted to {new_max_price} {signal} ')
-            self.eventScheduler.put(new_signal)
-    
-            
-        elif position_result == ResultsEnum.TOO_ILLIQUID.value or position_result == ResultsEnum.NO_ORDERS.value:
-            order_settings = deepcopy(signal.order_settings if signal.order_settings is not None else self.order_settings) 
-            order_settings = self.__reduce_order_settings_dte_by_factor(order_settings)
-            dte = order_settings['specifics'][0]['dte']
-            
-            if dte < self.min_acceptable_dte_threshold or dte <= 0:
-                self.logger.warning(f'Not generating order because:{position_result} {signal}')
-                print(f'Not generating order because:{position_result} {signal}')
-                unprocess_dict = signal.__dict__
-                unprocess_dict['reason'] = position_result
-                self.unprocessed_signals.append(unprocess_dict)
-                return None
-                
-            new_signal = deepcopy(signal)
-            new_signal.order_settings = order_settings
-            self.logger.warning(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
-            print(f'Not generating order because:{position_result} {signal}, adding new signal with adjusted dte. specifics: {order_settings["specifics"]}')
-            self.eventScheduler.put(new_signal)
-        else:
-            self.logger.warning(f'Not generating order because:{position_result} {signal}')
-            print(f'Not generating order because:{position_result} {signal}')
-            unprocess_dict = signal.__dict__
-            unprocess_dict['reason'] = position_result
-            self.unprocessed_signals.append(unprocess_dict)
-        
             
     def analyze_signal(self, event : SignalEvent):
         """
@@ -735,7 +540,7 @@ class OptionSignalPortfolio(Portfolio):
             initial_cash=self.initial_capital,
             start_date=self.risk_manager.start_date,
             end_date=self.risk_manager.end_date,
-            t_plus_n=self.config.t_plus_n,
+            t_plus_n=self.t_plus_n,
             is_backtest=True,
         )
 
@@ -775,47 +580,6 @@ class OptionSignalPortfolio(Portfolio):
         print(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
         self.eventScheduler.put(buy_signal_event)    
-    
-    ## FIXME: Make this better. It is for premiums when expiring
-    ## PRICE_ON_TO_DO: Adjust this to use `option_price` from RiskManager
-    def get_premiums_on_position(self, position: dict, entry_date: str) -> tuple[dict, dict] | tuple[None, None]:
-        """
-        get the premium of each contract in a position
-        return [long_premiums | None, short_premiums | None]
-        """
-        raise DeprecationWarning('This method is deprecated')
-        long_premiums = {}
-        short_premiums = {}
-        if 'long' in position:
-            for option_id in position['long']: 
-                option_data = self.get_option_data(option_id)
-                if option_data is not None: 
-                    option_data_series = option_data.loc[pd.to_datetime(entry_date)]
-                    if isinstance(option_data_series, pd.Series):
-                        premium = option_data_series['Midpoint']
-                    elif isinstance(option_data_series, pd.DataFrame):
-                        premium = option_data_series.iloc[0]['Midpoint']
-
-                    long_premiums[option_id] = premium
-                    
-        if 'short' in position:
-            for option_id in position['short']: 
-                option_data = self.get_option_data(option_id)
-                if option_data is not None: 
-                    option_data_series = option_data.loc[pd.to_datetime(entry_date)]
-                    if isinstance(option_data_series, pd.Series):
-                        premium = option_data_series['Midpoint']
-                    elif isinstance(option_data_series, pd.DataFrame):
-                        premium = option_data_series.iloc[0]['Midpoint']
-
-                    short_premiums[option_id] = premium
-                    
-        if len(long_premiums) == 0:
-            long_premiums = None
-        if len(short_premiums) == 0:
-            short_premiums = None
-        return (long_premiums, short_premiums)
-    
         
     def __normalize_dollar_amount_to_decimal(self, price: float) -> float:
         """
@@ -838,7 +602,6 @@ class OptionSignalPortfolio(Portfolio):
         fill - The FillEvent object to update the positions with.
         """
         # Check whether the fill is a buy or sell
-        ##TODO (CLEAN UP): Stop using self.get_options_data_on_contract
         new_position_data = {}
         
         if fill_event.position['trade_id'] not in self.trades_map:
@@ -858,27 +621,6 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
                 
-                ## Clean up: Remove commented code
-                # #retain long legs options_data dictionary for future use 
-                # # if 'long' in fill_event.position: 
-                # for option_id in fill_event.position['long']: 
-                #     option_meta = parse_option_tick(option_id)
-                #     option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                #     if option_data is not None: 
-                #         self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                #     else:
-                #         self.logger.warning(f'No data found for {option_id}')
-                
-                # #retain short legs options_data dictionary for future use 
-                # # if 'short' in fill_event.position: 
-                # for option_id in fill_event.position['short']: 
-                #     option_meta = parse_option_tick(option_id)
-                #     option_data = self.get_options_data_on_contract(symbol = option_meta['ticker'], right=option_meta['put_call'], exp=option_meta['exp_date'], strike=option_meta['strike'])
-                #     if option_data is not None: 
-                #         self.options_data[option_id] = option_data[~option_data.index.duplicated(keep='last')]
-                #     else:
-                #         self.logger.warning(f'No data found for {option_id}')
-            
                     
         if fill_event.direction == 'SELL':
             if fill_event.position is not None: 
@@ -893,17 +635,6 @@ class OptionSignalPortfolio(Portfolio):
 
         if fill_event.direction == 'EXERCISE':
             raise BacktestNotImplementedError('Exercise fill handling not implemented yet')
-            if fill_event.position is not None:
-                new_position_data['position'] = fill_event.position
-                new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
-                new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)   
-                if (new_position_data['quantity']) == 0: 
-                   new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
-                
-                # open a new position after exercise
-                new_signal = SignalEvent(fill_event.symbol, fill_event.datetime, SignalTypes.LONG.value, signal_id=fill_event.signal_id)
-                self.eventScheduler.put(new_signal)
-            
             
 
         self.current_positions[fill_event.symbol][fill_event.signal_id] = new_position_data
@@ -1015,7 +746,6 @@ class OptionSignalPortfolio(Portfolio):
         the close price is the difference between the long and short legs of the position 
         """
         return self.risk_manager.market_data.get_at_time_position_data(position['trade_id'], self.eventScheduler.current_date).get_price()
-        # return self.risk_manager.position_data[position['trade_id']][self.option_price.capitalize()][pd.to_datetime(self.eventScheduler.current_date)]
 
     
     
@@ -1058,7 +788,20 @@ class OptionSignalPortfolio(Portfolio):
                         signal_id
                     ])
 
-        df = pd.DataFrame(records, columns=['datetime', 'symbol', 'long', 'short', 'trade_id', 'close', 'quantity', 'market_value', signal_id])
+        df = pd.DataFrame(
+            records,
+            columns=[
+                'datetime',
+                'symbol',
+                'long',
+                'short',
+                'trade_id',
+                'close',
+                'quantity',
+                'market_value',
+                'signal_id',
+            ],
+        )
         df.set_index(['datetime', 'symbol'], inplace=True)
         df.index = df.index.set_levels(pd.to_datetime(df.index.levels[0]), level=0)  # Ensure datetime index
         return df
@@ -1075,48 +818,7 @@ class OptionSignalPortfolio(Portfolio):
         curve['equity_curve'] = (1.0 + curve['returns']).cumprod()
         return curve
         
-    def get_latest_option_data(self, option_id: str) -> pd.Series:
-        """
-        Get the latest option data for a symbol
-        params: option_id: str The option_id the contract was saved with during the fill process 
-        returns: a series with columns: ms_of_day,open,high,low,close,volume,count,date
-        """
-        raise DeprecationWarning('This method is deprecated')
-        
-        current_date = pd.to_datetime(self.eventScheduler.current_date)
-        option_data_df = self.get_option_data(option_id)
-        if option_data_df is None:
-            return None
-        closest_date_index = (option_data_df.index - current_date).to_series().abs().argsort()[:1] #index of nearest date to the current date
-        option_data = option_data_df.iloc[closest_date_index] #get the nearest date to the current date
-        return option_data.iloc[0]
 
-       
-    def get_options_data_on_contract(self, symbol: str, exp: str, strike: float, right: str) -> pd.DataFrame | None: 
-        """
-        Updates the option data based on the fill contract
-        """ 
-        raise DeprecationWarning('This method is deprecated')
-        start_date = self.bars.start_date.strftime('%Y%m%d')
-        end_date = self.bars.end_date.strftime('%Y%m%d')
-        exp = pd.to_datetime(exp).strftime('%Y%m%d')
-        options = retrieve_eod_ohlc(symbol = symbol, exp = exp, strike= float(strike), right=right, start_date=start_date, end_date=end_date)
-        if isinstance(options, pd.DataFrame) and is_theta_data_retrieval_successful(options):
-            return options # a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
-        else: 
-            return None
-        
-    def get_option_data(self, option_id: str) -> pd.DataFrame:
-        """
-         returns a dataframe with columns: ms_of_day,open,high,low,close,volume,count,date
-        """
-        raise DeprecationWarning('This method is deprecated')
-        if option_id in self.options_data:
-            return self.options_data[option_id]
-        else :
-            return None
-    
-    
 
     def plot_portfolio(self,
                     benchmark: Optional[str] = 'SPY',
