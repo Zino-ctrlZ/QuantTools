@@ -5,7 +5,8 @@ import pandas as pd
 from EventDriven.data import  HistoricTradeDataHandler
 from EventDriven.event import *
 from EventDriven.strategy import OptionSignalStrategy
-from EventDriven.portfolio import OptionSignalPortfolio
+# from EventDriven.portfolio import OptionSignalPortfolio
+from EventDriven.new_portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
 # from EventDriven.riskmanager import RiskManager
 from EventDriven.riskmanager.new_base import RiskManager
@@ -17,7 +18,8 @@ from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
 from pandas.tseries.offsets import BDay
-import time
+from EventDriven.types import EventTypes, SignalTypes
+from EventDriven.configs.core import BacktesterConfig
 
 LOGGER = setup_logger("OptionSignalBacktest")
 class OptionSignalBacktest():
@@ -27,10 +29,10 @@ class OptionSignalBacktest():
     
     def __init__(self, trades: pd.DataFrame, 
                  initial_capital: int | float =100000, 
-                 t_plus_n: float = 0,
                  symbol_list = None,
-                 finalize_trades: bool = True
-                    ) -> None:
+                 *,
+                 config: BacktesterConfig = None,
+                 ) -> None:
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -40,7 +42,7 @@ class OptionSignalBacktest():
                 Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
         
-        self.t_plus_n = t_plus_n
+        self.config = config or BacktesterConfig()
         trades = trades.copy()
         unadjusted = trades.copy() ## Store unadjusted trades for reference
         if trades.empty:
@@ -55,7 +57,6 @@ class OptionSignalBacktest():
                                                                               SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
                                                                               axis=1)
         self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
-        self.finalize_trades = finalize_trades
         self.__construct_data(trades, initial_capital, symbol_list)
         
     @property
@@ -70,7 +71,7 @@ class OptionSignalBacktest():
         
         #initialize critical components 
         self.eventScheduler = EventScheduler(self.start_date, self.end_date)
-        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list)
+        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list, finalize_trades=self.config.finalize_trades)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
         self.risk_manager = RiskManager(symbol_list=self.bars.symbol_list,
@@ -88,15 +89,17 @@ class OptionSignalBacktest():
         """
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
-        if self.t_plus_n > 0:
-            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
-            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
-            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
-        elif self.t_plus_n > 1:
+        if self.config.t_plus_n > 0:
+            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.config.t_plus_n} business days")
+            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
+            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
+        elif self.config.t_plus_n > 1:
             raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
         
     def run(self):
+        ## On every run, reset portfolio t_plus_n
+        self.portfolio.t_plus_n = self.config.t_plus_n
         while True: ##Loop through the dates
             # Get current event queue
             if self.eventScheduler.current_date is None: 
@@ -141,13 +144,11 @@ class OptionSignalBacktest():
                         print(f"Processing event: {event.type} {event.datetime}")
 
                         if event.type == EventTypes.SIGNAL.value:
-                            if not self.finalize_trades and self.eventScheduler.current_date == self.final_date:
-                                self.logger.info("Finalizing trades is disabled, skipping signal processing")
-                                continue
+                            # if not self.finalize_trades and self.eventScheduler.current_date == self.final_date:
+                            #     self.logger.info("Finalizing trades is disabled, skipping signal processing")
+                            #     continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
-                            # self.order_cache.setdefault(event.direction, {})\
-                            #     .setdefault(event.datetime, []).append(event)
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
@@ -161,6 +162,9 @@ class OptionSignalBacktest():
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
+                        if self.config.raise_errors:
+                            raise e
+                        
                         self.logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
                         print(f"Error processing event: {e}")   
 
