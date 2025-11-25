@@ -197,3 +197,4 @@ trade/helpers/*vol_resolve*.json
 # Adhoc Path
 EventDriven/notebooks/riskmanager_streamline/
 EventDriven/tests.py
+trade/assets/notebooks
