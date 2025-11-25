@@ -4,9 +4,8 @@ from dotenv import load_dotenv
 
 from EventDriven.helpers import generate_signal_id
 import datetime
-import os, os.path
+import os
 import pandas as pd
-import sys
 from EventDriven.types import SignalTypes
 from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import query_database # type: ignore
@@ -16,7 +15,7 @@ from EventDriven.event import MarketEvent, SignalEvent
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.helper import HOLIDAY_SET
 load_dotenv()
-logger = setup_logger('EventDriven.data')
+logger = setup_logger('EventDriven.data', stream_log_level="ERROR")
 
 
 
@@ -253,13 +252,18 @@ class HistoricTradeDataHandler(DataHandler):
     convert that to signals of 1 (for buy), -1 (for sell), 0 (for do nothing)
     """
     
-    def __init__(self, events: EventScheduler, trades_df: pd.DataFrame, symbol_list: Optional[list] = None): 
+    def __init__(self, 
+                 events: EventScheduler, 
+                 trades_df: pd.DataFrame, 
+                 symbol_list: Optional[list] = None,
+                 finalize_trades: bool = True): 
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
             events: EventScheduler
                 Event scheduler to push events to the event queue
         """
+        self.finalize_trades = finalize_trades
         trades_df = trades_df.copy()
         trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
         self.trades_df = trades_df
@@ -268,6 +272,7 @@ class HistoricTradeDataHandler(DataHandler):
         self._open_trade_data()
         self.options_data = {}
         self.symbol_list = symbol_list if symbol_list is not None else self.trades_df['Ticker'].unique().tolist()
+        
         
     def _open_trade_data(self): 
         """
@@ -294,8 +299,8 @@ class HistoricTradeDataHandler(DataHandler):
             
         #populate signal dataframe
         for _, row in self.trades_df.iterrows():
-            entry_time = row['EntryTime']
-            exit_time = row['ExitTime']
+            entry_time = pd.to_datetime(row['EntryTime'])
+            exit_time = pd.to_datetime(row['ExitTime'])
             ticker = row['Ticker']
             size = row['Size']
             signal : SignalTypes = SignalTypes.LONG.value if size > 0 else SignalTypes.SHORT.value
@@ -306,7 +311,17 @@ class HistoricTradeDataHandler(DataHandler):
             
             #schedule signals
             self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=generate_signal_id(ticker, entry_time, signal)))
-            self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, entry_time, signal)))
+            
+            # If finalize_trades is True, we ensure that exit_time is not NaT
+            if self.finalize_trades:
+                exit_time = exit_time if pd.notna(exit_time) else self.end_date
+            
+            ## If exit_time is not NaT, schedule exit signal
+            if pd.notna(exit_time):
+                self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, entry_time, signal)))
+            else:
+                logger.critical(f"Exit time is NaT for trade with signal_id {row['signal_id']}. No exit signal scheduled.")
+                
         
         signal_columns = ['Date'].append(unique_tickers)
         self.latest_signal_df = pd.DataFrame(columns=signal_columns)
