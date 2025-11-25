@@ -280,12 +280,13 @@ class HistoricTradeDataHandler(DataHandler):
         1 for LONG, 2 for SHORT, -1 for EXIT
         """
         unique_tickers = self.trades_df['Ticker'].unique()
-        # self.symbol_list = unique_tickers
         self.trades_df['EntryTime'] = pd.to_datetime(self.trades_df['EntryTime'])
         self.trades_df['ExitTime'] = pd.to_datetime(self.trades_df['ExitTime'])
         
         self.start_date = self.trades_df['EntryTime'].min()
         self.end_date = self.trades_df['ExitTime'].max()
+        if pd.isna(self.end_date):
+            raise ValueError("End date cannot be NaT. Please ensure AT LEAST one trade has ExitTime that is not NaT.")
         date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
         date_range = date_range[~date_range.isin(HOLIDAY_SET)]
         #initialize signal dataframe

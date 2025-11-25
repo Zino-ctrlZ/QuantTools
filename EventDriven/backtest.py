@@ -1,9 +1,7 @@
 from queue import Empty as emptyEventQueue
-from dbase.DataAPI.ThetaData import * #type: ignore
-from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd
 from EventDriven.data import  HistoricTradeDataHandler
-from EventDriven.event import *
+from EventDriven.event import Event
 from EventDriven.strategy import OptionSignalStrategy
 # from EventDriven.portfolio import OptionSignalPortfolio
 from EventDriven.new_portfolio import OptionSignalPortfolio
@@ -14,7 +12,6 @@ from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday
 from EventDriven.helpers import generate_signal_id
-from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
 from pandas.tseries.offsets import BDay
@@ -91,8 +88,11 @@ class OptionSignalBacktest():
         """
         if self.config.t_plus_n > 0:
             self.logger.info(f"Adjusting EntryTime and ExitTime by {self.config.t_plus_n} business days")
+            ## Adjust EntryTime and ExitTime by t_plus_n business days
             trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
-            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
+
+            ## Only adjust ExitTime if it is not NaT
+            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0) if pd.notna(x) else x) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
         elif self.config.t_plus_n > 1:
             raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
@@ -169,12 +169,14 @@ class OptionSignalBacktest():
                         print(f"Error processing event: {e}")   
 
         
-    def clean_run(self, trades: pd.DataFrame = pd.DataFrame(), initial_capital: int = None):
+    def clean_run(self, trades: pd.DataFrame = None, initial_capital: int = None):
         """
             Rerun the backtest with fresh set of data, the only set of data that persists are the last set of trades and capital data passed to the backtest, unless new data is passed in this function
         """
+        if trades is None:
+            trades = pd.DataFrame()
         clean_trades = self.bars_trades if trades.empty else trades
-        clean_capital = self.initial_capital if initial_capital == None else initial_capital
+        clean_capital = self.initial_capital if initial_capital is None else initial_capital
         self.__construct_data(clean_trades, clean_capital)
         self.run()
 
