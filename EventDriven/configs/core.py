@@ -1,7 +1,7 @@
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict
 import numbers
-from typing import Union, Tuple, List, Literal
+from typing import Union, Tuple, List, Literal, Dict
 from datetime import datetime, date
 import pandas as pd
 from abc import ABC
@@ -192,8 +192,46 @@ class PortfolioManagerConfig(BaseConfigs):
     """
     Configuration class for Backtest related settings.
     """
+    weights_haircut: float = 0.0  # Haircut applied to weights
 
-    t_plus_n: int = 1  # T+N settlement for orders
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class BacktesterConfig(BaseConfigs):
+    """
+    Configuration class for Backtest related settings.
+    """
+
+    t_plus_n: int = 1
+    finalize_trades: bool = False
+    raise_errors: bool = False
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class CashAllocatorConfig(BaseConfigs):
+    """
+    Threshold-based allocator for per-symbol max cash buckets.
+    """
+
+    thresholds: List[Tuple[float, float]] = Field(
+        default_factory=lambda: [
+            (500, 4),
+            (300, 3),
+            (200, 2),
+            (100, 1),
+            (0, 0.5),
+        ],
+        description="(min_alloc, bucket_value) pairs evaluated in order; first match wins.",
+    )
+
+    def alloc_for_weight(self, weight: float, cash: float) -> float:
+        alloc = weight * cash
+        for min_alloc, value in self.thresholds:
+            if alloc >= min_alloc:
+                return value
+        return 0.0
+
+    def build_max_cash_map(self, weights: Dict[str, float], cash: float) -> Dict[str, float]:
+        return {sym: self.alloc_for_weight(w, cash) for sym, w in weights.items()}
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class RiskManagerConfig(BaseConfigs):
