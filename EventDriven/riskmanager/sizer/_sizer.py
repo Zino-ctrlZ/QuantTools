@@ -22,8 +22,8 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
-    from EventDriven.riskmanager.base import RiskManager
-    from EventDriven.portfolio import OptionSignalPortfolio
+    from EventDriven.riskmanager.new_base import RiskManager
+    from EventDriven.new_portfolio import OptionSignalPortfolio
 
 
 logger = setup_logger('QuantTools.EventDriven.riskmanager.sizer')
