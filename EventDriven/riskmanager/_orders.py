@@ -8,7 +8,7 @@ from EventDriven.riskmanager.utils import get_persistent_cache, set_use_temp_cac
 from EventDriven.dataclasses.orders import OrderRequest
 
 if TYPE_CHECKING:
-    from EventDriven.riskmanager.base import OrderPicker
+    from EventDriven.riskmanager.picker.order_picker import OrderPicker
 
 logger = setup_logger('EventDriven.riskmanager._orders', stream_log_level="WARNING")
 
