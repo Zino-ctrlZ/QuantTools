@@ -123,7 +123,11 @@ class RiskManager:
         self.initial_capital = initial_capital
         self.symbol_list = symbol_list
         self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
+        if len(self.order_cache.values()) > 0:
+            logger.info(f"Order cache loaded with {len(self.order_cache.values())} orders")
         self.analysis_cache = load_riskmanager_cache(target="position_analysis", create_on_missing=True, clear_on_exit=True)
+        if len(self.analysis_cache.values()) > 0:
+            logger.info(f"Position analysis cache loaded with {len(self.analysis_cache.values())} analyses")
 
 
     def clear_caches(self):
@@ -223,7 +227,7 @@ class RiskManager:
 
         if self.config.cache_orders:
             logger.info(f"Caching order for position ID: {position_id}")
-            self.order_cache[position_id] = updated_pos_state.order
+            self.order_cache[position_id] = updated_pos_state
             
         order = updated_pos_state.order.to_dict()
 
