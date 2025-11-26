@@ -8,7 +8,6 @@ from .utils import *
 from .utils import (logger, 
                     get_timeseries_start_end,
                     set_deleted_keys,
-                    date_in_cache_index,
                     add_skip_columns,
                     _clean_data,
                     PERSISTENT_CACHE,
