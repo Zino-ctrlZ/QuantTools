@@ -204,6 +204,9 @@ class BacktesterConfig(BaseConfigs):
     t_plus_n: int = 1
     finalize_trades: bool = False
     raise_errors: bool = False
+    min_slippage_pct: float = 0.075
+    max_slippage_pct: float = 0.15
+    
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -239,7 +242,7 @@ class RiskManagerConfig(BaseConfigs):
     Configuration class for Risk Manager related settings.
     """
 
-    max_slippage: float = 0.25
-    min_slippage: float = 0.16
+    min_slippage_pct: float = 0.25
+    max_slippage_pct: float = 0.16
     cache_orders: bool = False
     cache_position_analysis: bool = False
