@@ -120,7 +120,7 @@ def load_riskmanager_cache(target: str = None,
                 if create_on_missing:
                     logger.warning(f"Creating new cache for unknown target: {target}")
                     clear_on_exit = kwargs.get('clear_on_exit', True)
-                    return CustomCache(BASE, fname = f"rm_{target}", clear_on_exit=clear_on_exit)
+                    return CustomCache(BASE, fname = f"extra_{target}", clear_on_exit=clear_on_exit)
                 raise ValueError(f"Unknown target: {target}")   
             
     return (spot_timeseries, 
