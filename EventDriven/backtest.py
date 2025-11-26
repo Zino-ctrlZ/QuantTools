@@ -38,8 +38,10 @@ class OptionSignalBacktest():
             t_plus_n: int
                 Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
         """
+        if config is not None and not isinstance(config, BacktesterConfig):
+            raise TypeError("config must be an instance of BacktesterConfig or None")
         
-        self.config = config or BacktesterConfig()
+        self.config: BacktesterConfig = config or BacktesterConfig()
         trades = trades.copy()
         unadjusted = trades.copy() ## Store unadjusted trades for reference
         if trades.empty:
@@ -98,9 +100,15 @@ class OptionSignalBacktest():
         return trades
         
     def run(self):
-        ## On every run, reset portfolio t_plus_n
+        ## Runtime configurations changes
         self.portfolio.t_plus_n = self.config.t_plus_n
-        while True: ##Loop through the dates
+        self.executor.max_slippage_pct = self.config.max_slippage_pct
+        self.executor.min_slippage_pct = self.config.min_slippage_pct
+        self.risk_manager.config.min_slippage_pct = self.config.min_slippage_pct
+        self.risk_manager.config.max_slippage_pct = self.config.max_slippage_pct
+
+        ## Begin backtest by looping through event scheduler dates
+        while True:
             # Get current event queue
             if self.eventScheduler.current_date is None: 
                 self.logger.info("No more dates left.")
