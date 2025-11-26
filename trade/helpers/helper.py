@@ -59,7 +59,7 @@ from pprint import pprint, pformat
 import atexit
 import signal
 import shortuuid
-from trade import get_pool_enabled
+from trade import get_pool_enabled, register_signal
 from trade.helpers.pools import runProcesses
 from trade.helpers.threads import runThreads
 
@@ -249,6 +249,8 @@ class CustomCache(Cache):
             data=state['data']
         )
 
+    def __hash__(self):
+        return super().__hash__()
 
 
     @property
@@ -292,8 +294,9 @@ class CustomCache(Cache):
         depending on self._clear_on_exit.
         """
         if self._clear_on_exit:
-            atexit.register(self._on_exit)
-            signal.signal(signal.SIGTERM, self._on_signal)
+            # atexit.register(self._on_exit)
+            # signal.signal(signal.SIGTERM, self._on_signal)
+            register_signal(signum=15, signal_func=self._on_exit)
         else:
             # just record the dir for later weekly cron clean-up
             with open(self.register_location, 'r') as f:
@@ -334,11 +337,11 @@ class CustomCache(Cache):
     
     def __repr__(self):
         sample_keys = list(self)[:10]
-        return f"<CustomCache {len(self)} entries; sample_keys={sample_keys}>"
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample_keys={sample_keys}>"
 
     def __str__(self):
         sample = dict(list(self.items())[:10])
-        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample={pformat(sample)}>"
     
     def setdefault(self, key, default):
         if key not in self:
@@ -904,12 +907,12 @@ def binomial(K: Union[int, float], exp_date: str, sigma: float, r: float = None,
             today = datetime.today()
             start = today.strftime("%Y-%m-%d")
     if tick is not None:
-        stock = Stock(tick)
-        if y is None:
-            y = stock.div_yield()
-        if S0 is None:
-            S0 = stock.prev_close()
-            S0 = S0.close
+        logger.info(f"This is no longer supported. Please pass in S0 and y directly. Ticker passed: {tick}")
+        # if y is None:
+        #     y = stock.div_yield()
+        # if S0 is None:
+        #     S0 = stock.prev_close()
+        #     S0 = S0.close
     else:
         if y is None:
             y = 0
