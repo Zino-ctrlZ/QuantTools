@@ -2,7 +2,6 @@
 This module defines the Trade class for tracking buy and sell transactions for a trade.
 """
 import pandas as pd
-from copy import deepcopy
 from EventDriven.tradeLedger import TradeLedger
 from EventDriven.event import FillEvent
 
@@ -125,7 +124,8 @@ class Trade:
                 stats['UnrealizedPnL'] = 0
                 
             # Calculate total PnL
-            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] - abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
+            ## Entry Price already includes commission and slippage costs
+            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] #- abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
             
             # Calculate return percentage
             if stats['TotalEntryCost'] > 0:
