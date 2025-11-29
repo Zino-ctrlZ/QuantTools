@@ -12,6 +12,17 @@ if TYPE_CHECKING:
 
 logger = setup_logger('EventDriven.riskmanager._orders', stream_log_level="WARNING")
 
+def order_failed(order: Dict[str, Any]) -> bool:
+    """
+    Check if the order result indicates a failure.
+
+    Args:
+        order (Dict[str, Any]): The order dictionary containing the result.
+    Returns:
+        bool: True if the order result indicates failure, False otherwise.
+    """
+    return order['result'] != ResultsEnum.SUCCESSFUL.value
+
 def resolve_schema(schema: OrderSchema, 
                    tries: int, 
                    max_dte_tolerance: int, 
@@ -38,6 +49,7 @@ def resolve_schema(schema: OrderSchema,
     Returns:
         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
     """
+    tick = schema['tick']
 
     ##0). Max schema tries
     if tries >= max_tries:
@@ -46,25 +58,25 @@ def resolve_schema(schema: OrderSchema,
     #1). DTE Resolve
     tries +=1
     if schema['dte_tolerance'] <= max_dte_tolerance:
-        logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
+        logger.info(f"Resolving Schema ({tick}): {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10 from {schema['dte_tolerance']} to {schema['dte_tolerance'] + 20}")
         schema['dte_tolerance'] += 20
         return schema, tries
     
     #2). Min Moneyness Resolve
     elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
-        logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
+        logger.info(f"Resolving Schema ({tick}): {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1 from {schema['min_moneyness']} to {schema['min_moneyness'] - 0.1}")
         schema['min_moneyness'] -= 0.1
         return schema, tries    
 
     #3). Max Moneyness Resolve
     elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
-        logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
+        logger.info(f"Resolving Schema ({tick}): {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1 from {schema['max_moneyness']} to {schema['max_moneyness'] + 0.1}")
         schema['max_moneyness'] += 0.1
         return schema, tries
     
     #4). Close Resolve
     elif schema['max_total_price'] <= max_close:
-        logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
+        logger.info(f"Resolving Schema ({tick}): {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5 from {schema['max_total_price']} to {schema['max_total_price'] + 1}")
         schema['max_total_price'] += 1
         return schema, tries
     
@@ -128,7 +140,7 @@ def order_resolve_loop(
         schema_as_tuple = tuple(schema.data.items())
         use_request = True
 
-    while order['result'] != ResultsEnum.SUCCESSFUL.value:
+    while order_failed(order):
         logger.info(f"Failed to produce order with schema: {schema}, trying to resolve schema, on try {tries}")
         pack = resolve_schema(schema,
                                         tries = tries,
