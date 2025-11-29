@@ -1,8 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, Any
-from trade.helpers.helper import CustomCache, setup_logger
+from trade.helpers.helper import  setup_logger
 from typing import TYPE_CHECKING
 from EventDriven.riskmanager.utils import parse_signal_id
 from trade.assets.helpers.utils import swap_ticker
@@ -10,7 +9,6 @@ import math
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
-import numpy as np
 import os
 from pathlib import Path
 from ._utils import (
@@ -238,7 +236,7 @@ class DefaultSizer(BaseSizer):
                 current_cash = overrides.pop('current_cash')
                 underlier_price_at_time = overrides.pop('underlier_price_at_time')
             except KeyError as e:
-                raise ValueError(f"Missing required override parameter: {e}")
+                raise ValueError(f"Missing required override parameter: {e}") from e
             self.register_position_id_starting_cash(signal_id, current_cash)
             self.register_signal_starting_cash(position_id, current_cash)
             delta = default_delta_limit(
@@ -393,8 +391,10 @@ class ZscoreRVolSizer(BaseSizer):
         """
         super().__init__(pm, rm, sizing_lev)
         
-        if isinstance(weights, (list)): weights = tuple(weights)  ## Ensure weights is a tuple
-        if isinstance(rvol_window, (list)): rvol_window = tuple(rvol_window)  ## Ensure rvol_window is a tuple if provided as a list
+        if isinstance(weights, (list)): 
+            weights = tuple(weights)  ## Ensure weights is a tuple
+        if isinstance(rvol_window, (list)): 
+            rvol_window = tuple(rvol_window)  ## Ensure rvol_window is a tuple if provided as a list
         
         rvol_window = self.__rvol_window_assert(vol_type, rvol_window)  ## Assert that the rvol_window is valid based on the vol_type
         assert vol_type in self.VOL_TYPES, f"vol_type must be one of {self.VOL_TYPES}, got {self.vol_type}"
@@ -416,7 +416,7 @@ class ZscoreRVolSizer(BaseSizer):
         self.rvol_timeseries = {} 
         self.z_i = {}
         self.vol_type = vol_type
-        self.norm_constant = kwargs.get('norm_constant', 1.0)  ## Normalization constant for the scaler
+        self.norm_constant = kwargs.get('norm_constant', kwargs.get('norm_const', 1.0))  ## Normalization constant for the scaler
         self.weights = weights  ## Weights for the weighted mean calculation
         self.scaler = ZcoreScalar(
             rvol_window=self.rvol_window,
@@ -519,7 +519,7 @@ class ZscoreRVolSizer(BaseSizer):
                 current_cash = overrides.pop('current_cash')
                 underlier_price_at_time = overrides.pop('underlier_price_at_time')
             except KeyError as e:
-                raise ValueError(f"Missing required override parameter: {e}")
+                raise ValueError(f"Missing required override parameter: {e}") from e
             
             equivalent_delta_size = zscore_rvol_delta_limit(
                 cash_available=current_cash,

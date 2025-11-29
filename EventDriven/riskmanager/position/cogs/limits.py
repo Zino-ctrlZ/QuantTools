@@ -1,5 +1,6 @@
 
 import pandas as pd
+from dataclasses import dataclass
 from datetime import datetime
 from EventDriven.configs.core import LimitsEnabledConfig
 from EventDriven.dataclasses.states import NewPositionState
@@ -17,12 +18,22 @@ from EventDriven.dataclasses.states import (
 )
 from .analyze_utils import (
     analyze_position,
-    get_dte_from_trade_id,
-    get_moneyness_from_trade_id,
+    get_dte_and_moneyness_from_trade_id,
 )
-from .vars import MEASURES
+from .vars import MEASURES_SET
 logger = setup_logger('EventDriven.riskmanager.position.cogs.limits', stream_log_level="WARNING")
 
+@dataclass
+class _LimitsMetaData:
+    trade_id: str
+    date: datetime
+    signal_id: str
+    scalar: float
+    sizing_lev: float
+    delta_lmt: float
+    delta: Optional[float] = None
+    option_price: Optional[float] = None
+    undl_price: Optional[float] = None
 
 class LimitsAndSizingCog(BaseCog):
     """
@@ -38,6 +49,7 @@ class LimitsAndSizingCog(BaseCog):
     ):
         self._sizer_configs: Optional[Union[DefaultSizerConfigs, ZscoreSizerConfigs]] = sizer_configs
         self.position_limits: Dict[str, PositionLimits] = {}
+        self.position_metadata: Dict[str, _LimitsMetaData] = {}
         self.underlier_list = underlier_list if underlier_list is not None else []
         if config is None:
             config = LimitsEnabledConfig()
@@ -106,7 +118,32 @@ class LimitsAndSizingCog(BaseCog):
         """
         self._calculate_limits(new_pos_state)
         self._update_position_quantity(new_pos_state)
+        self._create_position_metadata(new_pos_state)
         return new_pos_state
+    
+    def _create_position_metadata(self, new_pos_state: NewPositionState) -> None:
+        """
+        Create and store metadata for the new position.
+        """
+        order = new_pos_state.order
+        request = new_pos_state.request
+        undl_data = new_pos_state.undl_at_time_data
+        option_price = new_pos_state.at_time_data.get_price()
+        delta = new_pos_state.at_time_data.delta
+        scalar = 1 if isinstance(self.sizer, DefaultSizer) else self.sizer.scaler.get_scaler_on_date(sym=new_pos_state.symbol, date=request.date)
+        metadata = _LimitsMetaData(
+            trade_id=order["data"]["trade_id"],
+            date=request.date,
+            signal_id=order["signal_id"],
+            scalar=scalar,
+            sizing_lev=self.sizer_configs.sizing_lev,
+            delta=delta,
+            option_price=option_price,
+            undl_price=undl_data.chain_spot["close"],
+            delta_lmt=self.position_limits[order["data"]["trade_id"]].delta,
+        )
+        logger.info(f"Storing position metadata: {metadata}")
+        self.position_metadata[order["data"]["trade_id"]] = metadata
 
     def _calculate_limits(self, new_pos_state: NewPositionState) -> float:
         """
@@ -160,25 +197,32 @@ class LimitsAndSizingCog(BaseCog):
         bkt_info = portfolio_context.portfolio_meta
         opinions = []
 
+        ## Pre-compute commonly used values (Task #5 optimization)
+        strat_enabled_limits = self.config.enabled_limits
+        bkt_start_date = bkt_info.start_date
+        t_plus_n = bkt_info.t_plus_n
+        last_updated = portfolio_state.last_updated
+        t_plus_n_timedelta = pd.Timedelta(days=t_plus_n)
+
         for position in positions:
-            strat_enabled_limits = self.config.enabled_limits
             trade_id = position.trade_id
+            scaling_qty = position.quantity if not position.current_position_data.is_qty_scaled else 1
             dte_limit = self.position_limits[trade_id].dte
             moneyness_limit = self.position_limits[trade_id].moneyness
-            greeks_limit = self.position_limits[trade_id].__dict__
-            greeks_limit = {k: v for k, v in greeks_limit.items() if k in MEASURES}
-            greek_exposure = position.current_position_data.__dict__
-            greek_exposure = {k: v for k, v in greek_exposure.items() if k in MEASURES}
+            
+            ## Optimized dictionary filtering (Task #3)
+            ## Direct key access with MEASURES_SET for O(1) lookup
+            greeks_limit = {k: v for k, v in self.position_limits[trade_id].__dict__.items() if k in MEASURES_SET}
+            greek_exposure = {k: v * scaling_qty for k, v in position.current_position_data.__dict__.items() if k in MEASURES_SET}
+            
             qty = position.quantity
-            moneyness_list = get_moneyness_from_trade_id(
+            
+            ## Use combined function to parse trade_id only once (performance optimization)
+            dte, moneyness_list = get_dte_and_moneyness_from_trade_id(
                 trade_id=trade_id,
+                check_date=position.last_updated,
                 check_price=position.current_underlier_data.chain_spot["close"],
-                check_date=position.last_updated,
-                start=bkt_info.start_date,
-            )
-            dte = get_dte_from_trade_id(
-                trade_id=trade_id,
-                check_date=position.last_updated,
+                start=bkt_start_date,
             )
 
             ## Analyze position
@@ -192,25 +236,25 @@ class LimitsAndSizingCog(BaseCog):
                 qty=qty,
                 moneyness_list=moneyness_list,
                 strategy_enabled_actions=strat_enabled_limits,
-                t_plus_n=bkt_info.t_plus_n,
+                t_plus_n=t_plus_n,
+                tick=position.underlier_tick,
+                signal_id=position.signal_id,
             )
 
             ## Update analysis_date
-            action.analysis_date = portfolio_state.last_updated
-            action.effective_date = portfolio_state.last_updated + pd.Timedelta(days=bkt_info.t_plus_n)
-            action.verbose_info = f"""
-            Analysis Date: {action.analysis_date}
-            Effective Date: {action.effective_date}
-            Trade ID: {trade_id}
-            DTE: {dte}
-            Moneyness List: {moneyness_list}
-            Greek Exposure: {greek_exposure}
-            Position Quantity: {qty}
-            Action: {action.action}
-            Limits Applied: DTE Limit - {dte_limit}, Moneyness Limit - {moneyness_limit}, Greek Limits - {greeks_limit}
-            Analysis performed on {datetime.now()}
-            Analysis generated by LimitsAndSizingCog
-            """
+            action.analysis_date = last_updated
+            action.effective_date = last_updated + t_plus_n_timedelta
+            
+            ## Only generate verbose_info for non-HOLD actions (Task #4 optimization)
+            if action.action != "HOLD":
+                action.verbose_info = (
+                    f"Analysis: {action.analysis_date} | Effective: {action.effective_date} | "
+                    f"Trade: {trade_id} | DTE: {dte} | Moneyness: {moneyness_list} | "
+                    f"Greeks: {greek_exposure} | Qty: {qty} | Action: {action.action} | "
+                    f"Limits: DTE={dte_limit}, MN={moneyness_limit}, Greeks={greeks_limit}"
+                )
+            else:
+                action.verbose_info = None
             position.action = action
             opinions.append(position)
         return CogActions(opinions=opinions, strategy_id="", date=portfolio_context.date, source_cog=self.name)

@@ -12,7 +12,7 @@ import pandas as pd
 from typing import List
 from datetime import datetime
 from trade.helpers.Logging import setup_logger
-from EventDriven.riskmanager.picker.order_picker import OrderPicker
+from EventDriven.riskmanager.picker.order_picker import OrderPicker, order_failed
 from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 from EventDriven.riskmanager.position.analyzer import PositionAnalyzer
 from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog
@@ -113,21 +113,32 @@ class RiskManager:
         self.symbol_list = symbol_list
 
         ## Core Classes
-        self.order_picker = OrderPicker(start, end)
-        self.market_data = BacktestTimeseries(_start=self.ts_start, _end=self.ts_end)
-        self.position_analyzer = PositionAnalyzer()
-        lmt_cog = LimitsAndSizingCog(underlier_list=self.symbol_list)
+        self.order_picker: OrderPicker = OrderPicker(start, end)
+        self.market_data: BacktestTimeseries = BacktestTimeseries(_start=self.ts_start, _end=self.ts_end)
+        self.position_analyzer: PositionAnalyzer = PositionAnalyzer()
+        lmt_cog: LimitsAndSizingCog = LimitsAndSizingCog(underlier_list=self.symbol_list)
         self.position_analyzer.add_cog(lmt_cog)
 
         ## Misc Attributes
         self.initial_capital = initial_capital
         self.symbol_list = symbol_list
+
+        ## Initialize on disk caches. These will be cleared on exit.
+
+        ##Order Cache
         self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
         if len(self.order_cache.values()) > 0:
             logger.info(f"Order cache loaded with {len(self.order_cache.values())} orders")
+
+        ##Position Analysis Cache
         self.analysis_cache = load_riskmanager_cache(target="position_analysis", create_on_missing=True, clear_on_exit=True)
         if len(self.analysis_cache.values()) > 0:
             logger.info(f"Position analysis cache loaded with {len(self.analysis_cache.values())} analyses")
+
+        ##Order Request Cache
+        self.order_request_cache = load_riskmanager_cache(target="order_request_cache", create_on_missing=True, clear_on_exit=True)
+        if len(self.order_request_cache.values()) > 0:
+            logger.info(f"Order request cache loaded with {len(self.order_request_cache.values())} requests")
 
 
     def clear_caches(self):
@@ -177,17 +188,30 @@ class RiskManager:
 
         ## Get order
         print(f"Generating order for request: {req}")
+        if self.config.cache_order_requests:
+            logger.info(f"Caching order request for signal ID: {req.signal_id}")
+            self.order_request_cache[req.signal_id] = req
         order = self.order_picker.get_order(request=req).to_dict()
         logger.info(f"Order generated: {order}")
 
         ## Process order
-        if order["result"] == ResultsEnum.SUCCESSFUL.value:
+
+        if not order_failed(order):
             print(f"\nOrder Received: {order}\n")
             position_id = order["data"]["trade_id"]
         else:
             print(f"\nOrder Failed: {order}\n")
             logger.info(f"Signal ID: {req.signal_id}, Unable to produce order, returning None")
-            return order
+            failed_order_state = NewPositionState(
+                trade_id="None",
+                symbol=req.symbol,
+                order=Order.from_dict(order),
+                request=req,
+                at_time_data=None,
+                undl_at_time_data=None,
+                limits=None
+            )
+            return failed_order_state
 
         ## Get position data
         logger.info(f"Retrieving position data for position ID: {position_id}")
@@ -213,6 +237,7 @@ class RiskManager:
             trade_id=position_id,
             order=Order.from_dict(order),
             request=req,
+            symbol=req.symbol,
             at_time_data=at_time_data,
             undl_at_time_data=undl_at_time_data,
         )
@@ -220,14 +245,15 @@ class RiskManager:
         updated_pos_state = self.position_analyzer.on_new_position(new_position_state=new_pos_state)
         logger.info(f"Quantity after analysis: {updated_pos_state.order.data['quantity']}")
 
-        if self.config.cache_orders:
-            logger.info(f"Caching order for position ID: {position_id}")
-            self.order_cache[position_id] = updated_pos_state.order
-            
 
         if self.config.cache_orders:
             logger.info(f"Caching order for position ID: {position_id}")
             self.order_cache[position_id] = updated_pos_state
+
+        q = updated_pos_state.order.data['quantity']
+        if q == 0:
+            logger.warning(f"Final calculated position size is 0 for order {position_id}. Order will not be placed.")
+            updated_pos_state.order["result"] = ResultsEnum.POSITION_SIZE_ZERO.value
             
         order = updated_pos_state.order.to_dict()
 

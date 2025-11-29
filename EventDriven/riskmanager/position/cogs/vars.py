@@ -7,6 +7,7 @@ from dbase.database.SQLHelpers import DatabaseAdapter
 logger = setup_logger("algo.positions.analyze")
 db = DatabaseAdapter()
 MEASURES = ("delta", "gamma", "vega", "theta")
+MEASURES_SET = frozenset(MEASURES)  # O(1) lookup for filtering performance
 ACTIONABLE_ANALYSIS: List[EventTypes] = [
     EventTypes.EXERCISE,
     EventTypes.ROLL,

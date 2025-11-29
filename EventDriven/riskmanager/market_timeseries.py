@@ -25,6 +25,7 @@ import numpy as np
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
+from module_test.raw_code.DataManagers.DataManagers import set_skip_mysql_query
 
 logger = setup_logger('EventDriven.riskmanager.market_timeseries', stream_log_level="WARNING")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
@@ -43,6 +44,7 @@ class BacktestTimeseries:
         self.position_data_cache = load_riskmanager_cache(target="position_data")
         self.special_dividends = load_riskmanager_cache(target="special_dividend")
         self.splits = load_riskmanager_cache(target="splits_raw")
+        self.adjusted_strike_cache = load_riskmanager_cache(target="adjusted_strike_cache")
         self.rf_timeseries = get_risk_free_rate_helper()["annualized"]
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
@@ -120,17 +122,21 @@ class BacktestTimeseries:
         if position_data.empty:
             logger.critical(f"Position data for {position_id} not found in cache.")
             return None
-        date = pd.to_datetime(date).strftime("%Y-%m-%d")
+        ## OPTIMIZATION: Accept pre-formatted date string to avoid repeated conversion
+        if not isinstance(date, str):
+            date = pd.to_datetime(date).strftime("%Y-%m-%d")
         if date not in position_data.index:
             logger.critical(f"Date {date} not found in position data for {position_id}.")
             return None
         row = position_data.loc[date]
-        skips = {}
-        for col in self._skip_calc_config.skip_columns:
-            skips[col] = {
+        ## OPTIMIZATION: Dict comprehension for skip dict building (Task #4)
+        skips = {
+            col: {
                 "skip_day": row.get(f"{col}_skip_day", False),
                 "skip_day_count": row.get(f"{col}_skip_day_count", 0),
             }
+            for col in self._skip_calc_config.skip_columns
+        }
         return AtTimePositionData(
             position_id=position_id,
             date=date,
@@ -149,6 +155,7 @@ class BacktestTimeseries:
         """
         Calculate Greeks for a given position at a specific date.
         """
+        set_skip_mysql_query(True)
 
         logger.info(
             f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {position_id}, Date: {date}"
@@ -334,7 +341,8 @@ class BacktestTimeseries:
         for pack in splits:
             if compare_dates.inbetween(
                 pack[0],
-                self.start_date,
+                # self.start_date,
+                check_date,
                 self.end_date,
             ):
                 pack = list(pack)  ## Convert to list to append later
@@ -344,7 +352,8 @@ class BacktestTimeseries:
         for pack in dividends.items():
             if compare_dates.inbetween(
                 pack[0],
-                self.start_date,
+                # self.start_date,
+                check_date,
                 self.end_date,
             ):
                 pack = list(pack)
@@ -359,7 +368,11 @@ class BacktestTimeseries:
 
         ## If there are no splits, we can just load the data
         if not to_adjust_split:
+            logger.info(f"No splits or dividends to adjust for {opttick}, loading data directly")
             data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
+            data["adj_strike"] = meta["strike"]
+            data['factor'] = 1.0
+            self.adjusted_strike_cache[opttick] = data['adj_strike']
             return data[
                 (data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
                 & (data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
@@ -367,18 +380,28 @@ class BacktestTimeseries:
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
         else:
+            logger.info(f"Generating data for {opttick} with splits: {to_adjust_split}")
             adj_meta = meta.copy()
             adj_strike = meta["strike"]
             logger.info(f"Generating data for {opttick} with splits: {to_adjust_split}")
 
-            ## Load the data for picked option first
-            first_set_data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
-            if compare_dates.is_before(check_date, to_adjust_split[0][0]):
-                first_set_data = first_set_data[first_set_data.index < to_adjust_split[0][0]]
-            else:
-                first_set_data = first_set_data[first_set_data.index >= to_adjust_split[0][0]]
+            # ## Load the data for picked option first
+            # first_set_data = self.load_position_data(opttick).copy()
 
+            # ## If check_date is before the first split date, first_set_data is only up to the first split date
+            # if compare_dates.is_before(check_date, to_adjust_split[0][0]):
+            #     first_set_data = first_set_data[first_set_data.index < to_adjust_split[0][0]]
+
+            # ## If check_date is after the first split date, first_set_data is only from the first split date onwards
+            # else:
+            #     first_set_data = first_set_data[first_set_data.index >= to_adjust_split[0][0]]
+            
+            # ## Add Strike to keep track of adjustments
+            # print(f"Initial adj_strike for {opttick}: {adj_strike}")
+            # first_set_data['adj_strike'] = adj_strike
+            # first_set_data['factor'] = 1.0
             segments = []
+            
 
             for event_date, factor, event_type in to_adjust_split:
                 if compare_dates.is_before(check_date, event_date):
@@ -406,12 +429,16 @@ class BacktestTimeseries:
                     adj_data = self.load_position_data(adj_opttick).copy()
                 else:
                     adj_data = self.options_cache[adj_opttick]
+                logger.info(f"Loaded data for adjusted option tick: {adj_opttick}")
 
                 # Slice around the event
                 if compare_dates.is_before(check_date, event_date):
                     adj_data = adj_data[adj_data.index >= event_date]
                 else:
                     adj_data = adj_data[adj_data.index < event_date]
+                
+                adj_data['adj_strike'] = adj_strike
+                adj_data['factor'] = factor
 
                 # Apply price transformation if SPLIT
                 ## PRICE_ON_TO_DO: No need to change this. These are necessary columns
@@ -425,6 +452,9 @@ class BacktestTimeseries:
                 segments.append(adj_data)
 
         base_data = self.load_position_data(opttick).copy()
+        base_data['adj_strike'] = meta['strike'] ## Original strike    
+        base_data['factor'] = 1.0
+
         first_event_date = to_adjust_split[0][0] if to_adjust_split else self.start_date
         if compare_dates.is_before(check_date, first_event_date):
             base_data = base_data[base_data.index < first_event_date]
@@ -441,4 +471,5 @@ class BacktestTimeseries:
             (final_data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
             & (final_data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
         ]
+        self.adjusted_strike_cache[opttick] = final_data['adj_strike']
         return final_data

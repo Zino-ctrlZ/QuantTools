@@ -120,6 +120,7 @@ class ZcoreScalar:
     weights: tuple
     vol_type: Literal['mean', 'weighted', 'window']
     norm_constant: int = 1.0
+    rvol_timeseries: dict = field(default_factory=dict)
     VOL_TYPES: ClassVar[set] = {'mean', 'weighted_mean', 'window'} ## TODO: Align ZscoreRvolSizer to this
     syms: list = field(default_factory=list)
     interval: str = '1d'
@@ -225,7 +226,7 @@ class ZcoreScalar:
                                        start_date=Y2_LAGGED_START_DATE,
                                        end_date=datetime.now(),
                                        interval=self.interval)
-            ts = timeseries.get_timeseries(sym=sym, interval=self.interval)
+            ts = timeseries.get_timeseries(sym=sym, interval=self.interval).spot['close']
             
             if self.vol_type == 'window':
                 func = lambda x: realized_vol(x, self.rvol_window)
@@ -235,12 +236,14 @@ class ZcoreScalar:
                 func = lambda x: mean_realized_vol(x, self.rvol_window)
             else:
                 raise ValueError(f"Unknown vol_type: {self.vol_type}")
-
-            def _callable(x, func=func):
-                return scaler(func(x), self.norm_constant, self.rolling_window)
-            self.scalers[sym] = _callable(ts.spot['close'])
+            
             
 
+            def _callable(sym, func=func, ts=ts):
+                self.rvol_timeseries[sym] = func(ts)
+                return scaler(self.rvol_timeseries[sym], self.norm_constant, self.rolling_window)
+            self.scalers[sym] = _callable(sym)
+            
 
     def append_syms(self, syms: list|str, ignore_load:bool = False):
         """

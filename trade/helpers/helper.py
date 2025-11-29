@@ -652,7 +652,21 @@ def retrieve_timeseries(tick,
         data['unadjusted_close'] = data.close * data.max_cum_split
         data['split_factor'] = data.max_cum_split / data.cum_split
         data['chain_price'] = data.close * data.split_factor
-        data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+        data = data[
+            [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "chain_price",
+                "unadjusted_close",
+                "split_ratio",
+                "cum_split",
+                "split_factor",
+                "max_cum_split",
+            ]
+        ]
         data['is_split_date'] = data['split_ratio'] != 1
         data.index = pd.to_datetime(data.index)
         ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
@@ -1507,6 +1521,18 @@ def not_trading_day(date: str|datetime, time_aware: bool = False) -> bool:
 
 
 def change_to_last_busday(end, offset = 1):
+    """
+    Change the end date to the last business day if it falls on a weekend or holiday.
+    If the time is before 9:30, move to the previous business day.
+    If the time is after 16:00, move to the same business day at 16:00.
+    params:
+        end: str or datetime
+        offset: int, number of business days to move back if end is not a business day
+            if offset < 0 it will move forward
+            if offset = 0 it will stay on the same day if it is a business day
+            if offset > 0 it will move back
+    returns: datetime
+    """
 
     
     #Enfore time is passed

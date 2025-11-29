@@ -99,14 +99,16 @@ def setup_logger(filename,stream_log_level = None,
     # Create a custom logger (root logger)
     logger = logging.getLogger(custom_logger_name)
     
-    # If logger already has handlers, it's already configured (prevents duplicate handlers on autoreload)
-    if logger.handlers:
-        return logger
-    
     ## Ensure file name - to some capacity - exists.
-    assert filename, f'Please Create a FILENAME Variable'
+    assert filename, 'Please Create a FILENAME Variable'
     notebook_name = filename
 
+    # Always remove existing handlers to prevent duplicates on autoreload
+    # This ensures clean state even when modules are reloaded
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+    logger.handlers = []
 
     # Define the log file path
     os.makedirs(project_root_log_dir, exist_ok=True)
@@ -116,11 +118,6 @@ def setup_logger(filename,stream_log_level = None,
     if not os.path.exists(log_file):
         with open(log_file, 'w'):
             pass  # Just create the file
-
-
-    # Remove all existing handlers (in case the logger was already configured)
-    # NOTE: This should not be needed now with the early return above, but kept for safety
-    logger.handlers = []
 
 
     # Set the log level for the root logger

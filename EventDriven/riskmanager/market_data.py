@@ -243,18 +243,24 @@ class MarketTimeseries:
             self._last_refresh = ny_now()
                     
 
-        if isinstance(index, (str, datetime)):
+        ## OPTIMIZATION: Consolidate type checks and conversions (Task #3)
+        if not isinstance(index, pd.Timestamp):
             index = pd.Timestamp(index)
-        if sym not in self._spot.get(interval, {}):
+        
+        ## OPTIMIZATION: Extract interval_data once to avoid repeated dict lookups (Task #8)
+        interval_spot = self._spot.get(interval, {})
+        interval_chain_spot = self._chain_spot.get(interval, {})
+        interval_dividends = self._dividends.get(interval, {})
+        
+        if sym not in interval_spot:
             raise ValueError(f"Symbol {sym} not found in timeseries data.")
-        if not (isinstance(index, pd.Timestamp) or isinstance(index, datetime)):
-            raise ValueError("Index must be a pandas Timestamp or datetime object.")
-        index = index.strftime('%Y-%m-%d')
-        spot = self._spot[interval][sym].loc[index] if sym in self._spot.get(interval, {}) else None
-        chain_spot = self._chain_spot[interval][sym].loc[index] if sym in self._chain_spot.get(interval, {}) else None
-        dividends = self._dividends[interval][sym].loc[index] if sym in self._dividends.get(interval, {}) else None
-        rates = self.rates.loc[index] if self.rates is not None else None
-        return AtIndexResult(spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index, rates=rates)
+        
+        index_str = index.strftime('%Y-%m-%d')
+        spot = interval_spot[sym].loc[index_str] if sym in interval_spot else None
+        chain_spot = interval_chain_spot[sym].loc[index_str] if sym in interval_chain_spot else None
+        dividends = interval_dividends[sym].loc[index_str] if sym in interval_dividends else None
+        rates = self.rates.loc[index_str] if self.rates is not None else None
+        return AtIndexResult(spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index_str, rates=rates)
     
     def calculate_additional_data(self,
                              factor: Literal['spot', 'chain_spot', 'dividends'],

@@ -5,12 +5,11 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict
 from EventDriven.types import ResultsEnum
-
-from ..utils import BASE, logger
-from trade.helpers.helper import CustomCache
+from trade.helpers.Logging import setup_logger
 from EventDriven.configs.core import ChainConfig
 
-order_cache = CustomCache(BASE, fname="order")
+logger = setup_logger('EventDriven.riskmanager.picker', stream_log_level="WARNING")
+# order_cache = CustomCache(BASE, fname="order")
 
 
 # --------- OrderSchema ---------
@@ -101,23 +100,26 @@ def filter_contracts(
         ## Add Moneyness filter
         lower_strike = spot * (min(min_moneyness, max_moneyness) * factor)
         upper_strike = spot * (max(min_moneyness, max_moneyness) * factor)
+        logger.info(f"Filtering contracts with strike range [{lower_strike:.2f}, {upper_strike:.2f}] on attempt {attempt + 1}")
         _filter &= df["strike"].between(lower_strike, upper_strike)
 
         ## Add Open Interest filter if specified
         if min_oi is not None:
+            logger.info(f"Applying minimum open interest filter: {min_oi}")
             _filter &= df["open_interest"] >= min_oi
 
         ## Add Percentage Spread filter if specified
         if max_pct_width is not None:
+            logger.info(f"Applying maximum percentage spread filter: {max_pct_width}")
             _filter &= df["pct_spread"] <= max_pct_width
 
         filtered = df[_filter].copy()
-
+        logger.info(f"Number of contracts after filtering: {len(filtered)}")
         attempt += 1
         factor *= 1 + increment  # Increase the range by a factor of (1 + increment) each attempt
     if filtered.empty:
         logger.critical(
-            f"Warning: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{lower_strike:.2f}, {upper_strike:.2f}] after {attempt} attempts."
+            f"Failed to filter contracts: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{lower_strike:.2f}, {upper_strike:.2f}] after {attempt} attempts."
         )
     return filtered.reset_index(drop=True)
 
@@ -188,7 +190,7 @@ def build_spread_by_ticks(df, schema, cache):
         ## 2. Largest Spread Open Interest (Bid + Ask)
         ## 3. Lowest Spread Price
         logger.critical(
-            f"No spreads found for {schema['option_type']} with DTE {schema['target_dte']} ± {schema['dte_tolerance']} and ticks {schema['spread_ticks']}."
+            f"Failed to find spreads: for {schema['option_type']} with DTE {schema['target_dte']} ± {schema['dte_tolerance']} and ticks {schema['spread_ticks']}."
         )
         return []
     if schema["structure_direction"] == "long":

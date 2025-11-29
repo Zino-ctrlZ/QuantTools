@@ -22,7 +22,7 @@ from ..utils import (
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
 from EventDriven.dataclasses.orders import OrderRequest
-from EventDriven.riskmanager._orders import order_resolve_loop  
+from EventDriven.riskmanager._orders import order_resolve_loop, order_failed 
 from EventDriven.types import Order
 logger = setup_logger('EventDriven.riskmanager.picker.order_picker')
 
@@ -112,7 +112,7 @@ class OrderPicker:
         """
         assert isinstance(schema, tuple), "Schema must be a tuple of items."
         schema = OrderSchema(dict(schema))
-        if schema["option_type"] == "C":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
             logger.info(
                 f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
             )
@@ -122,17 +122,20 @@ class OrderPicker:
             logger.info(
                 f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
             )
-        elif schema["option_type"] == "P":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        elif schema["option_type"].lower() == "p":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
             logger.info(
                 f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
             )
+        else:
+            raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
 
         chain = populate_cache_with_chain(schema["tick"], date, chain_spot, print_url=print_url)
 
         cache = get_cache("spot")
         cache = {k: v for k, v in cache.items()}
-
-        raw_order = build_strategy(chain, schema, spot, cache)
+        
+        
+        raw_order = build_strategy(chain, schema, chain_spot, cache)
         return extract_order(raw_order)
 
     def get_order(self, request: OrderRequest) -> Order:
@@ -234,6 +237,9 @@ def _get_open_order_backtest(
     ## Add necessary tags for identification
     order["signal_id"] = inputs.signal_id
     order["map_signal_id"] = inputs.signal_id
+    if order_failed(order):
+        logger.warning(f"Order failed to resolve for request: {request} with schema: {schema}")
+        return Order.from_dict(order)
     order["data"]["quantity"] = 1
     order["date"] = pd.to_datetime(request.date).date()
     order = Order.from_dict(order)
