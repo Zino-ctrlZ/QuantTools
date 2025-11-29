@@ -1,6 +1,5 @@
-import numpy as np
+
 import pandas as pd
-import pandas_market_calendars as mcal
 from pandas import DatetimeIndex
 from queue import Queue
 from typing import Dict, Optional
@@ -10,6 +9,7 @@ from EventDriven.event import Event, ExerciseEvent, FillEvent, OrderEvent, Signa
 from EventDriven.types import SignalTypes
 from trade.helpers.Logging import setup_logger
 
+logger = setup_logger("OptionSignalEventQueue")
 class EventQueue(Queue):
     """
         A custom queue class that only accepts event types, and enforces the order of events to handle close events before open event of the same signal id on the same day(queue)
@@ -17,7 +17,12 @@ class EventQueue(Queue):
     def __init__(self, maxsize=0):
         super().__init__(maxsize)
         self.events_list = []
-        self.logger = setup_logger('OptionSignalEventQueue')
+    
+    @property
+    def logger(self):
+        global logger
+        return logger
+
     
     def put(self, item: Event):
         """Overrides put to ensure only Event objects are added."""
@@ -34,7 +39,7 @@ class EventQueue(Queue):
         conflict_events = self.conflicts(item)
         if len(conflict_events) > 0:
             self.logger.warning(f"Pushing {item} to back of queue because conflicting events were found: {[str(e) for e in conflict_events]}")
-            print(f"Pushing {item} to back of queue because conflicting events were found: {[str(e) for e in conflict_events]}")
+
             self.put(item)
             return self.get_nowait()
         
@@ -163,7 +168,6 @@ class EventScheduler:
             return False
         
         if event_date_str not in self.events_map:
-            print(f"Event date {event_date_str} not found in backtest range.")
             self.logger.error(f"Event date {event_date_str} not found in backtest range")
             return False
         
