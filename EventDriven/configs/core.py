@@ -193,6 +193,7 @@ class PortfolioManagerConfig(BaseConfigs):
     Configuration class for Backtest related settings.
     """
     weights_haircut: float = 0.0  # Haircut applied to weights
+    roll_failed_orders: bool = True  # Whether signals that fail to be processed should be rolled forward
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -246,3 +247,4 @@ class RiskManagerConfig(BaseConfigs):
     max_slippage_pct: float = 0.16
     cache_orders: bool = False
     cache_position_analysis: bool = False
+    cache_order_requests: bool = False

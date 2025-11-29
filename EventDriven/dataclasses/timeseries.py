@@ -5,7 +5,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict, Field
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True, frozen=True)
 class AtTimeBaseData:
     """
     Base dataclass for at-time data representations.
@@ -21,6 +21,7 @@ class AtTimeBaseData:
     gamma: numbers.Number
     vega: numbers.Number
     theta: numbers.Number
+    is_qty_scaled: bool = False
 
     ## USE_{ITEMS} for choosing btwn bid/ask/close/midpoint
     use_price: str = "midpoint"
@@ -41,12 +42,12 @@ class AtTimeBaseData:
             raise ValueError(f"Invalid use_price value: {self.use_price}")
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True, frozen=True)
 class AtTimeOptionData(AtTimeBaseData):
     opttick: str
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True, frozen=True)
 class AtTimePositionData(AtTimeBaseData):
     position_id: str
     skips: Dict[str, Any] = Field(default_factory=dict)

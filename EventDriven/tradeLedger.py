@@ -55,6 +55,7 @@ class TradeLedger:
             'commission': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.commission),
             'market_value': normalize_dollar_amount(fill_event.market_value),
             'slippage': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.slippage),
+            'per_unit_slippage': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount_to_decimal(fill_event.slippage / fill_event.quantity),
             'total_cost': normalize_dollar_amount(fill_event.fill_cost),
             'aux_cost': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(abs(fill_event.commission) + abs(fill_event.slippage)),
             'direction': fill_event.direction

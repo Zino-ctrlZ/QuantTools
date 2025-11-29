@@ -14,8 +14,9 @@ class NewPositionState:
     trade_id: str
     order: Order
     request: OrderRequest
-    at_time_data: AtTimePositionData
-    undl_at_time_data: AtIndexResult
+    symbol: str
+    at_time_data: Optional[AtTimePositionData]
+    undl_at_time_data: Optional[AtIndexResult]
     limits: Optional[PositionLimits] = None
 
     def __repr__(self):
@@ -99,7 +100,8 @@ class StrategyChangeMeta:
     """
 
     date: datetime
-    actionables: List[PositionState] 
+    actionables: List[PositionState]
+    portfolio_meta: Optional[PortfolioMetaInfo] = None
 
     def __repr__(self):
         actionables = [x for x in self.actionables if x.action.type.value != "HOLD"]

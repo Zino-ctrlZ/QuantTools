@@ -41,6 +41,7 @@ class ResultsEnum(Enum):
     NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
     IS_WEEKEND = 'IS_WEEKEND'
     NO_CONTRACTS_FOUND = 'NO_CONTRACTS_FOUND'
+    POSITION_SIZE_ZERO = 'POSITION_SIZE_ZERO'
     
 class EventTypes(Enum): 
   SIGNAL = 'SIGNAL'
@@ -254,6 +255,13 @@ class Order:
         data_dict = d['data']
         
         # Convert nested data dict to OrderData object
+        if data_dict is None:
+            data_dict = {
+                'trade_id': None,
+                'long': None,
+                'short': None,
+                'close': None,
+                'quantity': None}
         order_data = OrderData(
             trade_id=data_dict['trade_id'],
             long=data_dict['long'],
@@ -263,10 +271,12 @@ class Order:
         )
         
         # Create and return Order object
+        raw_date = d.get('date')
+        date = pd.to_datetime(raw_date).date() if raw_date is not None else None
         return Order(
             result=d['result'],
             signal_id=d['signal_id'],
             map_signal_id=d['map_signal_id'],
-            date=pd.to_datetime(d['date']).date(),
+            date=date,
             data=order_data
         )
