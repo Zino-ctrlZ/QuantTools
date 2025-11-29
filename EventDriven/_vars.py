@@ -81,15 +81,17 @@ def load_riskmanager_cache(target: str = None,
         logger.info("Using Temporary Cache for RiskManager")        
         spot_timeseries = CustomCache(BASE/"temp", fname = "rm_spot_timeseries", expire_days=100)
         chain_spot_timeseries = CustomCache(BASE/"temp", fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
-        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", expire_days=100)
+        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", clear_on_exit=True)
         position_data = CustomCache(BASE/"temp", fname = "rm_position_data", clear_on_exit=True)
         dividend_timeseries = CustomCache(BASE/"temp", fname = "rm_dividend_timeseries", expire_days=100)
+        adjusted_strike_cache = CustomCache(BASE/"temp", fname = "rm_adjusted_strike_cache", expire_days=100)
     else:
         spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
         chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
         processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
         position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
         dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
+        adjusted_strike_cache = CustomCache(BASE, fname = "rm_adjusted_strike_cache", expire_days=100)
     
     ## Not dependent on USE_TEMP_CACHE, so always use the persistent cache.
     splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
@@ -116,6 +118,8 @@ def load_riskmanager_cache(target: str = None,
                 return splits_raw
             case 'special_dividend':
                 return special_dividend
+            case 'adjusted_strike_cache':
+                return adjusted_strike_cache
             case _:
                 if create_on_missing:
                     logger.warning(f"Creating new cache for unknown target: {target}")
