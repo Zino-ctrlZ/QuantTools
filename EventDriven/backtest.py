@@ -63,8 +63,8 @@ class OptionSignalBacktest():
         return LOGGER
     
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
-        self.start_date = pd.to_datetime(trades['EntryTime']).min() - BDay(1)
-        self.end_date = pd.to_datetime(trades['ExitTime']).max()
+        self.start_date = change_to_last_busday(pd.to_datetime(trades['EntryTime']).min() - BDay(1), 1).date() ## Move back a day if not business day
+        self.end_date = change_to_last_busday(pd.to_datetime(trades['ExitTime']).max(), -1).date() ## Move forward a day if not business day
         self.bars_trades = trades
         self.initial_capital = initial_capital
         
@@ -140,6 +140,8 @@ class OptionSignalBacktest():
                     self.eventScheduler.advance_date()
                     break
                 except Exception as e:
+                    if self.config.raise_errors:
+                        raise e
                     self.logger.error(f"Error fetching event: {e}\n{traceback.format_exc()}")
                     print(f"Error fetching event: {e}")
                     break
