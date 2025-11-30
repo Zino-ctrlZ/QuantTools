@@ -17,6 +17,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
+from typing import Any
 from pandas.tseries.offsets import BDay
 from trade import get_pool_enabled, PRICING_CONFIG
 from trade.helpers.helper import (IV_handler, 
@@ -1173,7 +1174,7 @@ class OptionDataManager(_ManagerLazyLoader,
 
 #### Save to Database Functions
 @log_error(logger) 
-def save_to_database(data_request: 'RequestParameter', 
+def save_to_database(data_request: Any, 
                      print_info: bool = False, 
                      pool: bool = None,
                      **kwargs) -> None:
@@ -2120,7 +2121,7 @@ def handle_extra_cols(extra_cols, type_, model):
         if extra_cols:
             assert all([x in ['ask', 'bid', 'open'] for x in extra_cols]), f"Expected extra_cols to be one of: ['ask', 'bid', 'open'] received {extra_cols}"
         
-        if type_ == 'spot':
+        if type_ == 'spot' and extra_cols:
               for col in extra_cols:
                 if col == 'ask':
                      return_cols.append('closeask')
@@ -2129,7 +2130,7 @@ def handle_extra_cols(extra_cols, type_, model):
                 elif col == 'open':
                      return_cols.append('open')
 
-        elif type_ == 'vol':
+        elif type_ == 'vol' and extra_cols:
             for col in extra_cols:
                 if col == 'ask':
                      return_cols.append(f'ask_{model}_iv')
@@ -2181,19 +2182,21 @@ def build_name_format(type_, model, extra_cols, default_fill):
             name_format[f"{default_fill}"] = f"{default_fill}_bs_iv"
 
             ## Handle extra columns
-            for col in extra_cols:
-                if col.lower() in ['open']:
-                    continue
-                name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
+            if extra_cols:
+                for col in extra_cols:
+                    if col.lower() in ['open']:
+                        continue
+                    name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
 
 
         elif model == 'binomial':
             name_format['close'] = 'binomial_iv'
             name_format[f"{default_fill}"] = f"{default_fill}_binomial_iv"
-            for col in extra_cols:
-                if col.lower() in ['open']:
-                    continue
-                name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
+            if extra_cols:
+                for col in extra_cols:
+                    if col.lower() in ['open']:
+                        continue
+                    name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
     
     elif type_ in ['greek', 'greeks']:
         if model == 'bs':
@@ -2269,7 +2272,7 @@ def _check_cache(data_request, query_category):
 
     if query_category in ['single', 'bulk']:
         exp = data_request.exp
-        start, end = pd.to_datetime(data_request.start_date), pd.to_datetime(data_request.end_date)
+        start, _ = pd.to_datetime(data_request.start_date), pd.to_datetime(data_request.end_date)
     else:
         date = pd.to_datetime(data_request.date).date()
 
@@ -2290,7 +2293,8 @@ def _check_cache(data_request, query_category):
     elif query_category == 'chain':
         pass
     
-    else: raise ValueError("Unknown query_category. Recieved {query_category}".format(query_category))
+    else: 
+        raise ValueError(f"Unknown query_category. Recieved {query_category}")
 
     # 3) Get Data from db cache
     cache_data = DB_CACHE.get(key)

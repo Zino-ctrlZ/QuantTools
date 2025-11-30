@@ -1,18 +1,37 @@
 
 import pandas as pd
-import numpy as np
 from trade.assets.Stock import Stock
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData import (resample)
-from trade.helpers.pools import  parallel_apply
-from trade.helpers.decorators import log_error, log_error_with_stack, log_time
-from trade.helpers.helper_types import OptionModelAttributes
 from dateutil.relativedelta import relativedelta
-from pandas.tseries.offsets import BDay
 from trade import PRICING_CONFIG
 
 logger = setup_logger('DataManagers.utils.py')
+
+# Global MarketTimeseries instance for caching underlier data
+# This allows _ManagerLazyLoader to use cached data instead of hitting APIs
+_GLOBAL_MARKET_TIMESERIES = None
+
+def set_global_market_timeseries(market_timeseries_instance):
+    """
+    Set the global MarketTimeseries instance for caching underlier data.
+    
+    Args:
+        market_timeseries_instance: MarketTimeseries instance from EventDriven.riskmanager.market_data
+    """
+    global _GLOBAL_MARKET_TIMESERIES
+    _GLOBAL_MARKET_TIMESERIES = market_timeseries_instance
+    logger.info(f"Global MarketTimeseries instance set: {market_timeseries_instance}")
+
+def get_global_market_timeseries():
+    """
+    Get the global MarketTimeseries instance.
+    
+    Returns:
+        MarketTimeseries instance or None if not set
+    """
+    return _GLOBAL_MARKET_TIMESERIES
 
 ## Temp fix to override going thru my sql.
 EMPTY_TIMESEIRES_TABLE = pd.DataFrame({'Open': {},
@@ -133,10 +152,31 @@ class _ManagerLazyLoader:
 
     def _lazy_load(self, load_name, **kwargs):
         ## Utilizing the lazy load function to load data on demand, and speed up initialization
+        market_ts = get_global_market_timeseries()
+        
         if load_name == 's0_close':
-
             ## Will use Kwargs to move between intra and EOD.
-            kwargs.pop('intra_flag')
+            intra_flag = kwargs.pop('intra_flag')
+            
+            # Try to get from MarketTimeseries cache first
+            if market_ts is not None:
+                try:
+                    interval = '5min' if intra_flag else '1d'
+                    logger.debug(f"Attempting to load s0_close for {self.symbol} from MarketTimeseries cache")
+                    
+                    # Get data from MarketTimeseries (factor='spot')
+                    result = market_ts.get_timeseries(
+                        sym=self.symbol,
+                        factor='spot',
+                        interval=interval
+                    )
+                    if result and result.spot is not None and not result.spot.empty:
+                        logger.info(f"✓ Loaded s0_close for {self.symbol} from MarketTimeseries cache ({len(result.spot)} rows)")
+                        return result.spot
+                except Exception as e:
+                    logger.debug(f"MarketTimeseries cache miss for s0_close: {e}, falling back to Stock.spot()")
+            
+            # Fall back to Stock.spot() if cache miss
             return_item =  (self.Stock.spot(ts = True,
                                           ts_start = pd.to_datetime(self.exp) - relativedelta(years=5),
                                           ts_end =pd.to_datetime(self.exp) + relativedelta(years=5),
@@ -144,7 +184,27 @@ class _ManagerLazyLoader:
             return return_item
         
         elif load_name == 's0_chain':
-            kwargs.pop('intra_flag')
+            intra_flag = kwargs.pop('intra_flag')
+            
+            # Try to get from MarketTimeseries cache first (chain_spot type)
+            if market_ts is not None:
+                try:
+                    interval = '5min' if intra_flag else '1d'
+                    logger.debug(f"Attempting to load s0_chain for {self.symbol} from MarketTimeseries cache")
+                    
+                    # Get chain_spot data from MarketTimeseries
+                    result = market_ts.get_timeseries(
+                        sym=self.symbol,
+                        factor='chain_spot',
+                        interval=interval
+                    )
+                    if result and result.chain_spot is not None and not result.chain_spot.empty:
+                        logger.info(f"✓ Loaded s0_chain for {self.symbol} from MarketTimeseries cache ({len(result.chain_spot)} rows)")
+                        return result.chain_spot
+                except Exception as e:
+                    logger.debug(f"MarketTimeseries cache miss for s0_chain: {e}, falling back to Stock.spot()")
+            
+            # Fall back to Stock.spot()
             return_item =  (self.Stock.spot(ts = True,
                                             ts_start = pd.to_datetime(self.exp) - relativedelta(years=5),
                                             ts_end =pd.to_datetime(self.exp) + relativedelta(years=5),
@@ -172,6 +232,26 @@ class _ManagerLazyLoader:
         elif load_name == 'y':
             ## Get the dividend yield
             intra_flag = kwargs.get('intra_flag', False)
+            
+            # Try to get dividends from MarketTimeseries cache first
+            if market_ts is not None:
+                try:
+                    interval = '5min' if intra_flag else '1d'
+                    logger.debug(f"Attempting to load dividends for {self.symbol} from MarketTimeseries cache")
+                    
+                    # Get dividends data from MarketTimeseries
+                    result = market_ts.get_timeseries(
+                        sym=self.symbol,
+                        factor='dividends',
+                        interval=interval
+                    )
+                    if result and result.dividends is not None and not result.dividends.empty:
+                        logger.info(f"✓ Loaded dividends for {self.symbol} from MarketTimeseries cache ({len(result.dividends)} rows)")
+                        return result.dividends
+                except Exception as e:
+                    logger.debug(f"MarketTimeseries cache miss for dividends: {e}, falling back to Stock.div_yield_history()")
+            
+            # Fall back to Stock.div_yield_history()
             y = (self.Stock.div_yield_history(start = pd.to_datetime(self.exp) - relativedelta(years=5)))
 
             if intra_flag:
@@ -194,7 +274,7 @@ class IntraData(dict):
             inner.parent._intra[key] = inner.parent._lazy_load(key, ts_timewidth = '5', ts_timeframe = 'minute', intra_flag = True)
         return inner.parent._intra[key]
     
-    def __contains__(innner, key):
+    def __contains__(inner, key):
         return key in inner.parent._intra
     
     def __repr__(inner):
@@ -219,7 +299,7 @@ class EODData(dict):
             inner.parent._eod[key] = inner.parent._lazy_load(key, intra_flag = False)
         return inner.parent._eod[key]
     
-    def __contains__(innner, key):
+    def __contains__(inner, key):
         return key in inner.parent._eod
     
     def __repr__(inner):
