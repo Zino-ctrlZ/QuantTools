@@ -3,9 +3,8 @@ import os
 import signal
 import json
 import warnings
-from datetime import datetime
+import atexit
 from zoneinfo import ZoneInfo
-import platform
 import pandas as pd
 import pandas_market_calendars as mcal
 from dotenv import load_dotenv
@@ -17,6 +16,8 @@ warnings.filterwarnings("ignore")
 USER = str(os.environ.get("USER", "unknown_user")).lower() ## Temporary fix to allow only chidi utilize some features
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
+EXIT_HANDLERS = []  # Handlers for normal program exit
+_ATEXIT_REGISTERED = False
 logger = setup_logger('trade.__init__')
 
 
@@ -62,27 +63,59 @@ def is_allowed_user(allowed_users: list) -> bool:
     
 
 
+def _run_exit_handlers():
+    """Run all registered exit handlers."""
+    global EXIT_HANDLERS
+    for handler in EXIT_HANDLERS:
+        try:
+            logger.info("Running exit handler %s.", handler.__name__)
+            handler()
+        except Exception as e:
+            logger.error("Error running exit handler %s: %s", handler.__name__, e)
+
 
 def register_signal(signum, signal_func):
     """
-    Register a signal to be run when the process is interrupted.
+    Register a signal to be run when the process is interrupted or exits.
 
     Parameters:
     ----------
-    signum : int
-        The signal number (e.g., signal.SIGINT, signal.SIGTERM).
+    signum : int or str
+        The signal number (e.g., signal.SIGINT, signal.SIGTERM) or 'exit' for normal program exit.
     signal_func : callable
-        The function to execute when the signal is received.
+        The function to execute when the signal is received or program exits.
+        
+    Examples:
+    --------
+    >>> register_signal(signal.SIGTERM, cleanup_function)
+    >>> register_signal(signal.SIGINT, cleanup_function)
+    >>> register_signal('exit', save_data_function)  # For normal program exit
     """
+    global _ATEXIT_REGISTERED
+    
+    if not callable(signal_func):
+        raise ValueError(f"Signal function {signal_func} is not callable.")
+    
+    # Handle normal program exit
+    if signum == 'exit' or signum == 0:
+        EXIT_HANDLERS.append(signal_func)
+        # Register atexit handler only once
+        if not _ATEXIT_REGISTERED:
+            atexit.register(_run_exit_handlers)
+            _ATEXIT_REGISTERED = True
+            logger.info("Registered atexit handler for normal program exit.")
+        logger.info("Exit handler `%s` registered for normal program exit.", signal_func.__name__)
+        return
+    
+    # Handle signal-based interrupts
     if signum not in SIGNALS_TO_RUN:
         SIGNALS_TO_RUN[signum] = []
         signal.signal(signum, run_signals)
         logger.info("Registered signal number %d.", signum)
-    if not callable(signal_func):
-        raise ValueError(f"Signal function {signal_func} is not callable.")
     
-    SIGNALS_TO_RUN[signum].append( signal_func)
+    SIGNALS_TO_RUN[signum].append(signal_func)
     logger.info("Signal function for `%s` added to signal number %d.", signal_func.__name__, signum)
+
 
 def run_signals(signum, frame):
     """
