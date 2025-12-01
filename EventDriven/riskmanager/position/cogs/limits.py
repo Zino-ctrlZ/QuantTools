@@ -140,7 +140,7 @@ class LimitsAndSizingCog(BaseCog):
             delta=delta,
             option_price=option_price,
             undl_price=undl_data.chain_spot["close"],
-            delta_lmt=self.position_limits[order["data"]["trade_id"]].delta,
+            delta_lmt=new_pos_state.limits.delta,
         )
         logger.info(f"Storing position metadata: {metadata}")
         self.position_metadata[order["data"]["trade_id"]] = metadata
@@ -161,16 +161,28 @@ class LimitsAndSizingCog(BaseCog):
             underlier_price_at_time=undl_data.chain_spot["close"],
         )
         logger.info(f"Calculated limits for position {order['data']['trade_id']}: {limits}")
-        pos_lmts = PositionLimits(delta=limits, dte=self.config.default_dte, moneyness=self.config.default_moneyness)
-        self.position_limits[order["data"]["trade_id"]] = pos_lmts
+        pos_lmts = PositionLimits(delta=limits, dte=self.config.default_dte, moneyness=self.config.default_moneyness, creation_date=request.date)
+        self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
         new_pos_state.limits = pos_lmts
         return pos_lmts.delta
+    
+    def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
+        """
+        Save the position limits for a given trade ID.
+        """
+        self.position_limits[trade_id] = limits
+
+    def _get_position_limits(self, trade_id: str, signal_id: str) -> PositionLimits:
+        """
+        Retrieve the position limits for a given trade ID.
+        """
+        return self.position_limits.get(trade_id, None)
 
     def _update_position_quantity(self, new_position_state: NewPositionState) -> None:
         """
         Update the position quantity in the order data.
         """
-        delta_lmt = self.position_limits[new_position_state.order["data"]["trade_id"]].delta
+        delta_lmt = new_position_state.limits.delta
         request = new_position_state.request
         option_price = new_position_state.at_time_data.get_price()
         delta = new_position_state.at_time_data.delta
@@ -207,12 +219,12 @@ class LimitsAndSizingCog(BaseCog):
         for position in positions:
             trade_id = position.trade_id
             scaling_qty = position.quantity if not position.current_position_data.is_qty_scaled else 1
-            dte_limit = self.position_limits[trade_id].dte
-            moneyness_limit = self.position_limits[trade_id].moneyness
+            dte_limit = self._get_position_limits(trade_id, position.signal_id).dte
+            moneyness_limit = self._get_position_limits(trade_id, position.signal_id).moneyness
             
             ## Optimized dictionary filtering (Task #3)
             ## Direct key access with MEASURES_SET for O(1) lookup
-            greeks_limit = {k: v for k, v in self.position_limits[trade_id].__dict__.items() if k in MEASURES_SET}
+            greeks_limit = {k: v for k, v in self._get_position_limits(trade_id, position.signal_id).__dict__.items() if k in MEASURES_SET}
             greek_exposure = {k: v * scaling_qty for k, v in position.current_position_data.__dict__.items() if k in MEASURES_SET}
             
             qty = position.quantity
