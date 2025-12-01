@@ -64,7 +64,20 @@ logger = setup_logger('DataManager.py', stream_log_level = logging.CRITICAL)
 time_logger = setup_logger('time_logger_test_dm')
 vol_resolve_logger = setup_logger('DataManagers.Vol_Resolve')
 
-
+THETA_DATA_COLUMNS = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "Bid_size",
+    "CloseBid",
+    "Ask_size",
+    "CloseAsk",
+    "Midpoint",
+    "Weighted_midpoint",
+    "Open_interest",
+]
 CENTRAL_SAVE_THREAD = {}
 DB_CACHE = get_cache()
 SAVE_TO_DB = True ## This is a global variable to control if we save to DB or not
@@ -136,7 +149,7 @@ def cached_get_timeseries(func):
     return wrapper
 
 ## Skip MySql Query. MySql query is not optimized so just go straight to API
-SKIP_MYSQL_QUERY = False
+SKIP_MYSQL_QUERY = True
 def set_skip_mysql_query(value: bool):
     """
     Set the skip MySQL query flag.
@@ -299,24 +312,29 @@ class SpotDataManager(QuoteController):
         agg = data_request.agg
         if agg == 'eod':
             if not bulk:
-                if self.get_use_quotes():
-                    data=retrieve_quote(symbol=self.symbol, 
-                                        end_date=end, 
-                                        exp=exp, 
-                                        right=right, 
-                                        start_date=start, 
-                                        strike=strike, 
-                                        print_url=print_url, 
-                                        interval='1d',
-                                        ohlc_format=True)
-                else:
-                    data = retrieve_eod_ohlc(symbol=self.symbol, 
+                try:
+                    if self.get_use_quotes():
+                        data=retrieve_quote(symbol=self.symbol, 
                                             end_date=end, 
                                             exp=exp, 
                                             right=right, 
                                             start_date=start, 
                                             strike=strike, 
-                                            print_url=print_url)
+                                            print_url=print_url, 
+                                            interval='1d',
+                                            ohlc_format=True)
+                    else:
+                        data = retrieve_eod_ohlc(symbol=self.symbol, 
+                                                end_date=end, 
+                                                exp=exp, 
+                                                right=right, 
+                                                start_date=start, 
+                                                strike=strike, 
+                                                print_url=print_url)
+                except ThetaDataNotFound:
+                    logger.error(f"ThetaDataNotFound: No data found for {self.symbol} from {start} to {end}. Returning empty DataFrame.")
+                    data = pd.DataFrame(columns=THETA_DATA_COLUMNS)
+                    return data
                 data = data[~data.index.duplicated(keep='first')]
                 open_interest = retrieve_openInterest(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url).set_index('Datetime')
                 open_interest.drop_duplicates(inplace = True)
@@ -909,7 +927,7 @@ class OptionDataManager(_ManagerLazyLoader,
                        interval: str = '1d',
                        type_: str = 'spot',
                        model: str = 'bs',
-                       extra_cols: list = []) -> pd.DataFrame:
+                       extra_cols: list = []) -> OptionQueryRequestParameter:
         """
         Query the timeseries data from ThetaData API or SQL Database.
 
@@ -1094,19 +1112,11 @@ class OptionDataManager(_ManagerLazyLoader,
         start, end, type_ = data_request.start_date, data_request.end_date, data_request.type_
 
         if is_empty:
-            try:
-                raw_spot_data = self.spot_manager.query_thetadata(start=start, end=end, 
-                                                                strike=self.strike, exp=self.exp, 
-                                                                right=self.right, bulk=False, 
-                                                                data_request=data_request)
-                data_request.raw_spot_data = raw_spot_data
-            
-            except ThetaDataNotFound as e:
-                ## This means we have no data for the given date range. Happens for edge cases when the range is cut from original date range
-                ## This happens when option didn't start/end trading on the exact ranges
-                logger.info(f"Error querying data: {e}")
-                data_request.raw_spot_data = pd.DataFrame(columns = data_request.database_data.columns)
-                return
+            raw_spot_data = self.spot_manager.query_thetadata(start=start, end=end, 
+                                                            strike=self.strike, exp=self.exp, 
+                                                            right=self.right, bulk=False, 
+                                                            data_request=data_request)
+            data_request.raw_spot_data = raw_spot_data
 
             
             if type_ != 'spot':
@@ -1122,17 +1132,10 @@ class OptionDataManager(_ManagerLazyLoader,
 
         elif not is_complete:
             start_missing, end_missing = min(data_request.missing_dates), max(data_request.missing_dates)
-            try:
-                raw_spot_data = self.spot_manager.query_thetadata(start=start_missing, end=end_missing, 
-                                                                strike=self.strike, exp=self.exp, 
-                                                                right=self.right, bulk=False, 
-                                                                data_request=data_request)
-            except ThetaDataNotFound as e:
-                ## This means we have no data for the given date range. Happens for edge cases when the range is cut from original date range
-                ## This happens when option didn't start/end trading on the exact ranges
-                logger.info(f"Error querying data: {e}")
-                data_request.raw_spot_data = pd.DataFrame(columns = data_request.database_data.columns)
-                return
+            raw_spot_data = self.spot_manager.query_thetadata(start=start_missing, end=end_missing, 
+                                                            strike=self.strike, exp=self.exp, 
+                                                            right=self.right, bulk=False, 
+                                                            data_request=data_request)
 
             data_request.raw_spot_data = raw_spot_data
             if type_ != 'spot':
@@ -1537,8 +1540,8 @@ def format_raw_spot_data( **kwargs):
     data_request = kwargs.get('data_request')
     raw_spot_data = data_request.raw_spot_data
     if raw_spot_data.empty:
-        print("Format raw found this empty")
-        data_request.raw_spot_data = pd.DataFrame()
+        logger.info("Format raw found this empty")
+        data_request.raw_spot_data = pd.DataFrame(columns=data_request.database_data.columns)
 
     else:
         raw_spot_data.reset_index(inplace = True)

@@ -12,11 +12,12 @@ import pandas as pd
 
 from trade.helpers.helper import get_missing_dates
 from trade.helpers.Logging import setup_logger
+from .helpers import _BS_VOL_CACHE, _BINOMIAL_GREEKS_CACHE, _BS_GREEKS_CACHE, _OPTION_SPOT_CACHE, _BINOMIAL_VOL_CACHE
 
 if TYPE_CHECKING:
     from trade.helpers.helper import CustomCache
 
-logger = setup_logger('DataManagers.cache_utils')
+logger = setup_logger('DataManagers.option_cache.utils')
 
 
 def filter_today_from_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -196,10 +197,10 @@ def save_to_cache(
             new_data.index = pd.to_datetime(new_data.index)
         
         # Debug: Check BEFORE dedup  
-        logger.error(f"BEFORE dedup - existing: {len(existing_data)} rows, {existing_data.index.duplicated().sum()} dups")
-        logger.error(f"BEFORE dedup - new: {len(new_data)} rows, {new_data.index.duplicated().sum()} dups")
-        logger.error(f"existing.index full: {existing_data.index.tolist()}")
-        logger.error(f"new.index full: {new_data.index.tolist()}")
+        logger.info(f"BEFORE dedup - existing: {len(existing_data)} rows, {existing_data.index.duplicated().sum()} dups")
+        logger.info(f"BEFORE dedup - new: {len(new_data)} rows, {new_data.index.duplicated().sum()} dups")
+        logger.info(f"existing.index full: {existing_data.index.tolist()}")
+        logger.info(f"new.index full: {new_data.index.tolist()}")
         
         # Remove duplicate indices AFTER ensuring DatetimeIndex
         existing_data = existing_data[~existing_data.index.duplicated(keep='last')]
@@ -210,12 +211,12 @@ def save_to_cache(
         new_data = new_data.loc[:, ~new_data.columns.duplicated(keep='last')]
         
         # Debug: Check AFTER dedup
-        logger.error(f"AFTER dedup - existing: {len(existing_data)} rows, is_unique={existing_data.index.is_unique}")
-        logger.error(f"AFTER dedup - new: {len(new_data)} rows, is_unique={new_data.index.is_unique}")
-        logger.error(f"existing columns: {existing_data.columns.tolist()}")
-        logger.error(f"new columns: {new_data.columns.tolist()}")
-        logger.error(f"existing cols duplicated: {existing_data.columns.duplicated().sum()}")
-        logger.error(f"new cols duplicated: {new_data.columns.duplicated().sum()}")
+        logger.info(f"AFTER dedup - existing: {len(existing_data)} rows, is_unique={existing_data.index.is_unique}")
+        logger.info(f"AFTER dedup - new: {len(new_data)} rows, is_unique={new_data.index.is_unique}")
+        logger.info(f"existing columns: {existing_data.columns.tolist()}")
+        logger.info(f"new columns: {new_data.columns.tolist()}")
+        logger.info(f"existing cols duplicated: {existing_data.columns.duplicated().sum()}")
+        logger.info(f"new cols duplicated: {new_data.columns.duplicated().sum()}")
         
         # Now concat the deduplicated data
         try:
@@ -255,7 +256,16 @@ def get_cache_for_type_and_model(
     Returns:
         Appropriate CustomCache instance
     """
-    spot_cache, bs_vol, bs_greeks, binom_vol, binom_greeks = caches
+    try:
+        spot_cache, bs_vol, bs_greeks, binom_vol, binom_greeks = caches
+    except Exception:
+        spot_cache, bs_vol, bs_greeks, binom_vol, binom_greeks = (
+            _OPTION_SPOT_CACHE,
+            _BS_VOL_CACHE,
+            _BS_GREEKS_CACHE,
+            _BINOMIAL_VOL_CACHE,
+            _BINOMIAL_GREEKS_CACHE
+        )
     
     if type_ == 'spot':
         # Spot is model-agnostic

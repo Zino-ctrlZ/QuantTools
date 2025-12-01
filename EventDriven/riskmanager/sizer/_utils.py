@@ -80,7 +80,11 @@ def delta_position_sizing(
     if delta == 0 or cash_available <= 0 or option_price_at_time <= 0:
         logger.critical(f"Delta is 0 or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0.")
         return 0
-    delta_size = (math.floor(delta_limit/abs(delta)))
+    try:
+        delta_size = (math.floor(delta_limit/abs(delta)))
+    except (ValueError, ZeroDivisionError) as e:
+        logger.critical(f"Error calculating delta_size: {e}. delta: {delta}, delta_limit: {delta_limit}. Returning size 0.")
+        raise e
     max_size_cash_can_buy = abs(math.floor(cash_available/(option_price_at_time*100)))
     # size = max(delta_size if abs(delta_size) <= abs(max_size_cash_can_buy) else max_size_cash_can_buy, 1)
 

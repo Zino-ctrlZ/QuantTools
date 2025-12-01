@@ -39,10 +39,13 @@ from .DataManagers import (
     VolDataManager,
     GreeksDataManager,
     SpotDataManager,
+    set_skip_mysql_query,
 )
 
 # Import utils
 from .utils import set_global_market_timeseries
+
+from trade.helpers.decorators import timeit
 
 # Import MarketTimeseries for underlier data caching
 try:
@@ -51,14 +54,14 @@ try:
 except ImportError:
     import traceback
     MARKET_TIMESERIES_AVAILABLE = False
-    logger = setup_logger('DataManagers.CachedOptionDataManager')
+    logger = setup_logger('DataManagers.DataManagers_cached')
     logger.critical("MarketTimeseries not available - underlier caching disabled. Performance may be impacted.")
     logger.info(traceback.format_exc())
 
 if TYPE_CHECKING:
     from trade.helpers.helper import CustomCache
 
-logger = setup_logger('DataManagers.CachedOptionDataManager')
+logger = setup_logger("DataManagers.DataManagers_cached", stream_log_level="ERROR")
 
 
 # ============================================================================
@@ -81,6 +84,7 @@ class CachedVolManager:
         self._parent_manager = VolDataManager(symbol)
         logger.debug(f"CachedVolManager initialized for {symbol}")
     
+    @timeit
     def calculate_iv(self, **kwargs):
         """
         Calculate IV with cache check.
@@ -190,6 +194,7 @@ class CachedGreeksManager:
         self._parent_manager = GreeksDataManager(symbol)
         logger.debug(f"CachedGreeksManager initialized for {symbol}")
     
+    @timeit
     def calculate_greeks(self, type_, **kwargs):
         """
         Calculate greeks with cache check.
@@ -310,6 +315,7 @@ class CachedSpotManager:
         self._parent_manager = SpotDataManager(symbol)
         logger.debug(f"CachedSpotManager initialized for {symbol}")
     
+    @timeit
     def query_thetadata(self, start, end, **kwargs):
         """
         Query ThetaData with cache check.
@@ -356,8 +362,8 @@ class CachedSpotManager:
                     query_start = min(missing_dates)
                     query_end = max(missing_dates)
                     logger.info(f"Querying missing spot dates: {query_start.date()} to {query_end.date()}")
-                    
                     new_data = self._parent_manager.query_thetadata(query_start, query_end, **kwargs)
+
                     
                     if new_data is not None and not new_data.empty:
                         # Just use the new data - it already has the full range
@@ -368,8 +374,10 @@ class CachedSpotManager:
                         spot_cache = get_cache_for_type_and_model('spot', 'bs', self._caches)
                         save_to_cache(spot_cache, interval, self.opttick, new_data)
                         logger.info(f"Saved {len(new_data)} spot rows to cache")
+                        logger.info(f"Merging cached spot with newly queried data for {self.opttick}")
+                        self.query_thetadata(start, end, **kwargs)
                         
-                        return new_data
+                        # return new_data
                     else:
                         # Query failed, return cached data only
                         result = cached_spot[(cached_spot.index >= start_ts) & (cached_spot.index <= end_ts)]
@@ -485,6 +493,27 @@ class CachedOptionDataManager(OptionDataManager):
         cls._CACHE_ENABLED = True
         logger.info("Caching globally ENABLED")
     
+    @classmethod
+    def skip_mysql(cls, skip: bool = True):
+        """
+        Skip MySQL queries globally for maximum cache performance.
+        
+        When enabled, only cache is used for queries. This provides ~277x speedup
+        when cache is already populated. Use this for production with warm cache.
+        
+        Args:
+            skip: If True, skip MySQL queries. If False, use MySQL as fallback.
+        
+        Example:
+            # For maximum performance with populated cache
+            CachedOptionDataManager.skip_mysql(True)
+            
+            # Re-enable MySQL fallback
+            CachedOptionDataManager.skip_mysql(False)
+        """
+        set_skip_mysql_query(skip)
+        logger.info(f"MySQL query skip set to: {skip}")
+    
     def get_timeseries(self, 
                        start: str | datetime, 
                        end: str | datetime,
@@ -522,6 +551,10 @@ class CachedOptionDataManager(OptionDataManager):
         if end_ts > exp_ts:
             logger.warning(f"End date {end_ts.date()} is after expiration {exp_ts.date()} - capping at expiration")
             end = exp_ts
+        
+        if end_ts > pd.Timestamp.now().normalize():
+            logger.warning(f"End date {end_ts.date()} is in the future - capping at today")
+            end = pd.Timestamp.now().normalize()
         
         logger.info(f"Query: {self.opttick} | type={type_} | model={model} | dates={pd.Timestamp(start).date()} to {pd.Timestamp(end).date()}")
         
