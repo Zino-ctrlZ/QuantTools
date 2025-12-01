@@ -1,16 +1,73 @@
 
 from EventDriven.configs.base import BaseConfigs
 from collections.abc import Mapping
-from typing import Any, Iterable, Tuple, Dict
+from typing import Any, Iterable, Tuple, Dict, TypeVar, TypedDict, TYPE_CHECKING
 from datetime import datetime
 from dataclasses import dataclass, field
 import yaml
 import logging
 import importlib
 
-
+if TYPE_CHECKING:
+    from EventDriven.configs.core import (
+        ChainConfig,
+        OrderSchemaConfigs,
+        OrderPickerConfig,
+        BaseSizerConfigs,
+        DefaultSizerConfigs,
+        ZscoreSizerConfigs,
+        OrderResolutionConfig,
+        UndlTimeseriesConfig,
+        OptionPriceConfig,
+        SkipCalcConfig,
+        BaseCogConfig,
+        StrategyLimitsEnabled,
+        LimitsEnabledConfig,
+        PositionAnalyzerConfig,
+        PortfolioManagerConfig,
+        BacktesterConfig,
+        CashAllocatorConfig,
+        RiskManagerConfig,
+    )
 
 logger = logging.getLogger(__name__)
+
+# Type variable for generic config types
+T = TypeVar('T', bound=BaseConfigs)
+
+
+# TypedDict for all config types from core.py
+# This provides specific type hints for each config class when accessing bundle.configs
+# Usage: bundle.get("ChainConfig") returns ChainConfig with proper type hints
+class ConfigsDict(TypedDict, total=False):
+    """
+    Type hints for all available config classes.
+    
+    Keys are config class names (without _1, _2 suffixes).
+    Values are the actual config instances.
+    
+    Example:
+        bundle.configs["ChainConfig"]  # Type: ChainConfig
+        bundle.get("PortfolioManagerConfig")  # Type: PortfolioManagerConfig
+    """
+    ChainConfig: 'ChainConfig'
+    OrderSchemaConfigs: 'OrderSchemaConfigs'
+    OrderPickerConfig: 'OrderPickerConfig'
+    BaseSizerConfigs: 'BaseSizerConfigs'
+    DefaultSizerConfigs: 'DefaultSizerConfigs'
+    ZscoreSizerConfigs: 'ZscoreSizerConfigs'
+    OrderResolutionConfig: 'OrderResolutionConfig'
+    UndlTimeseriesConfig: 'UndlTimeseriesConfig'
+    OptionPriceConfig: 'OptionPriceConfig'
+    SkipCalcConfig: 'SkipCalcConfig'
+    BaseCogConfig: 'BaseCogConfig'
+    StrategyLimitsEnabled: 'StrategyLimitsEnabled'
+    LimitsEnabledConfig: 'LimitsEnabledConfig'
+    PositionAnalyzerConfig: 'PositionAnalyzerConfig'
+    PortfolioManagerConfig: 'PortfolioManagerConfig'
+    BacktesterConfig: 'BacktesterConfig'
+    CashAllocatorConfig: 'CashAllocatorConfig'
+    RiskManagerConfig: 'RiskManagerConfig'
 
 
 @dataclass
@@ -28,7 +85,7 @@ class ConfigLocation:
 class RunConfigBundle:
     run_name: str
     created_at: datetime
-    configs: dict[str, dict]
+    configs: ConfigsDict  # Using TypedDict for specific type hints
     metadata: dict[str, dict] = field(default_factory=dict)  # Stores path info per config
 
     
@@ -64,12 +121,14 @@ class RunConfigBundle:
             data = yaml.safe_load(f)
 
         confs = data.get('configs', {})
-        conf_bund_cls = {}
+        conf_bund_cls: ConfigsDict = {}  # type: ignore
         for label in confs.keys():
-            conf_name = label.split("_")[0]
+            # Extract class name without _1, _2 suffixes
+            conf_name = label.split("_")[0] if "_" in label else label
             cls_module = importlib.import_module("EventDriven.configs.core")
             conf_cls = getattr(cls_module, conf_name)
-            conf_bund_cls[conf_name] = conf_cls(**confs[label])
+            # Store with just the class name (no _1 suffix)
+            conf_bund_cls[conf_name] = conf_cls(**confs[label])  # type: ignore
         
         ret =  cls(
             run_name=data.get('run_name', ''),
@@ -92,6 +151,28 @@ class RunConfigBundle:
             Dict mapping labels to their applied paths
         """
         return apply_run_configs(root, self.configs, self.metadata, strict=strict, verify_paths=verify_paths)
+
+    def get(self, label: str) -> BaseConfigs:
+        """
+        Get a config by label with proper type hints.
+        
+        Since configs are stored by class name (without _1 suffix),
+        access them directly: bundle.get("ChainConfig") 
+        
+        Args:
+            label: The config class name (e.g., "ChainConfig", not "ChainConfig_1")
+            
+        Returns:
+            The config instance with proper type hint from ConfigsDict
+            
+        Example:
+            >>> chain_config = bundle.get("ChainConfig")  # Returns ChainConfig instance
+            >>> pm_config = bundle.get("PortfolioManagerConfig")
+        """
+        if label not in self.configs:
+            raise KeyError(f"Config with label '{label}' not found. Available: {list(self.configs.keys())}")
+        
+        return self.configs[label]  # type: ignore
 
     def __repr__(self):
         return f"RunConfigBundle(run_name={self.run_name!r}, created_at={self.created_at!r}, configs={list(self.configs.keys())})"
@@ -187,7 +268,7 @@ def _sanitize_for_yaml(obj: Any) -> Any:
     return str(obj)
 
 
-def export_run_configs(root: Any, debug: bool = False) -> RunConfigBundle:
+def export_run_configs(root: Any, debug: bool = False, remove_underscore: bool = False) -> RunConfigBundle:
     """
     Export all configs into plain Python dicts (e.g. to save to DB, JSON, etc.).
     Includes metadata for path verification during application.
@@ -199,13 +280,17 @@ def export_run_configs(root: Any, debug: bool = False) -> RunConfigBundle:
 
     for label, cfg in configs.items():
         # Sanitize config dict for YAML serialization
-        exported[label] = _sanitize_for_yaml(dict(cfg.__dict__))
-        if run_name is None and "run_name" in exported[label]:
-            run_name = exported[label]["run_name"]
+        if remove_underscore:
+            new_label = label.split("_")[0]
+
+        # exported[label] = _sanitize_for_yaml(dict(cfg.__dict__))
+        exported[new_label] = cfg
+        if run_name is None and hasattr(exported[new_label], "run_name"):
+            run_name = getattr(exported[new_label], "run_name") # noqa
         
         # Store metadata as dict (for YAML serialization)
         loc = metadata_objs[label]
-        metadata_dict[label] = {
+        metadata_dict[new_label] = {
             'config_class': loc.config_class,
             'path': loc.path,
             'parent_path': loc.parent_path,
