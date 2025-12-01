@@ -1,4 +1,5 @@
 # pylint: disable=broad-exception-caught
+from trade import register_signal
 import time
 import numbers
 import asyncio
@@ -9,11 +10,157 @@ import cProfile
 import pstats
 import io
 import traceback
+import os
+from pathlib import Path
+from datetime import datetime
+import signal
 import pandas as pd
 from trade.helpers.Logging import setup_logger
 _logger = setup_logger('trade.helpers.decorators')
 time_logger = setup_logger('trade.helpers.decorators.time_logger')
 failed_logger = setup_logger('trade.helpers.decorators.failed_logger')
+
+
+# Global bucket for timeit metadata
+_TIMEIT_BUCKET = []
+
+
+def _save_timeit_metadata():
+    """
+    Internal function to save collected timing metadata to CSV file.
+    This function is registered to run at exit via register_signal.
+    """
+    if not _TIMEIT_BUCKET:
+        return
+    
+    try:
+        cache_path = Path(os.environ.get('GEN_CACHE_PATH', '.cache'))
+        cache_path.mkdir(parents=True, exist_ok=True)
+        
+        # Single CSV file for all timeit logs
+        csv_path = cache_path / 'timeit_log.csv'
+        
+        # Convert bucket to DataFrame
+        df = pd.DataFrame(_TIMEIT_BUCKET)
+        
+        # Append to existing file or create new one
+        if csv_path.exists():
+            existing_df = pd.read_csv(csv_path)
+            df = pd.concat([existing_df, df], ignore_index=True)
+        
+        df.to_csv(csv_path, index=False)
+        _logger.info(f"Saved {len(_TIMEIT_BUCKET)} timeit records to {csv_path}")
+        _TIMEIT_BUCKET.clear()
+    except Exception as e:
+        _logger.error(f"Error saving timeit metadata: {e}", exc_info=True)
+
+
+# Register the cleanup function to run on exit using register_signal
+register_signal('exit', _save_timeit_metadata)  # Handles normal program exit
+register_signal(signal.SIGTERM, _save_timeit_metadata)  # Handles termination signal
+register_signal(signal.SIGINT, _save_timeit_metadata)  # Handles Ctrl+C
+
+
+def timeit(func):
+    """
+    Decorator to time function execution and collect metadata.
+    
+    Collects:
+    - func_name: Name of the function
+    - module: Module path of the function
+    - execution_time: Time taken to execute in seconds
+    - args: Positional arguments (serializable types only)
+    - kwargs: Keyword arguments (serializable types only)
+    - timestamp: When the function was called
+    
+    The metadata is stored in a global bucket and saved to CSV at exit.
+    CSV location: GEN_CACHE_PATH/timeit_log_YYYYMMDD.csv
+    
+    Args:
+        func: The function to be decorated
+    
+    Returns:
+        Decorated function
+    
+    Example:
+        @timeit
+        def my_function(x, y):
+            return x + y
+    """
+    def _serialize_arg(arg):
+        """Convert argument to serializable format"""
+        if isinstance(arg, (str, int, float, bool, type(None))):
+            return arg
+        elif isinstance(arg, (list, tuple)):
+            return str(arg)
+        elif isinstance(arg, dict):
+            return str(arg)
+        elif isinstance(arg, pd.DataFrame):
+            return f"DataFrame(shape={arg.shape})"
+        else:
+            return str(type(arg).__name__)
+    
+    iscoroutine = asyncio.iscoroutinefunction(func)
+    
+    if iscoroutine:
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            start_time = time.time()
+            timestamp = datetime.now().isoformat()
+            
+            try:
+                result = await func(*args, **kwargs)
+            finally:
+                execution_time = time.time() - start_time
+                
+                # Serialize args and kwargs
+                serialized_args = [_serialize_arg(arg) for arg in args]
+                serialized_kwargs = {k: _serialize_arg(v) for k, v in kwargs.items()}
+                
+                # Collect metadata
+                metadata = {
+                    'func_name': func.__name__,
+                    'module': func.__module__,
+                    'execution_time': execution_time,
+                    'args': str(serialized_args),
+                    'kwargs': str(serialized_kwargs),
+                    'timestamp': timestamp
+                }
+                
+                _TIMEIT_BUCKET.append(metadata)
+            
+            return result
+        return wrapper
+    else:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            timestamp = datetime.now().isoformat()
+            
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                execution_time = time.time() - start_time
+                
+                # Serialize args and kwargs
+                serialized_args = [_serialize_arg(arg) for arg in args]
+                serialized_kwargs = {k: _serialize_arg(v) for k, v in kwargs.items()}
+                
+                # Collect metadata
+                metadata = {
+                    'func_name': func.__name__,
+                    'module': func.__module__,
+                    'execution_time': execution_time,
+                    'args': str(serialized_args),
+                    'kwargs': str(serialized_kwargs),
+                    'timestamp': timestamp
+                }
+                
+                _TIMEIT_BUCKET.append(metadata)
+            
+            return result
+        return wrapper
+
 
 class PrintingLogger:
     """
