@@ -326,7 +326,7 @@ class HistoricTradeDataHandler(DataHandler):
             
             ## If exit_time is not NaT, schedule exit signal
             if pd.notna(exit_time):
-                self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, entry_time, signal)))
+                self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=signal_id))
             else:
                 logger.critical(f"Exit time is NaT for trade with signal_id {row['signal_id']}. No exit signal scheduled.")
                 
