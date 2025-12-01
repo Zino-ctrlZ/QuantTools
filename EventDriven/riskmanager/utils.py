@@ -2,7 +2,8 @@ import os
 from .config import get_avoid_opticks
 import functools
 from trade.assets.helpers.utils import (swap_ticker)
-from module_test.raw_code.DataManagers.DataManagers import OptionDataManager
+from module_test.raw_code.DataManagers.DataManagers import OptionDataManager  # noqa
+from module_test.raw_code.DataManagers.DataManagers_cached import CachedOptionDataManager
 from trade.helpers.helper import ( 
     generate_option_tick_new,
     parse_option_tick,
@@ -34,7 +35,7 @@ from .._vars import (
 
 ## Vars
 TIMESERIES_START = pd.to_datetime(OPTION_TIMESERIES_START_DATE)
-TIMESERIES_END = "2025-01-31"
+TIMESERIES_END = datetime.now().strftime('%Y-%m-%d')
 LOOKBACKS = {}
 
 ## Paths
@@ -387,7 +388,7 @@ def generate_spot_greeks(opttick, start_date: str|datetime, end_date: str|dateti
     """
     ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
     # meta = parse_option_tick(opttick)
-    data_manager = OptionDataManager(opttick=opttick)
+    data_manager = CachedOptionDataManager(opttick=opttick)
     greeks = data_manager.get_timeseries(start = start_date,
                                             end = end_date,
                                             interval = '1d',
