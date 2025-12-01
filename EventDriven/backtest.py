@@ -29,6 +29,7 @@ class OptionSignalBacktest():
                  symbol_list = None,
                  *,
                  config: BacktesterConfig = None,
+                 end_date: pd.Timestamp = None
                  ) -> None:
         """
             trades: pd.DataFrame
@@ -47,15 +48,20 @@ class OptionSignalBacktest():
         if trades.empty:
             raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
         trades = self.__handle_t_plus_n(trades)
-        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
-                                                                              row['EntryTime'], 
-                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
-                                                                              axis=1)
+        if "signal_id" not in trades.columns:
+            unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                                row['EntryTime'], 
+                                                                                SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                                axis=1)
+        else:
+            unadjusted['signal_id'] = trades['signal_id']
+            self.logger.critical("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
         unadjusted['unadjusted_signal_id'] = unadjusted.apply(lambda row: generate_signal_id(row['Ticker'], 
                                                                               row['EntryTime'], 
                                                                               SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
                                                                               axis=1)
         self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
+        self.end_date = end_date
         self.__construct_data(trades, initial_capital, symbol_list)
         
     @property
@@ -64,7 +70,7 @@ class OptionSignalBacktest():
     
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
         self.start_date = change_to_last_busday(pd.to_datetime(trades['EntryTime']).min() - BDay(1), 1).date() ## Move back a day if not business day
-        self.end_date = change_to_last_busday(pd.to_datetime(trades['ExitTime']).max(), -1).date() ## Move forward a day if not business day
+        self.end_date = self.end_date or change_to_last_busday(pd.to_datetime(trades['ExitTime']).max(), -1).date() ## Move forward a day if not business day
         self.bars_trades = trades
         self.initial_capital = initial_capital
         

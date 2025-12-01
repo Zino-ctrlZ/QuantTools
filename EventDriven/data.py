@@ -256,7 +256,8 @@ class HistoricTradeDataHandler(DataHandler):
                  events: EventScheduler, 
                  trades_df: pd.DataFrame, 
                  symbol_list: Optional[list] = None,
-                 finalize_trades: bool = True): 
+                 finalize_trades: bool = True,
+                 end_date: pd.Timestamp = None): 
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -265,13 +266,18 @@ class HistoricTradeDataHandler(DataHandler):
         """
         self.finalize_trades = finalize_trades
         trades_df = trades_df.copy()
-        trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        if 'signal_id' not in trades_df.columns:
+            trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        else:
+            logger.critical("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
         self.trades_df = trades_df
         self.continue_backtest = True 
         self.events = events
+        self.end_date = end_date
         self._open_trade_data()
         self.options_data = {}
         self.symbol_list = symbol_list if symbol_list is not None else self.trades_df['Ticker'].unique().tolist()
+        
         
         
     def _open_trade_data(self): 
@@ -284,7 +290,7 @@ class HistoricTradeDataHandler(DataHandler):
         self.trades_df['ExitTime'] = pd.to_datetime(self.trades_df['ExitTime'])
         
         self.start_date = self.trades_df['EntryTime'].min()
-        self.end_date = self.trades_df['ExitTime'].max()
+        self.end_date = self.end_date or self.trades_df['ExitTime'].max()
         if pd.isna(self.end_date):
             raise ValueError("End date cannot be NaT. Please ensure AT LEAST one trade has ExitTime that is not NaT.")
         date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
@@ -309,9 +315,10 @@ class HistoricTradeDataHandler(DataHandler):
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size > 0), ticker] = 1 
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size < 0), ticker] = 2
             self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1 
+            signal_id = row['signal_id']
             
             #schedule signals
-            self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=generate_signal_id(ticker, entry_time, signal)))
+            self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=signal_id))
             
             # If finalize_trades is True, we ensure that exit_time is not NaT
             if self.finalize_trades:
