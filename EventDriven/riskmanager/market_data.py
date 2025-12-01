@@ -14,6 +14,7 @@ from trade.helpers.helper import (
     ny_now, 
     CustomCache,
     get_missing_dates)
+from trade.helpers.decorators import timeit
 from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
@@ -93,6 +94,7 @@ class MarketTimeseries:
     def _dividends(self) -> CustomCache:
         return DIVIDEND_CACHE
 
+    @timeit
     def _already_loaded(self, 
                        sym: str, 
                        interval: str = '1d', 
@@ -151,6 +153,75 @@ class MarketTimeseries:
         """
         already_loaded, _ = self._already_loaded(sym, interval, start, end)
         return already_loaded
+    
+    @timeit
+    def _remove_today_data(self, data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+        """Remove today's data from the given DataFrame or Series."""
+        today_str = ny_now().strftime('%Y-%m-%d')
+        if isinstance(data, pd.DataFrame):
+            return data[data.index < today_str]
+        elif isinstance(data, pd.Series):
+            return data[data.index < today_str]
+        else:
+            raise ValueError("Data must be a pandas DataFrame or Series.")
+        
+    @timeit
+    def _sanitize_today_data(self) -> None:
+        """Remove today's data from all stored timeseries data."""
+        for interval in self._spot.keys():
+            spot_dict = self._spot.get(interval, {})
+            chain_spot_dict = self._chain_spot.get(interval, {})
+            div_dict = self._dividends.get(interval, {})
+            
+            for sym in spot_dict.keys():
+                spot_dict[sym] = self._remove_today_data(spot_dict[sym])
+            for sym in chain_spot_dict.keys():
+                chain_spot_dict[sym] = self._remove_today_data(chain_spot_dict[sym])
+            for sym in div_dict.keys():
+                div_dict[sym] = self._remove_today_data(div_dict[sym])
+            
+            self._spot[interval] = spot_dict
+            self._chain_spot[interval] = chain_spot_dict
+            self._dividends[interval] = div_dict
+
+    
+    @timeit
+    def _sanitize_data(self) -> None:
+        """
+        Sanitize all stored timeseries data by removing today's data.
+        Dropping duplicates, ensuring datetime index, and sorting.
+        """
+        self._sanitize_today_data()
+
+        for interval in self._spot.keys():
+            spot_dict = self._spot.get(interval, {})
+            chain_spot_dict = self._chain_spot.get(interval, {})
+            div_dict = self._dividends.get(interval, {})
+            
+            for sym in spot_dict.keys():
+                data = spot_dict[sym]
+                data.index = pd.to_datetime(data.index)
+                data = data[~data.index.duplicated(keep='last')]
+                data = data.sort_index()
+                spot_dict[sym] = data
+            
+            for sym in chain_spot_dict.keys():
+                data = chain_spot_dict[sym]
+                data.index = pd.to_datetime(data.index)
+                data = data[~data.index.duplicated(keep='last')]
+                data = data.sort_index()
+                chain_spot_dict[sym] = data
+            
+            for sym in div_dict.keys():
+                data = div_dict[sym]
+                data.index = pd.to_datetime(data.index)
+                data = data[~data.index.duplicated(keep='last')]
+                data = data.sort_index()
+                div_dict[sym] = data
+            
+            self._spot[interval] = spot_dict
+            self._chain_spot[interval] = chain_spot_dict
+            self._dividends[interval] = div_dict
 
             
 
@@ -210,15 +281,20 @@ class MarketTimeseries:
 
         
         ## Assign data to regular dicts. Caveat (Potentially large data in memory)
-        spot_dict[sym] = spot
-        chain_spot_dict[sym] = chain_spot
-        div_dict[sym] = divs
+        ## We remove today's data to avoid situations where it was loaded intraday and remains in database
+        ## This ensures only historical data is stored.
+        spot_dict[sym] = self._remove_today_data(spot)
+        chain_spot_dict[sym] = self._remove_today_data(chain_spot)
+        div_dict[sym] = self._remove_today_data(divs)
         
         ## Store data in caches. CustomCaches do not support in-place assignments
         ## So we have to retrieve the dict, modify it, and then reassign it.
         self._spot[interval] = spot_dict
         self._chain_spot[interval] = chain_spot_dict
         self._dividends[interval] = div_dict
+
+        ## Sanitize today's data across all data
+        self._sanitize_data()
 
 
     def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = '1d') -> AtIndexResult:

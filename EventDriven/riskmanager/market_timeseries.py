@@ -10,7 +10,7 @@ from EventDriven.riskmanager.utils import (
     load_position_data,
     add_skip_columns,
 )
-from trade.helpers.decorators import log_time
+from trade.helpers.decorators import timeit
 from trade.helpers.threads import runThreads
 from trade.helpers.helper import (
     compare_dates, 
@@ -183,14 +183,15 @@ class BacktestTimeseries:
             self.market_timeseries.load_timeseries(sym=ticker, interval=self.undl_timeseries_config.interval)
             timeseries_data = self.market_timeseries.get_timeseries(sym=ticker)
 
-            @log_time()
+            @timeit
             def get_timeseries(_id, direction):
                 logger.info("Calculate Greeks dates")
                 logger.info(f"Start Date: {self.start_date}")
                 logger.info(f"End Date: {self.end_date}")
 
                 logger.info(f"Calculating Greeks for {_id} on {date} in {direction} direction")
-                data = self.generate_option_data_for_trade(_id, date)  ## Generate the option data for the trade
+                with self.lock:
+                    data = self.generate_option_data_for_trade(_id, date)  ## Generate the option data for the trade
 
                 if direction == "L":
                     long.append(data)
