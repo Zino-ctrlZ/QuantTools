@@ -51,6 +51,22 @@ class PositionAnalyzer:
         Returns the list of cogs in registration order.
         """
         return list(self._cogs.values())
+
+    def remove_cog(self, cog_name: str) -> None:
+        """
+        Removes a cog by name from the PositionAnalyzer.
+        """
+        if cog_name not in self._cogs:
+            raise KeyError(f"Cog with name {cog_name} not found.")
+        del self._cogs[cog_name]
+        logger.info(f"Removed Cog: {cog_name}")
+
+    def clear_cogs(self) -> None:
+        """
+        Clears all cogs from the PositionAnalyzer.
+        """
+        self._cogs.clear()
+        logger.info("Cleared all cogs from PositionAnalyzer.")
     
     def add_cog(self, cog: BaseCog) -> None:
         """

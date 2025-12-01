@@ -1,7 +1,6 @@
 
 from datetime import datetime
 import pandas as pd
-
 from EventDriven.riskmanager._order_validator import OrderInputs
 from ..utils import (
     LOOKBACKS,
@@ -20,6 +19,7 @@ from ..utils import (
     dynamic_memoize,
 )
 from trade.helpers.Logging import setup_logger
+from trade.helpers.decorators import timeit
 from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop, order_failed 
@@ -137,7 +137,8 @@ class OrderPicker:
         
         raw_order = build_strategy(chain, schema, chain_spot, cache)
         return extract_order(raw_order)
-
+    
+    @timeit
     def get_order(self, request: OrderRequest) -> Order:
         """
         Get the order based on the request.

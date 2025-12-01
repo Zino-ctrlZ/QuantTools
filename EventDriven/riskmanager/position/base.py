@@ -77,6 +77,12 @@ class BaseCog:
     @property
     def config(self) -> BaseCogConfig:
         return self._config
+    
+    @config.setter
+    def config(self, new_config: BaseCogConfig):
+        if not isinstance(new_config, BaseCogConfig):
+            raise TypeError("new_config must be an instance of BaseCogConfig or its subclass")
+        self._config = new_config
 
 
     @property
