@@ -126,6 +126,7 @@ class PositionAnalyzer:
         return StrategyChangeMeta(
             date=context.date,
             actionables=strategy_changes,
+            portfolio_meta=context.portfolio_meta,
         )
 
     def on_new_position(self, new_position_state: NewPositionState) -> NewPositionState:
