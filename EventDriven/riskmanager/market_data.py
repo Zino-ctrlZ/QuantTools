@@ -304,6 +304,29 @@ class MarketTimeseries:
         self._pre_sanitize_load_timeseries(sym, start_date, end_date, interval, force)
         self._sanitize_data()
 
+    def _is_date_in_index(self, sym: str, date: pd.Timestamp, interval: str = '1d') -> bool:
+        """
+        Check if a specific date is present in the timeseries index for a given symbol and interval.
+        Args:
+            sym (str): The stock symbol.
+            date (pd.Timestamp or str): The date to check.
+            interval (str): The interval of the timeseries data. Defaults to '1d'.
+        Returns:
+            bool: True if the date is present, False otherwise.
+        """
+        all_data = [
+            self._spot.get(interval, {}).get(sym),
+            self._chain_spot.get(interval, {}).get(sym),
+            self._dividends.get(interval, {}).get(sym)
+        ]
+
+        for data in all_data:
+            date = pd.to_datetime(date).date()
+            if data is not None and date in data.index.date:
+                continue
+            else:
+                return False
+        return True
 
     def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = '1d') -> AtIndexResult:
         """
@@ -314,12 +337,15 @@ class MarketTimeseries:
         Returns:
             AtIndexResult: A dataclass containing spot price, chain spot price, and dividends."""
         
-        already_available = self.already_loaded(sym, interval)
+        ## Only load date if not available. Not loading all unavailable dates
+        already_available = self._is_date_in_index(sym, index, interval)
 
         if not already_available:
-            print("Reloading timeseries data for symbol %s.", sym)
-            self._pre_sanitize_load_timeseries(sym=sym, start_date=self._start, end_date=self._end, force=True)
-            self._last_refresh = ny_now()
+            logger.critical("Reloading timeseries data for symbol %s.", sym)
+            prev_day = (pd.Timestamp(index) - BDay(1)).strftime('%Y-%m-%d')
+            self._pre_sanitize_load_timeseries(
+                sym=sym, start_date=prev_day, end_date=index, interval=interval, force=True
+            )
                     
 
         ## OPTIMIZATION: Consolidate type checks and conversions (Task #3)
