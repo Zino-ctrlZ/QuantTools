@@ -39,7 +39,7 @@ class BacktestTimeseries:
         self.start_date = _start
         self.end_date = _end
         self._skip_calc_config = SkipCalcConfig(skip_columns=["Midpoint"])
-        self.market_timeseries = MarketTimeseries()
+        self.market_timeseries = MarketTimeseries(_start=self.start_date, _end=self.end_date)
         self.options_cache = load_riskmanager_cache(target="processed_option_data")
         self.position_data_cache = load_riskmanager_cache(target="position_data")
         self.special_dividends = load_riskmanager_cache(target="special_dividend")
