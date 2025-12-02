@@ -20,6 +20,7 @@ def get_dte_and_moneyness_from_trade_id(
     check_date: pd.Timestamp,
     check_price: float,
     start: pd.Timestamp = None,
+    is_backtest: bool = True,
 ) -> tuple[int, list[float]]:
     """
     Combined function to parse trade_id once and compute both DTE and moneyness.
@@ -40,7 +41,7 @@ def get_dte_and_moneyness_from_trade_id(
             
             # Calculate moneyness with optional corporate event adjustment
             if start:
-                meta = adjust_for_events(start=start, date=check_date, option=meta)
+                meta = adjust_for_events(start=start, date=check_date, option=meta, is_backtest=is_backtest)
             
             strike = meta["strike"]
             option_type = meta["put_call"]
@@ -94,10 +95,18 @@ def adjust_for_events(
         start: str,
         date: str,
         option: str | dict,
+        is_backtest: bool = True,
     ):
         """
         Adjusts the option tick for events like splits or dividends.
         This function searches for splits in the SPLITS_CACHE and adjusts the strike price accordingly.
+        Args:
+            start (str): The start date of the position.
+            date (str): The date for which the adjustment is to be made.
+            option (str | dict): The option tick as a string or a dictionary.
+            is_backtest (bool): Flag indicating if the context is backtesting or live trading.
+        Returns:
+            dict: The adjusted option tick as a dictionary. If no adjustment is made, returns the original option tick as a dictionary.
         """
         if isinstance(option, str):
             meta = option
@@ -113,14 +122,25 @@ def adjust_for_events(
 
         strike_series = ADJUSTED_STRIKE_CACHE.get(meta, None)
         if strike_series is None:
-            raise ValueError(f"No adjusted strike data found for option: {meta}")
+            if is_backtest:
+                raise ValueError(f"No adjusted strike data found for option: {meta}")
+            else:
+                logger.warning(f"No adjusted strike data found for option: {meta}. Returning original meta.")
+                meta_dict = parse_option_tick(meta)
+                return meta_dict
+            
         adj_strike = strike_series.get(pd.to_datetime(date), None)
         if adj_strike is not None:
             meta_dict = parse_option_tick(meta)
             meta_dict["strike"] = adj_strike
             return meta_dict
         else:
-            raise ValueError(f"No adjusted strike found for option: {meta} on date: {date}")
+            if is_backtest:
+                raise ValueError(f"No adjusted strike found for option: {meta} on date: {date}")
+            else:
+                logger.warning(f"No adjusted strike found for option: {meta} on date: {date}. Returning original meta.")
+                meta_dict = parse_option_tick(meta)
+                return meta_dict
         # split = SPLITS_CACHE.get(swap_ticker(meta["ticker"]), None)
         # if split is None:
         #     return meta
@@ -180,6 +200,7 @@ def greek_check(greek_value: float, greek_threshold: float, qty: int = 1, greate
     if greater_than:
         per_greek = greek_value / qty
         _bool = abs(greek_value) > abs(greek_threshold)
+        logger.info(f"Greek Check: greek_value={greek_value}, greek_threshold={greek_threshold}, per_greek={per_greek}, _bool={_bool}")
         required_qty = max(int(abs(greek_threshold) // abs(per_greek)), 1)
         quantity_diff = abs(qty) - abs(required_qty)
         return _bool, quantity_diff
