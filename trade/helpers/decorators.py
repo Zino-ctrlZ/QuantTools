@@ -66,15 +66,16 @@ def timeit(func):
     Decorator to time function execution and collect metadata.
     
     Collects:
+    - date: Date when the function was called (YYYY-MM-DD)
+    - timestamp: When the function was called (ISO format)
     - func_name: Name of the function
     - module: Module path of the function
-    - execution_time: Time taken to execute in seconds
+    - execution_time_in_seconds: Time taken to execute in seconds
     - args: Positional arguments (serializable types only)
     - kwargs: Keyword arguments (serializable types only)
-    - timestamp: When the function was called
     
     The metadata is stored in a global bucket and saved to CSV at exit.
-    CSV location: GEN_CACHE_PATH/timeit_log_YYYYMMDD.csv
+    CSV location: GEN_CACHE_PATH/timeit_log.csv
     
     Args:
         func: The function to be decorated
@@ -119,12 +120,13 @@ def timeit(func):
                 
                 # Collect metadata
                 metadata = {
+                    'date': datetime.now().strftime('%Y-%m-%d'),
+                    'timestamp': timestamp,
                     'func_name': func.__name__,
                     'module': func.__module__,
-                    'execution_time': execution_time,
+                    'execution_time_in_seconds': execution_time,
                     'args': str(serialized_args),
-                    'kwargs': str(serialized_kwargs),
-                    'timestamp': timestamp
+                    'kwargs': str(serialized_kwargs)
                 }
                 
                 _TIMEIT_BUCKET.append(metadata)
@@ -148,12 +150,13 @@ def timeit(func):
                 
                 # Collect metadata
                 metadata = {
+                    'date': datetime.now().strftime('%Y-%m-%d'),
+                    'timestamp': timestamp,
                     'func_name': func.__name__,
                     'module': func.__module__,
-                    'execution_time': execution_time,
+                    'execution_time_in_seconds': execution_time,
                     'args': str(serialized_args),
-                    'kwargs': str(serialized_kwargs),
-                    'timestamp': timestamp
+                    'kwargs': str(serialized_kwargs)
                 }
                 
                 _TIMEIT_BUCKET.append(metadata)

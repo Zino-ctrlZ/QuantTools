@@ -235,6 +235,7 @@ class LimitsAndSizingCog(BaseCog):
                 check_date=position.last_updated,
                 check_price=position.current_underlier_data.chain_spot["close"],
                 start=bkt_start_date,
+                is_backtest=bkt_info.is_backtest
             )
 
             ## Analyze position
