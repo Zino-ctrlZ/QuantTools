@@ -5,8 +5,8 @@
 
 from .utils import (
                     get_timeseries_start_end,
-                    get_use_temp_cache,
                     get_persistent_cache,)
+from EventDriven._vars import get_use_temp_cache
 from trade.helpers.helper import  CustomCache, is_USholiday
 import pandas as pd
 from typing import List

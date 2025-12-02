@@ -26,6 +26,9 @@ from trade import register_signal
 from typing import Tuple
 from pathlib import Path
 import signal
+from EventDriven._vars import (
+    get_use_temp_cache
+)
 from .config import ffwd_data
 from .._vars import (
     OPTION_TIMESERIES_START_DATE
@@ -64,26 +67,28 @@ ID_SAVE_FOLDER = Path(os.environ["WORK_DIR"]) / ".cache"
 ID_SAVE_FILE = ID_SAVE_FOLDER / "position_data.csv"
 
 
-def set_use_temp_cache(use_temp_cache: bool) -> None:
+def set_use_temp_cache(use_temp_cache: bool) -> None: # noqa
     """
     Sets the USE_TEMP_CACHE variable to the given value.
     
     Args:
         use_temp_cache (bool): The value to set USE_TEMP_CACHE to.
     """
+    raise AttributeError("set_use_temp_cache has been moved to EventDriven._vars. Please update your imports.")
     global USE_TEMP_CACHE
     USE_TEMP_CACHE = use_temp_cache
     logger.critical(f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}. This will use a temporary cache that is cleared on exit. Utilize reset_persistent_cache() to reset the persistent cache.")
 
-def get_use_temp_cache() -> bool:
-    """
-    Returns the current value of USE_TEMP_CACHE.
+# def get_use_temp_cache() -> bool:
+#     """
+#     Returns the current value of USE_TEMP_CACHE.
     
-    Returns:
-        bool: The current value of USE_TEMP_CACHE.
-    """
-    global USE_TEMP_CACHE
-    return USE_TEMP_CACHE
+#     Returns:
+#         bool: The current value of USE_TEMP_CACHE.
+#     """
+#     raise AttributeError("get_use_temp_cache has been moved to EventDriven._vars. Please update your imports.")
+#     global USE_TEMP_CACHE
+#     return USE_TEMP_CACHE
 
 
 # 2a) Create persistent cache or temp
