@@ -226,14 +226,13 @@ class MarketTimeseries:
             
 
 
-    def load_timeseries(self, 
+    def _pre_sanitize_load_timeseries(self, 
                         sym: str, 
                         start_date: str|datetime = None, 
                         end_date: str|datetime = None, 
                         interval='1d',
                         force: bool = False) -> None:
         already_loaded, dt_range = self._already_loaded(sym, interval, start_date, end_date)
-        
         if already_loaded and not force:
             logger.info("Timeseries for %s already loaded. Use force=%s to reload.", sym, force)
             return
@@ -283,9 +282,9 @@ class MarketTimeseries:
         ## Assign data to regular dicts. Caveat (Potentially large data in memory)
         ## We remove today's data to avoid situations where it was loaded intraday and remains in database
         ## This ensures only historical data is stored.
-        spot_dict[sym] = self._remove_today_data(spot)
-        chain_spot_dict[sym] = self._remove_today_data(chain_spot)
-        div_dict[sym] = self._remove_today_data(divs)
+        spot_dict[sym] = spot
+        chain_spot_dict[sym] = chain_spot
+        div_dict[sym] = divs
         
         ## Store data in caches. CustomCaches do not support in-place assignments
         ## So we have to retrieve the dict, modify it, and then reassign it.
@@ -293,7 +292,16 @@ class MarketTimeseries:
         self._chain_spot[interval] = chain_spot_dict
         self._dividends[interval] = div_dict
 
-        ## Sanitize today's data across all data
+    def load_timeseries(self,
+                        sym: str, 
+                        start_date: str|datetime = None, 
+                        end_date: str|datetime = None, 
+                        interval='1d',
+                        force: bool = False) -> None:
+        """
+        Public method to load timeseries data for a given symbol and interval.
+        """
+        self._pre_sanitize_load_timeseries(sym, start_date, end_date, interval, force)
         self._sanitize_data()
 
 
@@ -310,12 +318,7 @@ class MarketTimeseries:
 
         if not already_available:
             print("Reloading timeseries data for symbol %s.", sym)
-            self.load_timeseries(
-                sym=sym,
-                start_date=self._start,
-                end_date=self._end,
-                force=True
-            )
+            self._pre_sanitize_load_timeseries(sym=sym, start_date=self._start, end_date=self._end, force=True)
             self._last_refresh = ny_now()
                     
 
@@ -336,6 +339,8 @@ class MarketTimeseries:
         chain_spot = interval_chain_spot[sym].loc[index_str] if sym in interval_chain_spot else None
         dividends = interval_dividends[sym].loc[index_str] if sym in interval_dividends else None
         rates = self.rates.loc[index_str] if self.rates is not None else None
+        ## Sanitize today's data across all data
+        self._sanitize_data()
         return AtIndexResult(spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index_str, rates=rates)
     
     def calculate_additional_data(self,
