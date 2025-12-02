@@ -12,8 +12,9 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
+from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData
 from EventDriven.riskmanager.new_base import RiskManager, order_failed
+from EventDriven.riskmanager.utils import parse_position_id
 from trade.helpers.Logging import setup_logger
 from trade.assets.Stock import Stock
 from EventDriven.event import  (
@@ -537,8 +538,39 @@ class OptionSignalPortfolio(Portfolio):
         for event in events:
             self.eventScheduler.schedule_event(event.datetime, event)
         return meta_changes
+    
+    @staticmethod
+    def _construct_position(
+        signal_id: str,
+        trade_id: str,
+        close: float,
+        quantity: int,
+        entry_price: float,
+    ) -> dict:
+        """
+        Construct a position dictionary
+        Note:
+            entry_price should be total entry price for the position (not per contract) scaled by quantity and multiplied by 100
+        """
+        parsed = parse_position_id(trade_id)[1]
+        long = []
+        short = []
+        for leg, _id in parsed:
+            if leg == 'L':
+                long.append(_id)
+            elif leg == 'S':
+                short.append(_id)
+        _order_data = OrderData(trade_id=trade_id, long=long, short=short, close=close, quantity=quantity)
+        position = {
+            "signal_id": signal_id,
+            "position": _order_data,
+            "quantity": quantity,
+            "entry_price": entry_price,
+            "market_value": close * quantity * 100,
+        }
+        return position
         
-    def _create_ctx(self, date: pd.Timestamp) -> PositionAnalysisContext:
+    def _create_ctx(self, date: pd.Timestamp, positions: dict = None) -> PositionAnalysisContext:
         """
         Create a Context object for the given date
         """
@@ -547,7 +579,7 @@ class OptionSignalPortfolio(Portfolio):
         date_str = date.strftime('%Y-%m-%d')
 
         ## Create PositionState objects for all current positions
-        positions = self.current_positions
+        positions = positions if positions is not None else self.current_positions
         positions_states = []
         for tick, pos_pack in positions.items():
             for signal_id, position in pos_pack.items():
@@ -590,7 +622,7 @@ class OptionSignalPortfolio(Portfolio):
         
         ## Create PortfolioMetaInfo
         meta = PortfolioMetaInfo(
-            portfolio_name="bkt_test_11",
+            portfolio_name=self.config.run_name,
             initial_cash=self.initial_capital,
             start_date=self.risk_manager.start_date,
             end_date=self.risk_manager.end_date,
