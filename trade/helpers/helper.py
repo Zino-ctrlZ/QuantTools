@@ -4,6 +4,7 @@ import QuantLib as ql
 from datetime import datetime
 import time
 import os
+import shutil
 import backoff
 from dotenv import load_dotenv
 load_dotenv()
@@ -296,7 +297,9 @@ class CustomCache(Cache):
         if self._clear_on_exit:
             # atexit.register(self._on_exit)
             # signal.signal(signal.SIGTERM, self._on_signal)
-            register_signal(signum=15, signal_func=self._on_exit)
+            register_signal(signum=signal.SIGTERM, signal_func=self._on_exit)
+            register_signal(signum=signal.SIGINT, signal_func=self._on_exit)
+            register_signal("exit", self._on_exit)
         else:
             # just record the dir for later weekly cron clean-up
             with open(self.register_location, 'r') as f:
@@ -349,9 +352,18 @@ class CustomCache(Cache):
         return self[key]
     
     def _on_exit(self):
-        self.clear()
-        with open(f'{self.log_path}', 'a') as f:
-            f.write(f"Cache cleared by AtExit at {datetime.now()}\n")
+        try:
+            self.close()
+            self.clear()
+            shutil.rmtree(self.dir)
+
+        except Exception as e:
+            with open(f'{self.log_path}', 'a') as f:
+                f.write(f"Error clearing cache {self.dir} at {datetime.now()}: {e}\n")
+        else:
+            with open(f'{self.log_path}', 'a') as f:
+                f.write(f"Cache {self.dir} cleared by AtExit at {datetime.now()}\n")
+
 
     def _on_signal(self, signum, frame):
         # Only the creating process should handle cleanup

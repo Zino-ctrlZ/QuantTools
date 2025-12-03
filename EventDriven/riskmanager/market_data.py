@@ -19,6 +19,7 @@ from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
 from EventDriven.exceptions import UnaccessiblePropertyError
+from trade import register_signal
 
 
 logger = setup_logger('EventDriven.riskmanager.market_data', stream_log_level="WARNING")
@@ -68,7 +69,12 @@ class MarketTimeseries:
     _last_refresh: Optional[datetime] = field(default_factory=ny_now)
     _start: str = OPTION_TIMESERIES_START_DATE
     _end: str = (datetime.now() - BDay(1)).strftime('%Y-%m-%d')
+    _today: str = datetime.now().strftime('%Y-%m-%d')
     should_refresh: bool = True
+
+    def __post_init__(self):
+        register_signal(signum=15, signal_func=self._on_exit_sanitize)
+        register_signal(signum=0, signal_func=self._on_exit_sanitize)
 
     @property
     def spot(self) -> dict:
@@ -93,6 +99,23 @@ class MarketTimeseries:
     @property
     def _dividends(self) -> CustomCache:
         return DIVIDEND_CACHE
+    
+    def _on_exit_sanitize(self):
+        """Remove today's data from all stored timeseries data."""
+
+        for sym in self._spot.keys():
+            d = self._spot[sym]
+            d = d[d.index < self._today]
+            self._spot[sym] = d
+        for sym in self._chain_spot.keys():
+            d = self._chain_spot[sym]
+            d = d[d.index < self._today]
+            self._chain_spot[sym] = d
+        for sym in self._dividends.keys():
+            d = self._dividends[sym]
+            d = d[d.index < self._today]
+            self._dividends[sym] = d
+
 
     @timeit
     def _already_loaded(self, 
@@ -106,14 +129,13 @@ class MarketTimeseries:
         """
         start = start or self._start
         end = end or self._end
-        sym_available = sym in self._spot.get(interval, {})
-        interval_available = interval in self._spot
+        sym_available = sym in self._spot
         all_dates_present = False
         
         data_to_check = [
-            self._spot.get(interval, {}).get(sym),
-            self._chain_spot.get(interval, {}).get(sym),
-            self._dividends.get(interval, {}).get(sym)
+            self._spot.get(sym),
+            self._chain_spot.get(sym),
+            self._dividends.get(sym)
         ]
         
         missing_dates_set = set()
@@ -139,9 +161,8 @@ class MarketTimeseries:
         ## If all dates present, return empty list
         else:
             return_dates = []
-            
-                    
-        return (sym_available and interval_available and all_dates_present), return_dates
+        
+        return (sym_available and all_dates_present), return_dates
     
     def already_loaded(self, 
                        sym: str, 
@@ -163,26 +184,18 @@ class MarketTimeseries:
         elif isinstance(data, pd.Series):
             return data[data.index < today_str]
         else:
-            raise ValueError("Data must be a pandas DataFrame or Series.")
+            raise ValueError("Data must be a pandas DataFrame or Series. Got type: {}".format(type(data)))
         
     @timeit
     def _sanitize_today_data(self) -> None:
         """Remove today's data from all stored timeseries data."""
-        for interval in self._spot.keys():
-            spot_dict = self._spot.get(interval, {})
-            chain_spot_dict = self._chain_spot.get(interval, {})
-            div_dict = self._dividends.get(interval, {})
-            
-            for sym in spot_dict.keys():
-                spot_dict[sym] = self._remove_today_data(spot_dict[sym])
-            for sym in chain_spot_dict.keys():
-                chain_spot_dict[sym] = self._remove_today_data(chain_spot_dict[sym])
-            for sym in div_dict.keys():
-                div_dict[sym] = self._remove_today_data(div_dict[sym])
-            
-            self._spot[interval] = spot_dict
-            self._chain_spot[interval] = chain_spot_dict
-            self._dividends[interval] = div_dict
+        
+        for sym in self._spot.keys():
+            self._spot[sym] = self._remove_today_data(self._spot[sym])
+        for sym in self._chain_spot.keys():
+            self._chain_spot[sym] = self._remove_today_data(self._chain_spot[sym])
+        for sym in self._dividends.keys():
+            self._dividends[sym] = self._remove_today_data(self._dividends[sym])
 
     
     @timeit
@@ -193,35 +206,26 @@ class MarketTimeseries:
         """
         self._sanitize_today_data()
 
-        for interval in self._spot.keys():
-            spot_dict = self._spot.get(interval, {})
-            chain_spot_dict = self._chain_spot.get(interval, {})
-            div_dict = self._dividends.get(interval, {})
-            
-            for sym in spot_dict.keys():
-                data = spot_dict[sym]
-                data.index = pd.to_datetime(data.index)
-                data = data[~data.index.duplicated(keep='last')]
-                data = data.sort_index()
-                spot_dict[sym] = data
-            
-            for sym in chain_spot_dict.keys():
-                data = chain_spot_dict[sym]
-                data.index = pd.to_datetime(data.index)
-                data = data[~data.index.duplicated(keep='last')]
-                data = data.sort_index()
-                chain_spot_dict[sym] = data
-            
-            for sym in div_dict.keys():
-                data = div_dict[sym]
-                data.index = pd.to_datetime(data.index)
-                data = data[~data.index.duplicated(keep='last')]
-                data = data.sort_index()
-                div_dict[sym] = data
-            
-            self._spot[interval] = spot_dict
-            self._chain_spot[interval] = chain_spot_dict
-            self._dividends[interval] = div_dict
+        for sym in self._spot.keys():
+            data = self._spot[sym]
+            data.index = pd.to_datetime(data.index)
+            data = data[~data.index.duplicated(keep='last')]
+            data = data.sort_index()
+            self._spot[sym] = data
+        
+        for sym in self._chain_spot.keys():
+            data = self._chain_spot[sym]
+            data.index = pd.to_datetime(data.index)
+            data = data[~data.index.duplicated(keep='last')]
+            data = data.sort_index()
+            self._chain_spot[sym] = data
+        
+        for sym in self._dividends.keys():
+            data = self._dividends[sym]
+            data.index = pd.to_datetime(data.index)
+            data = data[~data.index.duplicated(keep='last')]
+            data = data.sort_index()
+            self._dividends[sym] = data
 
             
 
@@ -255,15 +259,10 @@ class MarketTimeseries:
         divs = resample(divs['amount'], method='ffill', interval=interval)
 
 
-        ## Interval Dict
-        spot_dict = self._spot.get(interval, {})
-        chain_spot_dict = self._chain_spot.get(interval, {})
-        div_dict = self._dividends.get(interval, {})
-
         ## Current Data
-        current_spot = spot_dict.get(sym)
-        current_chain_spot = chain_spot_dict.get(sym)
-        current_divs = div_dict.get(sym)
+        current_spot = self._spot.get(sym)
+        current_chain_spot = self._chain_spot.get(sym)
+        current_divs = self._dividends.get(sym)
 
         ## We are moving from overwritting prev data to merging new data
         if current_spot is not None:
@@ -279,18 +278,12 @@ class MarketTimeseries:
             divs = divs[~divs.index.duplicated(keep='last')]
 
         
-        ## Assign data to regular dicts. Caveat (Potentially large data in memory)
+        ## Assign data directly to cache
         ## We remove today's data to avoid situations where it was loaded intraday and remains in database
         ## This ensures only historical data is stored.
-        spot_dict[sym] = spot
-        chain_spot_dict[sym] = chain_spot
-        div_dict[sym] = divs
-        
-        ## Store data in caches. CustomCaches do not support in-place assignments
-        ## So we have to retrieve the dict, modify it, and then reassign it.
-        self._spot[interval] = spot_dict
-        self._chain_spot[interval] = chain_spot_dict
-        self._dividends[interval] = div_dict
+        self._spot[sym] = spot
+        self._chain_spot[sym] = chain_spot
+        self._dividends[sym] = divs
 
     def load_timeseries(self,
                         sym: str, 
@@ -302,7 +295,6 @@ class MarketTimeseries:
         Public method to load timeseries data for a given symbol and interval.
         """
         self._pre_sanitize_load_timeseries(sym, start_date, end_date, interval, force)
-        self._sanitize_data()
 
     def _is_date_in_index(self, sym: str, date: pd.Timestamp, interval: str = '1d') -> bool:
         """
@@ -315,9 +307,9 @@ class MarketTimeseries:
             bool: True if the date is present, False otherwise.
         """
         all_data = [
-            self._spot.get(interval, {}).get(sym),
-            self._chain_spot.get(interval, {}).get(sym),
-            self._dividends.get(interval, {}).get(sym)
+            self._spot.get(sym),
+            self._chain_spot.get(sym),
+            self._dividends.get(sym)
         ]
 
         for data in all_data:
@@ -352,21 +344,14 @@ class MarketTimeseries:
         if not isinstance(index, pd.Timestamp):
             index = pd.Timestamp(index)
         
-        ## OPTIMIZATION: Extract interval_data once to avoid repeated dict lookups (Task #8)
-        interval_spot = self._spot.get(interval, {})
-        interval_chain_spot = self._chain_spot.get(interval, {})
-        interval_dividends = self._dividends.get(interval, {})
-        
-        if sym not in interval_spot:
+        if sym not in self._spot:
             raise ValueError(f"Symbol {sym} not found in timeseries data.")
         
         index_str = index.strftime('%Y-%m-%d')
-        spot = interval_spot[sym].loc[index_str] if sym in interval_spot else None
-        chain_spot = interval_chain_spot[sym].loc[index_str] if sym in interval_chain_spot else None
-        dividends = interval_dividends[sym].loc[index_str] if sym in interval_dividends else None
+        spot = self._spot[sym].loc[index_str] if sym in self._spot else None
+        chain_spot = self._chain_spot[sym].loc[index_str] if sym in self._chain_spot else None
+        dividends = self._dividends[sym].loc[index_str] if sym in self._dividends else None
         rates = self.rates.loc[index_str] if self.rates is not None else None
-        ## Sanitize today's data across all data
-        self._sanitize_data()
         return AtIndexResult(spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index_str, rates=rates)
     
     def calculate_additional_data(self,
@@ -441,6 +426,9 @@ class MarketTimeseries:
         Returns:
             TimeseriesData: A dataclass containing the requested timeseries data.
         """
+        if not self.already_loaded(sym, interval):
+            logger.critical("Timeseries for symbol %s not loaded. Loading now.", sym)
+            self._pre_sanitize_load_timeseries(sym, interval=interval, force=True)
         if factor not in self.DEFAULT_NAMES + ['additional', None]:
             raise ValueError(f"Factor {factor} not recognized. Must be one of {self.DEFAULT_NAMES + ['additional']}.")
         if factor == 'additional':
@@ -453,23 +441,25 @@ class MarketTimeseries:
         
         elif factor in self.DEFAULT_NAMES:
             factor = '_'+factor
-            data = getattr(self, factor).get(interval, {}).get(sym)
+            data = getattr(self, factor).get(sym)
             if data is None:
                 raise ValueError(f"No data found for factor {factor} and symbol {sym}.")
             if factor == '_spot':
-                return TimeseriesData(spot=data, chain_spot=None, dividends=None)
+                ts =  TimeseriesData(spot=data, chain_spot=None, dividends=None)
             elif factor == '_chain_spot':
-                return TimeseriesData(spot=None, chain_spot=data, dividends=None)
+                ts = TimeseriesData(spot=None, chain_spot=data, dividends=None)
             elif factor == '_dividends':
-                return TimeseriesData(spot=None, chain_spot=None, dividends=data)
+                ts = TimeseriesData(spot=None, chain_spot=None, dividends=data)
             else:
                 raise ValueError(f"Unhandled factor {factor}.")
         
         elif factor is None:
-            spot = self._spot.get(interval, {}).get(sym)
-            chain_spot = self._chain_spot.get(interval, {}).get(sym)
-            dividends = self._dividends.get(interval, {}).get(sym)
-            return TimeseriesData(spot=spot, chain_spot=chain_spot, dividends=dividends)
+            spot = self._spot.get(sym)
+            chain_spot = self._chain_spot.get(sym)
+            dividends = self._dividends.get(sym)
+            ts = TimeseriesData(spot=spot, chain_spot=chain_spot, dividends=dividends)
+
+        return ts
 
 
     def __repr__(self) -> str:

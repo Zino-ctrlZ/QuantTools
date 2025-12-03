@@ -149,6 +149,39 @@ def check_cache_completeness(
     
     return is_complete, missing_dates
 
+def deleted_tick_from_all_cache(
+    opttick: str,
+    interval: str,
+) -> None:  
+    """
+    Delete all cached data for a specific opttick across all cache types.
+    
+    Args:
+        opttick: Option ticker string to delete
+        interval: Time interval (e.g., '1d')
+    """
+    global _OPTION_SPOT_CACHE, _BS_VOL_CACHE, _BS_GREEKS_CACHE
+    global _BINOMIAL_VOL_CACHE, _BINOMIAL_GREEKS_CACHE
+    
+    caches = [
+        _OPTION_SPOT_CACHE,
+        _BS_VOL_CACHE,
+        _BS_GREEKS_CACHE,
+        _BINOMIAL_VOL_CACHE,
+        _BINOMIAL_GREEKS_CACHE
+    ]
+    
+    for cache in caches:
+        if cache is not None:
+            interval_dict = cache.get(interval, {})
+            if opttick in interval_dict:
+                del interval_dict[opttick]
+                cache[interval] = interval_dict  # Reassign to update cache
+                logger.info(f"Deleted {opttick} from cache ({interval})")
+            else:
+                logger.debug(f"{opttick} not found in cache ({interval}), nothing to delete")
+
+
 
 def save_to_cache(
     cache: CustomCache,

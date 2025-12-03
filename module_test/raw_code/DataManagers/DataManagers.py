@@ -47,6 +47,7 @@ from dbase.DataAPI.ThetaData import (retrieve_ohlc,
                                       retrieve_openInterest,
                                       retrieve_chain_bulk,
                                       retrieve_bulk_open_interest,
+                                      quote_to_eod_patch,
                                       set_should_schedule)
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from .SaveManager import save_failed_request
@@ -314,15 +315,25 @@ class SpotDataManager(QuoteController):
             if not bulk:
                 try:
                     if self.get_use_quotes():
-                        data=retrieve_quote(symbol=self.symbol, 
-                                            end_date=end, 
-                                            exp=exp, 
-                                            right=right, 
-                                            start_date=start, 
-                                            strike=strike, 
-                                            print_url=print_url, 
-                                            interval='1d',
-                                            ohlc_format=True)
+ 
+                        data = quote_to_eod_patch(
+                            symbol = self.symbol,
+                            end_date = end,
+                            exp = exp,
+                            right = right,
+                            start_date = start,
+                            strike = strike,
+                            print_url = print_url,
+                        )
+                    # data=retrieve_quote(symbol=self.symbol,
+                    #                     end_date=end,
+                    #                     exp=exp,
+                    #                     right=right,
+                    #                     start_date=start,
+                    #                     strike=strike,
+                    #                     print_url=print_url,
+                    #                     interval='1d',
+                    #                     ohlc_format=True)
                     else:
                         data = retrieve_eod_ohlc(symbol=self.symbol, 
                                                 end_date=end, 
@@ -927,7 +938,8 @@ class OptionDataManager(_ManagerLazyLoader,
                        interval: str = '1d',
                        type_: str = 'spot',
                        model: str = 'bs',
-                       extra_cols: list = []) -> OptionQueryRequestParameter:
+                       extra_cols: list = [], 
+                       only_mid: bool = True) -> OptionQueryRequestParameter:
         """
         Query the timeseries data from ThetaData API or SQL Database.
 
@@ -948,8 +960,8 @@ class OptionDataManager(_ManagerLazyLoader,
         greek_names = self.greek_names
         self.current_request = datetime.now().strftime("%Y%m%d %H:%M:%S")
         _extra_cols = handle_extra_cols(extra_cols, type_, model)
-        greek_cols = build_name_format('greek', model, extra_cols, self.default_fill) 
-        vol_cols = build_name_format('vol', model, extra_cols, self.default_fill)
+        greek_cols = build_name_format('greek', model, extra_cols, self.default_fill, only_mid=only_mid) 
+        vol_cols = build_name_format('vol', model, extra_cols, self.default_fill, only_mid=only_mid)
 
         ## Enforce the interval
         enforce_interval(ivl_str)
@@ -962,7 +974,7 @@ class OptionDataManager(_ManagerLazyLoader,
         input_params = getattr(self, agg)
 
         ## Determine the requested columns
-        requested_col = determine_requested_columns(self.default_fill, type_, model, greek_names)
+        requested_col = determine_requested_columns(self.default_fill, type_, model, greek_names, only_mid=only_mid)
         
 
         ## TO-DO: Move this to a method
@@ -1500,25 +1512,38 @@ def determine_table_agg(ivl_str: str, type_: str, greek_names: list) -> tuple:
     return agg, database, table
 
 
-def determine_requested_columns(default_fill:str, type_:str, model:str, greek_names:list) -> list:
+def determine_requested_columns(default_fill:str, type_:str, model:str, greek_names:list, only_mid:bool = False) -> list:
     if type_ == 'spot':
         requested_col = ['datetime', 'open', 'high', 'low', 'close', default_fill.lower(),'volume', 'openinterest']
 
     elif type_ == 'vol':
-        requested_col = ['datetime', f"{model}_iv".lower(), f"{default_fill.lower()}_{model}_iv".lower()]
+        requested_col = ['datetime', f"{default_fill.lower()}_{model}_iv".lower()]
+        if not only_mid:
+            requested_col.append(
+                f"{model}_iv".lower(),
+            )
+            
 
     elif type_ in greek_names:
         ## If Statement logic to format a the list of greek names to be used
         if type_ not in ['greek', 'greeks']:
             if model == 'bs':
                 requested_col = ['datetime'] + [f"{default_fill}_{type_}".lower()] + [f"{type_}".lower()]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill}_{type_}".lower()]
             else:
                 requested_col = ['datetime'] + [f"{model}_{type_}".lower()] + [f"{default_fill.lower()}_{model}_{type_}".lower()]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{model}_{type_}".lower()]
         else:
             if model == 'bs':
                 requested_col = ['datetime'] + [f"{x}".lower() for x in greek_names if x not in ['greek', 'greeks']] + [f"{default_fill.lower()}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
             else:
                 requested_col = ['datetime'] + [f"{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']] + [f"{default_fill.lower()}_{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
 
     elif type_ == 'attribution':
         raise NotImplementedError("Attribution data not implemented yet")
@@ -2173,7 +2198,11 @@ def handle_extra_cols(extra_cols, type_, model):
              
         return return_cols
 
-def build_name_format(type_, model, extra_cols, default_fill):
+def build_name_format(type_, 
+                      model, 
+                      extra_cols, 
+                      default_fill, 
+                      only_mid:bool=True) -> dict:
     """
     Build the name format for the columns
     """
@@ -2181,7 +2210,8 @@ def build_name_format(type_, model, extra_cols, default_fill):
 
     if type_ == 'vol':
         if model == 'bs':
-            name_format['close'] = 'bs_iv'
+            if not only_mid:
+                name_format['close'] = 'bs_iv'
             name_format[f"{default_fill}"] = f"{default_fill}_bs_iv"
 
             ## Handle extra columns
@@ -2193,7 +2223,9 @@ def build_name_format(type_, model, extra_cols, default_fill):
 
 
         elif model == 'binomial':
-            name_format['close'] = 'binomial_iv'
+            if not only_mid:
+                name_format['close'] = 'binomial_iv'
+
             name_format[f"{default_fill}"] = f"{default_fill}_binomial_iv"
             if extra_cols:
                 for col in extra_cols:
@@ -2203,23 +2235,28 @@ def build_name_format(type_, model, extra_cols, default_fill):
     
     elif type_ in ['greek', 'greeks']:
         if model == 'bs':
-            name_format['bs_iv'] = '{x}'
+            if not only_mid:
+                name_format['bs_iv'] = '{x}'
             name_format[f"{default_fill}_bs_iv"] = f'{default_fill}_'+'{x}'
             if extra_cols:
                 pass ## Figure out how to handle extra cols
             
         elif model == 'binomial':
-            name_format['binomial_iv'] = 'binomial_{x}'
+            if not only_mid:
+                name_format['binomial_iv'] = 'binomial_{x}'
             name_format[f"{default_fill}_binomial_iv"] = f'{default_fill}_binomial_'+'{x}'
             for col in extra_cols:
                 name_format[f"{col}_binomial_iv"] = f"{col}_{model}_" +"{x}"
     
     elif type_ in PRICING_CONFIG['AVAILABLE_GREEKS']:
         if model == 'bs':
-            name_format['bs_iv'] = '{x}'
+            if not only_mid:
+                name_format['bs_iv'] = '{x}'
+
             name_format[f"{default_fill}_bs_iv"] = f'{default_fill}_'+'{x}'
         elif model == 'binomial':
-            name_format['binomial_iv'] = 'binomial_{x}'
+            if not only_mid:
+                name_format['binomial_iv'] = 'binomial_{x}'
             name_format[f"{default_fill}_binomial_iv"] = f'{default_fill}_binomial_'+'{x}'
             for col in extra_cols:
                 name_format[f"{col}_binomial_iv"] = f"{col}_{model}_" +"{x}"

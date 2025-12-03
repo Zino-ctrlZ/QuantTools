@@ -520,7 +520,8 @@ class CachedOptionDataManager(OptionDataManager):
                        interval: str = '1d',
                        type_: str = 'spot',
                        model: str = 'bs',
-                       extra_cols: list = None) -> pd.DataFrame:
+                       extra_cols: list = None,
+                       only_mid: bool = True) -> pd.DataFrame:
         """
         Query timeseries data with intelligent caching.
         
@@ -559,5 +560,5 @@ class CachedOptionDataManager(OptionDataManager):
         logger.info(f"Query: {self.opttick} | type={type_} | model={model} | dates={pd.Timestamp(start).date()} to {pd.Timestamp(end).date()}")
         
         # Call parent - cached managers will intercept at factor level
-        return super().get_timeseries(start, end, interval, type_, model, extra_cols)
+        return super().get_timeseries(start, end, interval, type_, model, extra_cols, only_mid=only_mid)
 

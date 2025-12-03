@@ -163,6 +163,7 @@ class OptionSignalPortfolio(Portfolio):
         self.position_cache = {}
         self.config = PortfolioManagerConfig()
         self._holiday_cache = {}
+        self.is_backtest = True ## Move to config?
 
     def _is_holiday(self, dt):
         """
@@ -627,7 +628,7 @@ class OptionSignalPortfolio(Portfolio):
             start_date=self.risk_manager.start_date,
             end_date=self.risk_manager.end_date,
             t_plus_n=self.t_plus_n,
-            is_backtest=True,
+            is_backtest=self.is_backtest,
         )
 
         ## Create AnalysisContext
