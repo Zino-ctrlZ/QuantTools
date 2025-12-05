@@ -1,6 +1,16 @@
 Todo Todo:
     ☐ Review this file and cut down useless tasks
 
+Long Term Design for Data:
+    5 Main Factors:
+        1. Spot
+        2. Vol
+        3. Greeks
+        4. PnL Attribution
+        5. Scenarios
+    Ultimately, each factor should cache it's own data. Within each factor, there will be multiple models to choose from.
+    Each model of a factor will have it's own caching mechanism to avoid mixups.
+
 Setup File ToDo:
     ☐ Add symbolic links creation for .vscode, .pylintrc, .gitignore, ruff.toml
 

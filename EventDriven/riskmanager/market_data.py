@@ -13,7 +13,8 @@ from trade.helpers.helper import (
     retrieve_timeseries, 
     ny_now, 
     CustomCache,
-    get_missing_dates)
+    get_missing_dates,
+    YFinanceEmptyData)
 from trade.helpers.decorators import timeit
 from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
@@ -102,17 +103,31 @@ class MarketTimeseries:
     
     def _on_exit_sanitize(self):
         """Remove today's data from all stored timeseries data."""
+        def _check_instance(d):
+            return isinstance(d, pd.DataFrame) or isinstance(d, pd.Series)
 
         for sym in self._spot.keys():
             d = self._spot[sym]
+            if not _check_instance(d):
+                logger.critical("Data for symbol %s in spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                continue
             d = d[d.index < self._today]
             self._spot[sym] = d
         for sym in self._chain_spot.keys():
             d = self._chain_spot[sym]
+
+            if not _check_instance(d):
+                logger.critical("Data for symbol %s in chain_spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                continue
+
             d = d[d.index < self._today]
             self._chain_spot[sym] = d
         for sym in self._dividends.keys():
             d = self._dividends[sym]
+            if not _check_instance(d):
+                logger.critical("Data for symbol %s in dividends cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                continue
+            
             d = d[d.index < self._today]
             self._dividends[sym] = d
 
@@ -206,7 +221,9 @@ class MarketTimeseries:
         """
         self._sanitize_today_data()
 
+
         for sym in self._spot.keys():
+            sym = sym.upper()
             data = self._spot[sym]
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
@@ -214,6 +231,7 @@ class MarketTimeseries:
             self._spot[sym] = data
         
         for sym in self._chain_spot.keys():
+            sym = sym.upper()
             data = self._chain_spot[sym]
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
@@ -221,6 +239,7 @@ class MarketTimeseries:
             self._chain_spot[sym] = data
         
         for sym in self._dividends.keys():
+            sym = sym.upper()
             data = self._dividends[sym]
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
@@ -236,6 +255,14 @@ class MarketTimeseries:
                         end_date: str|datetime = None, 
                         interval='1d',
                         force: bool = False) -> None:
+        """
+        Pre-sanitization before loading timeseries data for a given symbol and interval.
+        """
+        sym = sym.upper()
+        if start_date is None:
+            start_date = self._start
+        if end_date is None:
+            end_date = self._end
         already_loaded, dt_range = self._already_loaded(sym, interval, start_date, end_date)
         if already_loaded and not force:
             logger.info("Timeseries for %s already loaded. Use force=%s to reload.", sym, force)
@@ -244,8 +271,17 @@ class MarketTimeseries:
         start_date = min(dt_range)
         end_date = max(dt_range)
         
-        spot = retrieve_timeseries(sym, start_date, end_date, interval)
-        chain_spot = retrieve_timeseries(sym, start_date, end_date, interval, spot_type='chain_price')
+        try:
+            spot = retrieve_timeseries(sym, start_date, end_date, interval)
+        except YFinanceEmptyData:
+            logger.error("Failed to retrieve spot data for symbol %s. Skipping load.", sym)
+            return
+        
+        try:
+            chain_spot = retrieve_timeseries(sym, start_date, end_date, interval, spot_type='chain_price')
+        except YFinanceEmptyData:
+            logger.error("Failed to retrieve chain spot data for symbol %s. Skipping load.", sym)
+            return
         try:
             divs = obb.equity.fundamental.dividends(symbol=sym, provider='yfinance').to_df()
             divs.set_index('ex_dividend_date', inplace = True)
@@ -416,6 +452,8 @@ class MarketTimeseries:
                        factor: Literal['spot', 'chain_spot', 'dividends', 'additional']=None,
                        interval: str = '1d',
                        additional_data_name: Optional[str] = None,
+                       start_date: str|datetime = None,
+                       end_date: str|datetime = None
                        ) -> TimeseriesData:
         """
         Retrieve the timeseries data for a given symbol and factor.
@@ -426,6 +464,7 @@ class MarketTimeseries:
         Returns:
             TimeseriesData: A dataclass containing the requested timeseries data.
         """
+        sym = sym.upper()
         if not self.already_loaded(sym, interval):
             logger.critical("Timeseries for symbol %s not loaded. Loading now.", sym)
             self._pre_sanitize_load_timeseries(sym, interval=interval, force=True)
@@ -442,6 +481,13 @@ class MarketTimeseries:
         elif factor in self.DEFAULT_NAMES:
             factor = '_'+factor
             data = getattr(self, factor).get(sym)
+            if start_date is not None or end_date is not None:
+                start_date = pd.to_datetime(start_date).strftime('%Y-%m-%d') if start_date is not None else None
+                end_date = pd.to_datetime(end_date).strftime('%Y-%m-%d') if end_date is not None else None
+                if start_date is not None:
+                    data = data[data.index >= start_date]
+                if end_date is not None:
+                    data = data[data.index <= end_date]
             if data is None:
                 raise ValueError(f"No data found for factor {factor} and symbol {sym}.")
             if factor == '_spot':
@@ -457,6 +503,17 @@ class MarketTimeseries:
             spot = self._spot.get(sym)
             chain_spot = self._chain_spot.get(sym)
             dividends = self._dividends.get(sym)
+            if start_date is not None or end_date is not None:
+                start_date = pd.to_datetime(start_date).strftime('%Y-%m-%d') if start_date is not None else None
+                end_date = pd.to_datetime(end_date).strftime('%Y-%m-%d') if end_date is not None else None
+                if start_date is not None:
+                    spot = spot[spot.index >= start_date]
+                    chain_spot = chain_spot[chain_spot.index >= start_date]
+                    dividends = dividends[dividends.index >= start_date]
+                if end_date is not None:
+                    spot = spot[spot.index <= end_date]
+                    chain_spot = chain_spot[chain_spot.index <= end_date]
+                    dividends = dividends[dividends.index <= end_date]
             ts = TimeseriesData(spot=spot, chain_spot=chain_spot, dividends=dividends)
 
         return ts

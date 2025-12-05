@@ -378,6 +378,9 @@ class PTBacktester(AggregatorParent):
             
         ## Loop through each datasets backtest, optimize & append to optimized dataframe
         for dataset in self.datasets:
+            name = dataset.name
+            ## Make sure strategy name is set for each optimize run
+            dataset.backtest._strategy._name = name
             
             if return_heatmap:
                 opt, hm = dataset.backtest.optimize(**param_kwargs, **kwargs)

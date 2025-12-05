@@ -18,6 +18,7 @@ POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 EXIT_HANDLERS = []  # Handlers for normal program exit
 _ATEXIT_REGISTERED = False
+OWNER_PID = os.getpid()
 logger = setup_logger('trade.__init__')
 
 
@@ -121,6 +122,9 @@ def run_signals(signum, frame):
     """
     Run all registered signals.
     """
+    if os.getpid() != OWNER_PID:
+        logger.info("Signal received in child process (PID: %d). Ignoring signal %d.", os.getpid(), signum)
+        return
     if signum in SIGNALS_TO_RUN:
         for signal_func in SIGNALS_TO_RUN[signum]:
             try:
