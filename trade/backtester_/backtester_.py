@@ -92,10 +92,11 @@ class PTBacktester(AggregatorParent):
             
         """
         trade_on_close = kwargs.pop("trade_on_close", True)
+        finalize_trades = kwargs.pop("finalize_trades", True)
         if not trade_on_close:
             raise ValueError("PTBacktester currently only supports trade_on_close=True. trade_on_close=False is not supported.")
         else:
-            print("PTBacktester initialized with trade_on_close=True")
+            print(f"PTBacktester initialized with trade_on_close={trade_on_close}, finalize_trades={finalize_trades}")
         self.datasets = []
         self.__strategy = deepcopy(strategy)
         self.__port_stats = None
@@ -120,7 +121,7 @@ class PTBacktester(AggregatorParent):
             elif isinstance(cash, float):
                 cash_ = cash
             d = deepcopy(d)
-            d.backtest = Backtest(d.data, strategy = deepcopy(self.strategy), cash = cash_, trade_on_close=trade_on_close, **kwargs)
+            d.backtest = Backtest(d.data, strategy = deepcopy(self.strategy), cash = cash_, trade_on_close=trade_on_close, finalize_trades=finalize_trades, **kwargs)
             self.datasets.append(d)
         self.cash = cash
 
