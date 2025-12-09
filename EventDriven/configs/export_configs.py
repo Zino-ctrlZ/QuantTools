@@ -282,6 +282,8 @@ def export_run_configs(root: Any, debug: bool = False, remove_underscore: bool =
         # Sanitize config dict for YAML serialization
         if remove_underscore:
             new_label = label.split("_")[0]
+        else:
+            new_label = label
 
         # exported[label] = _sanitize_for_yaml(dict(cfg.__dict__))
         exported[new_label] = cfg

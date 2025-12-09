@@ -11,7 +11,7 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from trade.helpers.helper import parse_option_tick
+from trade.helpers.helper import parse_option_tick # noqa
 from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes
 from EventDriven.riskmanager.new_base import RiskManager
 from trade.helpers.Logging import setup_logger

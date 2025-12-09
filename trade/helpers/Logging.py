@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
 from dotenv import load_dotenv
+from logging.handlers import TimedRotatingFileHandler
 load_dotenv()
 print("""
 Console Logging & File Logging Can be configured using STREAM_LOG_LEVEL and FILE_LOG_LEVEL in environment variables.
@@ -14,7 +15,7 @@ STREAM_LOG_LEVEL = 'DEBUG'
 FILE_LOG_LEVEL = 'INFO'
 PROPAGATE_TO_ROOT_LOGGER = 'False'
 """)
-from logging.handlers import TimedRotatingFileHandler
+
 
 class TimezoneFormatter(logging.Formatter):
     """Custom formatter that converts timestamps to a specific timezone."""

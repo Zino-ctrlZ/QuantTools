@@ -269,7 +269,7 @@ class HistoricTradeDataHandler(DataHandler):
         if 'signal_id' not in trades_df.columns:
             trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
         else:
-            logger.critical("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
+            logger.info("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
         self.trades_df = trades_df
         self.continue_backtest = True 
         self.events = events
@@ -295,7 +295,8 @@ class HistoricTradeDataHandler(DataHandler):
             raise ValueError("End date cannot be NaT. Please ensure AT LEAST one trade has ExitTime that is not NaT.")
         date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
         date_range = date_range[~date_range.isin(HOLIDAY_SET)]
-        #initialize signal dataframe
+        
+        ## Initialize signal dataframe
         self.signal_df = pd.DataFrame({'Date': date_range})
         
         for ticker in unique_tickers: 
@@ -311,7 +312,8 @@ class HistoricTradeDataHandler(DataHandler):
             ticker = row['Ticker']
             size = row['Size']
             signal : SignalTypes = SignalTypes.LONG.value if size > 0 else SignalTypes.SHORT.value
-            #size in positive is for long positions whilenegative size is for short positions
+            
+            ## Size in positive is for long positions while negative size is for short positions
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size > 0), ticker] = 1 
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size < 0), ticker] = 2
             self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1 
