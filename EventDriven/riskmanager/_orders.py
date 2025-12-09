@@ -4,7 +4,8 @@ import pandas as pd
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker import OrderSchema, ResultsEnum
 from EventDriven.riskmanager._order_validator import OrderInputs
-from EventDriven.riskmanager.utils import get_persistent_cache, set_use_temp_cache
+from EventDriven.riskmanager.utils import get_persistent_cache
+from EventDriven._vars import set_use_temp_cache
 from EventDriven.dataclasses.orders import OrderRequest
 
 if TYPE_CHECKING:
