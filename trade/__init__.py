@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pandas_market_calendars as mcal
 from dotenv import load_dotenv
+from trade.helpers.clear_cache import cleanup_expired_caches
 from .helpers.Logging import setup_logger
 
 warnings.filterwarnings("ignore")
@@ -20,7 +21,7 @@ EXIT_HANDLERS = []  # Handlers for normal program exit
 _ATEXIT_REGISTERED = False
 OWNER_PID = os.getpid()
 logger = setup_logger('trade.__init__')
-
+cleanup_expired_caches()
 
 
 ## Universal Holidays set

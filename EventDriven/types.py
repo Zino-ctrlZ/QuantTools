@@ -4,9 +4,36 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Any, Dict, List
 from typing_extensions import TypedDict
+from EventDriven.helpers import parse_signal_id, generate_signal_id
 
 
+class SignalID(str):
+    """
+    Unique identifier for a trading signal.
+    
+    Format:
+        {TICKER}{YYYYMMDD}{SIGNAL_TYPE}
+    """
+    def __init__(self, signal_id: str):
+        self.signal_id = signal_id
+        parsed = parse_signal_id(signal_id)
+        self.ticker = parsed['ticker']
+        self.date = parsed['date']
+        self.direction = parsed['direction']
 
+    def parse(self) -> Dict[str, Any]:
+        return parse_signal_id(self.signal_id)
+    
+    @staticmethod
+    def generate(underlier: str, date: pd.Timestamp, signal_type: str) -> 'SignalID':
+        signal_id = generate_signal_id(underlier, date, signal_type)
+        return SignalID(signal_id)
+    
+    
+    def __str__(self):
+        return self.signal_id
+    def __repr__(self):
+        return f"SignalID({self.signal_id})"
 
 class OrderDataDict(TypedDict):
     trade_id: str

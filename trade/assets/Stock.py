@@ -14,7 +14,7 @@ from dbase.DataAPI.ThetaData import (list_contracts)
 from trade.helpers.Configuration import ConfigProxy
 import re
 from dateutil.relativedelta import relativedelta
-from trade.helpers.exception import OpenBBEmptyData
+from trade.helpers.exception import OpenBBEmptyData, DataSourceError
 import numpy as np
 import requests
 import pandas as pd
@@ -607,6 +607,8 @@ class Stock:
             end  = change_to_last_busday(ts_end)
             df.index = pd.to_datetime(df.index)
             df = df[df.index.date == pd.to_datetime(end).date()]
+            if df.empty:
+                raise DataSourceError(f"No spot data found for {self.ticker} on {end.strftime('%Y-%m-%d')}")
             spot = {end: df[spot_type].values[-1]}
 
             return spot

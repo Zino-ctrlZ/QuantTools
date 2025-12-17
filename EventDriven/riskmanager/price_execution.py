@@ -1,5 +1,6 @@
 from enum import Enum
 from trade.helpers.Logging import setup_logger
+from trade.backtester_._types import Side, SideInt # noqa
 logger = setup_logger('algo.strategies.fill_optimizer')
 
 ALPHA_LEVELS = {
@@ -19,19 +20,6 @@ def get_tick_increments(mid: float, volume: float | None)-> float:
             return 0.10
     else:
         return 0.01
-    
-class Side(str, Enum):
-    """Enum for order sides."""
-    ## Side should be LONG/SHORT. Meanwhilem PositionEffect is OPEN/CLOSE
-    BUY = "LONG"
-    SELL = "SHORT"
-    LONG = "LONG"
-    SHORT = "SHORT"
-
-class SideInt(int, Enum):
-    """Enum for order sides as integers."""
-    BUY = 1
-    SELL = -1
 
 class PositionEffect(str, Enum):
     """Enum for position effects."""
@@ -63,10 +51,10 @@ def limit_price(
 
     # 3) Simple nudge (optional): look at spread & volume only
     spread_pct = (ask - bid) / ((ask + bid) / 2)
-    tight = spread_pct <= 0.1        # Tight spread <= 10%
-    wide  = spread_pct > 0.20         # Wide spread > 20%
-    vol_ok   = (day_volume or 0) >= 200   # Volume OK if >= 200 options
-    vol_low  = (day_volume or 0) <= 50    # Volume Low if <= 50 options
+    tight = spread_pct <= 0.1        # noqa
+    wide  = spread_pct > 0.20         # noqa
+    vol_ok   = (day_volume or 0) >= 200   # noqa
+    vol_low  = (day_volume or 0) <= 50    # noqa
 
 
     ## No implementation for tight & vol_ok yet

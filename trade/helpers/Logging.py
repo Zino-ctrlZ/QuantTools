@@ -85,7 +85,7 @@ def setup_logger(filename,stream_log_level = None,
     file_log_level = getattr(logging, os.getenv('FILE_LOG_LEVEL', 'INFO')) if file_log_level is None else file_log_level
     propagate_to_root_logger = (os.getenv('PROPAGATE_TO_ROOT_LOGGER', 'False')).strip().lower() == 'true'
 
-    if custom_logger_name == None:
+    if custom_logger_name is None:
         custom_logger_name = filename
     # Remove all Root Handlers
     if remove_root:

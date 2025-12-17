@@ -6,7 +6,12 @@ from trade.assets.Stock import Stock
 from trade.backtester_.utils.utils  import plot_portfolio, optimize
 import plotly
 from trade.backtester_.utils.aggregators import AggregatorParent
+from trade.helpers.Logging import setup_logger
 from ._strategy_patch import has_signal_collection, collect_signals_decorator, SignalCollector
+from .data import PTDataset # noqa: F401
+from ._helper import make_bt_wrapper # noqa: F401
+from ._strategy import StrategyBase
+logger = setup_logger('trade.backtester_.backtester_', stream_log_level="DEBUG")
 
 ## TODO: Include Benchmark DD in Portfolio Plot
 ## FIX: After optimization, reset strategy settings to default. Currently, it is not resetting
@@ -16,9 +21,28 @@ def get_class_attributes(cls):
     return [attr for attr in dir(cls) if not callable(getattr(cls, attr)) and not attr.startswith("__")]
 
 
-def _setup_strategy(strategy: Strategy) -> Strategy:
+def _setup_strategy(strategy: Strategy, **kwargs) -> Strategy:
     """ Internal function to setup strategy with signal collection if not already present """
+    if issubclass(strategy, StrategyBase) or hasattr(strategy, 'bt_params'):
+        logger.info("Setting up StrategyBase derived strategy using make_bt_wrapper")
+        strategy = _setup_base_strategy(strategy, **kwargs)
+    else:
+        logger.info("Setting up backtesting.py Strategy derived strategy")
+        # strategy = _setup_backtesting_strategy(strategy, **kwargs)
+    return strategy
 
+
+def _setup_base_strategy(strategy: Strategy, **kwargs) -> Strategy:
+    """ Internal function to setup strategy when using StrategyBase derived classes """
+    start_date = kwargs.get('start_date', None)
+    verbose = kwargs.get('verbose', False)
+    plot_indicators = kwargs.get('plot_indicators', True)
+    logger.info(f"Wrapping StrategyBase derived strategy {strategy.__name__} with start_date={start_date}, verbose={verbose}, plot_indicators={plot_indicators}")
+    strategy = make_bt_wrapper(strategy, start_date=start_date, verbose=verbose, plot_indicators=plot_indicators)
+    return strategy
+
+def _setup_backtesting_strategy(strategy: Strategy) -> Strategy:
+    """ Internal function to setup strategy when using backtesting.py Strategy classes """
     ## Check if strategy has signal collection, if not, add it
     if not has_signal_collection(strategy):
         strategy = collect_signals_decorator(strategy)
@@ -40,39 +64,6 @@ def _collect_signals(stats: pd.DataFrame) -> pd.DataFrame:
     full_df.reset_index(drop=True, inplace=True)
     full_df.set_index(['date', 'name'], inplace=True)
     return full_df
-
-
-class PTDataset:
-    """
-    Custom dataset holding ticker name, ticker timeseries & backtest object from backtesting.py
-    
-    """
-    name = None
-    data = None
-    backtest = None
-    cash = None
-
-    def __init__(self, name: str, data: pd.DataFrame, param_settings: dict = None):
-        self.__param_settings = param_settings ## Making param_settings private
-        self.name = name
-        self.data = data
-        self.backtest = None
-    
-    def __repr__(self):
-        return f"PTDataset({self.name})"
-    
-    def __str__(self):
-        return f"PTDataset({self.name})"
-    
-    @property
-    def param_settings(self):
-        """Getter for param settings"""
-        return self.__param_settings
-    
-    @param_settings.setter
-    def param_settings(self, value: dict):
-        """Setter for param_settings with type checking"""
-        self.__param_settings = value
 
 
 
@@ -112,9 +103,12 @@ class PTBacktester(AggregatorParent):
         if not trade_on_close:
             raise ValueError("PTBacktester currently only supports trade_on_close=True. trade_on_close=False is not supported.")
         else:
-            print(f"PTBacktester initialized with trade_on_close={trade_on_close}, finalize_trades={finalize_trades}")
+            logger.info(f"PTBacktester initialized with trade_on_close={trade_on_close}, finalize_trades={finalize_trades}")
         self.datasets = []
-        self.__strategy = deepcopy((_setup_strategy(strategy)))
+        self.__strategy = deepcopy((_setup_strategy(strategy, 
+                                                    start_date=start_overwrite, 
+                                                    verbose=kwargs.get('verbose', False), 
+                                                    plot_indicators=kwargs.get('plot_indicators', True))))
         self.__port_stats = None
         self._trades = None
         self._equity = None
@@ -219,7 +213,7 @@ class PTBacktester(AggregatorParent):
         self._equity = self.pf_value_ts()
         dataframe = pd.DataFrame(results).transpose()
         dataframe.columns = [d.name for d in self.datasets]
-        self.signals = _collect_signals(dataframe)
+        # self.signals = _collect_signals(dataframe)
         return dataframe
 
     def get_port_stats(self):
@@ -436,7 +430,7 @@ class PTBacktester(AggregatorParent):
                 sig_count = len(dataset.backtest._strategy.signal_collector.get_signals())
                 total_signals += sig_count
                 if sig_count > 0:
-                    print(f"WARNING: {dataset.name} collected {sig_count} signals during optimization!")
+                    logger.info(f"WARNING: {dataset.name} collected {sig_count} signals during optimization!")
 
         
         SignalCollector.COLLECT_SIGNALS = True

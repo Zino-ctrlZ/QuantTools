@@ -7,7 +7,7 @@ import os
 import shutil
 import backoff
 from dotenv import load_dotenv
-load_dotenv()
+
 import sys
 from enum import Enum
 from typing import Any, Dict
@@ -16,7 +16,7 @@ import warnings
 from pandas.tseries.offsets import BDay
 from typing import Union
 from trade.helpers.Configuration import ConfigProxy
-Configuration = ConfigProxy()
+
 import re
 from datetime import datetime
 import QuantLib as ql
@@ -64,8 +64,10 @@ from trade import get_pool_enabled, register_signal
 from trade.helpers.pools import runProcesses
 from trade.helpers.threads import runThreads
 
-logger = setup_logger('trade.helpers.helper')
 
+logger = setup_logger('trade.helpers.helper')
+Configuration = ConfigProxy()
+load_dotenv()
 # To-Dos: 
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
@@ -317,6 +319,14 @@ class CustomCache(Cache):
 
     def items(self):
         return [(k, self[k]) for k in self]
+
+    def remove(self, key):
+        if key in self:
+            self.__delitem__(key)
+    
+    def pop(self, key, default=None, expire_time=False, tag=False, retry=False):
+        return super().pop(key, default, expire_time, tag, retry)
+
     
     def update(self, other):
         if isinstance(other, dict):

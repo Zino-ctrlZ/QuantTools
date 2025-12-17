@@ -51,8 +51,8 @@ class AtIndexResult:
 @dataclass
 class TimeseriesData:
     """Class to hold timeseries data for a specific symbol."""
-    spot: pd.Series
-    chain_spot: pd.Series
+    spot: pd.DataFrame
+    chain_spot: pd.DataFrame
     dividends: pd.Series
     additional_data: Dict[str, pd.Series] = field(default_factory=dict)
 
@@ -103,33 +103,40 @@ class MarketTimeseries:
     
     def _on_exit_sanitize(self):
         """Remove today's data from all stored timeseries data."""
-        def _check_instance(d):
-            return isinstance(d, pd.DataFrame) or isinstance(d, pd.Series)
+        try:
+            def _check_instance(d):
+                return isinstance(d, pd.DataFrame) or isinstance(d, pd.Series)
 
-        for sym in self._spot.keys():
-            d = self._spot[sym]
-            if not _check_instance(d):
-                logger.critical("Data for symbol %s in spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
-                continue
-            d = d[d.index < self._today]
-            self._spot[sym] = d
-        for sym in self._chain_spot.keys():
-            d = self._chain_spot[sym]
+            for sym in self._spot.keys():
+                d = self._spot[sym]
+                if not _check_instance(d):
+                    logger.critical("Data for symbol %s in spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                    del self._spot[sym]
+                    continue
+                d = d[d.index < self._today]
+                self._spot[sym] = d
+            for sym in self._chain_spot.keys():
+                d = self._chain_spot[sym]
 
-            if not _check_instance(d):
-                logger.critical("Data for symbol %s in chain_spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
-                continue
+                if not _check_instance(d):
+                    logger.critical("Data for symbol %s in chain_spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                    del self._chain_spot[sym]
+                    continue
 
-            d = d[d.index < self._today]
-            self._chain_spot[sym] = d
-        for sym in self._dividends.keys():
-            d = self._dividends[sym]
-            if not _check_instance(d):
-                logger.critical("Data for symbol %s in dividends cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
-                continue
-            
-            d = d[d.index < self._today]
-            self._dividends[sym] = d
+                d = d[d.index < self._today]
+                self._chain_spot[sym] = d
+            for sym in self._dividends.keys():
+                d = self._dividends[sym]
+                if not _check_instance(d):
+                    logger.critical("Data for symbol %s in dividends cache is not a DataFrame or Series. Skipping sanitization. Data: %s", sym, d)
+                    del self._dividends[sym]
+                    continue
+                
+                d = d[d.index < self._today]
+                self._dividends[sym] = d
+            logger.info("Successfully sanitized timeseries data on exit.")
+        except Exception as e:
+            logger.error("Error during sanitization: %s", e, exc_info=True)
 
 
     @timeit
