@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, Any, Type, List
 import pandas as pd
-from trade.backtester_._strategy import StrategyBase
+from trade.backtester_._strategy import StrategyBase, TradeDecision
 from trade.backtester_.backtester_ import PTDataset
 
 
@@ -27,7 +27,7 @@ class SimulationResults:
             f"total_trades={total_trades})"
         )
 
-
+## Consider making this a subclass of StrategyBase
 @dataclass
 class MultiAssetStrategy:
     """
@@ -191,6 +191,44 @@ class MultiAssetStrategy:
                 add_signal_marker=add_signal_marker
             )
         return figures
+    
+    def should_open(self, ticker: str, current_date: str) -> TradeDecision:
+        """
+        Check if the strategy for a given ticker signals to open a position on the current date.
+        
+        Args:
+            ticker (str): Ticker symbol
+            current_date (str): Current date in 'YYYY-MM-DD' format
+
+        Returns:
+            bool: True if the strategy signals to open a position, False otherwise
+        """
+        strategy = self.get_strategy(ticker)
+        return strategy.should_open(current_date)
+    
+    def should_close(self, ticker: str, current_date: str) -> TradeDecision:
+        """
+        Check if the strategy for a given ticker signals to close a position on the current date.
+        
+        Args:
+            ticker (str): Ticker symbol
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        Returns:
+            bool: True if the strategy signals to close a position, False otherwise
+        """
+        strategy = self.get_strategy(ticker)
+        return strategy.should_close(current_date)
+    
+    def open_action(self, ticker: str, current_date: str):
+        """
+        Get the open action for the strategy of a given ticker on the current date.
+        
+        Args:
+            ticker (str): Ticker symbol
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        """
+        strategy = self.get_strategy(ticker)
+        return strategy.open_action(current_date)
     
     def __repr__(self) -> str:
         """String representation showing key information."""
