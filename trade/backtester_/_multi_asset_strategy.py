@@ -230,6 +230,30 @@ class MultiAssetStrategy:
         strategy = self.get_strategy(ticker)
         return strategy.open_action(current_date)
     
+    def close_action(self, ticker: str, current_date: str):
+        """
+        Get the close action for the strategy of a given ticker on the current date.
+        
+        Args:
+            ticker (str): Ticker symbol
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        """
+        strategy = self.get_strategy(ticker)
+        return strategy.close_action(current_date)
+    
+    def info_on_date(self, ticker: str, current_date: str) -> Dict[str, Any]:
+        """
+        Get strategy info for a given ticker on the current date.
+        
+        Args:
+            ticker (str): Ticker symbol
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        Returns:
+            Dict[str, Any]: Strategy info dictionary
+        """
+        strategy = self.get_strategy(ticker)
+        return strategy.info_on_date(current_date)
+    
     def __repr__(self) -> str:
         """String representation showing key information."""
         return (
