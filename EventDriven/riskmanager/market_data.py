@@ -235,6 +235,7 @@ class MarketTimeseries:
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
             data = data.sort_index()
+            data.dropna(how='all', inplace=True)
             self._spot[sym] = data
         
         for sym in self._chain_spot.keys():
@@ -243,6 +244,7 @@ class MarketTimeseries:
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
             data = data.sort_index()
+            data.dropna(how='all', inplace=True)
             self._chain_spot[sym] = data
         
         for sym in self._dividends.keys():
@@ -251,6 +253,7 @@ class MarketTimeseries:
             data.index = pd.to_datetime(data.index)
             data = data[~data.index.duplicated(keep='last')]
             data = data.sort_index()
+            data.dropna(how='all', inplace=True)
             self._dividends[sym] = data
 
             
