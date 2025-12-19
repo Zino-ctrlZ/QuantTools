@@ -12,7 +12,7 @@ import numpy as np
 import traceback
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pydantic import loud_post_init
-from trade.helpers.types import SingletonMixin
+from trade.helpers.helper_types import SingletonMixin
 from trade.helpers.helper import (
     is_weekend, 
     not_trading_day, 

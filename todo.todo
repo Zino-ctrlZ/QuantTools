@@ -1,6 +1,9 @@
 Todo Todo:
     ☐ Review this file and cut down useless tasks
 
+Setup File ToDo:
+    ☐ Add symbolic links creation for .vscode, .pylintrc, .gitignore, ruff.toml
+
 Whole Codebase Routine:
     ☐ Add a Step by step guide to build env
     ☐ Build file/setup_env.py to set up the environment

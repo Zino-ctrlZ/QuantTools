@@ -196,3 +196,7 @@ trade/helpers/*vol_resolve*.json
 *.pkl
 \qtenv
 
+# Adhoc Path
+EventDriven/notebooks/riskmanager_streamline/
+EventDriven/tests.py
+trade/assets/notebooks
