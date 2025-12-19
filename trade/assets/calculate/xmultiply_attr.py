@@ -17,11 +17,14 @@ from trade.helpers.helper import (
     change_to_last_busday
 )
 from trade.helpers.Logging import setup_logger
-from module_test.raw_code.DataManagers.DataManagers import OptionDataManager
+from trade.helpers.decorators import log_time
+from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, set_skip_mysql_query
 
+##TODO: Take this out once DataManagers has been optimized
+set_skip_mysql_query(True)
 logger = setup_logger('trade.assets.calculate.xmultiply_attr')
 
-
+@log_time()
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def load_symbol_payload(symbol: str,
                         today: datetime,
@@ -49,6 +52,7 @@ def load_symbol_payload(symbol: str,
         spot=spot_series
     )
 
+@log_time()
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def load_rate_payload(today: datetime,
                       yesterday: datetime) -> SymbolPayload:
@@ -72,6 +76,7 @@ def load_rate_payload(today: datetime,
     )
 
 
+@log_time()
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def add_dod_change(payload: OptionPnlPayload,
                    yesterday: datetime,
@@ -111,6 +116,7 @@ def add_dod_change(payload: OptionPnlPayload,
     return payload
 
 
+@log_time()
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def load_option_pnl_data(yesterday: datetime, 
                      today: datetime, 
@@ -198,7 +204,7 @@ def load_option_pnl_data(yesterday: datetime,
 
     return calculate_pnl_decomposition(payload)
 
-
+@log_time()
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def calculate_pnl_decomposition(
     payload: OptionPnlPayload,

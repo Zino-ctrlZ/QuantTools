@@ -40,7 +40,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_error_with_stack, copy_doc
 from pathos.multiprocessing import ProcessingPool as Pool
 from trade.helpers.threads import runThreads
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 import numpy as np
 import time
 from datetime import datetime

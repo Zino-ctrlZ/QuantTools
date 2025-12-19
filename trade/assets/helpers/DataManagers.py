@@ -32,7 +32,7 @@ from dbase.DataAPI.Organizers import generate_optionData_to_save, Calc_Risks
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore, query_database, dynamic_batch_update
 from trade.helpers.decorators import log_error, log_error_with_stack
 from trade.models.utils import resolve_missing_vol
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 
 OptDataManagerLogger = setup_logger('OptionDataManager_Module', stream_log_level=logging.CRITICAL)
 logger = setup_logger('OptionDataManager.py', stream_log_level=logging.CRITICAL)

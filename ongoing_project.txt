@@ -1,0 +1,7 @@
+- Streamling & Cleaning up the backtester:
+    - Focus on intense config usage, ensuring every variable is properly captured
+    - Focusing on modularization
+
+- Option Model remake:
+    - Improving option model and volatility Model
+    - Keeping it in one place for easy use & testing.

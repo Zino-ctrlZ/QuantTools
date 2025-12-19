@@ -7,7 +7,7 @@ import pandas as pd
 from pydantic import Field, PrivateAttr, ConfigDict
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pydantic import  loud_post_init
-from trade.helpers.types import SingletonMixin
+from trade.helpers.helper_types import SingletonMixin
 from module_test.raw_code.optionlib_2.vol.ssvi.model.ssvi_model._parent_ssvi import SSVIParentModel
 from module_test.raw_code.optionlib_2.vol.ssvi.model.chain import ChainOutput, MarketChainLoader
 from module_test.raw_code.optionlib_2.vol.ssvi.model.param_utils import load_ssvi_params_from_cache

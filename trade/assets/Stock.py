@@ -32,7 +32,7 @@ from trade.helpers.decorators import log_error_with_stack
 from trade.assets.OptionChain import OptionChain
 from threading import Thread, Lock, RLock
 from trade.assets.helpers.utils import swap_ticker
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 from dbase.utils import bus_range
 import traceback
 
@@ -447,14 +447,12 @@ class Stock:
 
         ## To-do: Ensure this is previous day close RELATIVE to the end date
         try:
-           close = float(obb.equity.price.quote(symbol=self.ticker, provider='yfinance').to_dataframe()['prev_close'].values[0])
+            close = list(self.spot().values())[0]
         except Exception as e:
-            if 'Results not found'.lower() in e.__str__().lower():
-                close = float(obb.equity.price.quote(symbol=self.ticker, provider='fmp').to_dataframe()['prev_close'].values[0])
-                self.__set_close(close)
-            else:
-                logger.error(f"Error getting previous close for {self.ticker} from yfinance: {e}")
-                return None
+            close = float(
+                obb.equity.price.quote(symbol=self.ticker, provider="fmp").to_dataframe()["prev_close"].values[0]
+            )
+            self.__set_close(close)
         return close
     
     def div_schedule(self):
@@ -466,7 +464,7 @@ class Stock:
             div_history.set_index('ex_dividend_date', inplace = True)
         except:
             logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
-            logger.error(f"Probably due to no dividends history")
+            logger.info("Probably due to no dividends history")
             return pd.Series({x: 0 for x in bus_range(start = start_date, end = datetime.today(), freq = 'B')})
         
         return div_history['amount']

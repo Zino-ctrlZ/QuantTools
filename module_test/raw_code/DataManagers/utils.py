@@ -7,7 +7,7 @@ from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData import (resample)
 from trade.helpers.pools import  parallel_apply
 from trade.helpers.decorators import log_error, log_error_with_stack, log_time
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import BDay
 from trade import PRICING_CONFIG
