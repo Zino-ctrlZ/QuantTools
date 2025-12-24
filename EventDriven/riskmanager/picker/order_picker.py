@@ -1,3 +1,183 @@
+"""Intelligent Order Selection and Option Chain Filtering.
+
+This module implements the OrderPicker class responsible for selecting optimal option
+orders from available chains based on strategy criteria, risk constraints, and market
+conditions. It handles order schema creation, chain filtering, strategy building, and
+retry logic when initial criteria cannot be met.
+
+Core Class:
+    OrderPicker: Main order selection engine with caching and retry logic
+
+Key Features:
+    - Strategy-aware option selection (spreads, condors, butterflies, etc.)
+    - Moneyness-based filtering (ITM, ATM, OTM ranges)
+    - DTE (days to expiration) targeting with tolerance bands
+    - Price constraints (min/max total price limits)
+    - Liquidity filtering (volume, open interest, bid-ask spreads)
+    - Automatic retry with relaxed constraints on failure
+    - Memoization for performance optimization
+    - Call/Put moneyness adjustment logic
+
+Order Selection Process:
+    1. Schema Creation:
+       - Build OrderSchema from request parameters
+       - Set target DTE, moneyness range, price limits
+       - Configure strategy type and structure direction
+
+    2. Chain Retrieval:
+       - Fetch option chain for date and underlying
+       - Cache chains to avoid redundant API calls
+       - Filter by expiration dates within tolerance
+
+    3. Strike Filtering:
+       - Apply moneyness bounds (min/max strike/spot ratios)
+       - Special handling for calls vs puts
+       - ITM/OTM width constraints
+
+    4. Strategy Building:
+       - Select strikes for strategy legs
+       - Apply spread_ticks for multi-leg structures
+       - Validate structure meets requirements
+
+    5. Price Validation:
+       - Check total structure price against limits
+       - Consider bid-ask spreads
+       - Verify liquidity thresholds
+
+    6. Result Extraction:
+       - Package successful order with all details
+       - Include order metadata and trade_id
+       - Return ResultsEnum status
+
+Moneyness Adjustment for Calls:
+    Puts: moneyness = strike / spot
+        - OTM: < 1.0
+        - ATM: ~1.0
+        - ITM: > 1.0
+
+    Calls: moneyness inverted for consistency
+        - Original put range: [0.90, 1.10]
+        - Call range: [2-1.10, 2-0.90] = [0.90, 1.10]
+        - Maintains same OTM/ITM interpretation
+
+Configuration Objects:
+    ChainConfig:
+        - Data source settings
+        - Chain retrieval parameters
+        - Filtering options
+
+    OrderSchemaConfigs:
+        - Default DTE, moneyness, prices
+        - Strategy defaults
+        - Structure direction defaults
+
+    OrderPickerConfig:
+        - Start/end dates for data range
+        - Cache configuration
+        - Retry settings
+
+    OrderResolutionConfig:
+        - Max tries
+        - Tolerance expansions
+        - Resolution priorities
+
+Lookback Management:
+    - Precomputed date lookback dictionaries
+    - Efficient date arithmetic for DTE calculations
+    - Configurable lookback ranges (30, 60, 90 days)
+    - Global LOOKBACKS dict for performance
+
+Caching Strategy:
+    Memoization:
+        - @dynamic_memoize decorator on _get_order()
+        - Schema tuple used as cache key
+        - Avoids redundant chain fetching
+        - Cleared between backtest runs
+
+    Chain Caching:
+        - populate_cache_with_chain() for data
+        - Persistent across order requests
+        - Indexed by (ticker, date, spot)
+
+Retry Logic Integration:
+    - Uses order_resolve_loop from _orders module
+    - Progressive constraint relaxation
+    - Logged attempts for debugging
+    - Configurable max_tries limit
+    - Returns best available or failure
+
+Order Schema Structure:
+    Required Fields:
+        - tick: Underlying ticker
+        - target_dte: Target days to expiration
+        - strategy: Strategy name (e.g., 'vertical_spread')
+        - structure_direction: 'long' or 'short'
+        - spread_ticks: Strike separation for spreads
+        - dte_tolerance: Acceptable DTE deviation
+        - min_moneyness: Lower bound for strike/spot
+        - max_moneyness: Upper bound for strike/spot
+        - min_total_price: Minimum structure price
+        - option_type: 'C' or 'P'
+        - max_total_price: Upper price limit
+
+    Chain Config Fields (merged):
+        - Liquidity filters
+        - Data source settings
+        - Additional constraints
+
+Usage Examples:
+    # Initialize order picker
+    picker = OrderPicker(
+        start_date='2024-01-01',
+        end_date='2024-12-31'
+    )
+
+    # Create order request
+    request = OrderRequest(
+        symbol='AAPL',
+        date='2024-03-15',
+        spot=185.50,
+        option_type='P',
+        target_dte=45,
+        max_close=3.50
+    )
+
+    # Get order
+    order = picker.get_order(request)
+
+    # Check result
+    if not order_failed(order):
+        print(f"Selected: {order['data']['trade_id']}")
+        print(f"Price: ${order['data']['total_price']:.2f}")
+    else:
+        print(f"Failed: {order['result']}")
+
+Performance Optimizations:
+    - Schema memoization prevents redundant calculations
+    - Chain caching reduces API calls
+    - Precomputed lookbacks for date math
+    - Efficient pandas filtering operations
+    - Lazy loading of option data
+
+Integration Points:
+    - Called by RiskManager for new position orders
+    - Used in position rolling for replacement orders
+    - Feeds OrderRequest dataclasses
+    - Returns Order type for execution
+
+Error Handling:
+    - Invalid option types caught and corrected
+    - Missing chains logged and handled gracefully
+    - Failed orders return descriptive ResultsEnum
+    - Schema validation before processing
+
+Notes:
+    - Lookback setter triggers precomputation if needed
+    - get_order_new() is the public interface
+    - _get_order() is the memoized implementation
+    - Schema converted to tuple for hashability in cache
+    - print_url param useful for debugging data sources
+"""
 
 from datetime import datetime
 import pandas as pd
@@ -8,12 +188,7 @@ from ..utils import (
     populate_cache_with_chain,
     precompute_lookbacks,
 )
-from EventDriven.configs.core import (
-    ChainConfig, 
-    OrderSchemaConfigs, 
-    OrderPickerConfig,
-    OrderResolutionConfig
-)
+from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPickerConfig, OrderResolutionConfig
 
 from ..utils import (
     dynamic_memoize,
@@ -22,10 +197,10 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import timeit
 from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
 from EventDriven.dataclasses.orders import OrderRequest
-from EventDriven.riskmanager._orders import order_resolve_loop, order_failed 
+from EventDriven.riskmanager._orders import order_resolve_loop, order_failed
 from EventDriven.types import Order
-logger = setup_logger('EventDriven.riskmanager.picker.order_picker')
 
+logger = setup_logger("EventDriven.riskmanager.picker.order_picker")
 
 
 class OrderPicker:
@@ -122,7 +297,9 @@ class OrderPicker:
             logger.info(
                 f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
             )
-        elif schema["option_type"].lower() == "p":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        elif (
+            schema["option_type"].lower() == "p"
+        ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
             logger.info(
                 f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
             )
@@ -133,34 +310,31 @@ class OrderPicker:
 
         cache = get_cache("spot")
         cache = {k: v for k, v in cache.items()}
-        
-        
+
         raw_order = build_strategy(chain, schema, chain_spot, cache)
         return extract_order(raw_order)
-    
+
     @timeit
     def get_order(self, request: OrderRequest) -> Order:
         """
         Get the order based on the request.
         """
-        schema = self.get_order_schema(ticker=request.symbol, 
-                                       option_type=request.option_type, 
-                                       max_total_price=request.max_close)
-        
-        inputs = self.construct_inputs(request=request, 
-                                       schema=schema, 
-                                       order_resolution_config=self._order_resolution_config)
+        schema = self.get_order_schema(
+            ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
+        )
+
+        inputs = self.construct_inputs(
+            request=request, schema=schema, order_resolution_config=self._order_resolution_config
+        )
         return _get_open_order_backtest(
             picker=self,
             request=request,
             inputs=inputs,
         )
 
-    def construct_inputs(self, 
-                        request: OrderRequest, 
-                        schema: OrderSchema, 
-                        order_resolution_config: OrderResolutionConfig = None
-                        ) -> OrderInputs:
+    def construct_inputs(
+        self, request: OrderRequest, schema: OrderSchema, order_resolution_config: OrderResolutionConfig = None
+    ) -> OrderInputs:
         """
         Construct OrderInputs dataclass from OrderRequest and OrderSchema.
         """
@@ -187,12 +361,12 @@ class OrderPicker:
         )
         return inputs
 
+
 def _get_open_order_backtest(
     picker: OrderPicker,
     request: OrderRequest,
     inputs: OrderInputs,
 ) -> Order:
-    
     """
     Helper function to get open order in backtest mode.
     OR at least with order picker.
@@ -210,13 +384,9 @@ def _get_open_order_backtest(
     )
     schema_as_tuple = tuple(schema.data.items())
     order = picker._get_order(
-            schema=schema_as_tuple, 
-            date=request.date, 
-            spot=request.spot, 
-            chain_spot=request.chain_spot, 
-            print_url=False
-        )
-    
+        schema=schema_as_tuple, date=request.date, spot=request.spot, chain_spot=request.chain_spot, print_url=False
+    )
+
     ## Resolve order if failed and resolution is enabled
     if picker._order_resolution_config.resolve_enabled:
         order = order_resolve_loop(

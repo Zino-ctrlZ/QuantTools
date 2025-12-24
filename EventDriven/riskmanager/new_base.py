@@ -1,13 +1,199 @@
+"""Risk Manager Core Implementation and Orchestration.
+
+This module implements the RiskManager class, which serves as the central orchestrator
+for all risk management operations in the EventDriven backtesting framework. It
+coordinates order generation, position analysis, Greek-based limits, and market
+data management for options trading strategies.
+
+Core Class:
+    RiskManager: Main risk management orchestrator
+
+Key Responsibilities:
+    - Order generation from strategy signals
+    - Position analysis and action recommendations
+    - Greek-based risk limit enforcement
+    - Dynamic position sizing
+    - Market data caching and retrieval
+    - Corporate action handling
+    - Position rolling management
+
+Architecture:
+    The RiskManager delegates to specialized components:
+        - OrderPicker: Intelligent order selection from chains
+        - BacktestTimeseries: Market data management
+        - PositionAnalyzer: Position evaluation via cogs
+        - LimitsAndSizingCog: Risk limits and sizing
+
+Order Generation Flow:
+    1. Receive signal from strategy
+    2. Load market data for signal date
+    3. Apply risk limits and sizing
+    4. Search option chain for suitable contracts
+    5. Build order structure (single, spread, etc.)
+    6. Validate order against constraints
+    7. Return order or failure result
+
+Position Analysis Flow:
+    1. Load current positions from portfolio
+    2. Retrieve market data for analysis date
+    3. Run all enabled cogs (limits, signals, etc.)
+    4. Collect action recommendations
+    5. Reconcile conflicting recommendations
+    6. Return final strategy changes
+
+Risk Limit Enforcement:
+    Greek Limits:
+        - Delta: Directional exposure per position
+        - Gamma: Convexity exposure monitoring
+        - Vega: Volatility exposure tracking
+        - Theta: Time decay management
+
+    Portfolio Limits:
+        - Maximum leverage constraints
+        - Sector concentration limits
+        - Cash usage rules
+        - Position count limits
+
+    Sizing Rules:
+        - Per-position capital allocation
+        - Signal-based allocation
+        - Ticker-based allocation
+        - Dynamic volatility adjustment
+
+Corporate Action Handling:
+    Stock Splits:
+        - Trade IDs NOT updated during backtest
+        - Strikes adjusted automatically in data
+        - Contract quantities adjusted
+        - Position continuity maintained
+
+    Dividends:
+        - Special dividend tracking
+        - Regular dividend timeseries
+        - Early exercise impact analysis
+        - Ex-date handling
+
+Data Processing:
+    Zero Value Handling:
+        - Greeks with zero values forward-filled
+        - Midpoint prices forward-filled
+        - Prevents calculation errors
+        - Maintains data continuity
+
+    Missing Data:
+        - Forward-fill for temporary gaps
+        - Error on extended missing data
+        - Logging of all fill operations
+
+Caching Strategy:
+    Multiple Cache Locations:
+        - Order cache: Successful order searches
+        - Position cache: Position-specific data
+        - Market cache: Spot, chain, Greeks
+        - Persistent cache: Long-term storage
+        - Temporary cache: Session-only data
+
+    Cache Keys:
+        - Composite keys prevent collisions
+        - Include symbol, date, strategy params
+        - Version tagging for schema changes
+
+    TODO: Consolidate cache locations for clarity
+
+Configuration:
+    Required Config Parameters:
+        - symbol_list: Trading universe
+        - start_date/end_date: Backtest window
+        - initial_capital: Starting capital
+        - option_settings: Strategy configuration
+        - risk_settings: Limit parameters
+
+    Optional Parameters:
+        - cache_settings: Cache control
+        - execution_settings: Order execution
+        - analysis_settings: Position analysis
+
+Integration Points:
+    Strategy Integration:
+        - Receives signals from Strategy class
+        - Returns orders for execution
+        - Provides position analysis results
+
+    Portfolio Integration:
+        - Queries current positions
+        - Submits orders for execution
+        - Updates position tracking
+
+    Data Integration:
+        - Interfaces with DataManager
+        - Handles multiple data sources
+        - Manages data caching
+
+Performance Optimization:
+    - Aggressive caching of all data
+    - Memoization of expensive calculations
+    - Lazy loading of market data
+    - Parallel processing where possible
+    - Efficient DataFrame operations
+
+Usage:
+    # Initialize RiskManager
+    rm = RiskManager(
+        config=risk_manager_config,
+        initial_capital=100000
+    )
+
+    # Generate order from signal
+    order_result = rm.generate_order(
+        signal=strategy_signal,
+        current_date=analysis_date,
+        portfolio_state=current_portfolio
+    )
+
+    # Analyze existing positions
+    analysis_results = rm.analyze_positions(
+        positions=current_positions,
+        analysis_date=date,
+        market_data=market_snapshot
+    )
+
+Error Handling:
+    - Failed order searches logged with details
+    - Position analysis errors don't crash system
+    - Data retrieval failures have fallbacks
+    - All errors include context for debugging
+
+Logging:
+    - Order generation attempts
+    - Position analysis decisions
+    - Limit breaches
+    - Data cache hits/misses
+    - Corporate action adjustments
+
+Notes:
+    - All dates handled as pandas Timestamps
+    - Prices in dollars, Greeks in standard units
+    - Quantities always integers (contracts)
+    - Thread-safe via proper locking
+
+Known Limitations:
+    - Trade IDs not updated for splits (by design)
+    - Cache management could be simplified
+    - Limited support for exotic option strategies
+    - Assumes liquid markets for execution
+"""
+
 ## NOTE:
 ## 1) If a split happens during a backtest window, the trade id won't be updated. The dataframe will simply be uploaded with a the split adjusted strike.
 ## 2) All Greeks &  Midpoint with Zero values will be FFWD'ed
 ## 3) Do something about all these caches locations. I don't like it. It's confusing
 
 from .utils import (
-                    get_timeseries_start_end,
-                    get_persistent_cache,)
+    get_timeseries_start_end,
+    get_persistent_cache,
+)
 from EventDriven._vars import get_use_temp_cache
-from trade.helpers.helper import  CustomCache, is_USholiday
+from trade.helpers.helper import CustomCache, is_USholiday
 import pandas as pd
 from typing import List
 from datetime import datetime
@@ -21,7 +207,8 @@ from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisCon
 from EventDriven.types import ResultsEnum, Order
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
-logger = setup_logger('EventDriven.riskmanager.new_base', stream_log_level="WARNING")
+
+logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
 
 
 class RiskManager:
@@ -42,15 +229,15 @@ class RiskManager:
     Core Components:
         order_picker (OrderPicker): Selects optimal orders from available options based on moneyness,
             DTE, liquidity, and strategy-specific criteria. Filters option chains and ranks candidates.
-        
+
         timeseries (BacktestTimeseries): Manages and caches all market data including spot prices,
             option chains, Greeks, dividends, and risk-free rates. Handles data loading and caching
             strategies for efficient backtesting.
-        
+
         position_analyzer (PositionAnalyzer): Analyzes current positions against risk limits and signals
             to determine required actions (entry, exit, roll, adjust). Calculates portfolio Greeks and
             sizing requirements.
-        
+
         limits_cog (LimitsAndSizingCog): Enforces risk limits and calculates position sizes based on
             available capital, leverage, and Greek constraints. Validates orders against risk parameters.
 
@@ -59,17 +246,18 @@ class RiskManager:
         start_date/end_date (str|datetime): Backtest window boundaries
         initial_capital (float): Starting portfolio capital for the backtest
         config (RiskManagerConfig): Configuration object containing all risk management parameters
-        
+
     """
 
-    def __init__(self,
-                 symbol_list: List[str],
-                 bkt_start: str|datetime,
-                 bkt_end: str|datetime,
-                 initial_capital: float,
-                 *args,
-                 **kwargs
-                 ):
+    def __init__(
+        self,
+        symbol_list: List[str],
+        bkt_start: str | datetime,
+        bkt_end: str | datetime,
+        initial_capital: float,
+        *args,
+        **kwargs,
+    ):
         """
         Initialize the RiskManager with core backtest parameters and component setup.
 
@@ -85,7 +273,7 @@ class RiskManager:
             Starting portfolio capital
         **kwargs : dict, optional
             Additional configuration passed to RiskManagerConfig
-        
+
         Notes
         -----
         - Initializes OrderPicker, BacktestTimeseries, PositionAnalyzer, and LimitsAndSizingCog
@@ -131,15 +319,18 @@ class RiskManager:
             logger.info(f"Order cache loaded with {len(self.order_cache.values())} orders")
 
         ##Position Analysis Cache
-        self.analysis_cache = load_riskmanager_cache(target="position_analysis", create_on_missing=True, clear_on_exit=True)
+        self.analysis_cache = load_riskmanager_cache(
+            target="position_analysis", create_on_missing=True, clear_on_exit=True
+        )
         if len(self.analysis_cache.values()) > 0:
             logger.info(f"Position analysis cache loaded with {len(self.analysis_cache.values())} analyses")
 
         ##Order Request Cache
-        self.order_request_cache = load_riskmanager_cache(target="order_request_cache", create_on_missing=True, clear_on_exit=True)
+        self.order_request_cache = load_riskmanager_cache(
+            target="order_request_cache", create_on_missing=True, clear_on_exit=True
+        )
         if len(self.order_request_cache.values()) > 0:
             logger.info(f"Order request cache loaded with {len(self.order_request_cache.values())} requests")
-
 
     def clear_caches(self):
         """
@@ -148,7 +339,7 @@ class RiskManager:
         if get_use_temp_cache():
             self.market_data.options_cache.clear()
             self.market_data.position_data_cache.clear()
-            get_persistent_cache().clear() ## Ensures any caching with `.memoize` is cleared as well.
+            get_persistent_cache().clear()  ## Ensures any caching with `.memoize` is cleared as well.
         else:
             logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
@@ -171,10 +362,12 @@ class RiskManager:
         if is_USholiday(req.date):
             logger.info(f"Date {req.date} is a US Holiday, skipping order generation")
             return {"result": ResultsEnum.IS_HOLIDAY.value, "data": None}
-        
+
         ## Investigate if tick cash is scaled
         if not req.is_tick_cash_scaled:
-            req.tick_cash = req.tick_cash * CONTRACT_MULTIPLIER  ## Scale tick cash to account for options contract multiplier
+            req.tick_cash = (
+                req.tick_cash * CONTRACT_MULTIPLIER
+            )  ## Scale tick cash to account for options contract multiplier
             req.is_tick_cash_scaled = True
         ## Generate Data
         self.market_data.market_timeseries.load_timeseries(sym=req.symbol)
@@ -209,7 +402,7 @@ class RiskManager:
                 request=req,
                 at_time_data=None,
                 undl_at_time_data=None,
-                limits=None
+                limits=None,
             )
             return failed_order_state
 
@@ -245,20 +438,19 @@ class RiskManager:
         updated_pos_state = self.position_analyzer.on_new_position(new_position_state=new_pos_state)
         logger.info(f"Quantity after analysis: {updated_pos_state.order.data['quantity']}")
 
-
         if self.config.cache_orders:
             logger.info(f"Caching order for position ID: {position_id}")
             self.order_cache[position_id] = updated_pos_state
 
-        q = updated_pos_state.order.data['quantity']
+        q = updated_pos_state.order.data["quantity"]
         if q == 0:
             logger.warning(f"Final calculated position size is 0 for order {position_id}. Order will not be placed.")
             updated_pos_state.order["result"] = ResultsEnum.POSITION_SIZE_ZERO.value
-            
+
         order = updated_pos_state.order.to_dict()
 
         return updated_pos_state
-    
+
     def analyze_position(self, context: PositionAnalysisContext) -> StrategyChangeMeta:
         """
         Analyze the given portfolio context using the PositionAnalyzer.
@@ -272,7 +464,7 @@ class RiskManager:
         analysis = self.position_analyzer.analyze(context)
         if self.config.cache_position_analysis:
             logger.info(f"Caching position analysis for date: {context.date}")
-            dt = pd.to_datetime(context.date).strftime('%Y-%m-%d')
+            dt = pd.to_datetime(context.date).strftime("%Y-%m-%d")
             self.analysis_cache[dt] = analysis
         return analysis
 

@@ -1,3 +1,98 @@
+"""Order Picker Module for Option Chain Filtering and Strategy Building.
+
+This module provides the core data structures and utilities for selecting optimal
+option orders from available chains. It defines the OrderSchema structure for
+configuring order parameters, implements chain filtering logic, and provides
+utility functions for strategy construction.
+
+Key Components:
+    OrderSchema: Configuration container for order search parameters
+    filter_contracts: Apply moneyness, DTE, and liquidity filters to chains
+    resolve_ordering: Determine strike ordering based on strategy direction
+    build_strategy_from_chain: Construct multi-leg structures from filtered chains
+
+OrderSchema Structure:
+    Required Fields:
+        - strategy: Strategy type ('vertical', 'single', 'iron_condor', etc.)
+        - option_type: 'C' for calls, 'P' for puts
+        - target_dte: Target days to expiration
+        - dte_tolerance: Acceptable DTE deviation
+        - structure_direction: 'long' or 'short'
+        - max_total_price: Maximum acceptable structure price
+        - min_total_price: Minimum acceptable structure price
+        - tick: Underlying ticker symbol
+
+    Optional Fields (with defaults):
+        - min_moneyness: Minimum strike/spot ratio (default: 0.9)
+        - max_moneyness: Maximum strike/spot ratio (default: 1.1)
+        - max_attempts: Number of retry attempts (default: 3)
+        - increment: Moneyness relaxation step (default: 0.25)
+        - spread_pct: Spread width as percentage (for spreads)
+        - spread_ticks: Spread width in strikes (for spreads)
+        - min_open_interest: Minimum OI filter (default: 25)
+        - max_pct_width: Maximum percentage width (default: 0.10)
+
+Filtering Strategy:
+    1. DTE Filtering:
+       - Contracts within [target_dte - dte_tolerance, target_dte + dte_tolerance]
+       - Relaxes on retry by expanding tolerance
+
+    2. Moneyness Filtering:
+       - Strike/Spot ratio between min_moneyness and max_moneyness
+       - Call moneyness: spot/strike
+       - Put moneyness: strike/spot
+       - Incrementally relaxes bounds on failed attempts
+
+    3. Liquidity Filtering:
+       - Minimum open interest threshold
+       - Bid-ask spread width constraints
+       - Volume requirements for execution
+
+    4. Retry Logic:
+       - Attempts up to max_attempts iterations
+       - Each iteration relaxes constraints by increment
+       - Prevents infinite loops with hard attempt limit
+
+Strategy Construction:
+    Single Leg:
+        - Select one option contract
+        - Simple long/short position
+
+    Vertical Spread:
+        - Two legs with same expiration
+        - Strikes separated by spread_ticks or spread_pct
+        - Debit or credit spread based on direction
+
+    Iron Condor (planned):
+        - Four legs: two call spreads, two put spreads
+        - OTM strikes on both sides
+
+    Butterfly (planned):
+        - Three strikes with symmetric spacing
+        - Center strike at ATM
+
+Usage:
+    schema = OrderSchema(data={
+        'strategy': 'vertical',
+        'option_type': 'P',
+        'target_dte': 45,
+        'dte_tolerance': 7,
+        'structure_direction': 'long',
+        'max_total_price': 5.0,
+        'min_total_price': 0.5,
+        'tick': 'AAPL',
+        'spread_ticks': 5,
+        'min_moneyness': 0.95,
+        'max_moneyness': 1.05
+    })
+
+    filtered_df = filter_contracts(chain_df, schema, spot=150.0)
+
+Note:
+    This was previously a standalone file. Converted to package structure
+    to support old_picker and new_picker implementations.
+"""
+
 ## NOTE: Remember this was previously a file. TO switch btwn old_picker & new_picker. Copy and paste for now
 
 import pandas as pd
@@ -8,7 +103,7 @@ from EventDriven.types import ResultsEnum
 from trade.helpers.Logging import setup_logger
 from EventDriven.configs.core import ChainConfig
 
-logger = setup_logger('EventDriven.riskmanager.picker', stream_log_level="WARNING")
+logger = setup_logger("EventDriven.riskmanager.picker", stream_log_level="WARNING")
 # order_cache = CustomCache(BASE, fname="order")
 
 
@@ -100,7 +195,9 @@ def filter_contracts(
         ## Add Moneyness filter
         lower_strike = spot * (min(min_moneyness, max_moneyness) * factor)
         upper_strike = spot * (max(min_moneyness, max_moneyness) * factor)
-        logger.info(f"Filtering contracts with strike range [{lower_strike:.2f}, {upper_strike:.2f}] on attempt {attempt + 1}")
+        logger.info(
+            f"Filtering contracts with strike range [{lower_strike:.2f}, {upper_strike:.2f}] on attempt {attempt + 1}"
+        )
         _filter &= df["strike"].between(lower_strike, upper_strike)
 
         ## Add Open Interest filter if specified

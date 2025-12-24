@@ -1,3 +1,70 @@
+"""Order Validation and Input Schema for Risk Manager.
+
+This module provides validation infrastructure for order requests and strategy configurations
+within the risk management system. It defines input schemas, type checking, and configuration
+management for order generation and execution.
+
+Key Components:
+    OrderInputs: Container class holding all order parameters with type validation
+    _SlugConfig: Abstract base class for strategy configuration management
+    INPUTS: Schema definition mapping for order parameters with types and descriptions
+
+Order Input Parameters:
+    Trading Parameters:
+        - tick: Stock ticker symbol
+        - date: Trade date
+        - spot: Current underlying price
+        - signal_id: Unique signal identifier
+
+    Strategy Parameters:
+        - option_strategy: Strategy type (e.g., 'vertical_spread', 'iron_condor')
+        - option_type: Call ('C') or Put ('P')
+        - structure_direction: Long or short structure
+        - direction: LONG or SHORT position
+
+    Risk Parameters:
+        - initial_cash: Total capital allocated
+        - tick_cash: Per-ticker allocation
+        - max_close: Maximum acceptable option price
+        - min_total_price: Minimum structure price threshold
+
+    Selection Criteria:
+        - target_dte: Target days to expiration
+        - dte_tolerance: Acceptable DTE deviation
+        - min_moneyness: Minimum strike/spot ratio
+        - max_moneyness: Maximum strike/spot ratio
+        - spread_ticks: Number of strikes between legs
+        - otm_moneyness_width: OTM selection width
+        - itm_moneyness_width: ITM selection width
+
+    Execution Control:
+        - max_tries: Maximum order search attempts
+        - max_dte_tolerance: Maximum DTE relaxation allowed
+
+Validation:
+    - Type checking for all input parameters
+    - Range validation for numerical values
+    - Enum validation for categorical parameters
+    - Strategy compatibility verification
+
+Usage:
+    inputs = OrderInputs(
+        tick='AAPL',
+        date='2024-01-15',
+        spot=185.50,
+        option_strategy='put_spread',
+        target_dte=45,
+        min_moneyness=0.90,
+        max_moneyness=1.10
+    )
+
+Notes:
+    - All parameters are validated on instantiation
+    - Invalid keys are logged and ignored
+    - Type mismatches raise descriptive errors
+    - Configuration can be loaded from various sources (YAML, JSON, database)
+"""
+
 from datetime import datetime
 from typing import Any, Dict, Optional, TYPE_CHECKING, Union, Literal
 import pandas as pd
@@ -9,7 +76,8 @@ from EventDriven.riskmanager.picker import STRATEGY_MAP
 from EventDriven.riskmanager.market_data import get_timeseries_obj, OPTION_TIMESERIES_START_DATE
 from EventDriven.riskmanager.picker import OrderSchema
 
-logger = setup_logger('EventDriven.riskmanager._order_validator', stream_log_level='WARNING')
+logger = setup_logger("EventDriven.riskmanager._order_validator", stream_log_level="WARNING")
+
 
 @dataclass(kw_only=True)
 class _SlugConfig(ABC):
@@ -31,37 +99,47 @@ class _SlugConfig(ABC):
         pass
 
 
-
-
-
-
 INPUTS = {
-        'tick': (str, "This should be a string representing the stock ticker.", ),
-        'date': ([str, pd.Timestamp, datetime], "This should be a date in string format or a pandas Timestamp/datetime object."),
-        'spot': (numbers.Number, "This should be a float representing chain_spot for the tick."),
-        'signal_id': (str, "This should be a string representing the signal ID."),
-        'max_close': (numbers.Number, "Max price for the order search engine."),
-        'option_strategy': (str, f"This should be a string representing the option strategy. Available: {STRATEGY_MAP.keys()}"),
-        'initial_cash': (numbers.Number, "This should be a float representing the initial cash for the strategy."),
-        'option_type': (str, "This should be a string representing the option type, e.g., 'standard'.", ["C", "P"]),
-        'structure_direction': (str, "This should be a string representing the structure direction.", ["long", "short"]),
-        'spread_ticks': (numbers.Number, "This should be an integer representing the spread ticks."),
-        'dte_tolerance': (numbers.Number, "This should be an integer representing the DTE tolerance."),
-        'min_moneyness': (numbers.Number, "This should be a float representing the minimum moneyness."),
-        'max_moneyness': (numbers.Number, "This should be a float representing the maximum moneyness."),
-        'target_dte': (numbers.Number, "This should be an integer representing the target DTE."),
-        'min_total_price': (numbers.Number, "This should be a float representing the minimum total price."),
-        'direction': (str, "This should be a str of either LONG or SHORT"),
-        'max_dte_tolerance': (numbers.Number, "This should be an integer representing the maximum DTE tolerance."),
-        'max_tries': (numbers.Number, "This should be an integer representing the maximum number of tries."),
-        'otm_moneyness_width': (numbers.Number, "This should be a float representing the OTM moneyness width max for ATM against OTM."),
-        'itm_moneyness_width': (numbers.Number, "This should be a float representing the ITM moneyness width max for ATM against ITM."),
-        'tick_cash': (numbers.Number, "This should be a float representing the cash allocated to this tick."),
-    }
+    "tick": (
+        str,
+        "This should be a string representing the stock ticker.",
+    ),
+    "date": (
+        [str, pd.Timestamp, datetime],
+        "This should be a date in string format or a pandas Timestamp/datetime object.",
+    ),
+    "spot": (numbers.Number, "This should be a float representing chain_spot for the tick."),
+    "signal_id": (str, "This should be a string representing the signal ID."),
+    "max_close": (numbers.Number, "Max price for the order search engine."),
+    "option_strategy": (
+        str,
+        f"This should be a string representing the option strategy. Available: {STRATEGY_MAP.keys()}",
+    ),
+    "initial_cash": (numbers.Number, "This should be a float representing the initial cash for the strategy."),
+    "option_type": (str, "This should be a string representing the option type, e.g., 'standard'.", ["C", "P"]),
+    "structure_direction": (str, "This should be a string representing the structure direction.", ["long", "short"]),
+    "spread_ticks": (numbers.Number, "This should be an integer representing the spread ticks."),
+    "dte_tolerance": (numbers.Number, "This should be an integer representing the DTE tolerance."),
+    "min_moneyness": (numbers.Number, "This should be a float representing the minimum moneyness."),
+    "max_moneyness": (numbers.Number, "This should be a float representing the maximum moneyness."),
+    "target_dte": (numbers.Number, "This should be an integer representing the target DTE."),
+    "min_total_price": (numbers.Number, "This should be a float representing the minimum total price."),
+    "direction": (str, "This should be a str of either LONG or SHORT"),
+    "max_dte_tolerance": (numbers.Number, "This should be an integer representing the maximum DTE tolerance."),
+    "max_tries": (numbers.Number, "This should be an integer representing the maximum number of tries."),
+    "otm_moneyness_width": (
+        numbers.Number,
+        "This should be a float representing the OTM moneyness width max for ATM against OTM.",
+    ),
+    "itm_moneyness_width": (
+        numbers.Number,
+        "This should be a float representing the ITM moneyness width max for ATM against ITM.",
+    ),
+    "tick_cash": (numbers.Number, "This should be a float representing the cash allocated to this tick."),
+}
 
 
 class OrderInputs:
-
     __slots__ = list(INPUTS.keys())
     if TYPE_CHECKING:
         tick: str
@@ -93,30 +171,34 @@ class OrderInputs:
             else:
                 logger.info(f"Unknown input key: {k}. This key will be ignored.")
 
+
 OrderInputs.__doc__ = f"""
 Order Container that holds all necessary variables in one place.
 Args:
 {chr(10).join([f"    {key} ({' | '.join([t.__name__ if isinstance(t, type) else str(t) for t in (types if isinstance(types, list) else [types])])}): {desc}" for key, (types, desc, *_) in INPUTS.items()])}
 """
 
+
 def verify_order_selection_inputs(**kwargs):
     ## Key:
-    #{input: (type, description, Optional[expected values])}
+    # {input: (type, description, Optional[expected values])}
 
     for key, (expected_type, description, *expected_values) in INPUTS.items():
         if key not in kwargs:
             raise ValueError(f"Missing required input: '{key}'. Desc: {description}")
         if not isinstance(kwargs[key], tuple(expected_type) if isinstance(expected_type, list) else expected_type):
-            raise TypeError(f"Input '{key}' must be of type {expected_type}, but got {type(kwargs[key])}. {description}")
+            raise TypeError(
+                f"Input '{key}' must be of type {expected_type}, but got {type(kwargs[key])}. {description}"
+            )
         if expected_values and kwargs[key] not in expected_values[0]:
-            raise ValueError(f"Input '{key}' must be one of {expected_values[0]}, but got '{kwargs[key]}'. {description}")
-        
+            raise ValueError(
+                f"Input '{key}' must be one of {expected_values[0]}, but got '{kwargs[key]}'. {description}"
+            )
 
-def build_inputs_with_config(config: _SlugConfig, 
-                             max_close: float,
-                             row: pd.Series,
-                             tick_cash: float,
-                             tick: str) -> tuple[OrderSchema, OrderInputs]:
+
+def build_inputs_with_config(
+    config: _SlugConfig, max_close: float, row: pd.Series, tick_cash: float, tick: str
+) -> tuple[OrderSchema, OrderInputs]:
     """
     Builds the inputs for the order selection engine based on the strategy config and trade row.
     Args:
@@ -129,67 +211,68 @@ def build_inputs_with_config(config: _SlugConfig,
     """
     ## Necessary inputs
     assert isinstance(config, _SlugConfig), "config must be an instance of SlugConfig"
-    assert all(k in row for k in ['PT_BKTEST_SIG_ID', 'Size', 'EntryTime']), "row must contain 'PT_BKTEST_SIG_ID', 'Size', and 'EntryTime' keys"
+    assert all(
+        k in row for k in ["PT_BKTEST_SIG_ID", "Size", "EntryTime"]
+    ), "row must contain 'PT_BKTEST_SIG_ID', 'Size', and 'EntryTime' keys"
 
     ## Date is signal entry date + t+n days
-    date = pd.to_datetime(row.EntryTime).strftime('%Y-%m-%d')
+    date = pd.to_datetime(row.EntryTime).strftime("%Y-%m-%d")
     signal_id = row.PT_BKTEST_SIG_ID
 
-    
     ## The option strategy to deploy. Eg: 'vertical'
-    option_strategy = config.order_settings.get('strategy', 'Unknown')
-    if option_strategy == 'Unknown':
+    option_strategy = config.order_settings.get("strategy", "Unknown")
+    if option_strategy == "Unknown":
         raise ValueError("Unknown strategy. Not set in config?")
-    
+
     ## The option type to deploy. Eg: 'C' or 'P'
-    option_type = 'C' if row.Size > 0 else 'P'
-    
+    option_type = "C" if row.Size > 0 else "P"
+
     ## The structure direction. Eg: 'long' or 'short'. E.g., long vertical call spread
-    structure_direction = config.order_settings.get('structure_direction', 'Unknown')
-    if structure_direction == 'Unknown':
+    structure_direction = config.order_settings.get("structure_direction", "Unknown")
+    if structure_direction == "Unknown":
         raise ValueError("Unknown structure_direction. Not set in config?")
-    
+
     ## Spread btwn strikes in ticks
-    spread_ticks = config.order_settings.get('spread_ticks', 1)
+    spread_ticks = config.order_settings.get("spread_ticks", 1)
 
     ## The Min & Max DTE tolerance
-    dte_tolerance = config.order_settings.get('dte_tolerance', 90)
+    dte_tolerance = config.order_settings.get("dte_tolerance", 90)
 
     ## Min & Max moneyness for the options to consider
-    min_moneyness = config.order_settings.get('min_moneyness', 0.5)
-    max_moneyness = config.order_settings.get('max_moneyness', 1.25)
-    
+    min_moneyness = config.order_settings.get("min_moneyness", 0.5)
+    max_moneyness = config.order_settings.get("max_moneyness", 1.25)
+
     ## Target DTE for the options to consider
-    target_dte = config.order_settings.get('target_dte', 'Unknown')
-    if target_dte == 'Unknown':
+    target_dte = config.order_settings.get("target_dte", "Unknown")
+    if target_dte == "Unknown":
         raise ValueError("Unknown target_dte. Not set in config?")
-    
+
     ## Minimum total price for the order selection
-    min_total_price = config.order_settings.get('min_total_price', max_close/2)
+    min_total_price = config.order_settings.get("min_total_price", max_close / 2)
 
     ## Direction
-    if option_type.upper() == 'C':
-        direction = 'LONG'
-    elif option_type.upper() == 'P':
-        direction = 'SHORT'
+    if option_type.upper() == "C":
+        direction = "LONG"
+    elif option_type.upper() == "P":
+        direction = "SHORT"
     else:
         raise ValueError("Invalid option type. Must be 'C' or 'P'.")
-    
+
     timeseries = get_timeseries_obj()
     timeseries.load_timeseries(tick, OPTION_TIMESERIES_START_DATE, datetime.now())
-    
+
     ## Get spot price for the tick at the date. chain_spot is used for option pricing
     spot = timeseries.get_at_index(tick, date).chain_spot.close
 
     ## Min DTE Threshold
-    max_dte_tolerance = config.rm_settings.get('max_dte_tolerance', 180)
+    max_dte_tolerance = config.rm_settings.get("max_dte_tolerance", 180)
 
     ## Amount of tries for the order selection engine if no orders are found
-    max_tries = config.rm_settings.get('max_tries', 3)
+    max_tries = config.rm_settings.get("max_tries", 3)
 
     ## OTM & ITM moneyness width for multi-leg strategies
-    otm_moneyness_width = config.rm_settings.get('otm_moneyness_width', 0.2)
-    itm_moneyness_width = config.rm_settings.get('itm_moneyness_width', 0.2)
+    otm_moneyness_width = config.rm_settings.get("otm_moneyness_width", 0.2)
+    itm_moneyness_width = config.rm_settings.get("itm_moneyness_width", 0.2)
     initial_cash = config.initial_capital
     inputs = dict(
         tick=tick,
@@ -212,17 +295,21 @@ def build_inputs_with_config(config: _SlugConfig,
         max_tries=max_tries,
         otm_moneyness_width=otm_moneyness_width,
         itm_moneyness_width=itm_moneyness_width,
-        tick_cash=tick_cash
+        tick_cash=tick_cash,
     )
     verify_order_selection_inputs(**inputs)
-    return OrderSchema({
-            "strategy": option_strategy, "option_type": option_type, "tick": tick,
-            "target_dte": target_dte, "dte_tolerance": dte_tolerance,
-            "structure_direction": structure_direction, "max_total_price": max_close,
-            "spread_ticks":spread_ticks, "min_moneyness": min_moneyness, "max_moneyness": max_moneyness,
-            "min_total_price": min_total_price
-        }), OrderInputs(**inputs)
-    
-
-
-
+    return OrderSchema(
+        {
+            "strategy": option_strategy,
+            "option_type": option_type,
+            "tick": tick,
+            "target_dte": target_dte,
+            "dte_tolerance": dte_tolerance,
+            "structure_direction": structure_direction,
+            "max_total_price": max_close,
+            "spread_ticks": spread_ticks,
+            "min_moneyness": min_moneyness,
+            "max_moneyness": max_moneyness,
+            "min_total_price": min_total_price,
+        }
+    ), OrderInputs(**inputs)

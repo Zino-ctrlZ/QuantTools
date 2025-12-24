@@ -36,6 +36,10 @@ c. Random Exit:
     - Check if profits are generated on a random exit.
     - ***GOAL:*** If profit is generated, there are chances this is good
 
+d. Delayed Entry:
+    - Lag days from 1-5 days
+    - Randomize entry for individual days
+
 ### Exit Testing:
 Caveat: We're testing our exits and seeing if it is good or can be improved on
 a. Similar Approach:
@@ -107,4 +111,9 @@ Caveat: We want to see how sliding entry affects performance.
     - Monte Carlo stats option
     - Equity Curve option
     - Trade Options
+    - Monthly performance for both Eq & Options
 
+## Notes:
+- Strategy will start with signal on date, no entry on miss.
+- We will then test lagged entries and decide a limit for when to enter a strategy. This will be max_dates_lag
+- Also test how lagging exits deteriorates the strategy

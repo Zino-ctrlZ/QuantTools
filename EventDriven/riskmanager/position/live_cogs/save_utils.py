@@ -1,3 +1,146 @@
+"""Database Persistence Utilities for Live Position Limits and Greeks.
+
+This module provides database interaction functions for storing and retrieving
+position limits, Greek values, and risk metrics in live trading environments.
+It handles caching, batch updates, and data synchronization with the portfolio
+database to support the LiveCOGLimitsAndSizingCog.
+
+Key Functions:
+    get_limits_data:
+        - Retrieves all position limits from database
+        - Implements caching with automatic refresh
+        - Reloads every 5 accesses or on force=True
+        - Returns DataFrame with all limit records
+
+    update_greeks_case:
+        - Updates Greek values for specific position
+        - Supports date changes via new_date parameter
+        - Validates all required measures present
+        - Uses parameterized queries for safety
+
+    store_position_limits:
+        - Persists new position limits to database
+        - Records delta, gamma, vega, theta limits
+        - Associates limits with trade_id and signal_id
+        - Timestamps for audit trail
+
+    get_position_limit:
+        - Retrieves specific limit for position/measure
+        - Returns (date, limit_value) tuple
+        - Used during position initialization
+        - Falls back to default if not found
+
+Database Schema:
+    limits table:
+        - trade_id: Unique position identifier
+        - signal_id: Strategy signal reference
+        - strategy_name: Strategy identifier
+        - date: Limit creation/update date
+        - delta: Delta limit value
+        - gamma: Gamma limit value
+        - vega: Vega limit value
+        - theta: Theta limit value
+
+    greeks table:
+        - trade_id: Position identifier
+        - date: Greek calculation date
+        - delta: Current delta exposure
+        - gamma: Current gamma exposure
+        - vega: Current vega exposure
+        - theta: Current theta exposure
+        - Additional position metrics
+
+Caching Strategy:
+    LIMITS_DF Global Cache:
+        - In-memory DataFrame of all limits
+        - Reduces database queries
+        - Refreshes every 5 accesses
+        - Force refresh available via parameter
+
+    Access Counter:
+        - _ACCESS_COUNTER tracks reads
+        - Triggers automatic refresh at threshold
+        - Balances freshness vs performance
+        - Reset on refresh
+
+Update Patterns:
+    Single Update:
+        - update_greeks_case() for one position
+        - Used when analyzing individual positions
+        - Immediate database write
+
+    Batch Update:
+        - dynamic_batch_update() for multiple positions
+        - Used during portfolio-wide analysis
+        - More efficient for bulk operations
+        - Reduces database round-trips
+
+Safety Features:
+    Input Validation:
+        - Verifies all required Greek measures present
+        - Type checking on parameters
+        - Prevents partial updates
+
+    Parameterized Queries:
+        - All SQL uses parameter binding
+        - Prevents SQL injection
+        - Database handles type conversion
+
+    Transaction Management:
+        - Atomic updates via DatabaseAdapter
+        - Rollback on errors
+        - Maintains data consistency
+
+Usage:
+    # Store new position limits
+    store_position_limits(
+        delta_limit=10.0,
+        gamma_limit=5.0,
+        vega_limit=15.0,
+        theta_limit=-20.0,
+        trade_id='AAPL_20240315_C_150.0',
+        signal_id='SIG001',
+        strategy_name='put_spread_strategy',
+        date=pd.Timestamp('2024-01-15')
+    )
+
+    # Retrieve limits
+    limits_df = get_limits_data(force=False)
+    date, delta_limit = get_position_limit(
+        trade_id='AAPL_20240315_C_150.0',
+        strategy_name='put_spread_strategy',
+        signal_id='SIG001',
+        measure='delta'
+    )
+
+    # Update Greeks
+    update_greeks_case(
+        trade_id='AAPL_20240315_C_150.0',
+        strategy_name='put_spread_strategy',
+        signal_id='SIG001',
+        greeks={'delta': 8.5, 'gamma': 3.2, 'vega': 12.1, 'theta': -15.3},
+        date_=pd.Timestamp('2024-01-15')
+    )
+
+Integration:
+    - LiveCOGLimitsAndSizingCog uses for persistent state
+    - Position initialization loads historical limits
+    - Daily analysis updates Greeks in database
+    - Reporting queries limits table for analytics
+
+Error Handling:
+    - Missing measures raise ValueError with details
+    - Database errors propagated with context
+    - Invalid parameters logged with warnings
+    - Graceful degradation on cache failures
+
+Notes:
+    - Requires 'portfolio_data' database connection
+    - MEASURES_SET defines valid Greek measures
+    - Cache tuning via _ACCESS_COUNTER threshold
+    - Thread-safe via DatabaseAdapter connection pooling
+"""
+
 from sqlalchemy import text
 from datetime import datetime
 import pandas as pd
@@ -11,13 +154,14 @@ LIMITS_DF = None
 _ACCESS_COUNTER = 0
 db = DatabaseAdapter()
 
+
 def get_limits_data(force: bool = False) -> pd.DataFrame:
     global LIMITS_DF
     global _ACCESS_COUNTER
     _ACCESS_COUNTER += 1
 
     ## Reload every 5 accesses or if forced
-    if LIMITS_DF is None or force or _ACCESS_COUNTER >5:
+    if LIMITS_DF is None or force or _ACCESS_COUNTER > 5:
         _ACCESS_COUNTER = 0
         LIMITS_DF = db.query_database(
             db="portfolio_data",
@@ -27,6 +171,7 @@ def get_limits_data(force: bool = False) -> pd.DataFrame:
         """,
         )
     return LIMITS_DF
+
 
 ## STORERS
 

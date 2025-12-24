@@ -1,9 +1,153 @@
+"""Backtest Market Timeseries and Option Data Management.
+
+This module manages market data retrieval, caching, and transformation for options backtesting.
+It provides efficient access to historical spot prices, option chains, Greeks, corporate actions,
+and position-level analytics across the entire backtest window.
+
+Core Class:
+    BacktestTimeseries: Centralized timeseries manager for backtest market data
+
+Key Features:
+    - Lazy loading of option data with intelligent caching
+    - Position-specific data retrieval with corporate action adjustments
+    - Skip column calculation for data quality management
+    - Special dividend and split handling
+    - Adjusted strike calculation for corporate actions
+    - Thread-safe data access with locking mechanisms
+    - Integration with DataManager for pricing and Greeks
+
+Data Types Managed:
+    Spot Data:
+        - Underlying equity prices (open, high, low, close)
+        - Volume and liquidity metrics
+        - Chain-specific spot prices
+
+    Option Data:
+        - Full option chains by expiration
+        - Bid/ask/mid prices
+        - Black-Scholes and binomial Greeks
+        - Open interest and volume
+        - Implied volatility surfaces
+
+    Corporate Actions:
+        - Regular dividend timeseries
+        - Special dividends with ex-dates
+        - Stock splits (forward and reverse)
+        - Strike adjustments from splits
+
+    Risk-Free Rates:
+        - Treasury yield curve
+        - Interpolated rates for option pricing
+        - Annualized rate timeseries
+
+Caching Strategy:
+    - Position data cached by position_id (trade_id)
+    - Option data cached by option ticker
+    - Special dividends and splits cached globally
+    - Adjusted strikes cached to avoid recalculation
+    - Cache expiration managed automatically
+
+Skip Column Logic:
+    Identifies unreliable data points to skip during analysis:
+        - Missing or stale prices (no updates)
+        - Zero volume/open interest
+        - Wide bid-ask spreads
+        - Missing Greeks or volatility
+        - Configured per column (Midpoint, Delta, Vega, etc.)
+
+Key Methods:
+    get_option_data(opttick):
+        Retrieve full timeseries for option ticker
+
+    get_position_data(position_id):
+        Get position-specific data with adjustments
+
+    get_at_time_option_data(opttick, date):
+        Point-in-time option data snapshot
+
+    get_at_time_position_data(position_id, date):
+        Position data at specific date with skip info
+
+    skip(position_id, date, column):
+        Check if position should be skipped on date
+
+Configuration:
+    SkipCalcConfig:
+        - skip_columns: List of columns to monitor
+        - threshold: Staleness threshold
+        - window: Lookback window for checks
+
+    UndlTimeseriesConfig:
+        - price_source: Which price to use (close, mid)
+        - data_provider: Source for spot data
+
+    OptionPriceConfig:
+        - pricing_model: BS vs Binomial
+        - greeks_source: Analytical vs numerical
+
+Corporate Action Handling:
+    Splits:
+        - Automatic strike adjustment (strike / split_ratio)
+        - Position quantity adjustment
+        - Historical price normalization
+
+    Dividends:
+        - Regular dividend forecasting
+        - Special dividend adjustments
+        - Ex-date identification
+        - Impact on pricing models
+
+Usage:
+    bt_ts = BacktestTimeseries(
+        _start='2024-01-01',
+        _end='2024-12-31'
+    )
+
+    # Get option data at specific time
+    option_data = bt_ts.get_at_time_option_data(
+        opttick='AAPL250117P175000',
+        date='2024-10-15'
+    )
+
+    # Check if should skip
+    should_skip = bt_ts.skip(
+        position_id='AAPL_20241015_175P_long',
+        date='2024-11-01',
+        column='Midpoint'
+    )
+
+    # Get position data with adjustments
+    pos_data = bt_ts.get_at_time_position_data(
+        position_id='MSFT_20240301_350C_short',
+        date='2024-03-15'
+    )
+
+Performance:
+    - All data cached in memory after first load
+    - Custom cache with configurable expiration
+    - Thread-safe concurrent access
+    - Minimal disk I/O after initial population
+    - Efficient pandas operations throughout
+
+Integration:
+    - Used by RiskManager for all market data needs
+    - Feeds PositionAnalyzer for position evaluation
+    - Provides data to OrderPicker for chain filtering
+    - Supplies Greeks to position sizers for limit calculations
+
+Notes:
+    - Dates automatically converted to pandas Timestamps
+    - Missing data returns None rather than raising exceptions
+    - Critical errors logged but don't halt execution
+    - Pool logging level changed to WARNING by default
+    - MySQL queries can be disabled via set_skip_mysql_query()
+"""
+
 ## Options Timeseries class for handling data retrieval
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from EventDriven.riskmanager.market_data import MarketTimeseries
-from EventDriven._vars import (load_riskmanager_cache, 
-                               ADD_COLUMNS_FACTORY)
+from EventDriven._vars import load_riskmanager_cache, ADD_COLUMNS_FACTORY
 from EventDriven.riskmanager.utils import (
     parse_position_id,
     swap_ticker,
@@ -12,10 +156,7 @@ from EventDriven.riskmanager.utils import (
 )
 from trade.helpers.decorators import timeit
 from trade.helpers.threads import runThreads
-from trade.helpers.helper import (
-    compare_dates, 
-    parse_option_tick, 
-    generate_option_tick_new)
+from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
 from trade.assets.rates import get_risk_free_rate_helper
 from threading import Lock
@@ -27,14 +168,16 @@ from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
 from module_test.raw_code.DataManagers.DataManagers import set_skip_mysql_query
 
-logger = setup_logger('EventDriven.riskmanager.market_timeseries', stream_log_level="WARNING")
+logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="WARNING")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
 _change_global_stream_level("WARNING")
+
 
 class BacktestTimeseries:
     """
     Class for managing and retrieving market timeseries data for options and positions during backtesting.
     """
+
     def __init__(self, _start: Union[datetime, str], _end: Union[datetime, str]):
         self.start_date = _start
         self.end_date = _end
@@ -50,7 +193,7 @@ class BacktestTimeseries:
         self.option_price_config = OptionPriceConfig()
         self.lock = Lock()
 
-    def skip(self, position_id:str, date:Union[datetime, str], column:str = 'Midpoint') -> bool:
+    def skip(self, position_id: str, date: Union[datetime, str], column: str = "Midpoint") -> bool:
         """
         Check if a specific position should be skipped on a given date based on skip calculation configuration.
         """
@@ -59,8 +202,8 @@ class BacktestTimeseries:
             return False
         skips_meta = at_time.skips
         skip = skips_meta.get(column.capitalize())
-        
-        return skip.get('skip_day', False)
+
+        return skip.get("skip_day", False)
 
     def set_splits(self, d):
         """
@@ -372,8 +515,8 @@ class BacktestTimeseries:
             logger.info(f"No splits or dividends to adjust for {opttick}, loading data directly")
             data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
             data["adj_strike"] = meta["strike"]
-            data['factor'] = 1.0
-            self.adjusted_strike_cache[opttick] = data['adj_strike']
+            data["factor"] = 1.0
+            self.adjusted_strike_cache[opttick] = data["adj_strike"]
             return data[
                 (data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
                 & (data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
@@ -396,13 +539,12 @@ class BacktestTimeseries:
             # ## If check_date is after the first split date, first_set_data is only from the first split date onwards
             # else:
             #     first_set_data = first_set_data[first_set_data.index >= to_adjust_split[0][0]]
-            
+
             # ## Add Strike to keep track of adjustments
             # print(f"Initial adj_strike for {opttick}: {adj_strike}")
             # first_set_data['adj_strike'] = adj_strike
             # first_set_data['factor'] = 1.0
             segments = []
-            
 
             for event_date, factor, event_type in to_adjust_split:
                 if compare_dates.is_before(check_date, event_date):
@@ -437,9 +579,9 @@ class BacktestTimeseries:
                     adj_data = adj_data[adj_data.index >= event_date]
                 else:
                     adj_data = adj_data[adj_data.index < event_date]
-                
-                adj_data['adj_strike'] = adj_strike
-                adj_data['factor'] = factor
+
+                adj_data["adj_strike"] = adj_strike
+                adj_data["factor"] = factor
 
                 # Apply price transformation if SPLIT
                 ## PRICE_ON_TO_DO: No need to change this. These are necessary columns
@@ -453,8 +595,8 @@ class BacktestTimeseries:
                 segments.append(adj_data)
 
         base_data = self.load_position_data(opttick).copy()
-        base_data['adj_strike'] = meta['strike'] ## Original strike    
-        base_data['factor'] = 1.0
+        base_data["adj_strike"] = meta["strike"]  ## Original strike
+        base_data["factor"] = 1.0
 
         first_event_date = to_adjust_split[0][0] if to_adjust_split else self.start_date
         if compare_dates.is_before(check_date, first_event_date):
@@ -472,5 +614,5 @@ class BacktestTimeseries:
             (final_data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
             & (final_data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
         ]
-        self.adjusted_strike_cache[opttick] = final_data['adj_strike']
+        self.adjusted_strike_cache[opttick] = final_data["adj_strike"]
         return final_data

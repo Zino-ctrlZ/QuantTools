@@ -1,4 +1,3 @@
-
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict, Tuple
 import inspect
@@ -9,7 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-from ._types import Side, SideInt # noqa
+from ._types import Side, SideInt  # noqa
+
 
 @dataclass
 class Indicator:
@@ -17,6 +17,7 @@ class Indicator:
     values: pd.Series
     overlay: bool = False
     color: Optional[str] = "red"
+
 
 @dataclass
 class TradeDecision:
@@ -28,15 +29,15 @@ class TradeDecision:
             raise TypeError("TradeDecision.ok must be a boolean.")
         if not isinstance(self.side, int):
             raise TypeError("TradeDecision.side must be an integer.")
-        
+
         self.ok = bool(self.ok)
-            
 
     def __bool__(self):
         return self.ok
-    
+
     def __repr__(self):
         return f"TradeDecision(ok={self.ok}, side={self.side})"
+
 
 @dataclass
 class PositionInfo:
@@ -46,70 +47,68 @@ class PositionInfo:
 
     def __bool__(self):
         return self.entry_date is not None and self.entry_price is not None and self.side is not None
-    
-
 
 
 class StrategyBase(ABC):
     """
-        Abstract base class for trading strategies with built-in backtest parameter validation.
+    Abstract base class for trading strategies with built-in backtest parameter validation.
 
-        This class provides a framework for building trading strategies with automatic parameter
-        validation and efficient data access using numpy arrays. It enforces that all subclasses
-        declare their required parameters via the `bt_params` class attribute.
+    This class provides a framework for building trading strategies with automatic parameter
+    validation and efficient data access using numpy arrays. It enforces that all subclasses
+    declare their required parameters via the `bt_params` class attribute.
 
-        Subclasses MUST define:
-            bt_params: Dict[str, Any] = {"param_name": default_or_REQUIRED, ...}
+    Subclasses MUST define:
+        bt_params: Dict[str, Any] = {"param_name": default_or_REQUIRED, ...}
 
-        Key Features:
-        - Automatic parameter validation at class definition time
-        - Efficient data access via numpy arrays for OHLCV data
-        - Built-in indicator management system
-        - Position tracking and state management with support for long/short positions
-        - Simulation and visualization capabilities
+    Key Features:
+    - Automatic parameter validation at class definition time
+    - Efficient data access via numpy arrays for OHLCV data
+    - Built-in indicator management system
+    - Position tracking and state management with support for long/short positions
+    - Simulation and visualization capabilities
 
-        Data Structures:
-        - TradeDecision: Dataclass returned by should_open() and should_close() containing:
-          - ok (bool): Whether the trade decision is valid
-          - side (int): Position side (1 for long, -1 for short)
-        - PositionInfo: Dataclass tracking current position details:
-          - entry_date (pd.Timestamp): Date position was opened
-          - entry_price (float): Price at which position was opened
-          - side (SideInt): Position side (SideInt.BUY or SideInt.SELL)
-        - Side/SideInt: Enum types for position direction (BUY=1, SELL=-1)
+    Data Structures:
+    - TradeDecision: Dataclass returned by should_open() and should_close() containing:
+      - ok (bool): Whether the trade decision is valid
+      - side (int): Position side (1 for long, -1 for short)
+    - PositionInfo: Dataclass tracking current position details:
+      - entry_date (pd.Timestamp): Date position was opened
+      - entry_price (float): Price at which position was opened
+      - side (SideInt): Position side (SideInt.BUY or SideInt.SELL)
+    - Side/SideInt: Enum types for position direction (BUY=1, SELL=-1)
 
-        Methods to Override (Required):
-        - setup(): Initialize indicators and strategy-specific state
-        - is_open_signal(): Define logic for opening signals
-        - is_close_signal(): Define logic for closing signals
-        - open_action(): Execute actions when opening a position
-        - close_action(): Execute actions when closing a position
+    Methods to Override (Required):
+    - setup(): Initialize indicators and strategy-specific state
+    - is_open_signal(): Define logic for opening signals
+    - is_close_signal(): Define logic for closing signals
+    - open_action(): Execute actions when opening a position
+    - close_action(): Execute actions when closing a position
 
-        Methods to Override (Optional):
-        - should_trade(): Customize trading eligibility logic. Ideally checks market regime, time filters, etc.
-        - should_open(): Customize position opening logic, returns TradeDecision. Ideally this takes into account both
-          - should_trade() and is_open_signal()
-        - should_close(): Customize position closing logic, returns TradeDecision. Ideally this takes into account both
-          - is_close_signal() and position status
-        - info_on_date(): Get strategy state at a specific date/index
-        - have_position(): Check if a position is currently open
-        - reset_strategy_state(): Reset position and stop-loss state
+    Methods to Override (Optional):
+    - should_trade(): Customize trading eligibility logic. Ideally checks market regime, time filters, etc.
+    - should_open(): Customize position opening logic, returns TradeDecision. Ideally this takes into account both
+      - should_trade() and is_open_signal()
+    - should_close(): Customize position closing logic, returns TradeDecision. Ideally this takes into account both
+      - is_close_signal() and position status
+    - info_on_date(): Get strategy state at a specific date/index
+    - have_position(): Check if a position is currently open
+    - reset_strategy_state(): Reset position and stop-loss state
 
-        Built-in Methods (Do Not Override):
-        - simulate(): Runs the backtest simulation
-        - plot_strategy_indicators(): Visualizes strategy performance
-        - plot_signals(): Visualizes buy/sell signals
-        - add_indicator(): Add indicators to the strategy
-        - get_indicator(): Retrieve indicator values
+    Built-in Methods (Do Not Override):
+    - simulate(): Runs the backtest simulation
+    - plot_strategy_indicators(): Visualizes strategy performance
+    - plot_signals(): Visualizes buy/sell signals
+    - add_indicator(): Add indicators to the strategy
+    - get_indicator(): Retrieve indicator values
 
-        Attributes:
-        - data (PTDataset): Market data container
-        - position_open (bool): Current position status
-        - position_side (SideInt): Current position direction (BUY or SELL)
-        - position_info (PositionInfo): Current position details (entry date, price, side)
-        - stop (Optional[float]): Stop-loss price level
-        - indicators (Dict[str, Any]): Dictionary of strategy indicators
-        - close, open, high, low, volume, dates: Numpy array properties for efficient data access
+    Attributes:
+    - data (PTDataset): Market data container
+    - position_open (bool): Current position status
+    - position_side (SideInt): Current position direction (BUY or SELL)
+    - position_info (PositionInfo): Current position details (entry date, price, side)
+    - stop (Optional[float]): Stop-loss price level
+    - indicators (Dict[str, Any]): Dictionary of strategy indicators
+    - close, open, high, low, volume, dates: Numpy array properties for efficient data access
     """
 
     bt_params: Dict[str, Any] = {}
@@ -166,14 +165,10 @@ class StrategyBase(ABC):
                     f"{cls.__name__}.bt_params includes '{k}', but {cls.__name__}.__init__ "
                     f"does not accept '{k}' (and has no **kwargs)."
                 )
-            
 
-
-    def __init__(self, 
-                 data: PTDataset, 
-                 start_trading_date: Optional[str] = None, 
-                 ticker: Optional[str] = None,
-                 **kwargs):
+    def __init__(
+        self, data: PTDataset, start_trading_date: Optional[str] = None, ticker: Optional[str] = None, **kwargs
+    ):
         """
         Initializes the strategy with data and parameters.
         Parameters:
@@ -273,14 +268,16 @@ class StrategyBase(ABC):
         """
         if self._df.isnull().values.any():
             raise ValueError("Input data contains missing values. Please clean the data before using the strategy.")
-        
+
         if self._df.index.duplicated().any():
             raise ValueError("Input data contains duplicated index values. Please ensure the index is unique.")
-        
+
         if self._df.duplicated().any().any():
             cols_with_dupes = self._df.columns[self._df.T.duplicated()].tolist()
-            raise ValueError("Input data contains duplicated rows. Please ensure all rows are unique."
-                             f" Duplicated columns: {cols_with_dupes}, Tick: {self.ticker}")
+            raise ValueError(
+                "Input data contains duplicated rows. Please ensure all rows are unique."
+                f" Duplicated columns: {cols_with_dupes}, Tick: {self.ticker}"
+            )
 
         self._df.columns = self._df.columns.str.lower()
         assert set(self._df.columns).issuperset(
@@ -585,14 +582,14 @@ class StrategyBase(ABC):
         Note:
             Provide exactly one of date or index.
         """
-        
+
         return TradeDecision(
             ok=(
                 self.should_trade(date=date, index=index)
                 and (not self.position_open)
                 and self.is_open_signal(date=date, index=index)
             ),
-            side=1
+            side=1,
         )
 
     def should_close(self, *, date: pd.Timestamp = None, index: int = None) -> TradeDecision:
@@ -616,13 +613,7 @@ class StrategyBase(ABC):
         Note:
             Provide exactly one of date or index.
         """
-        return TradeDecision(
-            ok=(
-                self.position_open
-                and self.is_close_signal(date=date, index=index)
-            ),
-            side=-1
-        )
+        return TradeDecision(ok=(self.position_open and self.is_close_signal(date=date, index=index)), side=-1)
 
     def add_indicator(self, name: str, series: pd.Series, overlay: bool = False, color: Optional[str] = "red") -> None:
         """
@@ -727,7 +718,7 @@ class StrategyBase(ABC):
                 prev_price = float(close[i - 1])
                 if prev_price != 0.0:
                     ratio = current_price / prev_price
-                    eq *= ratio ** position_side  # adjust for short/long
+                    eq *= ratio**position_side  # adjust for short/long
 
             # 2) Decide actions using today's bar
             if self.should_open(index=i):
@@ -908,7 +899,7 @@ class StrategyBase(ABC):
         fig.update_yaxes(title_text="Price", row=1, col=1, type="log" if log_scale else "linear")
 
         return fig
-    
+
     def plot_signals(self, log_scale: bool = True) -> go.Figure:
         """
         Create an interactive Plotly visualization of buy/sell signals on the price chart.
@@ -934,9 +925,7 @@ class StrategyBase(ABC):
         """
         open_sigs = [self.is_open_signal(index=i) for i in range(self._n)]
         close_sigs = [self.is_close_signal(index=i) for i in range(self._n)]
-        combined = [1 if open_sigs[i]
-                    else -1 if close_sigs[i]
-                    else 0 for i in range(self._n)]
+        combined = [1 if open_sigs[i] else -1 if close_sigs[i] else 0 for i in range(self._n)]
         signal_series = pd.Series(combined, index=self._index, name="signals")
         signal_series = signal_series.loc[self.start_date :]
         fig = go.Figure()
@@ -947,9 +936,7 @@ class StrategyBase(ABC):
                 mode="lines+markers",
                 name="Signals",
                 line=dict(color="blue"),
-                hovertemplate=(
-                    "Date: %{x|%Y-%m-%d}<br>Signal: %{y}<extra></extra>"
-                )
+                hovertemplate=("Date: %{x|%Y-%m-%d}<br>Signal: %{y}<extra></extra>"),
             )
         )
         name = self.__class__.__name__ if self.ticker is None else f"{self.ticker} - {self.__class__.__name__}"
