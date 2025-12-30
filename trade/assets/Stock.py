@@ -133,7 +133,8 @@ class Stock:
                         logger.error(f"Error setting close for {self.ticker}: {e}")
                         raise e  ## Raise error so that decorator can catch it
                     try:
-                        self.div_yield()
+                        with self.__thread_lock:
+                            self.div_yield(div_type="yield")
 
                     except Exception as e:
                         logger.error(f"Error setting yield for {self.ticker}: {e}")
@@ -353,7 +354,7 @@ class Stock:
                 retry_counter += 1
                 time.sleep(1)  # Wait for 1 second before retrying
 
-            ## If still not found after retries, raise an error
+            ## If still not found after retries, default to previous available date
             if last_bus.date() not in ts.index.date:
                 logger.critical(
                     f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after {retry_counter} retries. Defaulting to previous available date."
@@ -361,9 +362,11 @@ class Stock:
                 last_available_date = ts.index[ts.index.date < last_bus.date()].max()
                 logger.critical(f"Using risk free rate from {pd.to_datetime(last_available_date).strftime('%Y-%m-%d')}")
                 self.__rf_rate = ts.loc[last_available_date, "annualized"]
+
             else:
-                # raise ValueError(f"Could not find risk free rate for {self.ticker} on {last_bus.strftime('%Y-%m-%d')} after retries.")
                 self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime("%Y-%m-%d")]["annualized"].values[0]
+        else:
+            self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime("%Y-%m-%d")]["annualized"].values[0]
 
     def rebuild_chain(self):
         """
@@ -446,10 +449,11 @@ class Stock:
         try:
             div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider="yfinance").to_df()
             div_history.set_index("ex_dividend_date", inplace=True)
+
         except:
             logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
             logger.info("Probably due to no dividends history")
-            return pd.Series({x: 0 for x in bus_range(start=start_date, end=datetime.today(), freq="B")})
+            return pd.Series({x: 0 for x in bus_range(start=self.start_date, end=datetime.today(), freq="B")})
 
         return div_history["amount"]
 
@@ -468,12 +472,11 @@ class Stock:
                 self.__set_y(y)
             return y
 
-    @backoff.on_exception(backoff.expo, OpenBBEmptyData, max_tries=5, logger=logger)
+    @backoff.on_exception(backoff.expo, (OpenBBEmptyData, ValueError), max_tries=5, logger=logger)
     def div_yield_history(self, start=None, ts_timeframe="day", ts_timewidth="1", div_type="yield"):
         """
         Return the yearly dividend yield
         """
-        ##Optional giveup for specific names during backoff: giveup=lambda e: "MSTR" in str(e)
         if not start:
             start_date = self.start_date
 
@@ -482,14 +485,16 @@ class Stock:
 
         try:
             div_history = obb.equity.fundamental.dividends(symbol=self.ticker, provider="yfinance").to_df()
+            _data_from_openbb = div_history.copy()
         except:
             logger.error(f"Error getting dividends history for {self.ticker} from yfinance")
-            logger.error(f"Probably due to no dividends history")
+            logger.error("Probably due to no dividends history")
             return pd.Series({x: 0 for x in bus_range(start=start_date, end=datetime.today(), freq="B")})
 
         if div_history.empty:
             raise OpenBBEmptyData(f"Dividends history for {self.ticker} is empty")
 
+        logger.info(div_history.tail(20))  ###<----
         div_history.rename(columns={"ex_dividend_date": "date"}, inplace=True)
         div_history.date = pd.to_datetime(div_history.date)
         div_history.set_index("date", inplace=True)
@@ -497,9 +502,11 @@ class Stock:
 
         ## Convert to daily, filling missing with 0
         div_history = div_history.asfreq("1D").fillna(0)
+        logger.info(f"DIV HISTORY AFTER ASFREQ: {div_history.tail(20).to_string()}")  ###<----
         ## Calculate yearly dividend using 365 rolling sum
         div_history["yearly_dividend"] = div_history.rolling(365).sum()
         div_history.dropna(inplace=True)
+        logger.info(f"DIV HISTORY AFTER ROLLING SUM: {div_history.tail(20).to_string()}")  ###<----
         if div_type == "value":
             dates = pd.date_range(start=div_history.index.min(), end=datetime.today(), freq="B")
             div_history = div_history.reindex(dates, method="ffill")
@@ -507,9 +514,12 @@ class Stock:
         elif div_type == "yield":
             pass
         else:
-            raise ValueError("div_type must be either 'value' or 'yield'")
+            raise AttributeError("div_type must be either 'value' or 'yield'")
 
         ## Get Spot Price timeseries
+        logger.info(
+            f"Info passed to spot: start_date={start_date}, ts_timeframe={ts_timeframe}, ts_timewidth={ts_timewidth}, ts_end={self.end_date}, ts={True}"
+        )  ###<----
         spot = self.spot(
             ts=True,
             ts_timeframe=ts_timeframe,
@@ -517,16 +527,29 @@ class Stock:
             ts_start=pd.to_datetime(start_date),
             ts_end=self.end_date,
         )
+        logger.info(f"SPOT FROM OPENBB: {spot.tail(20).to_string()}")  ###<----
         spot["Date"] = pd.to_datetime(spot.index.date)
         spot.reset_index(inplace=True, drop=True)
         spot.set_index("Date", inplace=True)
+        logger.info(f"SPOT BEFORE DIVIDEND ADDED: {spot.tail(20).to_string()}")  ###<----
         spot["yearly_dividend"] = div_history["yearly_dividend"]
         spot.fillna(method="ffill", inplace=True)
+        logger.info(f"SPOT WITH DIVIDEND ADDED: {spot.tail(20).to_string()}")  ###<----
 
         ## Calculate Dividend Yield
         spot["dividend_yield"] = spot["yearly_dividend"] / spot["close"]
         div_yield = spot["dividend_yield"]
-        div_yield = resample(div_yield, interval)
+        logger.info(f"DIV YIELD BEFORE RESAMPLE: {div_yield.tail(20).to_string()}")  ###<----
+        try:
+            div_yield = resample(div_yield, interval)
+        except Exception as e:
+            logger.info(f"Error resampling dividend yield for {self.ticker}: {e}")
+            logger.info("Info on data: ")
+            logger.info(f"Index: {div_yield.index}")
+            logger.info(f"Data: {div_yield.to_string()}")
+            logger.info(traceback.format_exc())
+            logger.info(f"Duplicated Indexes: {div_yield.index[div_yield.index.duplicated(keep=False)]}")
+            raise e
         return div_yield["dividend_yield"] if isinstance(div_yield, pd.DataFrame) else div_yield
 
     def spot(
