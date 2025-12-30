@@ -824,7 +824,7 @@ class StrategyBase(ABC):
         )
 
         if add_signal_marker:
-            trades, _ = self.simulate()
+            trades, _ = self.simulate(finalize=False)
             plotted_open = False
             plotted_close = False
             for trade in trades:
