@@ -75,9 +75,9 @@ def _get_current_environment() -> str | None:
         Environment string ('prod', 'test', 'test-{name}') or None if not set
     """
     try:
-        from dbase.database.SQLHelpers import _ENVIRONMENT_CONTEXT
+        from dbase.database.SQLHelpers import ENVIRONMENT_CONTEXT
 
-        return _ENVIRONMENT_CONTEXT.get("environment")
+        return ENVIRONMENT_CONTEXT.get("environment")
     except ImportError:
         return None
 
@@ -109,7 +109,7 @@ def setup_logger(
     Environment-Aware:
         - Production: {filename}.log with format "{timestamp} {filename} {level}: {message}"
         - Test: {filename}_{env}.log with format "{timestamp} [{env}] {filename} {level}: {message}"
-        - Environment detected from dbase.database.SQLHelpers._ENVIRONMENT_CONTEXT if available
+        - Environment detected from dbase.database.SQLHelpers.ENVIRONMENT_CONTEXT if available
 
     Note:
         Log files rotate daily at midnight (3 backups). Handlers are cleaned on autoreload.
