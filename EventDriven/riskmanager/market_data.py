@@ -295,6 +295,14 @@ class MarketTimeseries:
     @property
     def _dividends(self) -> CustomCache:
         return DIVIDEND_CACHE
+    
+    @classmethod
+    def clear_caches(cls):
+        """Clear all caches used by MarketTimeseries."""
+        SPOT_CACHE.clear()
+        CHAIN_SPOT_CACHE.clear()
+        DIVIDEND_CACHE.clear()
+        logger.info("All MarketTimeseries caches have been cleared.")
 
     def _on_exit_sanitize(self):
         """Remove today's data from all stored timeseries data."""
