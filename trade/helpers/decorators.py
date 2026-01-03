@@ -30,6 +30,9 @@ def _save_timeit_metadata():
     """
     Internal function to save collected timing metadata to CSV file.
     This function is registered to run at exit via register_signal.
+
+    Implements rolling mechanism: when CSV exceeds 50k rows, archive it
+    to timeit/ subfolder with numbered suffix and start fresh.
     """
     if not _TIMEIT_BUCKET:
         return
@@ -44,12 +47,36 @@ def _save_timeit_metadata():
         # Convert bucket to DataFrame
         df = pd.DataFrame(_TIMEIT_BUCKET)
 
-        # Append to existing file or create new one
+        # Check if we need to roll the existing file
         if csv_path.exists():
             existing_df = pd.read_csv(csv_path)
-            df = pd.concat([existing_df, df], ignore_index=True)
 
-        df.to_csv(csv_path, index=False)
+            # Roll if existing file has >= 50k rows
+            if len(existing_df) >= 50000:
+                # Create timeit archive folder
+                archive_path = cache_path / "timeit"
+                archive_path.mkdir(parents=True, exist_ok=True)
+
+                # Find next available suffix number
+                suffix = 1
+                while (archive_path / f"timeit_log_{suffix}.csv").exists():
+                    suffix += 1
+
+                # Move old file to archive with numbered suffix
+                archived_file = archive_path / f"timeit_log_{suffix}.csv"
+                existing_df.to_csv(archived_file, index=False)
+                _logger.info(f"Archived {len(existing_df)} rows to {archived_file}")
+
+                # Start fresh with new data only
+                df.to_csv(csv_path, index=False)
+            else:
+                # Append to existing file
+                df = pd.concat([existing_df, df], ignore_index=True)
+                df.to_csv(csv_path, index=False)
+        else:
+            # Create new file
+            df.to_csv(csv_path, index=False)
+
         _logger.info(f"Saved {len(_TIMEIT_BUCKET)} timeit records to {csv_path}")
         _TIMEIT_BUCKET.clear()
     except Exception as e:
@@ -226,7 +253,11 @@ def log_time(logger: Logger = None):
                 start = time.time()
                 result = await func(*args, **kwargs)
                 end = time.time()
-                args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
+                args = [
+                    arg
+                    for arg in args
+                    if not isinstance(arg, (type(None), pd.DataFrame, bytes))
+                ]
                 logger.info(f"{func.__name__} took {end - start} seconds")
                 logger.info(f"args {args}, kwargs: {kwargs}")
                 return result
@@ -239,7 +270,11 @@ def log_time(logger: Logger = None):
                 start = time.time()
                 result = func(*args, **kwargs)
                 end = time.time()
-                args = [arg for arg in args if not isinstance(arg, (type(None), pd.DataFrame, bytes))]
+                args = [
+                    arg
+                    for arg in args
+                    if not isinstance(arg, (type(None), pd.DataFrame, bytes))
+                ]
                 logger.info(f"{func.__name__} took {end - start} seconds")
                 logger.info(f"args {args}, kwargs: {kwargs}")
                 return result
@@ -271,7 +306,9 @@ def log_error(logger: Logger = None, raise_exception=True):
                 try:
                     return await func(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"\n{func.__name__} raised an error: {e}", exc_info=True)
+                    logger.error(
+                        f"\n{func.__name__} raised an error: {e}", exc_info=True
+                    )
                     logger.error(f"args {args}, kwargs: {kwargs}")
                     logger.error("Traceback:\n" + traceback.format_exc())
                     if raise_exception:
@@ -285,7 +322,9 @@ def log_error(logger: Logger = None, raise_exception=True):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"\n{func.__name__} raised an error: {e}", exc_info=True)
+                    logger.error(
+                        f"\n{func.__name__} raised an error: {e}", exc_info=True
+                    )
                     logger.error(f"args {args}, kwargs: {kwargs}")
                     logger.error("Traceback:\n" + traceback.format_exc())
                     raise e
