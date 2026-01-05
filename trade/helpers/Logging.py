@@ -169,7 +169,7 @@ def setup_logger(
         logger.removeHandler(handler)
     logger.handlers = []
 
-    # Define the log file path
+    # Define the log file path and create the directory if it doesn't exist
     os.makedirs(project_root_log_dir, exist_ok=True)
     log_file = os.path.join(project_root_log_dir, f"{notebook_name}.log")
 
