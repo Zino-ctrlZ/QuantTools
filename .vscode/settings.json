@@ -9,6 +9,6 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "editor.formatOnSave": false,
-    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.useLibraryCodeForTypes": true
 
 }
