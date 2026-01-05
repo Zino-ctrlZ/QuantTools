@@ -3,19 +3,19 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from EventDriven.helpers import generate_signal_id
-from EventDriven.types import SignalTypes
-load_dotenv()
 import datetime
-import os, os.path
+import os
 import pandas as pd
-import sys
+from EventDriven.types import SignalTypes
 from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import query_database # type: ignore
 from dbase.DataAPI.ThetaData import retrieve_option_ohlc # type: ignore
 from abc import ABCMeta, abstractmethod
 from EventDriven.event import MarketEvent, SignalEvent
 from EventDriven.eventScheduler import EventScheduler
-logger = setup_logger('EventDriven.data')
+from trade.helpers.helper import HOLIDAY_SET
+load_dotenv()
+logger = setup_logger('EventDriven.data', stream_log_level="ERROR")
 
 
 
@@ -252,21 +252,33 @@ class HistoricTradeDataHandler(DataHandler):
     convert that to signals of 1 (for buy), -1 (for sell), 0 (for do nothing)
     """
     
-    def __init__(self, events: EventScheduler, trades_df: pd.DataFrame, symbol_list: Optional[list] = None): 
+    def __init__(self, 
+                 events: EventScheduler, 
+                 trades_df: pd.DataFrame, 
+                 symbol_list: Optional[list] = None,
+                 finalize_trades: bool = True,
+                 end_date: pd.Timestamp = None): 
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
             events: EventScheduler
                 Event scheduler to push events to the event queue
         """
+        self.finalize_trades = finalize_trades
         trades_df = trades_df.copy()
-        trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        if 'signal_id' not in trades_df.columns:
+            trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+        else:
+            logger.info("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
         self.trades_df = trades_df
         self.continue_backtest = True 
         self.events = events
+        self.end_date = end_date
         self._open_trade_data()
         self.options_data = {}
         self.symbol_list = symbol_list if symbol_list is not None else self.trades_df['Ticker'].unique().tolist()
+        
+        
         
     def _open_trade_data(self): 
         """
@@ -274,14 +286,17 @@ class HistoricTradeDataHandler(DataHandler):
         1 for LONG, 2 for SHORT, -1 for EXIT
         """
         unique_tickers = self.trades_df['Ticker'].unique()
-        # self.symbol_list = unique_tickers
         self.trades_df['EntryTime'] = pd.to_datetime(self.trades_df['EntryTime'])
         self.trades_df['ExitTime'] = pd.to_datetime(self.trades_df['ExitTime'])
         
         self.start_date = self.trades_df['EntryTime'].min()
-        self.end_date = self.trades_df['ExitTime'].max()
+        self.end_date = self.end_date or self.trades_df['ExitTime'].max()
+        if pd.isna(self.end_date):
+            raise ValueError("End date cannot be NaT. Please ensure AT LEAST one trade has ExitTime that is not NaT.")
         date_range = pd.bdate_range(start=self.start_date, end=self.end_date)
-        #initialize signal dataframe
+        date_range = date_range[~date_range.isin(HOLIDAY_SET)]
+        
+        ## Initialize signal dataframe
         self.signal_df = pd.DataFrame({'Date': date_range})
         
         for ticker in unique_tickers: 
@@ -292,19 +307,31 @@ class HistoricTradeDataHandler(DataHandler):
             
         #populate signal dataframe
         for _, row in self.trades_df.iterrows():
-            entry_time = row['EntryTime']
-            exit_time = row['ExitTime']
+            entry_time = pd.to_datetime(row['EntryTime'])
+            exit_time = pd.to_datetime(row['ExitTime'])
             ticker = row['Ticker']
             size = row['Size']
             signal : SignalTypes = SignalTypes.LONG.value if size > 0 else SignalTypes.SHORT.value
-            #size in positive is for long positions whilenegative size is for short positions
+            
+            ## Size in positive is for long positions while negative size is for short positions
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size > 0), ticker] = 1 
             self.signal_df.loc[(self.signal_df['Date'] == entry_time) & (size < 0), ticker] = 2
             self.signal_df.loc[self.signal_df['Date'] == exit_time, ticker] = -1 
+            signal_id = row['signal_id']
             
             #schedule signals
-            self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=generate_signal_id(ticker, entry_time, signal)))
-            self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=generate_signal_id(ticker, entry_time, signal)))
+            self.events.schedule_event(entry_time, SignalEvent(ticker, entry_time, signal, signal_id=signal_id))
+            
+            # If finalize_trades is True, we ensure that exit_time is not NaT
+            if self.finalize_trades:
+                exit_time = exit_time if pd.notna(exit_time) else self.end_date
+            
+            ## If exit_time is not NaT, schedule exit signal
+            if pd.notna(exit_time):
+                self.events.schedule_event(exit_time, SignalEvent(ticker, exit_time, 'CLOSE', signal_id=signal_id))
+            else:
+                logger.critical(f"Exit time is NaT for trade with signal_id {row['signal_id']}. No exit signal scheduled.")
+                
         
         signal_columns = ['Date'].append(unique_tickers)
         self.latest_signal_df = pd.DataFrame(columns=signal_columns)

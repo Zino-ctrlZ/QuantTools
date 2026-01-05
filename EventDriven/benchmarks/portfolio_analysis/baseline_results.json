@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-11-28T23:11:31.694782",
+  "positions_count": 1,
+  "create_ctx": {
+    "avg_ms": 187.94512098009363,
+    "std_ms": 49.08379372111311,
+    "cv_pct": 26.11602443583085,
+    "min_ms": 151.59218999906443,
+    "max_ms": 451.18993899814086
+  },
+  "note": "Baseline for _create_ctx optimization. Focus: market data lookups and PositionState creation"
+}

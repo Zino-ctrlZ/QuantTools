@@ -41,6 +41,7 @@ class TickerMap(dict):
 class SingletonMixin(ABC):
     """
     A mixin class to make a class a singleton by symbol.
+    Still a work in progress.
     """
 
     _registry: ClassVar[WeakSet[type]] = WeakSet()
@@ -68,3 +69,17 @@ class SingletonMixin(ABC):
                     sub.clear_instances()
                 except TypeError:
                     pass
+
+
+class SingletonMetaClass(type):
+    """
+    A metaclass for singleton classes.
+    It ensures that only one instance of a class is created.
+    """
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+        return cls._instances[cls]

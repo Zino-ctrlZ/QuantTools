@@ -1,7 +1,14 @@
 {
-    "ruff.format.enable": false,
-    "[python]":{
-        "editor.defaultFormatter": null
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
     },
-    "editor.formatOnSave": false
+
+    "[json]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "editor.formatOnSave": false,
+    "python.analysis.useLibraryCodeForTypes": true,
+
 }

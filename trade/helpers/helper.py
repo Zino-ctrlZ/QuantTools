@@ -4,9 +4,10 @@ import QuantLib as ql
 from datetime import datetime
 import time
 import os
+import shutil
 import backoff
 from dotenv import load_dotenv
-load_dotenv()
+
 import sys
 from enum import Enum
 from typing import Any, Dict
@@ -15,7 +16,7 @@ import warnings
 from pandas.tseries.offsets import BDay
 from typing import Union
 from trade.helpers.Configuration import ConfigProxy
-Configuration = ConfigProxy()
+
 import re
 from datetime import datetime
 import QuantLib as ql
@@ -59,12 +60,14 @@ from pprint import pprint, pformat
 import atexit
 import signal
 import shortuuid
-from trade import get_pool_enabled
+from trade import get_pool_enabled, register_signal
 from trade.helpers.pools import runProcesses
 from trade.helpers.threads import runThreads
 
-logger = setup_logger('trade.helpers.helper')
 
+logger = setup_logger('trade.helpers.helper')
+Configuration = ConfigProxy()
+load_dotenv()
 # To-Dos: 
 # If still using binomial, change the r to prompt for it rather than it calling a function
 
@@ -249,6 +252,8 @@ class CustomCache(Cache):
             data=state['data']
         )
 
+    def __hash__(self):
+        return super().__hash__()
 
 
     @property
@@ -292,8 +297,11 @@ class CustomCache(Cache):
         depending on self._clear_on_exit.
         """
         if self._clear_on_exit:
-            atexit.register(self._on_exit)
-            signal.signal(signal.SIGTERM, self._on_signal)
+            # atexit.register(self._on_exit)
+            # signal.signal(signal.SIGTERM, self._on_signal)
+            register_signal(signum=signal.SIGTERM, signal_func=self._on_exit)
+            register_signal(signum=signal.SIGINT, signal_func=self._on_exit)
+            register_signal("exit", self._on_exit)
         else:
             # just record the dir for later weekly cron clean-up
             with open(self.register_location, 'r') as f:
@@ -311,6 +319,14 @@ class CustomCache(Cache):
 
     def items(self):
         return [(k, self[k]) for k in self]
+
+    def remove(self, key):
+        if key in self:
+            self.__delitem__(key)
+    
+    def pop(self, key, default=None, expire_time=False, tag=False, retry=False):
+        return super().pop(key, default, expire_time, tag, retry)
+
     
     def update(self, other):
         if isinstance(other, dict):
@@ -332,13 +348,13 @@ class CustomCache(Cache):
         """
         return [key for key in self.keys() if x(key)]
     
-    
     def __repr__(self):
-        sample = dict(list(self.items())[:10])
-        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+        sample_keys = list(self)[:10]
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample_keys={sample_keys}>"
+
     def __str__(self):
         sample = dict(list(self.items())[:10])
-        return f"<CustomCache {len(self)} entries; sample={pformat(sample)}>"
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample={pformat(sample)}>"
     
     def setdefault(self, key, default):
         if key not in self:
@@ -346,9 +362,18 @@ class CustomCache(Cache):
         return self[key]
     
     def _on_exit(self):
-        self.clear()
-        with open(f'{self.log_path}', 'a') as f:
-            f.write(f"Cache cleared by AtExit at {datetime.now()}\n")
+        try:
+            self.close()
+            self.clear()
+            shutil.rmtree(self.dir)
+
+        except Exception as e:
+            with open(f'{self.log_path}', 'a') as f:
+                f.write(f"Error clearing cache {self.dir} at {datetime.now()}: {e}\n")
+        else:
+            with open(f'{self.log_path}', 'a') as f:
+                f.write(f"Cache {self.dir} cleared by AtExit at {datetime.now()}\n")
+
 
     def _on_signal(self, signum, frame):
         # Only the creating process should handle cleanup
@@ -418,6 +443,63 @@ def check_missing_dates(x, _start, _end):
     missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
     x.drop(columns=['Datetime'], inplace=True, errors='ignore')
     return missing_dates_fourth_check
+
+def get_missing_dates(x:pd.Series|pd.DataFrame, _start: datetime, _end: datetime):
+    """
+    Check for missing business days in the Series or DataFrame x within the specified date range. This also skips US market holidays.
+    It also ensures there are no weekends
+    Args:
+        x (pd.Series or pd.DataFrame): Series or DataFrame with a DatetimeIndex.
+        _start (str or datetime): Start date of the range.
+        _end (str or datetime): End date of the range.
+    Returns:
+        list: List of missing business days in the range.
+    """
+    assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
+    date_range = bus_range(_start, _end, freq="1B")
+    dates_available = x.index
+    
+    # Numpy optimized version - O(n log n) vs O(n²)
+    date_range_arr = np.array(date_range, dtype='datetime64[ns]')
+    dates_available_arr = np.array(dates_available, dtype='datetime64[ns]')
+    
+    # Check which dates are missing from available dates
+    missing_mask = ~np.isin(date_range_arr, dates_available_arr)
+    missing_dates_arr = date_range_arr[missing_mask]
+    
+    # Filter out holidays using numpy
+    holiday_arr = np.array(list(HOLIDAY_SET), dtype='datetime64[ns]')
+    not_holiday_mask = ~np.isin(missing_dates_arr, holiday_arr)
+    missing_dates_no_holidays_arr = missing_dates_arr[not_holiday_mask]
+    
+    # Filter out weekends using vectorized weekday check
+    if len(missing_dates_no_holidays_arr) > 0:
+        missing_dates_idx = pd.DatetimeIndex(missing_dates_no_holidays_arr)
+        weekdays = missing_dates_idx.weekday.values
+        missing_dates_fourth_check = missing_dates_idx[weekdays < 5]
+    else:
+        missing_dates_fourth_check = pd.DatetimeIndex(missing_dates_no_holidays_arr)
+    
+    return missing_dates_fourth_check.tolist()
+
+# def get_missing_dates(x:pd.Series|pd.DataFrame, _start: datetime, _end: datetime):
+#     """
+#     Check for missing business days in the Series or DataFrame x within the specified date range. This also skips US market holidays.
+#     It also ensures there are no weekends
+#     Args:
+#         x (pd.Series or pd.DataFrame): Series or DataFrame with a DatetimeIndex.
+#         _start (str or datetime): Start date of the range.
+#         _end (str or datetime): End date of the range.
+#     Returns:
+#         list: List of missing business days in the range.
+#     """
+#     assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
+#     date_range = bus_range(_start, _end, freq="1B")
+#     dates_available = x.index
+#     missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+#     missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
+#     missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
+#     return missing_dates_fourth_check
 
 def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
 
@@ -592,7 +674,21 @@ def retrieve_timeseries(tick,
         data['unadjusted_close'] = data.close * data.max_cum_split
         data['split_factor'] = data.max_cum_split / data.cum_split
         data['chain_price'] = data.close * data.split_factor
-        data = data[['open', 'high', 'low', 'close', 'volume','chain_price','unadjusted_close',  'split_ratio', 'cum_split']]
+        data = data[
+            [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "chain_price",
+                "unadjusted_close",
+                "split_ratio",
+                "cum_split",
+                "split_factor",
+                "max_cum_split",
+            ]
+        ]
         data['is_split_date'] = data['split_ratio'] != 1
         data.index = pd.to_datetime(data.index)
         ## To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
@@ -847,12 +943,12 @@ def binomial(K: Union[int, float], exp_date: str, sigma: float, r: float = None,
             today = datetime.today()
             start = today.strftime("%Y-%m-%d")
     if tick is not None:
-        stock = Stock(tick)
-        if y is None:
-            y = stock.div_yield()
-        if S0 is None:
-            S0 = stock.prev_close()
-            S0 = S0.close
+        logger.info(f"This is no longer supported. Please pass in S0 and y directly. Ticker passed: {tick}")
+        # if y is None:
+        #     y = stock.div_yield()
+        # if S0 is None:
+        #     S0 = stock.prev_close()
+        #     S0 = S0.close
     else:
         if y is None:
             y = 0
@@ -1447,6 +1543,18 @@ def not_trading_day(date: str|datetime, time_aware: bool = False) -> bool:
 
 
 def change_to_last_busday(end, offset = 1):
+    """
+    Change the end date to the last business day if it falls on a weekend or holiday.
+    If the time is before 9:30, move to the previous business day.
+    If the time is after 16:00, move to the same business day at 16:00.
+    params:
+        end: str or datetime
+        offset: int, number of business days to move back if end is not a business day
+            if offset < 0 it will move forward
+            if offset = 0 it will stay on the same day if it is a business day
+            if offset > 0 it will move back
+    returns: datetime
+    """
 
     
     #Enfore time is passed

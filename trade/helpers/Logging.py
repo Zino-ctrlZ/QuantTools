@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
 from dotenv import load_dotenv
+from logging.handlers import TimedRotatingFileHandler
 load_dotenv()
 print("""
 Console Logging & File Logging Can be configured using STREAM_LOG_LEVEL and FILE_LOG_LEVEL in environment variables.
@@ -14,7 +15,7 @@ STREAM_LOG_LEVEL = 'DEBUG'
 FILE_LOG_LEVEL = 'INFO'
 PROPAGATE_TO_ROOT_LOGGER = 'False'
 """)
-from logging.handlers import TimedRotatingFileHandler
+
 
 class TimezoneFormatter(logging.Formatter):
     """Custom formatter that converts timestamps to a specific timezone."""
@@ -84,7 +85,7 @@ def setup_logger(filename,stream_log_level = None,
     file_log_level = getattr(logging, os.getenv('FILE_LOG_LEVEL', 'INFO')) if file_log_level is None else file_log_level
     propagate_to_root_logger = (os.getenv('PROPAGATE_TO_ROOT_LOGGER', 'False')).strip().lower() == 'true'
 
-    if custom_logger_name == None:
+    if custom_logger_name is None:
         custom_logger_name = filename
     # Remove all Root Handlers
     if remove_root:
@@ -100,9 +101,15 @@ def setup_logger(filename,stream_log_level = None,
     logger = logging.getLogger(custom_logger_name)
     
     ## Ensure file name - to some capacity - exists.
-    assert filename, f'Please Create a FILENAME Variable'
+    assert filename, 'Please Create a FILENAME Variable'
     notebook_name = filename
 
+    # Always remove existing handlers to prevent duplicates on autoreload
+    # This ensures clean state even when modules are reloaded
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+    logger.handlers = []
 
     # Define the log file path
     os.makedirs(project_root_log_dir, exist_ok=True)
@@ -112,10 +119,6 @@ def setup_logger(filename,stream_log_level = None,
     if not os.path.exists(log_file):
         with open(log_file, 'w'):
             pass  # Just create the file
-
-
-    # Remove all existing handlers (in case the logger was already configured)
-    logger.handlers = []
 
 
     # Set the log level for the root logger

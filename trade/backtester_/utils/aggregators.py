@@ -402,7 +402,7 @@ def avgPnL(trades_df: pd.DataFrame, Type_: str, value=True) -> float:
         'W', 'L', 'A'],  f"Invalid Type_: '{Type_}'. Must be 'L', 'W' or 'A."
     assert 'PnL' in trades_df.columns or 'ReturnPct' in trades_df.columns, f"Please pass a dataframe holding trades and ensure it has either 'PnL' or 'ReturnPct' in the columns. Current Columns {trades_df.columns}"
     trades_ = trades_df
-    PnL = trades_.PnL if value else trades_.ReturnPct
+    PnL = (trades_.PnL if value else trades_.ReturnPct).astype(float)
     WPnL = PnL[PnL > 0] if Type_.upper() == 'W' else PnL[PnL <=
                                                          0] if Type_.upper() == 'L' else PnL
 
@@ -431,12 +431,19 @@ def profitFactor(trades_df: pd.DataFrame) -> float:
     return round(abs(tot_gain/tot_loss), 6)
 
 
-def Expectancy(trades_df: pd.DataFrame) -> float:
+def Expectancy(trades_df: pd.DataFrame, cash_expectancy: bool = False) -> float:
     """
     Returns the expected %pnl based on portfolio data
     """
     tr = trades_df
-    return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
+    avg_win_pnl = avgPnL(tr, 'W', True)
+    avg_win_rate = winRate(tr)
+    avg_loss_rate = lossRate(tr)
+    avg_loss_pnl = avgPnL(tr, 'L', True)
+    if cash_expectancy:
+        return ((avg_win_pnl * (avg_win_rate/100)) + (avg_loss_pnl * (avg_loss_rate/100)))
+    else:
+        return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
 
 
 def SQN(trades_df: pd.DataFrame) -> float:
@@ -776,7 +783,18 @@ class AggregatorParent(ABC):
         Returns the expected %pnl based on portfolio data
         """
 
-        return Expectancy(self._trades)
+        # cash = getattr(self, 'cash', None)
+        # if not cash:
+        #     return Expectancy(self._trades)
+        # if isinstance(cash, dict):
+        #     total_cash = sum(cash.values())
+        # elif isinstance(cash, int) or isinstance(cash, float):
+        #     total_cash = cash
+        # else:
+        #     raise TypeError(f"Cash attribute must be of type dict, int or float. Current type is {type(cash)}")
+        
+        pct_expectancy = Expectancy(self._trades, cash_expectancy = False)
+        return pct_expectancy
 
     def SQN(self) -> float:
         """

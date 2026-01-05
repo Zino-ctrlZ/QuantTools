@@ -17,6 +17,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
+from typing import Any
 from pandas.tseries.offsets import BDay
 from trade import get_pool_enabled, PRICING_CONFIG
 from trade.helpers.helper import (IV_handler, 
@@ -46,6 +47,7 @@ from dbase.DataAPI.ThetaData import (retrieve_ohlc,
                                       retrieve_openInterest,
                                       retrieve_chain_bulk,
                                       retrieve_bulk_open_interest,
+                                      quote_to_eod_patch,
                                       set_should_schedule)
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from .SaveManager import save_failed_request
@@ -63,7 +65,20 @@ logger = setup_logger('DataManager.py', stream_log_level = logging.CRITICAL)
 time_logger = setup_logger('time_logger_test_dm')
 vol_resolve_logger = setup_logger('DataManagers.Vol_Resolve')
 
-
+THETA_DATA_COLUMNS = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "Bid_size",
+    "CloseBid",
+    "Ask_size",
+    "CloseAsk",
+    "Midpoint",
+    "Weighted_midpoint",
+    "Open_interest",
+]
 CENTRAL_SAVE_THREAD = {}
 DB_CACHE = get_cache()
 SAVE_TO_DB = True ## This is a global variable to control if we save to DB or not
@@ -135,7 +150,7 @@ def cached_get_timeseries(func):
     return wrapper
 
 ## Skip MySql Query. MySql query is not optimized so just go straight to API
-SKIP_MYSQL_QUERY = False
+SKIP_MYSQL_QUERY = True
 def set_skip_mysql_query(value: bool):
     """
     Set the skip MySQL query flag.
@@ -298,24 +313,39 @@ class SpotDataManager(QuoteController):
         agg = data_request.agg
         if agg == 'eod':
             if not bulk:
-                if self.get_use_quotes():
-                    data=retrieve_quote(symbol=self.symbol, 
-                                        end_date=end, 
-                                        exp=exp, 
-                                        right=right, 
-                                        start_date=start, 
-                                        strike=strike, 
-                                        print_url=print_url, 
-                                        interval='1d',
-                                        ohlc_format=True)
-                else:
-                    data = retrieve_eod_ohlc(symbol=self.symbol, 
-                                            end_date=end, 
-                                            exp=exp, 
-                                            right=right, 
-                                            start_date=start, 
-                                            strike=strike, 
-                                            print_url=print_url)
+                try:
+                    if self.get_use_quotes():
+ 
+                        data = quote_to_eod_patch(
+                            symbol = self.symbol,
+                            end_date = end,
+                            exp = exp,
+                            right = right,
+                            start_date = start,
+                            strike = strike,
+                            print_url = print_url,
+                        )
+                    # data=retrieve_quote(symbol=self.symbol,
+                    #                     end_date=end,
+                    #                     exp=exp,
+                    #                     right=right,
+                    #                     start_date=start,
+                    #                     strike=strike,
+                    #                     print_url=print_url,
+                    #                     interval='1d',
+                    #                     ohlc_format=True)
+                    else:
+                        data = retrieve_eod_ohlc(symbol=self.symbol, 
+                                                end_date=end, 
+                                                exp=exp, 
+                                                right=right, 
+                                                start_date=start, 
+                                                strike=strike, 
+                                                print_url=print_url)
+                except ThetaDataNotFound:
+                    logger.error(f"ThetaDataNotFound: No data found for {self.symbol} from {start} to {end}. Returning empty DataFrame.")
+                    data = pd.DataFrame(columns=THETA_DATA_COLUMNS)
+                    return data
                 data = data[~data.index.duplicated(keep='first')]
                 open_interest = retrieve_openInterest(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url).set_index('Datetime')
                 open_interest.drop_duplicates(inplace = True)
@@ -908,7 +938,8 @@ class OptionDataManager(_ManagerLazyLoader,
                        interval: str = '1d',
                        type_: str = 'spot',
                        model: str = 'bs',
-                       extra_cols: list = []) -> pd.DataFrame:
+                       extra_cols: list = [], 
+                       only_mid: bool = True) -> OptionQueryRequestParameter:
         """
         Query the timeseries data from ThetaData API or SQL Database.
 
@@ -929,8 +960,8 @@ class OptionDataManager(_ManagerLazyLoader,
         greek_names = self.greek_names
         self.current_request = datetime.now().strftime("%Y%m%d %H:%M:%S")
         _extra_cols = handle_extra_cols(extra_cols, type_, model)
-        greek_cols = build_name_format('greek', model, extra_cols, self.default_fill) 
-        vol_cols = build_name_format('vol', model, extra_cols, self.default_fill)
+        greek_cols = build_name_format('greek', model, extra_cols, self.default_fill, only_mid=only_mid) 
+        vol_cols = build_name_format('vol', model, extra_cols, self.default_fill, only_mid=only_mid)
 
         ## Enforce the interval
         enforce_interval(ivl_str)
@@ -943,7 +974,7 @@ class OptionDataManager(_ManagerLazyLoader,
         input_params = getattr(self, agg)
 
         ## Determine the requested columns
-        requested_col = determine_requested_columns(self.default_fill, type_, model, greek_names)
+        requested_col = determine_requested_columns(self.default_fill, type_, model, greek_names, only_mid=only_mid)
         
 
         ## TO-DO: Move this to a method
@@ -1093,19 +1124,11 @@ class OptionDataManager(_ManagerLazyLoader,
         start, end, type_ = data_request.start_date, data_request.end_date, data_request.type_
 
         if is_empty:
-            try:
-                raw_spot_data = self.spot_manager.query_thetadata(start=start, end=end, 
-                                                                strike=self.strike, exp=self.exp, 
-                                                                right=self.right, bulk=False, 
-                                                                data_request=data_request)
-                data_request.raw_spot_data = raw_spot_data
-            
-            except ThetaDataNotFound as e:
-                ## This means we have no data for the given date range. Happens for edge cases when the range is cut from original date range
-                ## This happens when option didn't start/end trading on the exact ranges
-                logger.info(f"Error querying data: {e}")
-                data_request.raw_spot_data = pd.DataFrame(columns = data_request.database_data.columns)
-                return
+            raw_spot_data = self.spot_manager.query_thetadata(start=start, end=end, 
+                                                            strike=self.strike, exp=self.exp, 
+                                                            right=self.right, bulk=False, 
+                                                            data_request=data_request)
+            data_request.raw_spot_data = raw_spot_data
 
             
             if type_ != 'spot':
@@ -1121,17 +1144,10 @@ class OptionDataManager(_ManagerLazyLoader,
 
         elif not is_complete:
             start_missing, end_missing = min(data_request.missing_dates), max(data_request.missing_dates)
-            try:
-                raw_spot_data = self.spot_manager.query_thetadata(start=start_missing, end=end_missing, 
-                                                                strike=self.strike, exp=self.exp, 
-                                                                right=self.right, bulk=False, 
-                                                                data_request=data_request)
-            except ThetaDataNotFound as e:
-                ## This means we have no data for the given date range. Happens for edge cases when the range is cut from original date range
-                ## This happens when option didn't start/end trading on the exact ranges
-                logger.info(f"Error querying data: {e}")
-                data_request.raw_spot_data = pd.DataFrame(columns = data_request.database_data.columns)
-                return
+            raw_spot_data = self.spot_manager.query_thetadata(start=start_missing, end=end_missing, 
+                                                            strike=self.strike, exp=self.exp, 
+                                                            right=self.right, bulk=False, 
+                                                            data_request=data_request)
 
             data_request.raw_spot_data = raw_spot_data
             if type_ != 'spot':
@@ -1173,7 +1189,7 @@ class OptionDataManager(_ManagerLazyLoader,
 
 #### Save to Database Functions
 @log_error(logger) 
-def save_to_database(data_request: 'RequestParameter', 
+def save_to_database(data_request: Any, 
                      print_info: bool = False, 
                      pool: bool = None,
                      **kwargs) -> None:
@@ -1496,25 +1512,38 @@ def determine_table_agg(ivl_str: str, type_: str, greek_names: list) -> tuple:
     return agg, database, table
 
 
-def determine_requested_columns(default_fill:str, type_:str, model:str, greek_names:list) -> list:
+def determine_requested_columns(default_fill:str, type_:str, model:str, greek_names:list, only_mid:bool = False) -> list:
     if type_ == 'spot':
         requested_col = ['datetime', 'open', 'high', 'low', 'close', default_fill.lower(),'volume', 'openinterest']
 
     elif type_ == 'vol':
-        requested_col = ['datetime', f"{model}_iv".lower(), f"{default_fill.lower()}_{model}_iv".lower()]
+        requested_col = ['datetime', f"{default_fill.lower()}_{model}_iv".lower()]
+        if not only_mid:
+            requested_col.append(
+                f"{model}_iv".lower(),
+            )
+            
 
     elif type_ in greek_names:
         ## If Statement logic to format a the list of greek names to be used
         if type_ not in ['greek', 'greeks']:
             if model == 'bs':
                 requested_col = ['datetime'] + [f"{default_fill}_{type_}".lower()] + [f"{type_}".lower()]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill}_{type_}".lower()]
             else:
                 requested_col = ['datetime'] + [f"{model}_{type_}".lower()] + [f"{default_fill.lower()}_{model}_{type_}".lower()]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{model}_{type_}".lower()]
         else:
             if model == 'bs':
                 requested_col = ['datetime'] + [f"{x}".lower() for x in greek_names if x not in ['greek', 'greeks']] + [f"{default_fill.lower()}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
             else:
                 requested_col = ['datetime'] + [f"{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']] + [f"{default_fill.lower()}_{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
+                if only_mid:
+                    requested_col = ['datetime'] + [f"{default_fill.lower()}_{model}_{x}".lower() for x in greek_names if x not in ['greek', 'greeks']]
 
     elif type_ == 'attribution':
         raise NotImplementedError("Attribution data not implemented yet")
@@ -1536,8 +1565,8 @@ def format_raw_spot_data( **kwargs):
     data_request = kwargs.get('data_request')
     raw_spot_data = data_request.raw_spot_data
     if raw_spot_data.empty:
-        print("Format raw found this empty")
-        data_request.raw_spot_data = pd.DataFrame()
+        logger.info("Format raw found this empty")
+        data_request.raw_spot_data = pd.DataFrame(columns=data_request.database_data.columns)
 
     else:
         raw_spot_data.reset_index(inplace = True)
@@ -2120,7 +2149,7 @@ def handle_extra_cols(extra_cols, type_, model):
         if extra_cols:
             assert all([x in ['ask', 'bid', 'open'] for x in extra_cols]), f"Expected extra_cols to be one of: ['ask', 'bid', 'open'] received {extra_cols}"
         
-        if type_ == 'spot':
+        if type_ == 'spot' and extra_cols:
               for col in extra_cols:
                 if col == 'ask':
                      return_cols.append('closeask')
@@ -2129,7 +2158,7 @@ def handle_extra_cols(extra_cols, type_, model):
                 elif col == 'open':
                      return_cols.append('open')
 
-        elif type_ == 'vol':
+        elif type_ == 'vol' and extra_cols:
             for col in extra_cols:
                 if col == 'ask':
                      return_cols.append(f'ask_{model}_iv')
@@ -2169,7 +2198,11 @@ def handle_extra_cols(extra_cols, type_, model):
              
         return return_cols
 
-def build_name_format(type_, model, extra_cols, default_fill):
+def build_name_format(type_, 
+                      model, 
+                      extra_cols, 
+                      default_fill, 
+                      only_mid:bool=True) -> dict:
     """
     Build the name format for the columns
     """
@@ -2177,43 +2210,53 @@ def build_name_format(type_, model, extra_cols, default_fill):
 
     if type_ == 'vol':
         if model == 'bs':
-            name_format['close'] = 'bs_iv'
+            if not only_mid:
+                name_format['close'] = 'bs_iv'
             name_format[f"{default_fill}"] = f"{default_fill}_bs_iv"
 
             ## Handle extra columns
-            for col in extra_cols:
-                if col.lower() in ['open']:
-                    continue
-                name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
+            if extra_cols:
+                for col in extra_cols:
+                    if col.lower() in ['open']:
+                        continue
+                    name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
 
 
         elif model == 'binomial':
-            name_format['close'] = 'binomial_iv'
+            if not only_mid:
+                name_format['close'] = 'binomial_iv'
+
             name_format[f"{default_fill}"] = f"{default_fill}_binomial_iv"
-            for col in extra_cols:
-                if col.lower() in ['open']:
-                    continue
-                name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
+            if extra_cols:
+                for col in extra_cols:
+                    if col.lower() in ['open']:
+                        continue
+                    name_format[f"close{col}"] = handle_extra_cols([col], type_, model)[0]
     
     elif type_ in ['greek', 'greeks']:
         if model == 'bs':
-            name_format['bs_iv'] = '{x}'
+            if not only_mid:
+                name_format['bs_iv'] = '{x}'
             name_format[f"{default_fill}_bs_iv"] = f'{default_fill}_'+'{x}'
             if extra_cols:
                 pass ## Figure out how to handle extra cols
             
         elif model == 'binomial':
-            name_format['binomial_iv'] = 'binomial_{x}'
+            if not only_mid:
+                name_format['binomial_iv'] = 'binomial_{x}'
             name_format[f"{default_fill}_binomial_iv"] = f'{default_fill}_binomial_'+'{x}'
             for col in extra_cols:
                 name_format[f"{col}_binomial_iv"] = f"{col}_{model}_" +"{x}"
     
     elif type_ in PRICING_CONFIG['AVAILABLE_GREEKS']:
         if model == 'bs':
-            name_format['bs_iv'] = '{x}'
+            if not only_mid:
+                name_format['bs_iv'] = '{x}'
+
             name_format[f"{default_fill}_bs_iv"] = f'{default_fill}_'+'{x}'
         elif model == 'binomial':
-            name_format['binomial_iv'] = 'binomial_{x}'
+            if not only_mid:
+                name_format['binomial_iv'] = 'binomial_{x}'
             name_format[f"{default_fill}_binomial_iv"] = f'{default_fill}_binomial_'+'{x}'
             for col in extra_cols:
                 name_format[f"{col}_binomial_iv"] = f"{col}_{model}_" +"{x}"
@@ -2269,7 +2312,7 @@ def _check_cache(data_request, query_category):
 
     if query_category in ['single', 'bulk']:
         exp = data_request.exp
-        start, end = pd.to_datetime(data_request.start_date), pd.to_datetime(data_request.end_date)
+        start, _ = pd.to_datetime(data_request.start_date), pd.to_datetime(data_request.end_date)
     else:
         date = pd.to_datetime(data_request.date).date()
 
@@ -2290,7 +2333,8 @@ def _check_cache(data_request, query_category):
     elif query_category == 'chain':
         pass
     
-    else: raise ValueError("Unknown query_category. Recieved {query_category}".format(query_category))
+    else: 
+        raise ValueError(f"Unknown query_category. Recieved {query_category}")
 
     # 3) Get Data from db cache
     cache_data = DB_CACHE.get(key)

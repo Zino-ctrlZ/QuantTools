@@ -2,7 +2,6 @@
 This module defines the Trade class for tracking buy and sell transactions for a trade.
 """
 import pandas as pd
-from copy import deepcopy
 from EventDriven.tradeLedger import TradeLedger
 from EventDriven.event import FillEvent
 
@@ -59,6 +58,45 @@ class Trade:
             if self.is_closed():
                 self.exit_date = fill_event.datetime
                 
+        self.stats = pd.DataFrame([self.aggregate()])
+
+    def _update_kw(self, **entry_kwargs):
+        """
+        Update the appropriate ledger using keyword args compatible with TradeLedger._add_entry_kw.
+        
+        Expected keys:
+        - entry_time: datetime of the fill (required)
+        - direction: 'BUY'/'SELL'/'EXERCISE' or aliases 'LONG'/'SHORT' (required)
+        - fill_cost: total fill cost
+        - quantity: filled quantity
+        - symbol: ticker for the trade
+        - commission: commission for the fill
+        - market_value: market value of the position
+        - slippage: slippage for the fill
+        - trade_id: overrides the Trade.trade_id (optional, defaults to this trade)
+        - signal_id: overrides the Trade.signal_id (optional, defaults to this trade)
+        - normalize: whether to normalize monetary values before storing (default True)
+        """
+        direction = entry_kwargs.get('direction')
+        if direction.upper() not in ['BUY', 'SELL', 'EXERCISE', 'LONG', 'SHORT']:
+            raise ValueError("Keyword updates must include direction of BUY, SELL, or EXERCISE.")
+        if direction.upper() in ['LONG', 'SHORT']:
+            direction = 'BUY' if direction.upper() == 'LONG' else 'SELL'
+        entry_time = entry_kwargs.get('entry_time')
+        if entry_time is None:
+            raise ValueError("Keyword updates must include entry_time.")
+        entry_kwargs.setdefault('trade_id', self.trade_id)
+        entry_kwargs.setdefault('signal_id', self.signal_id)
+
+        if direction == 'BUY':
+            self.buy_ledger._add_entry_kw(**entry_kwargs)
+            if self.entry_date is None:
+                self.entry_date = entry_time
+        elif direction in ['SELL', 'EXERCISE']:
+            self.sell_ledger._add_entry_kw(**entry_kwargs)
+            if self.is_closed():
+                self.exit_date = entry_time
+
         self.stats = pd.DataFrame([self.aggregate()])
             
             
@@ -125,7 +163,8 @@ class Trade:
                 stats['UnrealizedPnL'] = 0
                 
             # Calculate total PnL
-            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] - abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
+            ## Entry Price already includes commission and slippage costs
+            stats['PnL'] = stats['ClosedPnL'] + stats['UnrealizedPnL'] #- abs(stats['TotalSlippage']) - abs(stats['TotalCommission'])
             
             # Calculate return percentage
             if stats['TotalEntryCost'] > 0:

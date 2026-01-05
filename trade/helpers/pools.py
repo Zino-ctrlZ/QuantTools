@@ -87,7 +87,6 @@ def runProcesses(func, OrderedInputs: List[List], run_type: str = 'map') -> List
 
 def shutdown(pool):
     global shutdown_event
-    shutdown_event
     shutdown_event = True
     pool.terminate()
 

@@ -8,7 +8,6 @@ from .utils import *
 from .utils import (logger, 
                     get_timeseries_start_end,
                     set_deleted_keys,
-                    date_in_cache_index,
                     add_skip_columns,
                     _clean_data,
                     PERSISTENT_CACHE,
@@ -41,7 +40,10 @@ from trade.assets.helpers.utils import (swap_ticker)
 from dateutil.relativedelta import relativedelta
 import yaml
 from ._orders import resolve_schema
+from EventDriven.riskmanager.picker.order_picker import OrderPicker
+from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 
+## IMPORT FROM _vars
 BASE = Path(os.environ["WORK_DIR"])/ ".riskmanager_cache" ## Main Cache for RiskManager
 HOME_BASE = Path(os.environ["WORK_DIR"])/".cache"
 BASE.mkdir(exist_ok=True)
@@ -85,24 +87,6 @@ def load_riskmanager_cache():
             splits_raw, 
             special_dividend)
 
-def ewm_smooth_data(series:pd.Series, window:int = 3) -> pd.Series:
-    """
-    Apply an exponential weighted moving average to a series.
-    """
-    window = CONFIG.get('smooth_ewn_span', window)
-    return series.ewm(span=window).mean()
-
-ADD_COLUMNS_FACTORY = {'ewm_smooth': ewm_smooth_data}
-
-def add_columns(series:pd.Series, col_to_add:int, factory=ADD_COLUMNS_FACTORY):
-    """
-    Add new columns to a DataFrame using a factory function.
-    """
-    return factory[col_to_add](series)
-
-
-
-
 
 
 
@@ -115,357 +99,6 @@ def get_order_cache():
 
 
 
-# def resolve_schema(schema: OrderSchema, 
-#                    tries: int, 
-#                    max_dte_tolerance: int, 
-#                    otm_moneyness_width: float, 
-#                    itm_moneyness_width: float,
-#                    max_close: float, max_tries: int =6) -> (OrderSchema, int):
-#     """
-#     Resolving schema by order of importance
-#     1. DTE Tolerance
-#     2. Min Moneyness width
-#     3. Max Moneyness width
-#     4. Max Close Price
-#     5. Max Schema Tries
-#     If no schema is found after max tries, return False and the number of tries.
-
-#     Args:
-#         schema (OrderSchema): The schema to resolve.
-#         tries (int): The number of tries already made.
-#         max_dte_tolerance (int): The maximum DTE tolerance to allow.
-#         moneyness_width (float): The moneyness width to allow.
-#         max_close (float): The maximum close price to allow.
-#         max_tries (int): The maximum number of tries allowed.
-
-#     Returns:
-#         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
-#     """
-
-#     ##0). Max schema tries
-#     if tries >= max_tries:
-#         return False, tries
-
-#     #1). DTE Resolve
-#     tries +=1
-#     if schema['dte_tolerance'] <= max_dte_tolerance:
-#         logger.info(f"Resolving Schema: {schema['dte_tolerance']} <= {max_dte_tolerance}, increasing DTE Tolerance by 10")
-#         schema['dte_tolerance'] += 20
-#         return schema, tries
-    
-#     #2). Min Moneyness Resolve
-#     elif 1 - schema['min_moneyness'] <= otm_moneyness_width:
-#         logger.info(f"Resolving Schema: {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1")
-#         schema['min_moneyness'] -= 0.1
-#         return schema, tries    
-
-#     #3). Max Moneyness Resolve
-#     elif schema['max_moneyness'] - 1 <= itm_moneyness_width:
-#         logger.info(f"Resolving Schema: {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1")
-#         schema['max_moneyness'] += 0.1
-#         return schema, tries
-    
-#     #4). Close Resolve
-#     elif schema['max_total_price'] <= max_close:
-#         logger.info(f"Resolving Schema: {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5")
-#         schema['max_total_price'] += 1
-#         return schema, tries
-    
-#     return False, tries
-
-
-
-
-
-class OrderPicker:
-    def __init__(self, 
-                 start_date: str|datetime,
-                 end_date: str|datetime,
-                 liquidity_threshold: int = 250, 
-                 data_availability_threshold: float = 0.7, 
-                 lookback: int = 30):
-        """
-        initializes the OrderPicker class
-        
-        params:
-        liquidity_threshold: int: liquidity threshold. Default is 250
-        data_availability_threshold: float: data availability threshold. Default is 0.7
-        lookback: int: lookback. Default is 30
-        """
-        self.liquidity_threshold = liquidity_threshold
-        self.data_availability_threshold = data_availability_threshold
-        self.__lookback = lookback
-        self.start_date = start_date
-        self.end_date = end_date
-        self.order_cache = {}
-        
-    @property
-    def lookback(self):
-        return self.__lookback
-    
-    @lookback.setter
-    def lookback(self, value):
-        global LOOKBACKS
-        initial_lookback_key = list(LOOKBACKS.keys())[0]
-        if value not in LOOKBACKS[initial_lookback_key].keys():
-            precompute_lookbacks('2000-01-01', '2030-12-31', _range = [value])
-        self.__lookback = value
-
-    def get_order_new(self,
-                      schema: OrderSchema, 
-                      date: str|datetime,
-                      spot,
-                      chain_spot: float = None,
-                      print_url: bool = False):
-        
-        schema = tuple(schema.data.items())
-        chain_spot=spot
-        return self.__get_order(schema, date, spot, chain_spot, print_url=print_url)
-    
-    
-    # @lru_cache(maxsize=128)
-    @staticmethod
-    @dynamic_memoize
-    def __get_order(schema:tuple,
-                date: str|datetime,
-                spot: float,
-                chain_spot: float = None,
-                print_url: bool = False) -> dict:
-        """
-        Get the order for the given schema, date, and spot price.
-        """
-
-        schema = OrderSchema(dict(schema))
-        if schema['option_type'] =='C': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
-            min_m, max_m = 2-schema['min_moneyness'], 2 - schema['max_moneyness']
-            schema['min_moneyness'] = min(min_m, max_m) ## For Calls, we want the min moneyness to be 2 - min_moneyness
-            schema['max_moneyness'] = max(min_m, max_m) 
-            logger.info(f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
-        elif schema['option_type'] == 'P': ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}")
-
-        chain = populate_cache_with_chain(
-            schema['tick'], 
-            date, 
-            chain_spot,
-            print_url = print_url
-        )
-
-        cache = get_cache('spot')
-        cache = {k: v for k, v in cache.items() }
-
-        raw_order = build_strategy(chain, schema, spot, cache)
-        return extract_order(raw_order)
-    
-
-    @log_error_with_stack(logger)
-    def get_order(self, 
-                  tick: str, 
-                  date: str,
-                  right: str, 
-                  max_close: str,
-                  order_settings: dict) -> dict:
-        
-        """
-        returns the order for the given tick, date, right, max_close, and order_settings
-
-        params:
-        tick: str: ticker to get the order for
-        date: str: date to get the order for
-        right: str: right of the option contract (P or C)
-        max_close: str: maximum close price
-        order_settings: dict: settings for the order
-            example: {'type': 'naked',
-                        'specifics': [{'direction': 'long',
-                        'rel_strike': .900,
-                        'dte': 365,
-                        'moneyness_width': 0.15},
-                        {'direction': 'short',
-                        'rel_strike': .80,
-                        'dte': 365,
-                        'moneyness_width': 0.15}],
-
-                        'name': 'vertical_spread'}
-
-        returns:
-        dict: order
-        """
-        global spot_cache, close_cache, oi_cache, chain_cache
-        order_cache = self.order_cache
-        order_cache.setdefault(date, {})
-        order_cache[date].setdefault(tick, {})
-
-        ## Create necessary data structures
-        direction_index = {}
-    
-        str_direction_index = {}
-        for indx, v in enumerate(order_settings['specifics']):
-            if v['direction'] == 'long':
-                str_direction_index[indx] = 'long'
-                direction_index[indx] = 1
-            elif v['direction'] == 'short':
-                str_direction_index[indx] = 'short'
-                direction_index[indx] = -1
-
-        order_candidates = produce_order_candidates(order_settings, tick, date, right)
-        if any([x2 is None for x in order_candidates.values() for x2 in x]):
-            return_item = {
-                'result': "MONEYNESS_TOO_TIGHT",
-                'data': None
-            } 
-            order_cache[date][tick] = return_item
-            return return_item
-
-        returned = populate_cache(order_candidates = order_candidates, 
-                                  target_date=date, 
-                                  start_date=self.start_date, 
-                                  end_date=self.end_date) 
-        refresh_cache()
-    
-        if returned == 'holiday':
-            return_item = {
-                'result': "IS_HOLIDAY",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
-        
-        elif returned == 'theta_data_error':
-
-            return_item = {
-                'result': "UNAVAILABLE_CONTRACT",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
-        
-        elif returned == 'weekend':
-            return_item = {
-                'result': "IS_WEEKEND",
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
-    
-
-        SKIP_ORDER_CRITERIA = []
-        for s in order_settings['specifics']:
-            SKIP_ORDER_CRITERIA.append(s['moneyness_width'])
-            
-        SKIP_ORDER_CRITERIA = not all(SKIP_ORDER_CRITERIA)
-        if SKIP_ORDER_CRITERIA: ## We will return the order as is.
-
-            return_order = {
-                'result': ResultsEnum.SUCCESSFUL.value,
-                'data':{}
-            }
-            id = ''
-            close = 0
-            for direction in order_candidates.keys():
-                return_order['data'][direction] = []
-                for data in order_candidates[direction]:
-                    optid = data["option_id"].unique()[0]
-                    return_order['data'][direction].append(optid)
-                    id+= f'&{direction.upper()[0]}:{optid}'
-                    spot = get_cache('spot')[f'{optid}_{date}'] if direction == 'long' else -get_cache('spot')[f'{optid}_{date}']
-                    close += spot
-            return_order['data']['trade_id'] = id
-            return_order['data']['close'] = close
-            return return_order
-
-        
-        for direction in order_candidates: ## Fix this to use .items()
-            for i,data in enumerate(order_candidates[direction]):
-                data['date_available'] = data.apply(lambda x: date_in_cache_index( date, x.option_id), axis=1)
-                data = data[data.date_available == True] ## Filter out contracts that are not available on the date.
-                data['liquidity_check'] = data.option_id.apply(lambda x: liquidity_check(x, date, pass_threshold=self.liquidity_threshold, lookback=self.lookback))
-                data = data[data.liquidity_check == True]
-                if data.empty:
-                    return_item = {
-                        'result': "TOO_ILLIQUID",
-                        'data': None
-                    }
-                    order_cache[date][tick] = return_item
-                    return return_item
-                
-                data['available_close_check'] = data.option_id.apply(lambda x: available_close_check(x, date, threshold=self.data_availability_threshold))
-                data = data[data.available_close_check == True] ## Filter out contracts that do not have close data.
-                if data.empty:
-                    return_item = {
-                        'result': "NO_TRADED_CLOSE",
-                        'data': None
-                    }
-                    order_cache[date][tick] = return_item
-                    return return_item
-            
-                order_candidates[direction][i] = data
-
-
-        ## Filter Unique Combinations per leg.
-        unique_ids = {'long': [], 'short': []}
-        for direction in order_candidates:
-            for i,data in enumerate(order_candidates[direction]):
-                unique_ids[direction].append(data[(data.liquidity_check == True) & (data.available_close_check == True)].option_id.unique().tolist())
-
-        ## Produce Tradeable Combinations
-        tradeable_ids = list(product(*unique_ids['long'], *unique_ids['short']))
-        tradeable_ids, unique_ids 
-
-        ## Keep only unique combinations. Not repeating a contract.
-        filtered = [t for t in tradeable_ids if len(set(t)) == len(t)]
-
-
-        ## Get the price of the structure
-        ## Using List Comprehension to sum the prices of the structure per index
-        results = [
-            (*items, sum([direction_index[i] * spot_cache[f'{item}_{date}'] for i, item in enumerate(items)])) for items in filtered
-        ]
-
-        ## Convert to DataFrame, and sort by the price of the structure.
-        return_dataframe = pd.DataFrame(results)
-        if return_dataframe.empty:
-            return_item = {
-                'result': ResultsEnum.MONEYNESS_TOO_TIGHT.value,
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-
-            return return_item
-        cols = return_dataframe.columns.tolist()
-        cols[-1] = 'close'
-        return_dataframe.columns= cols
-        return_dataframe = return_dataframe[(return_dataframe.close<= max_close) & (return_dataframe.close> 0)].sort_values('close', ascending = False).head(1) ## Implement for shorts. Filtering automatically removes shorts.
-
-
-        if return_dataframe.empty:
-            return_item = {
-                'result': ResultsEnum.MAX_PRICE_TOO_LOW.value,
-                'data': None
-            }
-            order_cache[date][tick] = return_item
-            return return_item
-            
-        ## Rename the columns to the direction names
-        return_dataframe.columns = list(str_direction_index.values()) + ['close']
-        return_order = return_dataframe[list(str_direction_index.values())].to_dict(orient = 'list')
-        return_order
-
-        ## Create the trade_id with the direction and the id of the contract.
-        id = ''
-        for k, v in return_order.items():
-            if len(v) > 0:
-                id += f"&{k[0].upper()}:{v[0]}"
-        return_order['trade_id'] = id
-        return_order['close'] = return_dataframe.close.values[0]
-        
-        return_dict = {
-            'result': ResultsEnum.SUCCESSFUL.value,
-            'data': return_order
-        }
-        order_cache[date][tick] = return_dict
-
-        return return_dict
 
 class RiskManager:
     """
@@ -644,7 +277,7 @@ class RiskManager:
         self.pm_end_date = end_date
         self.end_date = end
         self.symbol_list = self.bars.symbol_list
-        self.OrderPicker = OrderPicker(start, end)
+        self.order_picker = OrderPicker(start, end)
         
         ## Load data caches. USE_TEMP_CACHE == True means a reset every kernel refresh. Else persists over days.
         (
@@ -699,6 +332,7 @@ class RiskManager:
         self.add_columns = []
         self.skip_adj_count = 0 ## Counter for skipped adjustments, used to skip adjustments for a certain number of times.
         self.limits_meta = {}
+        self.market_data = BacktestTimeseries(_start=self.start_date, _end=self.end_date)
 
     @property 
     def option_data(self):
@@ -759,7 +393,7 @@ class RiskManager:
             self.dividend_timeseries.clear()
             get_persistent_cache().clear() ## Ensures any caching with `.memoize` is cleared as well.
         else:
-            logger.critical(f"USE_TEMP_CACHE set to False. Cache will not be cleared")
+            logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
     
     @property
@@ -822,8 +456,8 @@ Quanitity Sizing Type: {self.sizing_type}
             """
         print(msg)
         
-    @log_error_with_stack(logger)
-    @log_time(time_logger)
+    # @log_error_with_stack(logger)
+    # @log_time(time_logger)
     def get_order(self, *args, **kwargs):
         """
         Compulsory variables for OrderSchema:
@@ -1062,7 +696,144 @@ Quanitity Sizing Type: {self.sizing_type}
                     new_details['strike']/=split_meta[1]
                     direction_frame.loc[split_start:, i] = generate_option_tick_new(*new_details.values())
 
-    @log_time(time_logger)
+
+    # @log_time(time_logger)
+    # def calculate_position_greeks(self, positionID, date):
+    #     """
+    #     Calculate the greeks of a position
+
+    #     date: Evaluation Date for the greeks (PS: This is not the pricing date)
+    #     positionID: str: position string. (PS: This function assumes ticker for position is the same)
+    #     """
+    #     logger.info(f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {positionID}, Date: {date}")
+    #     if positionID in self.position_data:
+    #         ## If the position data is already available, then we can skip this step
+    #         logger.info(f"Position Data for {positionID} already available, skipping calculation")
+    #         return self.position_data[positionID]
+    #     else:
+    #         logger.critical(f"Position Data for {positionID} not available, calculating greeks. Load time ~2 minutes")
+    #     ## Initialize the Long and Short Lists
+    #     long = []
+    #     short = []
+    #     threads = []
+    #     thread_input_list = [
+    #         [], [], [], [], [], []
+    #     ]
+
+    #     date = pd.to_datetime(date) ## Ensure date is in datetime format
+        
+    #     ## First get position info
+    #     position_dict, positon_meta = self.parse_position_id(positionID)
+
+    #     ## Now ensure that the spot and dividend data is available
+    #     for p in position_dict.values():
+    #         for s in p:
+    #             self.generate_data(swap_ticker(s['ticker']))
+    #     ticker = swap_ticker(s['ticker'])
+
+    #     ## Get the spot, risk free rate, and dividend yield for the date
+    #     s = self.chain_spot_timeseries[ticker]
+    #     s0_close = self.spot_timeseries[ticker]
+    #     r = self.rf_timeseries
+    #     y = self.dividend_timeseries[ticker]
+
+            
+
+    #     @log_time(time_logger)
+    #     def get_timeseries(ids, s, r, y, s0_close, direction):
+    #         logger.info("Calculate Greeks dates")
+    #         logger.info(f"Start Date: {self.start_date}")
+    #         logger.info(f"End Date: {self.end_date}")
+    #         full_data = pd.DataFrame()
+
+    #         ##ids are a list of tuples, where each tuple is (option_id, shift)
+    #         if ids[-1][0] in self.processed_option_data:
+    #             ## Using -1 index because incases of split, the last id is the one that is subscribed to in the cache
+    #             full_data = self.processed_option_data[ids[-1][0]] ## If the data is already available, then we can skip this step
+    #             logger.info(f"Data for {ids[-1]} already available, skipping calculation")
+            
+    #         else:
+    #             logger.info(f"Data for {ids[-1]} not available, calculating greeks. Load time ~2 minutes")
+    #             for id_set in ids:
+    #                 id, shift, start_date = id_set
+    #                 data_manager = OptionDataManager(opttick = id)
+    #                 self.data_managers[id] = data_manager ## Store the data manager for the option tick
+    #                 greeks = data_manager.get_timeseries(start = self.start_date,
+    #                                                         end = self.end_date,
+    #                                                         interval = '1d',
+    #                                                         type_ = 'greeks',).post_processed_data ## Multiply by the shift to account for splits
+    #                 greeks = greeks[greeks.index >= start_date] ## Filter the data to only include data after the start date
+    #                 greeks_cols = [x for x in greeks.columns if 'Midpoint' in x]
+    #                 greeks = greeks[greeks_cols]
+    #                 greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method = 'ffill') ## FFill NaN values and 0 Values
+    #                 greeks.columns = [x.split('_')[1].capitalize() for x in greeks.columns]
+
+    #                 spot = data_manager.get_timeseries(start = self.start_date,
+    #                                                     end = self.end_date,
+    #                                                     interval = '1d',
+    #                                                     type_ = 'spot',
+    #                                                     extra_cols=['bid', 'ask']).post_processed_data * shift ## Using chain spot data to account for splits
+    #                 spot = spot[spot.index >= start_date] ## Filter the data to only include data after the start date
+    #                 spot = spot[[self.option_price.capitalize()] + ['Closeask', 'Closebid']]
+    #                 data = greeks.join(spot)
+    #                 full_data = pd.concat([full_data, data], axis = 0)
+    #         full_data = _clean_data(full_data)
+    #         full_data = full_data[~full_data.index.duplicated(keep = 'last')]
+    #         full_data['s'] = s
+    #         full_data['r'] = r
+    #         full_data['y'] = y
+    #         full_data['s0_close'] = s0_close
+    #         self.processed_option_data[ids[-1][0]] = full_data
+    #         if direction == 'L':
+    #             long.append(full_data)
+    #         elif direction == 'S':
+    #             short.append(full_data)
+    #         else:
+    #             raise ValueError(f"Position Type {_set[0]} not recognized")
+            
+    #         return full_data
+
+    
+    #     ## Check for splits
+    #     split = self.splits.get(ticker, [])
+
+    #     ## Calculating IVs & Greeks for the options
+    #     for _set in positon_meta:
+    #         # To-do: Thread thisto speed up the process
+    #         ids = [(_set[1], 1, self.start_date)]
+    #         if len(split) > 0:
+    #             for i in split:
+    #                 split_date = i[0]
+    #                 if pd.to_datetime(split_date) < pd.to_datetime(date): ## Strike is already adjusted for the split
+    #                     continue
+    #                 shift = i[1]
+    #                 id = _set[1]
+    #                 meta = parse_option_tick(id)
+    #                 meta['strike'] = meta['strike'] / shift
+    #                 ids.append((generate_option_tick_new(*meta.values()), shift, split_date))
+    #         # data_manager = OptionDataManager(opttick = id)
+
+    #         for input, list_ in zip([ids, s, r, y, s0_close, _set[0]], thread_input_list):
+    #             list_.append(input)
+        
+        
+    #     runThreads(get_timeseries, thread_input_list)
+    #     # return long
+            
+    #     position_data = sum(long) - sum(short)
+    #     position_data = position_data[~position_data.index.duplicated(keep = 'first')]
+    #     position_data.columns = [x.capitalize() for x in position_data.columns]
+    #     ## Retain the spot, risk free rate, and dividend yield for the position, after the greeks have been calculated & spread values subtracted
+    #     position_data['s0_close'] = s0_close
+    #     position_data['s'] = s
+    #     position_data['r'] = r
+    #     position_data['y'] = y
+    #     position_data['spread'] = position_data['Closeask'] - position_data['Closebid'] ## Spread is the difference between the ask and bid prices
+    #     position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
+    #     position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
+    #     self.position_data[positionID] = position_data
+
+
     def calculate_position_greeks(self, positionID, date):
         """
         Calculate the greeks of a position
@@ -1153,9 +924,6 @@ Quanitity Sizing Type: {self.sizing_type}
         ## Add the additional columns to the position data
         position_data['spread_ratio'] = (position_data['spread'] / position_data['Midpoint'] ).abs().replace(np.inf, np.nan).fillna(0) ## Spread ratio is the spread divided by the midpoint price
         position_data = add_skip_columns(position_data, positionID, ['Delta', 'Gamma', 'Vega', 'Theta', 'Midpoint'], window = 20, skip_threshold=3)
-        if self.add_columns:
-            for col in self.add_columns:
-                position_data[f"{col[0]}_{col[1]}".capitalize()] = ADD_COLUMNS_FACTORY[col[1]](position_data[col[0]])
         self.position_data[positionID] = position_data
 
         return position_data
@@ -1178,6 +946,8 @@ Quanitity Sizing Type: {self.sizing_type}
                                   r=self.rf_timeseries,
                                   y=self.dividend_timeseries[meta['ticker']],
                                   s0_close=self.spot_timeseries[meta['ticker']],)
+
+
 
     def enrich_data(self, data, ticker) -> pd.DataFrame:
         """
@@ -1282,6 +1052,7 @@ Quanitity Sizing Type: {self.sizing_type}
 
         ## Sort the splits by date
         to_adjust_split.sort(key=lambda x: x[0])  ## Sort by date
+        logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
         logger.info(f"Splits and Dividends to adjust for {opttick}: {to_adjust_split} range: {self.pm_start_date} to {self.pm_end_date}")
 
         ## If there are no splits, we can just load the data

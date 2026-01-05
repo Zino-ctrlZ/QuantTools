@@ -1,5 +1,5 @@
 {
-    "INTRADAY_AGG": "5m",
+    "INTRADAY_AGG": "30m",
     "MARKET_OPEN_TIME": "09:30",
     "MARKET_CLOSE_TIME": "16:00",
     "AVAILABLE_PRICING_MODELS": [

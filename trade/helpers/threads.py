@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from os import cpu_count
+from trade.helpers.Logging import setup_logger
+logger = setup_logger("trade.helpers.threads")
 
 def runThreads(func, OrderedInputs: list[list], 
                run_type: str = 'map', block = True, 

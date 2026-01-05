@@ -1,73 +1,232 @@
 from queue import Empty as emptyEventQueue
-from dbase.DataAPI.ThetaData import * #type: ignore
-from dbase.database.SQLHelpers import * #type: ignore
 import pandas as pd
 from EventDriven.data import  HistoricTradeDataHandler
-from EventDriven.event import *
+from EventDriven.event import Event
 from EventDriven.strategy import OptionSignalStrategy
-from EventDriven.portfolio import OptionSignalPortfolio
+from EventDriven.new_portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
-from EventDriven.riskmanager import RiskManager
+from EventDriven.riskmanager.new_base import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday
 from EventDriven.helpers import generate_signal_id
-from trade.backtester_.utils.utils import *
 from copy import deepcopy
 import traceback
 from pandas.tseries.offsets import BDay
+from EventDriven.types import EventTypes, SignalTypes
+from EventDriven.configs.core import BacktesterConfig
 
-
+LOGGER = setup_logger("OptionSignalBacktest")
 class OptionSignalBacktest():
     """
-    Encapsulates the settings and components for carrying out an event-driven backtest
+    Event-driven backtesting engine for option trading strategies.
+    
+    This class orchestrates the complete backtesting workflow by coordinating multiple components:
+    - Data handling (HistoricTradeDataHandler)
+    - Strategy signal generation (OptionSignalStrategy)
+    - Risk management (RiskManager)
+    - Portfolio management (OptionSignalPortfolio)
+    - Order execution with slippage simulation (SimulatedExecutionHandler)
+    - Event scheduling and processing (EventScheduler)
+    
+    The backtester processes trades chronologically through an event queue, simulating realistic
+    market conditions including entry/exit timing, slippage, position sizing, and risk limits.
+    
+    Key Features:
+        - T+N settlement adjustments for realistic entry/exit timing
+        - Configurable slippage range for execution realism
+        - Position-level P&L tracking and attribution
+        - Risk management with position limits and exposure controls
+        - Support for both options and equity positions
+        - Detailed logging and error handling
+    
+    Workflow:
+        1. Initialize with trade data and configuration
+        2. Call run() to execute the backtest
+        3. Access results via portfolio.ledger, portfolio.holdings, etc.
+        4. Use clean_run() to backtest with different parameters
+    
+    Attributes:
+        config (BacktesterConfig): Configuration settings for the backtest
+        bars (HistoricTradeDataHandler): Market data handler
+        strategy (OptionSignalStrategy): Strategy signal generator
+        portfolio (OptionSignalPortfolio): Portfolio state manager
+        risk_manager (RiskManager): Risk controls and validation
+        executor (SimulatedExecutionHandler): Order execution simulator
+        eventScheduler (EventScheduler): Event queue coordinator
+        start_date (date): Backtest start date
+        end_date (date): Backtest end date
+        initial_capital (float): Starting portfolio value
+        unadjusted_trades (pd.DataFrame): Original trades before T+N adjustment
+    
+    Example:
+        >>> # Basic usage
+        >>> trades_df = pd.DataFrame({
+        ...     'Ticker': ['AAPL', 'AAPL'],
+        ...     'EntryTime': ['2024-01-02', '2024-01-03'],
+        ...     'ExitTime': ['2024-01-05', '2024-01-08'],
+        ...     'Size': [100, -100],
+        ...     'EntryPrice': [150.0, 155.0],
+        ...     'ExitPrice': [155.0, 150.0]
+        ... })
+        >>> 
+        >>> config = BacktesterConfig(t_plus_n=1, max_slippage_pct=0.001)
+        >>> backtest = OptionSignalBacktest(
+        ...     trades=trades_df,
+        ...     initial_capital=100000,
+        ...     config=config
+        ... )
+        >>> backtest.run()
+        >>> 
+        >>> # Access results
+        >>> ledger = backtest.portfolio.ledger
+        >>> final_value = backtest.portfolio.current_holdings['total']
+    
+    See Also:
+        BacktesterConfig: Configuration dataclass for backtest settings
+        OptionSignalPortfolio: Portfolio management and P&L tracking
+        RiskManager: Risk controls and position validation
     """
     
     def __init__(self, trades: pd.DataFrame, 
                  initial_capital: int | float =100000, 
-                 t_plus_n: float = 0,
                  symbol_list = None,
-                 finalize_trades: bool = True
-                    ) -> None:
+                 *,
+                 config: BacktesterConfig = None,
+                 end_date: pd.Timestamp = None
+                 ) -> None:
         """
-            trades: pd.DataFrame
-                Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
-            initial_capital: int
-                Initial capital to be used for backtesting
-            t_plus_n: int
-                Number of business days to add to the entry and exit times of trades, defaults to 0, meaning no adjustment is made
+        Initialize the backtesting engine with trade data and configuration.
+        
+        This constructor sets up all necessary components for the backtest including data handlers,
+        portfolio manager, risk controls, and event scheduler. It preprocesses trades to handle
+        T+N settlement adjustments and generates unique signal IDs for tracking.
+        
+        Args:
+            trades (pd.DataFrame): 
+                DataFrame containing trade signals to backtest. Must include the following columns:
+                - 'Ticker' or 'Symbol': Stock/option ticker symbol
+                - 'EntryTime': Trade entry timestamp (str or datetime)
+                - 'ExitTime': Trade exit timestamp (str or datetime, can be NaT for open positions)
+                - 'Size': Position size (positive for long, negative for short)
+                - 'EntryPrice': Entry execution price
+                - 'ExitPrice': Exit execution price (can be NaN for open positions)
+                
+                Optional columns:
+                - 'signal_id': Unique identifier for each signal (auto-generated if missing)
+                - 'EntryType': Order type at entry (e.g., 'MKT', 'LMT')
+                - 'ExitType': Order type at exit
+                
+            initial_capital (int | float, optional): 
+                Starting portfolio value in dollars. Defaults to 100000.
+                Used for position sizing and P&L calculations.
+                
+            symbol_list (list, optional): 
+                List of symbols to track. If None, extracted from trades DataFrame.
+                Useful for including symbols that may appear later in the backtest.
+                
+            config (BacktesterConfig, optional): 
+                Configuration object controlling backtest behavior. If None, uses defaults.
+                Key configuration options:
+                - t_plus_n (int): Settlement delay in business days (0 or 1)
+                - max_slippage_pct (float): Maximum slippage as % of price (e.g., 0.001 = 0.1%)
+                - min_slippage_pct (float): Minimum slippage as % of price
+                - finalize_trades (bool): Whether to finalize incomplete trades
+                - raise_errors (bool): Whether to raise exceptions or log them
+                
+            end_date (pd.Timestamp, optional): 
+                Override backtest end date. If None, uses the latest ExitTime in trades.
+                Useful for extending backtests beyond the last trade exit.
+        
+        Raises:
+            TypeError: If config is not a BacktesterConfig instance or None
+            ValueError: If trades DataFrame is empty
+            ValueError: If t_plus_n is not 0 or 1
+            
+        Notes:
+            - Trades are automatically adjusted for T+N settlement if configured
+            - Signal IDs are auto-generated using ticker, entry time, and direction
+            - Start date is set to 1 business day before earliest entry
+            - All timestamps are converted to business days (skipping weekends/holidays)
+            - Original unadjusted trades are preserved in self.unadjusted_trades
+            
+        Example:
+            >>> # With custom configuration
+            >>> config = BacktesterConfig(
+            ...     t_plus_n=1,  # Next-day settlement
+            ...     max_slippage_pct=0.002,  # 0.2% max slippage
+            ...     finalize_trades=True
+            ... )
+            >>> 
+            >>> backtest = OptionSignalBacktest(
+            ...     trades=my_trades_df,
+            ...     initial_capital=500000,
+            ...     symbol_list=['AAPL', 'MSFT', 'GOOGL'],
+            ...     config=config,
+            ...     end_date=pd.Timestamp('2024-12-31')
+            ... )
+            
+        See Also:
+            BacktesterConfig: For detailed configuration options
+            clean_run(): To re-run backtest with different parameters
         """
-        self.logger = setup_logger('OptionSignalBacktest')
-        self.t_plus_n = t_plus_n
+        if config is not None and not isinstance(config, BacktesterConfig):
+            raise TypeError("config must be an instance of BacktesterConfig or None")
+        
+        self.config: BacktesterConfig = config or BacktesterConfig()
+        
+        ## Initialize trades dataframe. Trades to be preprocessed to handle t_plus_n logic and unadjusted trades
+        ## to be stored for reference
         trades = trades.copy()
-        unadjusted = trades.copy() ## Store unadjusted trades for reference
+        unadjusted = trades.copy()
         if trades.empty:
             raise ValueError("Trades DataFrame cannot be empty. Please provide valid trade data.")
         trades = self.__handle_t_plus_n(trades)
-        unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
-                                                                              row['EntryTime'], 
-                                                                              SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
-                                                                              axis=1)
+        if "signal_id" not in trades.columns:
+            self.logger.info("Generating 'signal_id' for trades DataFrame")
+            unadjusted['signal_id'] = trades.apply(lambda row: generate_signal_id(row['Ticker'], 
+                                                                                row['EntryTime'], 
+                                                                                SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
+                                                                                axis=1)
+        else:
+            self.logger.critical("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
+            unadjusted['signal_id'] = trades['signal_id']
         unadjusted['unadjusted_signal_id'] = unadjusted.apply(lambda row: generate_signal_id(row['Ticker'], 
                                                                               row['EntryTime'], 
                                                                               SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), 
                                                                               axis=1)
-        self.unadjusted_trades = unadjusted.copy() ## Store unadjusted trades for reference
-        self.finalize_trades = finalize_trades
+        ## Store unadjusted trades for reference
+        self.unadjusted_trades = unadjusted.copy() 
+        self.end_date = end_date
         self.__construct_data(trades, initial_capital, symbol_list)
         
+    @property
+    def logger(self):
+        return LOGGER
+    
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None: 
-        self.start_date = pd.to_datetime(trades['EntryTime']).min() - BDay(1)
-        self.end_date = pd.to_datetime(trades['ExitTime']).max()
+        
+        ## Date range setup
+        ## Move back a day if not business day
+        self.start_date = change_to_last_busday(pd.to_datetime(trades['EntryTime']).min() - BDay(1), 1).date()
+        
+        ## Move forward a day if not business day
+        self.end_date = self.end_date or change_to_last_busday(pd.to_datetime(trades['ExitTime']).max(), -1).date()
+        
+        ## Store trades and initial capital for clean runs
         self.bars_trades = trades
         self.initial_capital = initial_capital
         
         #initialize critical components 
         self.eventScheduler = EventScheduler(self.start_date, self.end_date)
-        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list)
+        self.bars = HistoricTradeDataHandler(self.eventScheduler, trades, symbol_list, finalize_trades=self.config.finalize_trades, end_date=self.end_date)
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
         self.executor =  SimulatedExecutionHandler(self.eventScheduler)
-        self.risk_manager = RiskManager(self.bars, self.eventScheduler, initial_capital, self.start_date, self.end_date, self.executor, self.unadjusted_trades,t_plus_n= self.t_plus_n)
+        self.risk_manager = RiskManager(symbol_list=self.bars.symbol_list,
+                                        bkt_start=self.start_date,
+                                        bkt_end=self.end_date,
+                                        initial_capital=initial_capital,)
+        
         self.portfolio = OptionSignalPortfolio(self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital= float(initial_capital))
         self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1]).strftime('%Y%m%d')
         self.risk_free_rate = 0.055
@@ -78,16 +237,27 @@ class OptionSignalBacktest():
         """
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
-        if self.t_plus_n > 0:
-            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.t_plus_n} business days")
-            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
-            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.t_plus_n), -1).replace(hour = 0)) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
-        elif self.t_plus_n > 1:
+        if self.config.t_plus_n > 0:
+            self.logger.info(f"Adjusting EntryTime and ExitTime by {self.config.t_plus_n} business days")
+            ## Adjust EntryTime and ExitTime by t_plus_n business days
+            trades['EntryTime'] = trades['EntryTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0)) ## Adjust EntryTime by t_plus_n business days, and offseting to next business day if holiday
+
+            ## Only adjust ExitTime if it is not NaT
+            trades['ExitTime'] = trades['ExitTime'].apply(lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour = 0) if pd.notna(x) else x) ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
+        elif self.config.t_plus_n > 1:
             raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
         
     def run(self):
-        while True: ##Loop through the dates
+        ## Runtime configurations changes
+        self.portfolio.t_plus_n = self.config.t_plus_n
+        self.executor.max_slippage_pct = self.config.max_slippage_pct
+        self.executor.min_slippage_pct = self.config.min_slippage_pct
+        self.risk_manager.config.min_slippage_pct = self.config.min_slippage_pct
+        self.risk_manager.config.max_slippage_pct = self.config.max_slippage_pct
+
+        ## Begin backtest by looping through event scheduler dates
+        while True:
             # Get current event queue
             if self.eventScheduler.current_date is None: 
                 self.logger.info("No more dates left.")
@@ -99,12 +269,13 @@ class OptionSignalBacktest():
             event_count = 0
 
             # Process events for the current bar
-            while True:  # Avoid blocking. Loops through the event queue
+            # Avoid blocking. Loops through the event queue
+            while True:  
                 try:
-                    if len(list(deepcopy(current_event_queue.queue))) == 0: ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                        ## Analyze positions if theres no events in the queue, this happens before getting from the queue cause the process can add a roll event to the queue
-                        actions = self.risk_manager.analyze_position() 
-                        print("Risk Manager Actions: ", actions)
+                    ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
+                    if len(list(deepcopy(current_event_queue.queue))) == 0: 
+                        meta = self.portfolio.analyze_positions()
+                        print(f"Position Analysis Meta: {meta}")
 
                     event = current_event_queue.get_nowait()
 
@@ -113,15 +284,15 @@ class OptionSignalBacktest():
                     print(f"Event queue is empty, processed {event_count} event(s)")
                    
                     # Update portfolio time index after processing all events
-                    
                     self.portfolio.update_timeindex()
                     
                     #advance scheduler queue to next date 
                     self.eventScheduler.advance_date()
                     break
                 except Exception as e:
+                    if self.config.raise_errors:
+                        raise e
                     self.logger.error(f"Error fetching event: {e}\n{traceback.format_exc()}")
-                    print(f"Error fetching event: {e}")
                     break
 
                 if event:
@@ -132,13 +303,8 @@ class OptionSignalBacktest():
                         print(f"Processing event: {event.type} {event.datetime}")
 
                         if event.type == EventTypes.SIGNAL.value:
-                            if not self.finalize_trades and self.eventScheduler.current_date == self.final_date:
-                                self.logger.info("Finalizing trades is disabled, skipping signal processing")
-                                continue
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
-                            self.order_cache.setdefault(event.direction, {})\
-                                .setdefault(event.datetime, []).append(event)
                             self.executor.execute_order_randomized_slippage(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
@@ -148,20 +314,25 @@ class OptionSignalBacktest():
                         elif event.type == EventTypes.ROLL.value:
                             print("\nPerforming Roll Operation\n")
                             self.portfolio.execute_roll(event)
-                            # self.__roll(event, current_event_queue)
+
                         else:
                             self.logger.warning(f"Unrecognized event type: {event.type}")
                     except Exception as e:
+                        if self.config.raise_errors:
+                            raise e
+                        
                         self.logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
                         print(f"Error processing event: {e}")   
 
         
-    def clean_run(self, trades: pd.DataFrame = pd.DataFrame(), initial_capital: int = None):
+    def clean_run(self, trades: pd.DataFrame = None, initial_capital: int = None):
         """
             Rerun the backtest with fresh set of data, the only set of data that persists are the last set of trades and capital data passed to the backtest, unless new data is passed in this function
         """
+        if trades is None:
+            trades = pd.DataFrame()
         clean_trades = self.bars_trades if trades.empty else trades
-        clean_capital = self.initial_capital if initial_capital == None else initial_capital
+        clean_capital = self.initial_capital if initial_capital is None else initial_capital
         self.__construct_data(clean_trades, clean_capital)
         self.run()
 

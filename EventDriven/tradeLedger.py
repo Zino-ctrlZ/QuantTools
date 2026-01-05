@@ -41,36 +41,105 @@ class TradeLedger:
         """
         Adds an entry to the ledger using datetime as key
         """
-        # Use the datetime as key for the ledger
-        entry_time = fill_event.datetime
-        entry = {}
         trade_id = fill_event.position['trade_id']
-        uid = f'{trade_id}_{fill_event.signal_id}_{entry_time}'
+        self._add_entry_common(
+            entry_time=fill_event.datetime,
+            trade_id=trade_id,
+            signal_id=fill_event.signal_id,
+            fill_cost=fill_event.fill_cost,
+            quantity=fill_event.quantity,
+            symbol=fill_event.symbol,
+            commission=fill_event.commission,
+            market_value=fill_event.market_value,
+            slippage=fill_event.slippage,
+            direction=fill_event.direction,
+            normalize=True,
+        )
+
+    def _add_entry_kw(
+        self,
+        *,
+        entry_time,
+        trade_id: str,
+        signal_id: str,
+        fill_cost: float,
+        quantity: int,
+        symbol: str,
+        commission: float,
+        market_value: float,
+        slippage: float,
+        direction: str,
+        normalize: bool = False,
+    ):
+        """
+        Adds an entry using keyword args instead of a FillEvent.
+        """
+        self._add_entry_common(
+            entry_time=entry_time,
+            trade_id=trade_id,
+            signal_id=signal_id,
+            fill_cost=fill_cost,
+            quantity=quantity,
+            symbol=symbol,
+            commission=commission,
+            market_value=market_value,
+            slippage=slippage,
+            direction=direction,
+            normalize=normalize,
+        )
+
+    def _add_entry_common(
+        self,
+        *,
+        entry_time,
+        trade_id: str,
+        signal_id: str,
+        fill_cost: float,
+        quantity: int,
+        symbol: str,
+        commission: float,
+        market_value: float,
+        slippage: float,
+        direction: str,
+        normalize: bool,
+    ):
+        uid = f'{trade_id}_{signal_id}_{entry_time}'
+        # Normalize monetary fields unless explicitly disabled
+        price_val = normalize_dollar_amount(fill_cost / quantity) if normalize else fill_cost / quantity
+        commission_val = 0.0 if direction == 'EXERCISE' else (normalize_dollar_amount(commission) if normalize else commission)
+        market_value_val = normalize_dollar_amount(market_value) if normalize else market_value
+        slippage_val = 0.0 if direction == 'EXERCISE' else (normalize_dollar_amount(slippage) if normalize else slippage)
+        per_unit_slippage_val = 0.0 if direction == 'EXERCISE' else (
+            normalize_dollar_amount_to_decimal(slippage / quantity) if normalize else slippage / quantity
+        )
+        total_cost_val = normalize_dollar_amount(fill_cost) if normalize else fill_cost
+        aux_cost_val = 0.0 if direction == 'EXERCISE' else (
+            normalize_dollar_amount(abs(commission) + abs(slippage)) if normalize else abs(commission) + abs(slippage)
+        )
         entry = {
-            'datetime': fill_event.datetime,
-            'uid': uid, 
-            'price': normalize_dollar_amount(fill_event.fill_cost/fill_event.quantity),
-            'quantity': fill_event.quantity,
-            'symbol': fill_event.symbol,
-            'commission': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.commission),
-            'market_value': normalize_dollar_amount(fill_event.market_value),
-            'slippage': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(fill_event.slippage),
-            'total_cost': normalize_dollar_amount(fill_event.fill_cost),
-            'aux_cost': 0.0 if fill_event.direction == 'EXERCISE' else normalize_dollar_amount(abs(fill_event.commission) + abs(fill_event.slippage)),
-            'direction': fill_event.direction
+            'datetime': entry_time,
+            'uid': uid,
+            'price': price_val,
+            'quantity': quantity,
+            'symbol': symbol,
+            'commission': commission_val,
+            'market_value': market_value_val,
+            'slippage': slippage_val,
+            'per_unit_slippage': per_unit_slippage_val,
+            'total_cost': total_cost_val,
+            'aux_cost': aux_cost_val,
+            'direction': direction
         }
-            
-        
-        # Update aggregated metrics
-        self.avg_price = ((self.avg_price * self.quantity) + 
-                         (entry['price'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
-        self.avg_total_cost = ((self.avg_total_cost * self.quantity) + 
-                               (entry['total_cost'] * fill_event.quantity)) / (self.quantity + fill_event.quantity)
+
+        self.avg_price = ((self.avg_price * self.quantity) +
+                         (entry['price'] * quantity)) / (self.quantity + quantity)
+        self.avg_total_cost = ((self.avg_total_cost * self.quantity) +
+                               (entry['total_cost'] * quantity)) / (self.quantity + quantity)
         self.aux_cost += entry['aux_cost']
         self.quantity += entry['quantity']
         self.commission += entry['commission']
         self.slippage += entry['slippage']
         self.market_value += entry['market_value']
-        
+
         self.ledger.append(entry)
         self.ledger_df = pd.DataFrame(self.ledger)
