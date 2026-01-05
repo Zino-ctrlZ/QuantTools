@@ -1,11 +1,11 @@
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.dataclasses import dataclass
 from pydantic import ConfigDict
 from typing import Union, Literal
 from datetime import datetime, date
 import numbers
 
 
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class OrderRequest:
     """
     Dataclass representing an order request generated for Order Picker to process.

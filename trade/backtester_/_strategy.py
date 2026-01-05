@@ -813,7 +813,7 @@ class StrategyBase(ABC):
             row_heights=[0.6] + [0.2] * num_non_overlay,
         )
         df = self._df.copy()
-        df = df.loc[self.start_date :]
+        # df = df.loc[self.start_date :]
         ## Main plot
         fig.add_trace(
             go.Candlestick(

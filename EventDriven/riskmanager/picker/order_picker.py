@@ -341,6 +341,12 @@ class OrderPicker:
         if order_resolution_config is None:
             order_resolution_config = self._order_resolution_config
 
+        if request.max_close > request.tick_cash:
+            logger.warning(
+                f"Request max_close {request.max_close} is greater than tick_cash {request.tick_cash}. Adjusting max_close to tick_cash."
+            )
+            request.max_close = request.tick_cash
+
         inputs = OrderInputs(
             tick=request.symbol,
             date=request.date,
