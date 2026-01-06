@@ -1,0 +1,212 @@
+========================================
+OPTION DATA MANAGER – TOP LEVEL DESIGN
+========================================
+
+----------------------------------------
+AS-OF POLICY (SIMPLIFIED)
+----------------------------------------
+
+As-of represents the assumed market state time for a calculation.
+
+We use ONLY three modes:
+
+1) intraday
+   - Historical intraday timestamp
+   - Used for backtests and intraday analytics
+   - Example: 2025-01-04 10:32:15
+
+2) eod
+   - End-of-day snapshot
+   - Used for daily data, surfaces, storage
+   - Example: 2025-01-04 EOD
+
+3) snap
+   - Real-time / near-real-time snapshot
+   - Used for live trading
+   - Example: now() with short TTL
+
+As-of is NOT an interval or bar size.
+As-of is part of every cache key.
+
+----------------------------------------
+CORE ARCHITECTURE OVERVIEW
+----------------------------------------
+
+DESIGN PHILOSOPHY:
+Facade + domain managers + pluggable engines
+Read-through caching + materialization
+
+----------------------------------------
+HEAD / ORCHESTRATION
+----------------------------------------
+
+DataManager
+- Single entrypoint
+- Coordinates all domain managers
+- No heavy computation
+- Enforces lifecycle + consistency
+
+----------------------------------------
+DOMAIN MANAGERS (CORE PRODUCTS)
+----------------------------------------
+
+MarketSnapshotManager
+- Owns as-of normalization
+- Produces snapshot identity (hash or id)
+
+SpotManager
+- Spot prices
+- Cached by (underlying, as_of)
+
+RatesManager
+- Discount factors / rate curves
+
+DividendManager
+- Dividend schedules / borrow
+
+ForwardManager
+- Produces forward from spot + carry
+- Cached by (underlying, expiry, as_of)
+
+ChainManager
+- Option metadata + quotes
+- Cached by (underlying, as_of)
+
+VolManager
+- Entry point for volatility
+- Routes to engines
+- Owns vol caching + provenance
+
+GreeksManager
+- Entry point for greeks
+- Requests vols explicitly from VolManager
+
+----------------------------------------
+ENGINE LAYER (INTERNAL ONLY)
+----------------------------------------
+
+Volatility Engines:
+- BSVolEngine
+- CRRVolEngine
+- SurfaceVolEngine
+- FitEngine
+
+Greeks Engines:
+- BSGreeksEngine
+- NumericalGreeksEngine
+- BinomialGreeksEngine
+
+Engines are NEVER called directly by strategies.
+
+----------------------------------------
+REQUEST / RESULT CONTRACTS
+----------------------------------------
+
+Requests:
+- SpotRequest
+- ChainRequest
+- VolRequest
+- GreeksRequest
+
+Results:
+- SpotResult
+- VolResult
+- GreeksResult
+
+Each result contains:
+- values (Series / DataFrame)
+- provenance (engine, config hash, snapshot id, as_of)
+- diagnostics (optional)
+
+----------------------------------------
+CACHING LAYER
+----------------------------------------
+
+CustomCache
+- Disk-backed
+- Used by all managers
+
+CacheKey
+- Standardized key builder
+- Includes:
+  - identity (option / underlying)
+  - artifact type
+  - as_of
+  - engine / version info
+
+----------------------------------------
+PERSISTENCE / OFFLOAD
+----------------------------------------
+
+offload()
+- Base capability on managers
+- Cron-driven
+
+Materializer (optional)
+- Shared SQL writer
+- Batching, retries, idempotency
+
+----------------------------------------
+POLICIES & DIAGNOSTICS
+----------------------------------------
+
+AsOfPolicy
+- intraday / eod / snap
+
+PricePolicy
+- mid / bid / ask
+
+CachePolicy
+- TTL / refresh rules
+
+Metrics / Logging
+- cache hit/miss
+- compute time
+- engine selection
+
+----------------------------------------
+BUILD ORDER (DO THIS IN ORDER)
+----------------------------------------
+
+PHASE 1 – FOUNDATION
+- CustomCache
+- CacheKey
+- AsOfPolicy
+
+PHASE 2 – MARKET DATA
+- ChainManager
+- SpotManager
+
+PHASE 3 – CARRY
+- RatesManager
+- DividendManager
+- ForwardManager
+
+PHASE 4 – VOLATILITY
+- VolManager
+- BSVolEngine
+- VolRequest / VolResult
+
+PHASE 5 – GREEKS
+- GreeksManager
+- BSGreeksEngine
+- GreeksRequest / GreeksResult
+
+PHASE 6 – PERSISTENCE
+- offload()
+- Materializer
+
+PHASE 7 – EXTENSIONS
+- CRRVolEngine
+- SurfaceVolEngine
+- FitEngine
+- Batch / chain analytics
+
+----------------------------------------
+GOLDEN RULES
+----------------------------------------
+
+1) Strategies never choose engines
+2) Managers choose engines
+3) Cache keys always include as_of
+4) Provenance travels with data

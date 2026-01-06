@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Union
+from typing import List
 from scipy.stats import norm
 from ..config.defaults import DAILY_BASIS
 from trade.helpers.Logging import setup_logger

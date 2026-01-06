@@ -8,17 +8,19 @@ import numpy as np
 from trade.helpers.helper import assert_member_of_enum
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pydantic import loud_post_init
-from module_test.raw_code.optionlib_2.vol.ssvi.model.ssvi_model._ssvi import _SSVIModel
-from module_test.raw_code.optionlib_2.vol.ssvi.model.params import SSVIModelParams
-from module_test.raw_code.optionlib_2.vol.ssvi.model.chain import ChainOutput
-from module_test.raw_code.optionlib_2.vol.ssvi.types import VolSide, DivType, VolType
-from module_test.raw_code.optionlib_2.vol.ssvi.controller import (
+from trade.optionlib.vol.ssvi.model.ssvi_model._ssvi import _SSVIModel
+from trade.optionlib.vol.ssvi.model.params import SSVIModelParams
+from trade.optionlib.vol.ssvi.model.chain import ChainOutput
+from trade.optionlib.config.types import VolSide, DivType, VolType
+from trade.optionlib.config.ssvi.controller import (
     get_global_config,
     get_background_fits,
 )
-from module_test.raw_code.optionlib_2.vol.ssvi.model.base import BaseSSVIModel
-from module_test.raw_code.optionlib_2.vol.ssvi.exceptions import ChainInputError
-logger = setup_logger('optionlib.ssvi.model.ssvi_model')
+from trade.optionlib.vol.ssvi.model.base import BaseSSVIModel
+from trade.optionlib.vol.ssvi.exceptions import ChainInputError
+
+logger = setup_logger("optionlib.ssvi.model.ssvi_model")
+
 
 class SSVIParentModel(BaseModel, BaseSSVIModel):
     """
@@ -36,8 +38,8 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
 
     ## Compulsory Inputs
     chain: ChainOutput
-    valuation_date: str|datetime
-    
+    valuation_date: str | datetime
+
     ## Optional Inputs/Derived inputs
     _models: Optional[dict[str, _SSVIModel]] = PrivateAttr(default_factory=dict)
 
@@ -46,8 +48,7 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         """
         Post-initialization to validate and initialize the parent model.
         """
-        self.valuation_date = pd.to_datetime(self.valuation_date).strftime('%Y-%m-%d')
-        
+        self.valuation_date = pd.to_datetime(self.valuation_date).strftime("%Y-%m-%d")
 
     @property
     def iterations(self) -> int:
@@ -55,7 +56,7 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         Returns the number of iterations for model fitting.
         """
         return get_global_config().model_iterations
-    
+
     @iterations.setter
     def iterations(self, value: int):
         get_global_config().model_iterations = value
@@ -79,7 +80,7 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         if self.models is None:
             raise ValueError("Models have not been initialized.")
         return {right: model.params for right, model in self.models.items()}
-    
+
     @property
     def model_info(self) -> dict[str, dict]:
         """
@@ -87,38 +88,37 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         """
         if self.models is None:
             raise ValueError("Models have not been initialized.")
-        return {right: {
-                    'valuation_date': model.valuation_date,
-                    'right': model.right.value,
-                    'params': model.params
-                } for right, model in self.models.items()}
-    
+        return {
+            right: {"valuation_date": model.valuation_date, "right": model.right.value, "params": model.params}
+            for right, model in self.models.items()
+        }
+
     @property
     def call_model(self) -> _SSVIModel:
-        if self.models is None or 'call' not in self.models:
+        if self.models is None or "call" not in self.models:
             raise ValueError("Call model has not been initialized.")
         return self._get_or_build(VolSide.CALL)
 
     @property
     def put_model(self) -> _SSVIModel:
-        if self.models is None or 'put' not in self.models:
+        if self.models is None or "put" not in self.models:
             raise ValueError("Put model has not been initialized.")
         return self._get_or_build(VolSide.PUT)
 
     @property
     def otm_model(self) -> _SSVIModel:
-        if self.models is None or 'otm' not in self.models:
+        if self.models is None or "otm" not in self.models:
             raise ValueError("OTM model has not been initialized.")
         return self._get_or_build(VolSide.OTM)
-    
+
     @property
     def div_type(self) -> DivType:
         return self.chain.div_type
-    
+
     @property
     def model(self) -> VolType:
         return self.chain.vol_type
-    
+
     @model.setter
     def model(self, value: VolType):
         raise ChainInputError("Model type cannot be changed for this chain.")
@@ -130,17 +130,12 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
     def __repr__(self):
         return f"<SSVIParentModel(valuation_date={self.valuation_date}, models={list(self.models.keys())})>"
 
-
-    def _get_or_build(self, side: VolSide, fit: bool=False) -> _SSVIModel:
+    def _get_or_build(self, side: VolSide, fit: bool = False) -> _SSVIModel:
         side = assert_member_of_enum(side, VolSide)
         key = side.value
         m = self._models.get(key)
         if m is None:
-            m = _SSVIModel(
-                chain=self.chain,
-                valuation_date=self.valuation_date,
-                right=side
-            )
+            m = _SSVIModel(chain=self.chain, valuation_date=self.valuation_date, right=side)
             if fit:
                 m.fit()
             self._models[key] = m
@@ -150,8 +145,6 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
     def models(self) -> dict[str, _SSVIModel]:
         return self._models
 
-    
-    
     def fit(self):
         """
         Fit the SSVI model to the option chain data.
@@ -162,7 +155,7 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
 
         Note: This method is designed to be called after the model has been initialized. It fits per right chain (call and put).
         """
-        
+
         # Fit only the primary side first
         global_conf = get_global_config()
         global_background_fits = get_background_fits()
@@ -172,16 +165,17 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         if global_conf.fit_all_sides:
             # Optionally background-fit the others IF you truly need them later
             for side in (VolSide.CALL, VolSide.PUT, VolSide.OTM):
-                if side is primary: 
+                if side is primary:
                     continue
-                global_background_fits.submit(fn=self._get_or_build(side).fit,
-                                            key=f"{self.chain.key}_{side.value}")
+                global_background_fits.submit(fn=self._get_or_build(side).fit, key=f"{self.chain.key}_{side.value}")
 
-    def predict(self,
-                k: float| np.ndarray,
-                exp: str| datetime| np.ndarray = None,
-                strike_type: Literal['p', 'k', 'pf', 'f'] = 'f',
-                right: VolSide = None):
+    def predict(
+        self,
+        k: float | np.ndarray,
+        exp: str | datetime | np.ndarray = None,
+        strike_type: Literal["p", "k", "pf", "f"] = "f",
+        right: VolSide = None,
+    ):
         """
         Predict the implied volatility for a given strike and expiration.
         Args:
@@ -204,10 +198,20 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
 
         ## Warning if global config differs from model config
         if global_config.div_type != self.div_type:
-            logger.warning("Global div_type %s differs from model div_type %s. Using global div_type %s.", global_config.div_type, self.div_type, global_config.div_type)
+            logger.warning(
+                "Global div_type %s differs from model div_type %s. Using global div_type %s.",
+                global_config.div_type,
+                self.div_type,
+                global_config.div_type,
+            )
         if global_config.vol_type != self.model:
-            logger.warning("Global vol_type %s differs from model vol_type %s. Using global vol_type %s.", global_config.vol_type, self.model, global_config.vol_type)
-        
+            logger.warning(
+                "Global vol_type %s differs from model vol_type %s. Using global vol_type %s.",
+                global_config.vol_type,
+                self.model,
+                global_config.vol_type,
+            )
+
         ## Use global config side if not provided
         if right is None:
             right = global_config.vol_side
@@ -222,6 +226,6 @@ class SSVIParentModel(BaseModel, BaseSSVIModel):
         if model.params is None:
             logger.warning("Model for %s on %s not fitted yet. Fitting now...", right.value, self.chain.key)
             model.fit()
-        
+
         ## Predict using the appropriate model
         return model.predict(k=k, exp=exp, strike_type=strike_type)

@@ -6,6 +6,7 @@ predict volatilities, and load parameters from cache.
 Author: Chiemelie Nwanisobi
 Date: 2025-10-10
 """
+
 from collections.abc import Iterable
 from typing import Optional
 from datetime import datetime
@@ -13,45 +14,38 @@ import numpy as np
 import pandas as pd
 from trade.helpers.helper import assert_member_of_enum
 from trade.helpers.Logging import setup_logger
-from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import params_cache_key
-from module_test.raw_code.optionlib_2.vol.ssvi.controller import (
-     is_latest_config, 
-     get_global_config, 
-     get_params_cache
-)
-from module_test.raw_code.optionlib_2.vol.ssvi.vol_math import ssvi_implied_vol
-from module_test.raw_code.optionlib_2.vol.ssvi.model.params import SSVIModelParams
-from module_test.raw_code.optionlib_2.vol.ssvi.types import (
-     DivType, 
-     VolType, 
-     VolSide
-)
-from module_test.raw_code.optionlib_2.vol.ssvi.utils import (
+from trade.optionlib.vol.ssvi.model.model_utils import params_cache_key
+from trade.optionlib.config.ssvi.controller import is_latest_config, get_global_config, get_params_cache
+from trade.optionlib.vol.ssvi.vol_math import ssvi_implied_vol
+from trade.optionlib.vol.ssvi.model.params import SSVIModelParams
+from trade.optionlib.config.types import DivType, VolType, VolSide
+from trade.optionlib.vol.ssvi.utils import (
     get_t_grid,
     get_fwd_grid,
     get_k_grid,
 )
-from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import (
+from trade.optionlib.vol.ssvi.model.model_utils import (
     calculate_normalized_rmse_loss,
     calculate_normalized_mae_loss,
 )
 
-logger = setup_logger('optionlib.ssvi.model.param_utils')
+logger = setup_logger("optionlib.ssvi.model.param_utils")
+
+
 def build_svi_params_obj(
-        chain: pd.DataFrame,
-        var0_hat: float,
-        var_inf_hat: float,
-        kappa_hat: float,
-        eta_hat: float,
-        lambda_hat: float,
-        rho_hat: float,
-        atm_loss: float,
-        surface_loss: float,
+    chain: pd.DataFrame,
+    var0_hat: float,
+    var_inf_hat: float,
+    kappa_hat: float,
+    eta_hat: float,
+    lambda_hat: float,
+    rho_hat: float,
+    atm_loss: float,
+    surface_loss: float,
 ) -> SSVIModelParams:
-    
     """
     Build an SSVIModelParams object from the given parameters.
-    
+
     Args:
         chain (pd.DataFrame): The option chain DataFrame.
         var0_hat (float): Initial variance estimate at ATM.
@@ -62,30 +56,30 @@ def build_svi_params_obj(
         rho_hat (float): Correlation parameter.
         atm_loss (float): Loss associated with ATM volatility estimation.
         surface_loss (float): Loss associated with surface fitting.
-        
+
     Returns:
         SSVIModelParams: The SSVI model parameters object.
     """
     ## Calculate normalized losses
-    moneyness = chain['moneyness'].values
-    market_iv = chain['vol'].values
+    moneyness = chain["moneyness"].values
+    market_iv = chain["vol"].values
     model_iv = ssvi_implied_vol(
         fwd=get_fwd_grid(chain),
         strike=get_k_grid(chain),
-        maturity= get_t_grid(chain),
-        var0=var0_hat, var_inf=var_inf_hat, kappa=kappa_hat,
-        eta=eta_hat, lam=lambda_hat, rho=rho_hat
+        maturity=get_t_grid(chain),
+        var0=var0_hat,
+        var_inf=var_inf_hat,
+        kappa=kappa_hat,
+        eta=eta_hat,
+        lam=lambda_hat,
+        rho=rho_hat,
     )
 
     normalized_nrmse, rw_nrmse, lw_nrmse = calculate_normalized_rmse_loss(
-        market_iv=market_iv,
-        model_iv=model_iv,
-        moneyness=moneyness
+        market_iv=market_iv, model_iv=model_iv, moneyness=moneyness
     )
     normalized_nmae, rw_nmae, lw_nmae = calculate_normalized_mae_loss(
-        market_iv=market_iv,
-        model_iv=model_iv,
-        moneyness=moneyness
+        market_iv=market_iv, model_iv=model_iv, moneyness=moneyness
     )
     return SSVIModelParams(
         var0_hat=var0_hat,
@@ -101,8 +95,9 @@ def build_svi_params_obj(
         lw_nrmse=lw_nrmse,
         nmae=normalized_nmae,
         rw_nmae=rw_nmae,
-        lw_nmae=lw_nmae
+        lw_nmae=lw_nmae,
     )
+
 
 def is_iterable(obj, *, exclude_str=True):
     if exclude_str and isinstance(obj, (str, bytes)):
@@ -110,40 +105,39 @@ def is_iterable(obj, *, exclude_str=True):
     return isinstance(obj, Iterable)
 
 
-def _sigmoid_func(k: np.ndarray, 
-                  f: float) -> np.ndarray:
-    x = np.log(k/f)
-    return 1/(1 + np.exp(4*x))
+def _sigmoid_func(k: np.ndarray, f: float) -> np.ndarray:
+    x = np.log(k / f)
+    return 1 / (1 + np.exp(4 * x))
 
-def pick_params(call_params: SSVIModelParams,
-                put_params: SSVIModelParams,
-                right: str) -> SSVIModelParams:
+
+def pick_params(call_params: SSVIModelParams, put_params: SSVIModelParams, right: str) -> SSVIModelParams:
     """
     Pick parameters based on the option type (call or put).
-    
+
     Args:
         call_params (SSVIModelParams): Parameters for call options.
         put_params (SSVIModelParams): Parameters for put options.
         right (str): The option type ('c' for call, 'p' for put).
-        
+
     Returns:
         SSVIModelParams: The selected parameters based on the option type.
     """
-    if right.lower() == 'c':
+    if right.lower() == "c":
         return call_params
-    elif right.lower() == 'p':
+    elif right.lower() == "p":
         return put_params
     else:
         raise ValueError(f"Invalid option type: {right}. Expected 'c' or 'p'.")
-    
+
+
 def _predict_vol_decider(
-    k: float|np.ndarray,
-    t: float|np.ndarray,
-    f: float|np.ndarray,
+    k: float | np.ndarray,
+    t: float | np.ndarray,
+    f: float | np.ndarray,
     right: str,
     call_params: SSVIModelParams,
-    put_params: SSVIModelParams
-) -> float|np.ndarray:
+    put_params: SSVIModelParams,
+) -> float | np.ndarray:
     """
     Predict the volatility using the SSVI model parameters.
     This function selects the appropriate parameters based on the option type
@@ -151,23 +145,23 @@ def _predict_vol_decider(
 
     If 'right' is 'itm' or 'otm', it blends the call and put volatilities
     based on the moneyness using a sigmoid function.
-    
+
     Args:
         k (float): Strike price.
         t (float): Time to maturity in years.
         f (float): Forward price.
         params (SSVIModelParams): The SSVI model parameters.
-        
+
     Returns:
         float: The predicted volatility.
     """
-    if right in ['c', 'p']:
+    if right in ["c", "p"]:
         params = pick_params(call_params, put_params, right)
-    elif right in ['itm', 'otm']:
-        call_vols =  predict_vol(k, t, f, call_params)
+    elif right in ["itm", "otm"]:
+        call_vols = predict_vol(k, t, f, call_params)
         put_vols = predict_vol(k, t, f, put_params)
         w = _sigmoid_func(k, f)
-        if right == 'itm': ## Left: Call, Right: Put
+        if right == "itm":  ## Left: Call, Right: Put
             return w * call_vols + (1 - w) * put_vols
         else:
             return (1 - w) * call_vols + w * put_vols
@@ -175,25 +169,35 @@ def _predict_vol_decider(
         raise ValueError(f"Invalid option type: {right}. Expected 'c', 'p', 'itm', or 'otm'.")
 
     return ssvi_implied_vol(
-        fwd=f, strike=k, maturity=t,
-        var0=params.var0_hat, var_inf=params.var_inf_hat, kappa=params.kappa_hat,
-        eta=params.eta_hat, lam=params.lambda_hat, rho=params.rho_hat
+        fwd=f,
+        strike=k,
+        maturity=t,
+        var0=params.var0_hat,
+        var_inf=params.var_inf_hat,
+        kappa=params.kappa_hat,
+        eta=params.eta_hat,
+        lam=params.lambda_hat,
+        rho=params.rho_hat,
     )
 
-def predict_vol(
-    k: float|np.ndarray,
-    t: float|np.ndarray,
-    f: float,
-    params: SSVIModelParams) -> float|np.ndarray:
+
+def predict_vol(k: float | np.ndarray, t: float | np.ndarray, f: float, params: SSVIModelParams) -> float | np.ndarray:
     """
     Predict the volatility using the SSVI model parameters.
     This function computes the implied volatility using the SSVI formula.
     """
     return ssvi_implied_vol(
-        fwd=f, strike=k, maturity=t,
-        var0=params.var0_hat, var_inf=params.var_inf_hat, kappa=params.kappa_hat,
-        eta=params.eta_hat, lam=params.lambda_hat, rho=params.rho_hat
+        fwd=f,
+        strike=k,
+        maturity=t,
+        var0=params.var0_hat,
+        var_inf=params.var_inf_hat,
+        kappa=params.kappa_hat,
+        eta=params.eta_hat,
+        lam=params.lambda_hat,
+        rho=params.rho_hat,
     )
+
 
 def load_ssvi_params_from_cache(
     root: str,
@@ -233,9 +237,7 @@ def load_ssvi_params_from_cache(
         if is_latest_config(config_hash):
             return SSVIModelParams(**params)
         if global_conf.overwrite_existing:
-            logger.warning(
-                "Cached params config hash is outdated. Overwriting existing cache."
-            )
+            logger.warning("Cached params config hash is outdated. Overwriting existing cache.")
             del params_cache[key]
         else:
             logger.warning(
