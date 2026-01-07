@@ -14,19 +14,19 @@ from pydantic import Field, ConfigDict, BaseModel, PrivateAttr
 from pydantic.dataclasses import dataclass
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper_types import SingletonMixin
-from module_test.raw_code.optionlib_2.vol.ssvi.types import DivType, VolType
-from module_test.raw_code.optionlib_2.vol.ssvi.global_config import SSVIGlobalConfig
-from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import chain_cache_key
-from module_test.raw_code.optionlib_2.vol.ssvi.chain_prep import ChainChecklist
-from module_test.raw_code.optionlib_2.vol.ssvi.model.base import ChainInputModel
-from module_test.raw_code.optionlib_2.vol.ssvi.controller import (
-    get_pricing_config, 
-    hash_config, 
+from trade.optionlib.config.types import DivType, VolType
+from trade.optionlib.config.ssvi.global_config import SSVIGlobalConfig
+from trade.optionlib.vol.ssvi.model.model_utils import chain_cache_key
+from trade.optionlib.vol.ssvi.chain_prep import ChainChecklist
+from trade.optionlib.vol.ssvi.model.base import ChainInputModel
+from trade.optionlib.config.ssvi.controller import (
+    get_pricing_config,
+    hash_config,
     get_global_config,
     get_chain_cache,
-    is_latest_config
+    is_latest_config,
 )
-from module_test.raw_code.optionlib_2.vol.ssvi.utils import (
+from trade.optionlib.vol.ssvi.utils import (
     get_chain,
     format_chain,
     get_rates,
@@ -34,37 +34,39 @@ from module_test.raw_code.optionlib_2.vol.ssvi.utils import (
     get_bs_vol_on_chain,
     get_discrete_crr_vol_on_chain,
 )
-logger = setup_logger('optionlib.ssvi.chain')
+
+logger = setup_logger("optionlib.ssvi.chain")
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True,
-                             frozen=True))
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True, frozen=True))
 class ChainOutput:
     """
     Dataclass to hold the output of the chain processing.
     """
+
     root: Optional[str] = Field(default=None, description="Root symbol of the underlying asset.")
     data_chain: Optional[pd.DataFrame] = Field(default_factory=None, description="Processed option chain DataFrame")
     source_from_cache: bool = Field(default=False, description="Indicates if the chain was sourced from cache")
     spot: float = Field(..., description="Spot price of the underlying asset")
     div_type: DivType = Field(default=get_global_config().div_type, description="Type of dividends considered")
-    vol_type: VolType = Field(default=get_global_config().vol_type, description="Type of volatility used for calibration")
+    vol_type: VolType = Field(
+        default=get_global_config().vol_type, description="Type of volatility used for calibration"
+    )
     pv_div_col: str = Field(default=None, description="Column name for present value of dividends if applicable")
     div_schedule_col: str = Field(default=None, description="Column name for dividend schedule if applicable")
     fwd_col_name: str = Field(default=None, description="Column name for forward prices if applicable")
     rate_col: str = Field(default=None, description="Column name for interest rates if applicable")
-    vol_col: str = Field(default='vol', description="Column name for implied volatilities")
-    t_col: str = Field(default='t', description="Column name for time to maturity")
-    strike_col: str = Field(default='strike', description="Column name for strike prices")
-    f_log_m_col: str = Field(default='f_log_moneyness', description="Column name for log moneyness")
-    fwd_m_col: str = Field(default='f_moneyness', description="Column name for forward moneyness")
-    right_col: str = Field(default='right', description="Column name for option rights (call/put)")
-    midpoint_col: str = Field(default='midpoint', description="Column name for option midpoints")
-    valuation_date: str|datetime = Field(..., description="Valuation date for the option chain")
+    vol_col: str = Field(default="vol", description="Column name for implied volatilities")
+    t_col: str = Field(default="t", description="Column name for time to maturity")
+    strike_col: str = Field(default="strike", description="Column name for strike prices")
+    f_log_m_col: str = Field(default="f_log_moneyness", description="Column name for log moneyness")
+    fwd_m_col: str = Field(default="f_moneyness", description="Column name for forward moneyness")
+    right_col: str = Field(default="right", description="Column name for option rights (call/put)")
+    midpoint_col: str = Field(default="midpoint", description="Column name for option midpoints")
+    valuation_date: str | datetime = Field(..., description="Valuation date for the option chain")
 
     def __post_init__(self):
         self.validate()
-
 
     def validate(self):
         """
@@ -72,7 +74,7 @@ class ChainOutput:
         Raises ValueError if any required column is missing.
         """
         if self.source_from_cache:
-            return # Skip validation if sourced from cache
+            return  # Skip validation if sourced from cache
         if self.data_chain is None:
             raise ValueError("Chain DataFrame cannot be None")
         if self.data_chain.empty:
@@ -84,17 +86,16 @@ class ChainOutput:
             self.pv_div_col,
             self.div_schedule_col,
             self.rate_col,
-            'expiration',
+            "expiration",
             self.vol_col,
             self.t_col,
             self.fwd_col_name,
-
         ]
 
         for col in required_columns:
             if col not in self.data_chain.columns:
                 raise ValueError(f"Missing required column: {col}")
-            
+
     def _cache_chain(self):
         """
         Caches the chain DataFrame to optimize access to frequently used columns.
@@ -109,35 +110,28 @@ class ChainOutput:
         6. This approach minimizes memory usage and improves performance by avoiding redundant data storage.
         7. The use of properties allows for easy and intuitive access to the cached data.
         """
-    
+
         if self.key not in get_chain_cache():
             if self.data_chain is None:
                 raise ValueError("Chain DataFrame cannot be None when caching. Consider reloading the chain.")
             if self.data_chain.empty:
                 raise ValueError("Chain DataFrame cannot be empty when caching. Consider reloading the chain.")
-            
+
             ## Add config hash to the chain for versioning
             chain = self.data_chain.copy()
-            chain['config_hash']=hash_config(get_pricing_config())
+            chain["config_hash"] = hash_config(get_pricing_config())
             get_chain_cache()[self.key] = chain
             logger.info("Caching chain for key in ChainOutput: %s", self.key)
         else:
             logger.info("Chain with key: %s already cached.", self.key)
-        
+
         if self.data_chain is not None:
             self.data_chain = None
-        
-
 
     @property
     def key(self):
-        val_date = pd.to_datetime(self.valuation_date).strftime('%Y-%m-%d')
-        return chain_cache_key(
-            self.root,
-            val_date,
-            self.div_type,
-            self.vol_type
-        )
+        val_date = pd.to_datetime(self.valuation_date).strftime("%Y-%m-%d")
+        return chain_cache_key(self.root, val_date, self.div_type, self.vol_type)
 
     @property
     def chain(self):
@@ -176,17 +170,14 @@ class ChainOutput:
     @property
     def rates(self) -> Optional[pd.Series]:
         return None if self.rate_col is None else self.chain[self.rate_col]
-            
+
     def __repr__(self):
         return f"<ChainOutput(root={self.root}, valuation_date={self.valuation_date})>"
 
 
 def _get_chain_key(symbol: str, run_date: str, global_config: SSVIGlobalConfig) -> str:
     return chain_cache_key(
-        root=symbol,
-        valuation_date=run_date,
-        div_type=global_config.div_type,
-        vol_type=global_config.vol_type
+        root=symbol, valuation_date=run_date, div_type=global_config.div_type, vol_type=global_config.vol_type
     )
 
 
@@ -197,9 +188,9 @@ def _calculate_vol(chain: pd.DataFrame, run_date: str, global_config: SSVIGlobal
         return get_bs_vol_on_chain(
             chain=chain,
             valuation_date=run_date,
-            rate_col_name='risk_free_rate',
-            forward_col_name='f',
-            mid_col_name='midpoint',
+            rate_col_name="risk_free_rate",
+            forward_col_name="f",
+            mid_col_name="midpoint",
         )
 
     if global_config.vol_type == VolType.BINOMIAL:
@@ -207,37 +198,34 @@ def _calculate_vol(chain: pd.DataFrame, run_date: str, global_config: SSVIGlobal
             chain=chain,
             valuation_date=run_date,
             n=global_config.N,
-            rates_col_name='risk_free_rate',
-            div_type=global_config.div_type.value
+            rates_col_name="risk_free_rate",
+            div_type=global_config.div_type.value,
         )
 
     raise ValueError(f"Invalid vol_type: {global_config.vol_type}")
 
 
 def _process_fresh_chain(symbol: str, run_date: str, global_config: SSVIGlobalConfig) -> pd.DataFrame:
-    logger.info("Loading chain for %s on %s with key: %s", symbol, run_date, _get_chain_key(symbol, run_date, global_config))
+    logger.info(
+        "Loading chain for %s on %s with key: %s", symbol, run_date, _get_chain_key(symbol, run_date, global_config)
+    )
     chain = get_chain(symbol, run_date)
     chain = format_chain(chain)
 
     logger.info("Initial chain size: %s", chain.shape[0])
 
     r = get_rates(run_date)
-    chain['risk_free_rate'] = r
+    chain["risk_free_rate"] = r
     logger.info("Risk-free rate on %s: %s", run_date, r)
 
-    chain = get_forward_price_on_chain(
-        chain=chain,
-        valuation_date=run_date,
-        r=r,
-        div_type=global_config.div_type
-    )
+    chain = get_forward_price_on_chain(chain=chain, valuation_date=run_date, r=r, div_type=global_config.div_type)
     logger.info("After F load: %s", chain.shape[0])
 
     chain = ChainChecklist.remove_junk_quotes(chain)
     logger.info("After junk removal: %s", chain.shape[0])
 
     vol = _calculate_vol(chain, run_date, global_config)
-    chain['vol'] = vol
+    chain["vol"] = vol
     logger.info("After vol calculation: %s", chain.shape[0])
     return chain
 
@@ -247,8 +235,8 @@ def _check_cached_chain(chain_cache: dict, key: str, global_config: SSVIGlobalCo
     if chain is None:
         return chain, True, False  # chain, should_reload, deleted_flag
 
-    col_available = 'config_hash' in chain.columns
-    update_needed = not is_latest_config(chain['config_hash'].values[0]) if col_available else True
+    col_available = "config_hash" in chain.columns
+    update_needed = not is_latest_config(chain["config_hash"].values[0]) if col_available else True
 
     if update_needed and global_config.overwrite_existing:
         logger.warning("Cached chain config hash is outdated. Overwriting existing cache.")
@@ -256,31 +244,35 @@ def _check_cached_chain(chain_cache: dict, key: str, global_config: SSVIGlobalCo
         return None, True, True
 
     if update_needed:
-        logger.warning("Cached chain config hash is outdated. Use 'overwrite_existing=True' to overwrite from get_global_config.")
+        logger.warning(
+            "Cached chain config hash is outdated. Use 'overwrite_existing=True' to overwrite from get_global_config."
+        )
     return chain, False, False
 
 
-def _build_chain_output(symbol: str, run_date: str, chain: pd.DataFrame, global_config: SSVIGlobalConfig) -> ChainOutput:
+def _build_chain_output(
+    symbol: str, run_date: str, chain: pd.DataFrame, global_config: SSVIGlobalConfig
+) -> ChainOutput:
     return ChainOutput(
         root=symbol,
         data_chain=chain,
-        spot=chain['spot'].iloc[0],
+        spot=chain["spot"].iloc[0],
         div_type=global_config.div_type,
         vol_type=global_config.vol_type,
-        pv_div_col='div_pv',
-        fwd_col_name='f',
-        rate_col='risk_free_rate',
-        vol_col='vol',
-        t_col='t',
-        strike_col='strike',
-        right_col='right',
-        midpoint_col='midpoint',
+        pv_div_col="div_pv",
+        fwd_col_name="f",
+        rate_col="risk_free_rate",
+        vol_col="vol",
+        t_col="t",
+        strike_col="strike",
+        right_col="right",
+        midpoint_col="midpoint",
         valuation_date=run_date,
-        div_schedule_col='div_schedule'
+        div_schedule_col="div_schedule",
     )
 
 
-def _load_chain(symbol: str, run_date: str, ignore_cache: bool=False) -> ChainOutput:
+def _load_chain(symbol: str, run_date: str, ignore_cache: bool = False) -> ChainOutput:
     """
     Load and process the option chain for a given symbol and run date.
     Args:
@@ -317,17 +309,18 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
     """
     Market model to load and process option chain data.
     """
+
     model_config = ConfigDict(validate_assignment=True)
     _instances: ClassVar[Dict[str, "MarketChainLoader"]] = {}
     _initialized: bool = PrivateAttr(default=False)
-    
+
     symbol: str = Field(..., description="Symbol of the underlying asset")
-    valuation_date: str|datetime = Field(..., description="Run date for the data")
+    valuation_date: str | datetime = Field(..., description="Run date for the data")
     _chains: Optional[Dict[str, ChainOutput]] = PrivateAttr(default_factory=dict)
 
     ## Post init to format valuation_date
-    def model_post_init(self, context): # pylint: disable=arguments-differ
-        self.valuation_date = pd.to_datetime(self.valuation_date).strftime('%Y-%m-%d')
+    def model_post_init(self, context):  # pylint: disable=arguments-differ
+        self.valuation_date = pd.to_datetime(self.valuation_date).strftime("%Y-%m-%d")
 
     @property
     def run_date(self) -> datetime:
@@ -351,10 +344,10 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         # First-time init for this cached instance:
         # If __pydantic_private__ isn't set yet, it's the first real init.
         if getattr(self, "__pydantic_private__", None) is None:
-            super().__init__(*args, **data)     # sets fields and creates private store
-            self._initialized = True            # safe now
+            super().__init__(*args, **data)  # sets fields and creates private store
+            self._initialized = True  # safe now
             return
-        
+
         # Subsequent inits for this cached instance:
         if self._initialized:
             # Already initialized, just update fields
@@ -372,11 +365,10 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         ## If run_date not in chains, we need to build
         if self.run_date not in self._chains:
             return True
-        
+
         ## If GLOBAL_CONFIG has changed, we need to rebuild
         existing_chain = self._chains[self.run_date]
-        if (existing_chain.div_type != global_conf.div_type or
-            existing_chain.vol_type != global_conf.vol_type):
+        if existing_chain.div_type != global_conf.div_type or existing_chain.vol_type != global_conf.vol_type:
             return True
 
     def build_chain(self, force_rebuild: bool = False, ignore_cache: bool = False) -> ChainOutput:
@@ -391,10 +383,7 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         chain_cache = get_chain_cache()
         ## Generate cache key for the chain
         chain_key = chain_cache_key(
-            root=self.symbol,
-            valuation_date=self.run_date,
-            div_type=global_conf.div_type,
-            vol_type=global_conf.vol_type
+            root=self.symbol, valuation_date=self.run_date, div_type=global_conf.div_type, vol_type=global_conf.vol_type
         )
 
         ## Check if key exists in cache
@@ -402,21 +391,23 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
 
         ## If force_rebuild is True, or if the chain needs to be rebuilt based on config changes
         if self._force_rebuild() or force_rebuild:
-            logger.info("Rebuilding chain for %s on %s because config changed or not cached", self.symbol, self.run_date)
-            
+            logger.info(
+                "Rebuilding chain for %s on %s because config changed or not cached", self.symbol, self.run_date
+            )
+
             ## If key exists in cache, use it to create ChainOutput
             ## Doing this to avoid reloading the chain into memory again.
             if key_in_cache:
                 logger.info("Using cached chain data for %s on %s to rebuild ChainOutput", self.symbol, self.run_date)
                 self._chains[self.run_date] = self._create_chain_output_from_cache(chain_key)
-            
+
             ## Else, load from source
             else:
                 logger.info("Loading chain data from source for %s on %s", self.symbol, self.run_date)
                 self._chains[self.run_date] = _load_chain(self.symbol, self.run_date, ignore_cache=ignore_cache)
             logger.info("Rebuilt chain for %s on %s", self.symbol, self.run_date)
-        
-        ## If not force build, use ChainOutput in self._chains, 
+
+        ## If not force build, use ChainOutput in self._chains,
         ## pegged to a single run_date, saved under a singleton instance per symbol
         else:
             logger.info("Using cached chain for %s on %s", self.symbol, self.run_date)
@@ -425,7 +416,7 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         if self.run_date not in self._chains:
             logger.info("MarketChainLoader: Loading chain for %s on %s", self.symbol, self.run_date)
             self._chains[self.run_date] = _load_chain(self.symbol, self.run_date, ignore_cache=ignore_cache)
-        
+
         return self._chains[self.run_date]
 
     def get_chain(self) -> ChainOutput:
@@ -435,7 +426,7 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         if not self._chains:
             raise ValueError("Chain not built yet. Call build_chain() first.")
         return self._chains[self.run_date]
-    
+
     def _create_chain_output_from_cache(self, key: str) -> ChainOutput:
         """
         Creates a ChainOutput object from the cached chain data.
@@ -452,20 +443,20 @@ class MarketChainLoader(BaseModel, ChainInputModel, SingletonMixin):
         return ChainOutput(
             root=self.symbol,
             data_chain=None,
-            spot=chain['spot'].iloc[0],
+            spot=chain["spot"].iloc[0],
             div_type=global_config.div_type,
             vol_type=global_config.vol_type,
-            pv_div_col='div_pv',
-            fwd_col_name='f',
-            rate_col='risk_free_rate',
-            vol_col='vol',
-            t_col='t',
-            strike_col='strike',
-            right_col='right',
-            midpoint_col='midpoint',
+            pv_div_col="div_pv",
+            fwd_col_name="f",
+            rate_col="risk_free_rate",
+            vol_col="vol",
+            t_col="t",
+            strike_col="strike",
+            right_col="right",
+            midpoint_col="midpoint",
             valuation_date=self.run_date,
-            div_schedule_col='div_schedule',
-            source_from_cache=True
+            div_schedule_col="div_schedule",
+            source_from_cache=True,
         )
 
     @property

@@ -1,6 +1,7 @@
 from typing import ClassVar, Optional
 from dataclasses import dataclass as stdlib_dataclass, field as stdlib_field
-from module_test.raw_code.optionlib_2.vol.ssvi.types import VolSide, DivType, VolType
+from trade.optionlib.config.types import VolSide, DivType, VolType
+
 
 @stdlib_dataclass
 class SSVIGlobalConfig:
@@ -11,6 +12,7 @@ class SSVIGlobalConfig:
 
     Intention is to provide a centralized configuration for the SSVI model that can be easily accessed and modified.
     """
+
     __SINGLETON__: ClassVar[bool] = True
     _CREATED: ClassVar[Optional["SSVIGlobalConfig"]] = None
     _initialized: ClassVar[bool] = False
@@ -62,16 +64,18 @@ class SSVIGlobalConfig:
     def __setattr__(self, name, value):
         ## Ensure enum values are valid
         enum_names = {
-            'vol_side': VolSide,
-            'div_type': DivType,
-            'vol_type': VolType,    
+            "vol_side": VolSide,
+            "div_type": DivType,
+            "vol_type": VolType,
         }
         if name in enum_names:
             if isinstance(value, str):
                 try:
                     value = enum_names[name](value)
                 except ValueError as e:
-                    raise ValueError(f"Invalid value '{value}' for {name}. Allowed values are: {[e.value for e in enum_names[name]]}") from e
+                    raise ValueError(
+                        f"Invalid value '{value}' for {name}. Allowed values are: {[e.value for e in enum_names[name]]}"
+                    ) from e
             elif not isinstance(value, enum_names[name]):
                 raise ValueError(f"{name} must be an instance of {enum_names[name]}")
         super().__setattr__(name, value)

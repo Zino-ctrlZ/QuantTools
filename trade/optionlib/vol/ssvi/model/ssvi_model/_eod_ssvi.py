@@ -6,22 +6,24 @@ from datetime import datetime
 import pandas as pd
 from pydantic import Field, PrivateAttr, ConfigDict
 from trade.helpers.Logging import setup_logger
-from trade.helpers.pydantic import  loud_post_init
+from trade.helpers.pydantic import loud_post_init
 from trade.helpers.helper_types import SingletonMixin
-from module_test.raw_code.optionlib_2.vol.ssvi.model.ssvi_model._parent_ssvi import SSVIParentModel
-from module_test.raw_code.optionlib_2.vol.ssvi.model.chain import ChainOutput, MarketChainLoader
-from module_test.raw_code.optionlib_2.vol.ssvi.model.param_utils import load_ssvi_params_from_cache
-from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import params_cache_key
-from module_test.raw_code.optionlib_2.vol.ssvi.types import VolSide
-from module_test.raw_code.optionlib_2.vol.ssvi.controller import (
+from trade.optionlib.vol.ssvi.model.ssvi_model._parent_ssvi import SSVIParentModel
+from trade.optionlib.vol.ssvi.model.chain import ChainOutput, MarketChainLoader
+from trade.optionlib.vol.ssvi.model.param_utils import load_ssvi_params_from_cache
+from trade.optionlib.vol.ssvi.model.model_utils import params_cache_key
+from trade.optionlib.config.types import VolSide
+from trade.optionlib.config.ssvi.controller import (
     get_background_fits,
     get_global_config,
     get_pricing_config,
     hash_config,
-    get_params_cache
+    get_params_cache,
 )
 
-logger = setup_logger('optionlib.ssvi.model.ssvi_model')
+logger = setup_logger("optionlib.ssvi.model.ssvi_model")
+
+
 class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
     """
     EODMarketSSVIModel extends SSVIModel to handle end-of-day market data.
@@ -35,13 +37,14 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
         chain (Optional[ChainOutput]): The processed option chain data.
         chain_loader (MarketChainLoader): Loader to fetch and process market option chains.
     """
+
     ## Class variable to cache instances
     _instances: ClassVar[dict[Tuple[str, str], "EODMarketSSVIModel"]] = {}
     _initialized: bool = PrivateAttr(default=False)
     model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True)
 
     symbol: str
-    valuation_date: str|datetime
+    valuation_date: str | datetime
     load_on_init: bool = Field(default=True, description="Whether to load chain on initialization")
     chain: Optional[ChainOutput] = Field(default=None, description="Processed option chain output")
     chain_loader: Optional[MarketChainLoader] = Field(default=None, description="Market chain loader instance")
@@ -64,22 +67,18 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
         global_conf = get_global_config()
         if self.chain is None:
             if self.chain_loader is None:
-                loader = MarketChainLoader(
-                    symbol=self.symbol,
-                    valuation_date=self.valuation_date
-                )
+                loader = MarketChainLoader(symbol=self.symbol, valuation_date=self.valuation_date)
             else:
-                assert isinstance(self.chain_loader, MarketChainLoader), "chain_loader must be a MarketChainLoader instance"
+                assert isinstance(
+                    self.chain_loader, MarketChainLoader
+                ), "chain_loader must be a MarketChainLoader instance"
                 loader = self.chain_loader
 
             self.chain_loader = loader
 
             ## Load chain using loader
             ## Use GLOBAL_CONFIG settings for cache and force_calc
-            self.chain = loader.build_chain(
-                force_rebuild=global_conf.force_calc,
-                ignore_cache=global_conf.force_calc
-            )
+            self.chain = loader.build_chain(force_rebuild=global_conf.force_calc, ignore_cache=global_conf.force_calc)
         else:
             assert isinstance(self.chain, ChainOutput), "chain must be a ChainOutput instance"
 
@@ -88,26 +87,25 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
 
         super().model_post_init(_)
 
-    def __new__(cls, symbol: str, valuation_date: str|datetime, *args, **kwargs):
-        key = (symbol, pd.to_datetime(valuation_date).strftime('%Y-%m-%d'))
+    def __new__(cls, symbol: str, valuation_date: str | datetime, *args, **kwargs):
+        key = (symbol, pd.to_datetime(valuation_date).strftime("%Y-%m-%d"))
         if key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[key] = instance
         else:
             logger.info("Using cached instance for %s on %s", symbol, valuation_date)
         return cls._instances[key]
-    
+
     def __init__(self, *args, **data):
         # First-time init for this cached instance:
         # If __pydantic_private__ isn't set yet, it's the first real init.
         if getattr(self, "__pydantic_private__", None) is None:
-            super().__init__(*args, **data)     # sets fields and creates private store
-            self._initialized = True            # safe now
-
+            super().__init__(*args, **data)  # sets fields and creates private store
+            self._initialized = True  # safe now
 
     def __repr__(self):
         return f"<EODMarketSSVIModel(symbol={self.symbol}, valuation_date={self.valuation_date}>"
-    
+
     def load_chain(self, force_rebuild: bool = False, ignore_cache: bool = False):
         """
         Load or reload the option chain using the chain loader.
@@ -116,18 +114,12 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
             ignore_cache (bool): Whether to ignore any existing cache.
         """
         if self.chain_loader is None:
-            self.chain_loader = MarketChainLoader(
-                symbol=self.symbol,
-                valuation_date=self.valuation_date
-            )
-        
-        self.chain = self.chain_loader.build_chain(
-            force_rebuild=force_rebuild,
-            ignore_cache=ignore_cache
-        )
+            self.chain_loader = MarketChainLoader(symbol=self.symbol, valuation_date=self.valuation_date)
+
+        self.chain = self.chain_loader.build_chain(force_rebuild=force_rebuild, ignore_cache=ignore_cache)
         ## Cache chain immediately to get it off memory
         self.chain._cache_chain()
-    
+
     def load_models_from_cache(self):
         """
         Load SSVI model parameters for other option sides (call, put, otm) from cache if available.
@@ -140,14 +132,13 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
                 valuation_date=self.valuation_date,
                 div_type=self.div_type,
                 vol_type=self.model,
-                side=VolSide(side)
+                side=VolSide(side),
             )
             if cached_params is not None:
                 logger.info("Loaded cached params for %s model on %s", side, self.chain.key)
                 self.models[side].params = cached_params
             else:
                 logger.info("No cached params found for %s model on %s", side, self.chain.key)
-    
 
     def fit(self):
         """
@@ -166,24 +157,20 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
         ## Load chain if not already loaded
         if self.chain is None:
             logger.warning("Chain not loaded for %s. Loading now...", self.chain.key)
-            self.load_chain(
-                force_rebuild=global_conf.force_calc,
-                ignore_cache=global_conf.force_calc
-            )
+            self.load_chain(force_rebuild=global_conf.force_calc, ignore_cache=global_conf.force_calc)
 
         if not global_conf.force_calc:
             self.load_models_from_cache()
             if all(model.params is not None for model in self.models.values()):
                 logger.info("All models are already fitted for %s", self.chain.key)
                 return
-        
+
         ## If not all fitted, fit the primary model and others in background
         super().fit()
 
         ## Save to cache in background, only when global_conf.save_cache is True
         if global_conf.save_cache:
-            global_background_fits.submit(fn=self.save_cache,
-                                        key=f"{self.chain.key}_save_cache")
+            global_background_fits.submit(fn=self.save_cache, key=f"{self.chain.key}_save_cache")
 
     def save_cache(self):
         """
@@ -223,12 +210,13 @@ class EODMarketSSVIModel(SSVIParentModel, SingletonMixin):
                 continue
 
             params_dict = params.__dict__
-            params_dict['config_hash'] = hash_config(get_pricing_config())
-            key = params_cache_key(root=self.symbol,
-                                   valuation_date=self.valuation_date,
-                                   div_type=self.div_type,
-                                   vol_type=self.model,
-                                   side=VolSide(side))
+            params_dict["config_hash"] = hash_config(get_pricing_config())
+            key = params_cache_key(
+                root=self.symbol,
+                valuation_date=self.valuation_date,
+                div_type=self.div_type,
+                vol_type=self.model,
+                side=VolSide(side),
+            )
             if key not in params_cache:
                 params_cache[key] = params_dict
-

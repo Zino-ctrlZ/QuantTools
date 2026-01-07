@@ -465,9 +465,12 @@ class ZcoreScalar:
         Get the z-score scaler for a specific symbol on a specific date.
         """
         if isinstance(date, str):
-            date = pd.Timestamp(date)
+            date = pd.Timestamp(date).date()
+        elif isinstance(date, datetime):
+            date = date.date()
 
         scaler_ts = self.get_scaler(sym)
+        date = pd.to_datetime(date).strftime("%Y-%m-%d")
         if date not in scaler_ts.index:
             raise ValueError(f"Date {date} not found in scaler_ts index for symbol {sym}.")
 

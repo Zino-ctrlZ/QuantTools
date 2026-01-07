@@ -1,13 +1,9 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Union
+from typing import List
 import numpy as np
-from copy import deepcopy
-import pandas as pd
-import numpy as np
-from typing import List, Tuple
+from typing import  Tuple
 from numba import njit
-from numba.typed import List
 from numba import types
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import Scalar
@@ -21,209 +17,6 @@ from ..assets.forward import (
     EquityForward
 )
 logger = setup_logger('trade.optionlib.pricing.binomial')
-
-
-
-
-
-# Functions
-# def crr_init_parameters(
-#     sigma: float,
-#     r: float,
-#     T: float,
-#     N: int,
-#     div_yield: float = 0.0,
-#     dividend_type: str = 'discrete'
-# ):
-#     """
-#     params:
-#     sigma: Volatility of the underlying asset
-#     r: Risk-free interest rate
-#     dt: Time step size
-#     div_yield: Dividend yield (if applicable)
-#     dividend_type: Type of dividend ('discrete' or 'continuous'
-#     """
-#     if N <= 0:
-#         raise ValueError("N must be a positive integer.")
-#     if T <= 0:
-#         raise ValueError("T must be a positive number.")
-#     if sigma < 0:
-#         raise ValueError("sigma must be a non-negative number.")
-#     dt = T / N
-#     if dividend_type == 'continuous':
-#         y = div_yield ## Continuous dividend yield adjustment
-#     else:
-#         y = 0.0
-#     u = np.exp(sigma * np.sqrt(dt))
-#     d = 1 / u
-#     p = (np.exp((r - y) * dt) - d) / (u - d)
-#     if p < 0 or p > 1:
-#         logger.warning(f"Invalid probability p={p}. It must be between 0 and 1.")
-#         logger.warning(f"Input parameters: sigma={sigma}, r={r}, T={T}, N={N}, div_yield={div_yield}, dividend_type={dividend_type}")
-#         logger.warning(f"Model Initialization: u={u}, d={d}, p={p}")
-#         # raise ValueError(f"Invalid probability p={p}. It must be between 0 and 1.")
-#     return u, d, p
-
-
-# def build_tree(
-#     S0: float, 
-#     u: float, 
-#     d: float, 
-#     N: int
-# ):
-#     """
-#     params:
-#     S0: Initial stock price
-#     u: Up factor (multiplier for upward movement)
-#     d: Down factor (multiplier for downward movement)
-#     N: Number of time steps in the binomial tree
-#     Returns:
-#     A 2D list representing the binomial tree of stock prices.
-#     """
-#     if N < 0:
-#         raise ValueError("N must be a non-negative integer.")
-
-#     stock_tree = [
-#         [S0 * (u ** j) * (d ** (i - j)) for j in range(i + 1)]
-#         for i in range(N + 1)
-#     ]
-#     if len(stock_tree) != N + 1:
-#         raise ValueError(f"Expected {N + 1} rows in the stock tree, got {len(stock_tree)}.")
-#     return stock_tree
-
-
-# def apply_discrete_dividends(
-#     discrete_dividends: List[tuple],
-#     stock_tree: List[List[float]],
-#     N: int
-
-# )-> List[List[float]]: 
-#     """
-#     Apply discrete dividends to the stock tree.
-#     discrete_dividends: List of tuples (time_fraction, dividend_amount)
-#     stock_tree: The binomial tree of stock prices
-#     N: Number of time steps in the binomial tree
-#     Returns:
-#     A modified stock tree with dividends applied.
-#     """
-#     if not list(discrete_dividends):
-#         return stock_tree 
-    
-#     for t_frac, div in discrete_dividends:
-#         div_step = min(int(round(t_frac * N)), N)
-#         for i in range(div_step, N + 1):
-#             stock_tree[i] = [max(s - div, 0) for s in stock_tree[i]]
-#     return stock_tree
-
-
-# def create_option_tree(
-#         stock_tree: List[List[float]],
-#         K: float,
-#         option_type: str,
-#         N: int
-# )-> List[List[float]]:
-#     """
-#     Create the option value tree based on the stock price tree.
-#     stock_tree: The binomial tree of stock prices
-#     K: Strike price of the option
-#     option_type: 'c' for call, 'p' for put
-#     N: Number of time steps in the binomial tree
-#     Returns:
-#     A 2D list representing the option value tree.
-#     """
-#     tree = deepcopy(stock_tree)
-#     terminal_prices = tree[-1]  # Get the terminal prices from the last row of the stock tree
-#     if option_type == 'c':
-#         option_values = [max(0, price - K) for price in terminal_prices]  # Call option payoff
-#     elif option_type == 'p':
-#         option_values = [max(0, K - price) for price in terminal_prices]
-    
-#     tree[-1] = option_values  # Set the terminal option values in the last row of the tree
-#     return option_values
-
-# def calculate_option_values(
-#     stock_tree: List[List[float]],
-#     option_values: List[float],
-#     K: float,
-#     r: float,
-#     dt: float,
-#     N: int,
-#     p: float = 0.5,  # Probability of upward movement
-#     american: bool = False,
-#     option_type: str = 'c'
-# ) -> List[List[float]]:
-#     """
-#     Calculate the option values at each node in the binomial tree.
-#     stock_tree: The binomial tree of stock prices
-#     option_values: The terminal option values
-#     r: Risk-free interest rate
-#     dt: Time step size
-#     N: Number of time steps in the binomial tree
-#     Returns:
-#     A 2D list representing the option value tree.
-#     """
-#     # Backward induction to calculate option values at each node
-#     for i in range(N - 1, -1, -1):
-#         option_values = [
-#             np.exp(-r * dt) * (p * option_values[j+1] + (1 - p) * option_values[j]) ## Ordered from down to up.
-#             ## Moves from all power in d, to all power in u by 1 step. Counting down on size i
-#             for j in range(i + 1) ## At each node, there is Node+1 size
-#         ]
-
-#         # If American option, check for early exercise
-#         if american:
-#             early_exercise = [
-#                 max(val, (p - K) if option_type == 'c' else (K - p))
-#                 for p, val in zip(stock_tree[i], option_values)
-#             ]
-#             option_values = early_exercise
-#         if i==1:
-#             V1 = option_values.copy()
-#         elif i==2:
-#             V2 = option_values.copy()
-#     return option_values[0], V1, V2
-
-# def crr_binomial_pricing(
-#     K: float,
-#     T: float,
-#     sigma: float,
-#     r: float,
-#     N: int = 100,
-#     spot_price: float = None,
-#     dividend_type: str = 'discrete',
-#     div_amount: float = 0.0,
-#     option_type: str = 'c',
-#     american: bool = False
-# ) -> float:
-#     """
-#     Calculate the price of an option using the Cox-Ross-Rubinstein binomial model.
-    
-#     Parameters:
-#     - K: Strike price
-#     - expiration: Expiration date of the option
-#     - sigma: Volatility of the underlying asset
-#     - r: Risk-free interest rate
-#     - N: Number of time steps in the binomial tree
-#     - spot_price: Current price of the underlying asset (optional)
-#     - dividend_type: Type of dividend ('discrete' or 'continuous')
-#     - div_amount: Amount of dividend (if applicable)
-#     - option_type: 'c' for call, 'p' for put
-#     - start_date: Start date for the option pricing (optional)
-#     - valuation_date: Date for which the option is priced (optional)
-    
-#     Returns:
-#     The calculated price of the option.
-#     """
-#     if spot_price is None:
-#         raise ValueError("spot_price must be provided.")
-#     u, d, p = crr_init_parameters(sigma, r, T, N, div_yield=div_amount if dividend_type == 'continuous' else 0.0, dividend_type=dividend_type)
-#     stock_tree = build_tree(spot_price, u, d, N)
-#     if dividend_type == 'discrete':
-#         stock_tree = apply_discrete_dividends(div_amount, stock_tree, N)
-
-#     option_values = create_option_tree(stock_tree, K, option_type, N)
-#     option_price, _, _ = calculate_option_values(stock_tree, option_values, K, r, T / N, N, p, american, option_type)
-#     return option_price
 
 
 def convert_schedule_to_numba(schedule: list[tuple[float, float]]) -> List:
@@ -462,7 +255,7 @@ def crr_binomial_pricing(
     option_type: str = 'c',
     american: bool = False,
     div_yield: float = 0.0,
-    dividends: List[Tuple[float, float]] = [],
+    dividends: List[Tuple[float, float]] = [], # noqa
     dividend_type: str = 'discrete'
 ) -> float:
     """
@@ -511,7 +304,7 @@ def _crr_binomial_pricing_jit(
     option_type: int = 0,
     american: bool = False,
     div_yield: float = 0.0,
-    dividends: List[Tuple[float, float]] = [],
+    dividends: List[Tuple[float, float]] = [], # noqa
     is_continuous: bool = True
 ) -> float:
     """
@@ -989,7 +782,7 @@ class NodeBinomialBase(BinomialBase):
         tree = self.tree
 
         for i in range(self.N - 1, -1, -1):
-            for j, node in enumerate(tree[i]):
+            for _, node in enumerate(tree[i]):
                 up_val = node.up.option_value
                 down_val = node.down.option_value
                 expected = np.exp(-self.r * self.dt) * (

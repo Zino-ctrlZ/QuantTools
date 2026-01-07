@@ -10,33 +10,33 @@ from scipy.interpolate import interp1d
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pydantic import loud_post_init
 from trade.helpers.helper import assert_member_of_enum
-from module_test.raw_code.optionlib_2.vol.ssvi.model.base import BaseSSVIModel
-from module_test.raw_code.optionlib_2.vol.ssvi.model.model_utils import (
-    convert_date_to_time_to_maturity,
-    handle_strikes
-)
+from trade.optionlib.vol.ssvi.model.base import BaseSSVIModel
+from trade.optionlib.vol.ssvi.model.model_utils import convert_date_to_time_to_maturity, handle_strikes
 
-from module_test.raw_code.optionlib_2.vol.ssvi.model.params import SSVIModelParams
-from module_test.raw_code.optionlib_2.vol.ssvi.model.param_utils import (
+from trade.optionlib.vol.ssvi.model.params import SSVIModelParams
+from trade.optionlib.vol.ssvi.model.param_utils import (
     build_svi_params_obj,
     predict_vol,
 )
-from module_test.raw_code.optionlib_2.vol.ssvi.vol_math import (
+from trade.optionlib.vol.ssvi.vol_math import (
     get_best_params,
     get_surface_params,
     get_atm_t,
     get_atm_vol,
 )
 
-from module_test.raw_code.optionlib_2.vol.ssvi.controller import get_global_config
-from module_test.raw_code.optionlib_2.vol.ssvi.global_config import SSVIGlobalConfig
-from module_test.raw_code.optionlib_2.vol.ssvi.model.chain import ChainOutput
-from module_test.raw_code.optionlib_2.vol.ssvi.types import (
+from trade.optionlib.config.ssvi.controller import get_global_config
+from trade.optionlib.config.ssvi.global_config import SSVIGlobalConfig
+from trade.optionlib.vol.ssvi.model.chain import ChainOutput
+from trade.optionlib.config.types import (
     VolSide,
     DivType,
     VolType,
 )
-logger = setup_logger('optionlib.ssvi.model.ssvi_model')
+
+logger = setup_logger("optionlib.ssvi.model.ssvi_model")
+
+
 class _SSVIModel(BaseSSVIModel, BaseModel):
     """
     SSVI Model for Stochastic Volatility Surface.
@@ -53,19 +53,17 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         div_type (DivType): The type of dividend handling ('discrete', 'continuous').
         model (VolType): The type of volatility model ('binomial', 'normal', etc.).
         params (Optional[SSVIModelParams]): The parameters of the SSVI model after fitting.
-    
+
     Args:
         chain (ChainOutput): The option chain data.
         valuation_date (str | datetime): The valuation date for the option chain.
         right (VolSide): The side of the volatility surface to model ('call', 'put', 'otm').
     """
+
     # ==============================
     # Class Variables
     # ==============================
-    model_config = ConfigDict(validate_assignment=True, 
-                              arbitrary_types_allowed=True,
-                              frozen=True,
-                              extra='forbid')
+    model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True, frozen=True, extra="forbid")
     global_config: ClassVar[SSVIGlobalConfig] = get_global_config()
 
     # ==============================
@@ -74,12 +72,12 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
 
     ## Compulsory Inputs
     chain: ChainOutput
-    valuation_date: str|datetime
+    valuation_date: str | datetime
     right: VolSide
 
     ## Private Attributes
-    _atm_t:list = PrivateAttr(default_factory=list)
-    _atm_iv:list = PrivateAttr(default_factory=list)
+    _atm_t: list = PrivateAttr(default_factory=list)
+    _atm_iv: list = PrivateAttr(default_factory=list)
     _fwd_interp: interp1d = PrivateAttr(default=None)
     _params: SSVIModelParams = PrivateAttr(default=None)
 
@@ -89,7 +87,7 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         Returns the number of iterations for model fitting.
         """
         return get_global_config().model_iterations
-    
+
     @iterations.setter
     def iterations(self, value: int):
         get_global_config().model_iterations = value
@@ -105,21 +103,22 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
     def chunk_size(self, value: int):
         get_global_config().chunk_size = value
 
-
     @property
     def div_type(self) -> DivType:
         return self.chain.div_type
 
-    @ property
+    @property
     def params(self) -> Optional[SSVIModelParams]:
         return self._params
-    
+
     @property
     def fwd_interp(self) -> interp1d:
         if self._fwd_interp is None:
-            raise ValueError("Forward interpolation function is not initialized. Ensure the model is initialized properly.")
+            raise ValueError(
+                "Forward interpolation function is not initialized. Ensure the model is initialized properly."
+            )
         return self._fwd_interp
-    
+
     @property
     def atm_t(self) -> list:
         return self._atm_t
@@ -137,10 +136,10 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         view = self.chain.chain
         if view is None or view.empty:
             raise ValueError("Chain cannot be None or empty")
-        
+
         ## Seperate chain into calls, puts, and otm
-        call_bool = view[self.chain.right_col].str.lower() == 'c'
-        put_bool = view[self.chain.right_col].str.lower() == 'p'
+        call_bool = view[self.chain.right_col].str.lower() == "c"
+        put_bool = view[self.chain.right_col].str.lower() == "p"
 
         ## Spliting by right
         if self.right == VolSide.CALL:
@@ -148,14 +147,14 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         elif self.right == VolSide.PUT:
             chain = view[put_bool].copy()
         elif self.right == VolSide.OTM:
-            chain = view[((call_bool) & (view[self.chain.f_log_m_col] >= 0)) |
-                          ((put_bool) & (view[self.chain.f_log_m_col] < 0))].copy()
+            chain = view[
+                ((call_bool) & (view[self.chain.f_log_m_col] >= 0)) | ((put_bool) & (view[self.chain.f_log_m_col] < 0))
+            ].copy()
         else:
             raise ValueError(f"Invalid right side: {self.right}. Must be 'call', 'put', or 'otm'.")
 
         return chain
-        
-    
+
     @model.setter
     def model(self, value: VolType):
         enum_v = assert_member_of_enum(value, VolType)
@@ -170,14 +169,14 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         return f"<SSVIModel(valuation_date={self.valuation_date}, right={self.right}, params={self.params})>"
 
     @loud_post_init
-    def model_post_init(self, context): # pylint: disable=arguments-differ
+    def model_post_init(self, context):  # pylint: disable=arguments-differ
         """
         Post-initialization to validate and initialize the model.
         """
         self.validate()
         self.initialize()
 
-    def validate(self): # pylint: disable=arguments-renamed
+    def validate(self):  # pylint: disable=arguments-renamed
         """
         Validate the input chain DataFrame to ensure it contains all required columns.
         Raises ValueError if any required column is missing.
@@ -190,7 +189,7 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         Initialize the SSVI model by separating the option chain into calls, puts, and OTM options.
         Also prepares the ATM parameters for fitting.
         """
-        
+
         ## Chain Now
         chain = self.dataframe_chain
 
@@ -199,10 +198,10 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         self._atm_iv = get_atm_vol(self.dataframe_chain, self.chain.f_log_m_col, self.chain.vol_col)
 
         ## Prepare fwd_interp
-        self._fwd_interp= interp1d(
-            x= chain[self.chain.t_col].values,
-            y=chain[self.chain.fwd_col_name].values,)
-
+        self._fwd_interp = interp1d(
+            x=chain[self.chain.t_col].values,
+            y=chain[self.chain.fwd_col_name].values,
+        )
 
     def fit(self):
         """
@@ -216,7 +215,7 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
         """
         if self.dataframe_chain is None or self.dataframe_chain.empty:
             raise ValueError("Dataframe chain is empty or not set. Ensure the model is initialized properly.")
-        
+
         if self._params is not None:
             logger.info("Model is already fitted for %s", self.chain.key)
             return
@@ -233,11 +232,10 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
             atm_t = np.array(self._atm_t)
             atm_iv = np.array(self._atm_iv)
             if atm_t.size == 0 or atm_iv.size == 0:
-                raise ValueError(f"No ATM maturities or volatilities found in {right_chain_attr} chain. Adjust PRICING_CONFIG['ATM_WIDTH'].")
-            (var0_hat, var_inf_hat, kappa_hat), atm_loss = get_best_params(
-                atm_t,
-                atm_iv
-            )
+                raise ValueError(
+                    f"No ATM maturities or volatilities found in {right_chain_attr} chain. Adjust PRICING_CONFIG['ATM_WIDTH']."
+                )
+            (var0_hat, var_inf_hat, kappa_hat), atm_loss = get_best_params(atm_t, atm_iv)
             eta_hat, lambda_hat, rho_hat, surface_loss = get_surface_params(
                 chain[self.chain.strike_col].values,
                 chain[self.chain.t_col].values,
@@ -247,7 +245,7 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
                 kappa_hat,
                 chain[self.chain.vol_col].values,
                 iterations=self.iterations,
-                chunk_size=self.chunk_size
+                chunk_size=self.chunk_size,
             )
             params = build_svi_params_obj(
                 chain=chain,
@@ -258,16 +256,19 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
                 lambda_hat=lambda_hat,
                 rho_hat=rho_hat,
                 atm_loss=atm_loss,
-                surface_loss=surface_loss
+                surface_loss=surface_loss,
             )
 
             return params
-        self._params = inner_fit('dataframe_chain')
-    
-    def predict(self,
-                k: float| np.ndarray,
-                exp: str| datetime| np.ndarray = None,
-                strike_type: Literal['p', 'k', 'pf', 'f'] = 'f'):
+
+        self._params = inner_fit("dataframe_chain")
+
+    def predict(
+        self,
+        k: float | np.ndarray,
+        exp: str | datetime | np.ndarray = None,
+        strike_type: Literal["p", "k", "pf", "f"] = "f",
+    ):
         """
         Predict the implied volatility for a given strike and expiration.
         Args:
@@ -286,39 +287,37 @@ class _SSVIModel(BaseSSVIModel, BaseModel):
             np.ndarray: Predicted implied volatility for the given parameters.
         """
         if exp is None:
-            exp_vals = ['3m']
+            exp_vals = ["3m"]
         else:
-            exp_vals = exp if hasattr(exp, '__iter__') and not isinstance(exp, str) else [exp]
-            
+            exp_vals = exp if hasattr(exp, "__iter__") and not isinstance(exp, str) else [exp]
+
         exp = np.array(exp_vals)
         dtes = np.maximum(
-            np.array([convert_date_to_time_to_maturity(e, self.valuation_date) for e in exp]),
-            self.chain.t.min()
+            np.array([convert_date_to_time_to_maturity(e, self.valuation_date) for e in exp]), self.chain.t.min()
         )
         fwd = np.asarray(self._fwd_interp(dtes))
-        k = np.asarray(k if hasattr(k, '__iter__') else [k])
+        k = np.asarray(k if hasattr(k, "__iter__") else [k])
 
         # Broadcast k across maturities
-        spot = self.dataframe_chain['spot'].iloc[0]  # dynamic access as you prefer
-        K = np.vstack([
-            handle_strikes(k=k, f=f, strike_type=strike_type, spot=spot)
-            for f in fwd
-        ])
+        spot = self.dataframe_chain["spot"].iloc[0]  # dynamic access as you prefer
+        K = np.vstack([handle_strikes(k=k, f=f, strike_type=strike_type, spot=spot) for f in fwd])
         pretty_k = np.vstack([k for _ in fwd])
 
         T = np.repeat(dtes[:, None], K.shape[1], axis=1)
-        F = np.repeat(fwd[:,  None], K.shape[1], axis=1)
+        F = np.repeat(fwd[:, None], K.shape[1], axis=1)
 
         vols = predict_vol(k=K.ravel(), t=T.ravel(), f=F.ravel(), params=self.params)
 
         # Single DF build; index only if you rely on it downstream
-        df = pd.DataFrame({
-            'strike': pretty_k.ravel(),
-            'exp':    np.repeat(dtes, K.shape[1]),
-            'vol':    vols,
-            'fwd':    np.repeat(fwd,  K.shape[1]),
-        })
+        df = pd.DataFrame(
+            {
+                "strike": pretty_k.ravel(),
+                "exp": np.repeat(dtes, K.shape[1]),
+                "vol": vols,
+                "fwd": np.repeat(fwd, K.shape[1]),
+            }
+        )
 
         # map back to the original exp tokens
-        df['exp'] = df['exp'].map(dict(zip(dtes, exp)))
-        return df.set_index(['strike','exp']).sort_index()
+        df["exp"] = df["exp"].map(dict(zip(dtes, exp)))
+        return df.set_index(["strike", "exp"]).sort_index()

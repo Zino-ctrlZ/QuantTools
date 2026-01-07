@@ -14,7 +14,7 @@ from trade.helpers.helper import (
 from trade.helpers.Context import Context
 from trade.assets.Stock import Stock
 from ..utils.market_data import get_div_schedule
-from ..utils.format import assert_equal_length, convert_to_array
+from ..utils.format import assert_equal_length
 from ..utils.timing import format_dates, subtract_dates, validate_dates
 from ..config.defaults import (
     DAILY_BASIS,
@@ -58,7 +58,7 @@ def infer_frequency(div_history: pd.DataFrame):
     """
     date_diffs = div_history.index.to_series().diff()
     day_diffs = date_diffs.dt.days
-    most_common_day = day_diffs.mode()[0]
+    _ = day_diffs.mode()[0]
     frequency_labels = day_diffs.apply(classify_frequency)
     return frequency_labels.mode()[0]
     
@@ -628,7 +628,7 @@ def get_vectorized_dividend_scehdule(
     lookback_yrs = kwargs.get('lookback_yrs', DIVIDEND_LOOKBACK_YEARS)
     method =  kwargs.get('method', DIVIDEND_FORECAST_METHOD)
     tick_history = get_div_histories(tickers)   
-    for ticker, start_date, end_date, val_date in zip(
+    for ticker, _, end_date, val_date in zip(
         tickers,
         start_dates,
         end_dates,
