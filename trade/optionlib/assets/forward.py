@@ -85,9 +85,9 @@ class Forward(ForwardModel):
                  div_amount: Union[float, List[float]] = 1.0,
                  **kwargs):
         """
-        Initialize a Forward object.
-        start_date: datetime or str - The start date of the forward contract.
-        end_date: datetime or str - The end date of the forward contract.
+        Initialize a Forward object. This gets at time forward price based on inputs.
+        start_date: datetime or str - The start date of the forward contract. This is the date from which the contract is valid.
+        end_date: datetime or str - The end date of the forward contract. This is the maturity date.
         spot_price: float - The current spot price of the underlying asset.
         risk_free_rate: float - The risk-free interest rate (annualized).
         dividend_type: str - The type of dividend ('discrete' or 'continuous').

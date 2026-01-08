@@ -229,6 +229,7 @@ class AtIndexResult:
     chain_spot: pd.Series
     rates: pd.Series
     dividends: pd.Series
+    dividend_yield: pd.Series
     additional: Dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
@@ -242,6 +243,7 @@ class TimeseriesData:
     spot: pd.DataFrame
     chain_spot: pd.DataFrame
     dividends: pd.Series
+    dividend_yield: pd.Series
     additional_data: Dict[str, pd.Series] = field(default_factory=dict)
 
     def __repr__(self) -> str:
@@ -596,8 +598,9 @@ class MarketTimeseries:
         chain_spot = self._chain_spot[sym].loc[index_str] if sym in self._chain_spot else None
         dividends = self._dividends[sym].loc[index_str] if sym in self._dividends else None
         rates = self.rates.loc[index_str] if self.rates is not None else None
+        dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
         return AtIndexResult(
-            spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index_str, rates=rates
+            spot=spot, chain_spot=chain_spot, dividends=dividends, sym=sym, date=index_str, rates=rates, dividend_yield=dividend_yield
         )
 
     def calculate_additional_data(
@@ -699,7 +702,17 @@ class MarketTimeseries:
 
         elif factor in self.DEFAULT_NAMES:
             factor = "_" + factor
-            data = getattr(self, factor).get(sym)
+            if factor in ["_spot", "_chain_spot", "_dividends"]:
+                data = getattr(self, factor).get(sym)
+            elif factor == "_dividend_yield":
+                divs = self._dividends.get(sym)
+                if divs is None:
+                    raise ValueError(f"No dividend data found for symbol {sym} to calculate dividend yield.")
+                spot = self._spot.get(sym)
+                if spot is None:
+                    raise ValueError(f"No spot data found for symbol {sym} to calculate dividend yield.")
+                dividend_yield = divs / spot["close"]
+                data = dividend_yield
             if start_date is not None or end_date is not None:
                 start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d") if start_date is not None else None
                 end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d") if end_date is not None else None
@@ -715,6 +728,8 @@ class MarketTimeseries:
                 ts = TimeseriesData(spot=None, chain_spot=data, dividends=None)
             elif factor == "_dividends":
                 ts = TimeseriesData(spot=None, chain_spot=None, dividends=data)
+            elif factor == "_dividend_yield":
+                ts = TimeseriesData(spot=None, chain_spot=None, dividends=None, dividend_yield=data)
             else:
                 raise ValueError(f"Unhandled factor {factor}.")
 
@@ -722,6 +737,7 @@ class MarketTimeseries:
             spot = self._spot.get(sym)
             chain_spot = self._chain_spot.get(sym)
             dividends = self._dividends.get(sym)
+            dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
             if start_date is not None or end_date is not None:
                 start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d") if start_date is not None else None
                 end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d") if end_date is not None else None
@@ -733,7 +749,8 @@ class MarketTimeseries:
                     spot = spot[spot.index <= end_date]
                     chain_spot = chain_spot[chain_spot.index <= end_date]
                     dividends = dividends[dividends.index <= end_date]
-            ts = TimeseriesData(spot=spot, chain_spot=chain_spot, dividends=dividends)
+                    dividend_yield = dividend_yield[dividend_yield.index <= end_date]
+            ts = TimeseriesData(spot=spot, chain_spot=chain_spot, dividends=dividends, dividend_yield=dividend_yield)
 
         return ts
 
