@@ -395,6 +395,20 @@ class MarketTimeseries:
             return_dates = []
 
         return (sym_available and all_dates_present), return_dates
+    
+    def cache_it(self, timeseries: TimeseriesData, sym: str) -> None:
+        """
+        Cache the provided timeseries data for the given symbol.
+        """
+        ## Remove today's data before caching
+        spot = timeseries.spot.copy()
+        chain_spot = timeseries.chain_spot.copy()
+        dividends = timeseries.dividends.copy()
+
+        self._spot[sym] = self._remove_today_data(spot)
+        self._chain_spot[sym] = self._remove_today_data(chain_spot)
+        self._dividends[sym] = self._remove_today_data(dividends)
+        logger.info("Cached timeseries data for symbol %s", sym)
 
     def already_loaded(
         self, sym: str, interval: str = "1d", start: str | datetime = None, end: str | datetime = None

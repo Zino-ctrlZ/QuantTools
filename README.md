@@ -2,6 +2,63 @@
 
 **QuantTools** is a comprehensive Python framework for quantitative trading research, backtesting, and portfolio management with a focus on options trading strategies. Built around an event-driven architecture, it enables realistic simulation of trading workflows including signal generation, risk management, order execution, and performance analysis.
 
+## Table of Contents
+
+- [What Problems Does This Solve?](#what-problems-does-this-solve)
+- [Features](#features)
+- [Installation](#installation)
+  - [Requirements](#requirements)
+  - [Editable Install (Development)](#editable-install-development)
+  - [Environment Setup](#environment-setup)
+- [Repository Structure](#repository-structure)
+  - [Key Module Responsibilities](#key-module-responsibilities)
+- [Core Concepts](#core-concepts)
+  - [1. Event-Driven Backtesting Flow](#1-event-driven-backtesting-flow)
+  - [2. Data Access and Caching](#2-data-access-and-caching)
+  - [3. Portfolio and Risk Management](#3-portfolio-and-risk-management)
+  - [4. Configuration System](#4-configuration-system)
+  - [5. Logging Conventions](#5-logging-conventions)
+- [Quickstart](#quickstart)
+  - [Minimal Backtest Example](#minimal-backtest-example)
+- [How-To Examples](#how-to-examples)
+  - [1. Run a Backtest with Custom Risk Limits](#1-run-a-backtest-with-custom-risk-limits)
+  - [2. Using CustomCache for Data Management](#2-using-customcache-for-data-management)
+  - [3. Constructing and Updating a Portfolio Manually](#3-constructing-and-updating-a-portfolio-manually)
+  - [4. Adding a Custom Strategy](#4-adding-a-custom-strategy)
+  - [5. Analyzing Position Greeks and Limits](#5-analyzing-position-greeks-and-limits)
+  - [6. Handling Dividends in Option Pricing](#6-handling-dividends-in-option-pricing)
+  - [7. Performance Tips and Common Pitfalls](#7-performance-tips-and-common-pitfalls)
+- [Extended Examples: trade/ Module Deep Dive](#extended-examples-trade-module-deep-dive)
+  - [8. Option Pricing with Black-Scholes](#8-option-pricing-with-black-scholes)
+  - [9. Calculating Greeks (Delta, Gamma, Vega, Theta)](#9-calculating-greeks-delta-gamma-vega-theta)
+  - [10. Implied Volatility Calculation](#10-implied-volatility-calculation)
+  - [11. Using Decorators for Performance Monitoring](#11-using-decorators-for-performance-monitoring)
+  - [12. Context Manager for Time Window Management](#12-context-manager-for-time-window-management)
+  - [13. Legacy Vectorized Backtester (PTBacktester)](#13-legacy-vectorized-backtester-ptbacktester)
+  - [14. Volatility Surface Modeling](#14-volatility-surface-modeling)
+  - [15. Custom Technical Indicators](#15-custom-technical-indicators)
+  - [16. Thread Pool for Parallel Processing](#16-thread-pool-for-parallel-processing)
+  - [17. Working with Configuration Files](#17-working-with-configuration-files)
+  - [18. P&L Attribution and Greeks Decomposition](#18-pnl-attribution-and-greeks-decomposition)
+- [Samples](#samples)
+- [Troubleshooting](#troubleshooting)
+  - [Common Import Errors](#common-import-errors)
+  - [Missing Configuration](#missing-configuration)
+  - [Path Issues](#path-issues)
+  - [Running Tests](#running-tests)
+  - [Performance Issues](#performance-issues)
+  - [Logging Issues](#logging-issues)
+- [Contributing](#contributing)
+  - [Code Style](#code-style)
+  - [Type Hints and Docstrings](#type-hints-and-docstrings)
+  - [Branch Workflow](#branch-workflow)
+  - [Testing Guidelines](#testing-guidelines)
+- [License](#license)
+- [Authors](#authors)
+- [Acknowledgments](#acknowledgments)
+
+---
+
 ## What Problems Does This Solve?
 
 QuantTools addresses key challenges in algorithmic trading development:
@@ -1365,7 +1422,211 @@ print(f"After clear: {config.timeframe}")  # Default value
 
 ---
 
-## Samples
+### 18. P&L Attribution and Greeks Decomposition
+
+Decompose option P&L into Greeks components to understand what drives portfolio performance:
+
+```python
+from datetime import datetime
+from trade.assets.calculate.xmultiply_attr import (
+    load_option_pnl_data,
+    calculate_pnl_decomposition
+)
+from trade.assets.calculate.data_classes import TradePnlInfo
+from EventDriven.types import PositionEffect
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Define the option position
+opttick = 'AAPL240621C00150000'  # AAPL June 21, 2024 $150 Call
+yesterday = datetime(2024, 3, 30)
+today = datetime(2024, 3, 31)
+
+# Load option P&L data (loads market data for Greeks and attribution)
+payload = load_option_pnl_data(
+    yesterday=yesterday,
+    today=today,
+    opttick=opttick
+)
+
+# Calculate P&L decomposition
+result = calculate_pnl_decomposition(payload)
+
+# Access attribution results
+attribution_df = result.attribution
+print("\n=== P&L Attribution ===")
+print(attribution_df)
+
+# Columns in attribution_df:
+# - delta_pnl: P&L from spot price movement
+# - gamma_pnl: P&L from convexity (second-order spot effect)
+# - theta_pnl: P&L from time decay
+# - vega_pnl: P&L from volatility changes
+# - volga_pnl: P&L from volatility convexity (second-order vol effect)
+# - vanna_pnl: P&L from cross-effect of spot and vol
+# - rho_pnl: P&L from interest rate changes
+# - total_pnl_excl_trade_pnl: Sum of all Greek P&L components
+# - unexplained_pnl: Difference between actual and attributed P&L
+# - opt_dod_change: Observed option price change (day-over-day)
+
+# Access underlying market data
+print("\n=== Market Data ===")
+print(f"Spot prices: {result.asset_payload.spot}")
+print(f"Volatility: {result.vol}")
+print(f"Greeks: {result.greeks}")
+print(f"Day-over-day changes: {result.dod_change}")
+
+# --- Advanced: Adjust for trade P&L (position entries/exits) ---
+# When opening/closing positions, adjust attribution to exclude trade execution P&L
+trade_info = TradePnlInfo(
+    position_effect_close=155.0,   # Execution price
+    effect_date=datetime(2024, 3, 15),
+    tmin0_close=156.0,             # Market close on T+0
+    tmin1_close=154.0,             # Market close on T-1
+    position_effect=PositionEffect.OPEN,
+    quantity=10,                   # Number of contracts
+    position_entry_price=155.0
+)
+
+# Recalculate with trade adjustment
+result_with_trade = calculate_pnl_decomposition(
+    payload,
+    trade_pnl_entries=[trade_info]
+)
+
+print("\n=== Attribution with Trade Adjustment ===")
+print(result_with_trade.attribution)
+
+# --- Visualize P&L Components ---
+fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+# 1. Cumulative P&L by Greek
+ax = axes[0, 0]
+greeks = ['delta_pnl', 'gamma_pnl', 'theta_pnl', 'vega_pnl', 'volga_pnl']
+attribution_df[greeks].cumsum().plot(ax=ax, title='Cumulative P&L by Greek')
+ax.set_ylabel('Cumulative P&L ($)')
+ax.legend(loc='best')
+ax.grid(True, alpha=0.3)
+
+# 2. Daily attribution waterfall
+ax = axes[0, 1]
+latest = attribution_df.iloc[-1]
+components = ['delta_pnl', 'gamma_pnl', 'theta_pnl', 'vega_pnl', 'volga_pnl', 'vanna_pnl', 'rho_pnl']
+values = [latest[c] for c in components]
+ax.bar(range(len(components)), values, color=['green' if v > 0 else 'red' for v in values])
+ax.set_xticks(range(len(components)))
+ax.set_xticklabels([c.replace('_pnl', '').title() for c in components], rotation=45)
+ax.set_title(f"Latest Day Attribution ({attribution_df.index[-1].date()})")
+ax.set_ylabel('P&L Contribution ($)')
+ax.axhline(0, color='black', linewidth=0.8)
+ax.grid(True, alpha=0.3, axis='y')
+
+# 3. Actual vs Total Attribution
+ax = axes[1, 0]
+attribution_df[['opt_dod_change', 'total_pnl_excl_trade_pnl']].cumsum().plot(
+    ax=ax, title='Actual vs Attributed P&L'
+)
+ax.set_ylabel('Cumulative P&L ($)')
+ax.legend(['Actual P&L', 'Total Attribution'])
+ax.grid(True, alpha=0.3)
+
+# 4. Unexplained P&L (model error)
+ax = axes[1, 1]
+attribution_df['unexplained_pnl'].cumsum().plot(
+    ax=ax, color='orange', title='Cumulative Unexplained P&L'
+)
+ax.set_ylabel('Unexplained P&L ($)')
+ax.axhline(0, color='black', linewidth=0.8)
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# --- Batch Processing: Multiple Days ---
+from pandas.tseries.offsets import BDay
+
+start_date = datetime(2024, 1, 1)
+end_date = datetime(2024, 3, 31)
+
+# Generate business day range
+date_range = pd.date_range(start=start_date, end=end_date, freq=BDay())
+
+all_attributions = []
+for i in range(1, len(date_range)):
+    yesterday = date_range[i-1]
+    today = date_range[i]
+    
+    payload = load_option_pnl_data(yesterday, today, opttick)
+    result = calculate_pnl_decomposition(payload)
+    
+    all_attributions.append(result.attribution)
+
+# Combine all periods
+full_attribution = pd.concat(all_attributions)
+print("\n=== Full Period Attribution ===")
+print(full_attribution)
+
+# --- Use Case: Risk Factor Analysis ---
+# Identify top P&L contributors
+total_attribution = attribution_data.sum()
+top_contributors = total_attribution[greeks].abs().sort_values(ascending=False)
+
+print("\n=== Top Risk Factor Contributors ===")
+for greek, value in top_contributors.items():
+    pct = (value / attribution_data['Actual_PnL'].sum().abs()) * 100
+    print(f"{greek.replace('_PnL', '')}: ${value:.2f} ({pct:.1f}%)")
+
+# Days with large unexplained P&L (potential model issues)
+large_unexplained = attribution_data[attribution_data['Unexplained_PnL'].abs() > 10]
+if len(large_unexplained) > 0:
+    print(f"\n⚠️  {len(large_unexplained)} days with |Unexplained P&L| > $10")
+    print(large_unexplained[['Actual_PnL', 'Total_PnL', 'Unexplained_PnL']])
+```
+
+**Key Insights**:
+
+1. **xMULTIPLY Attribution Model**: Uses Taylor expansion with Greeks from previous day
+   - Delta: Linear spot exposure (first-order)
+   - Gamma: Convexity from spot moves (second-order)
+   - Vega: Linear volatility exposure
+   - Volga: Convexity from vol moves (second-order)
+   - Vanna: Cross-effect between spot and vol
+   - Theta: Time decay
+   - Rho: Interest rate sensitivity
+
+2. **Unexplained P&L Sources**:
+   - Jump risk (overnight gaps)
+   - Volatility smile/skew dynamics (not captured by flat vol)
+   - Execution slippage vs mid-market prices
+   - Data quality issues (missing/stale data)
+   - Higher-order Greeks not included (charm, vomma, etc.)
+   - Discrete daily rebalancing vs continuous model
+
+3. **Trade P&L Adjustment**:
+   - Use `TradePnlInfo` to exclude trade execution P&L from attribution
+   - **OPEN positions**: Adjusts for difference between entry price and T-1 close
+   - **CLOSE positions**: Captures realized P&L on exit
+   - Keeps attribution focused on market risk factors, not execution
+
+4. **Data Requirements**:
+   - Option tick format: `TICKER<YYMMDD><C/P><STRIKE>`
+   - Spot prices: Retrieved from market data
+   - Volatility: Implied from option prices
+   - Greeks: Calculated from DataManager
+   - Risk-free rates: USD rates from Treasury data
+
+5. **Use Cases**:
+   - **Performance Attribution**: Decompose which Greeks drove portfolio returns
+   - **Risk Management**: Identify dominant risk exposures
+   - **Strategy Validation**: Verify strategy P&L matches expected Greek exposures
+   - **Model Validation**: Monitor unexplained P&L for model accuracy
+   - **Trade Post-Mortem**: Analyze individual position P&L drivers
+
+**Pro Tip**: For portfolio-level attribution, run `calculate_pnl_decomposition` for each position and aggregate the results. This gives you total delta P&L, gamma P&L, etc., across all holdings. High unexplained P&L (>5% of total) indicates model issues or missing risk factors
+large_unexplained = full_attribution[full_attribution['unexplained_pnl'].abs() > 10]
+if len(large_unexplained) > 0:
+    print(f"\n⚠️  {len(large_unexplained)} days with |Unexplained P&L| > $10")
+    print(large_unexplained[['opt_dod_change', 'total_pnl_excl_trade_pnl', 'unexplained_pnl
 
 Additional sample code and notebooks demonstrating specific workflows:
 
