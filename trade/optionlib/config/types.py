@@ -41,3 +41,7 @@ class DiscreteDivGrowthModel(str, Enum):
     REGRESSION = 'regression'
     AVG = 'avg'
     REGRESSION_CAGR = 'regression_cagr'
+    CONSTANT = 'constant'
+    CONSTANT_AVG = 'constant+avg'
+    CONSTANT_CAGR = 'constant+cagr'
+    CONSTANT_REGRESSION = 'constant+regression'

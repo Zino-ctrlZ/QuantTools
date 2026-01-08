@@ -4,16 +4,11 @@ import pandas as pd
 from ..config.defaults import(
     OPTION_TIMESERIES_START_DATE,
 )
-from trade.helpers.helper import (
-    CustomCache
-)
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('trade.optionlib.utils.market_data')
 
-DIVIDEND_CACHE = CustomCache(
-    location = '/Users/chiemelienwanisobi/cloned_repos/QuantTools/.cache',
-    fname='dividend_cache',
-    clear_on_exit=True,)
+## Cache has to be in memory. Incase dividends update on another date
+DIVIDEND_CACHE = {} 
 
 
 def get_div_schedule(ticker, filter_specials=True):
@@ -28,7 +23,7 @@ def get_div_schedule(ticker, filter_specials=True):
         try:
             div_history = obb.equity.fundamental.dividends(symbol=ticker, provider='yfinance').to_df()
             div_history.set_index('ex_dividend_date', inplace = True)
-            DIVIDEND_CACHE.set(ticker, div_history)
+            DIVIDEND_CACHE[ticker] = div_history
 
             div_history['amount'] = div_history['amount'].astype(float)
             div_history.index = pd.to_datetime(div_history.index)
