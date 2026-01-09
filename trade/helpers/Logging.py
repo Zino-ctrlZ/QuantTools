@@ -75,7 +75,7 @@ def _get_current_environment() -> str | None:
         Environment string ('prod', 'test', 'test-{name}') or None if not set
     """
     try:
-        from dbase.database.SQLHelpers import ENVIRONMENT_CONTEXT
+        from dbase.database.db_utils import ENVIRONMENT_CONTEXT
 
         return ENVIRONMENT_CONTEXT.get("environment")
     except ImportError:
