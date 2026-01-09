@@ -329,8 +329,8 @@ def register_info_stack(id, data, data_col, update_kwargs=None):
         copy_cat["streak_id"] = copy_cat[f"{k}_skip_day"].ne(copy_cat[f"{k}_skip_day"].shift()).cumsum()
         copy_cat["streak"] = copy_cat.groupby("streak_id").cumcount() + 1
         info[f"{k.upper()}_MAX_STREAK"] = (
-            copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.max()
-            if not copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.empty
+            copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.max() # noqa
+            if not copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.empty #noqa
             else 0
         )  # noqa
     info["DATA_LEN"] = len(data)
