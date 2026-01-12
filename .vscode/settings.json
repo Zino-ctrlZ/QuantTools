@@ -9,6 +9,19 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "editor.formatOnSave": false,
-    "python.analysis.useLibraryCodeForTypes": true
+    
+    // Ruff: Linting only (style, code quality)
+    "ruff.enable": true,
+    "ruff.lint.enable": true,
+    
+    // Disable pylint (redundant with ruff)
+    "python.linting.pylintEnabled": false,
+    "python.linting.enabled": true,
+    
+    // Keep Pylance: REQUIRED for IntelliSense and semantic highlighting
+    "python.languageServer": "Pylance",
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.diagnosticMode": "openFilesOnly"
 
 }

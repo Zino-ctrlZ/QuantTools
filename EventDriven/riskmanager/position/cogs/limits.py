@@ -269,7 +269,7 @@ class LimitsAndSizingCog(BaseCog):
 
     def __init__(
         self,
-        config: LimitsEnabledConfig = None,
+        config: Optional[LimitsEnabledConfig] = None,
         sizer_configs: Optional[Union[DefaultSizerConfigs, ZscoreSizerConfigs]] = None,
         underlier_list: Optional[List[str]] = None,
     ):

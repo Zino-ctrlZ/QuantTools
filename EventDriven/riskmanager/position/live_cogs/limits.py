@@ -64,7 +64,7 @@ Database Schema:
         - Query optimization for retrieval
 
 Limit Retrieval Flow:
-    1. Check self._position_limits dict (memory cache)
+    1. Check self.position_limits dict (memory cache)
     2. If not found, query database via get_position_limit()
     3. Load all Greek measures from database
     4. Construct PositionLimits object
@@ -218,7 +218,13 @@ from EventDriven.configs.core import LimitsEnabledConfig, BaseSizerConfigs
 from .save_utils import get_position_limit, store_position_limits
 from ..cogs.vars import MEASURES_SET
 
+def enable_storing_to_db(enable: bool = True):
+    """Utility to enable or disable database storage of limits globally for testing."""
+    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = enable
 
+def reset_storing_to_db():
+    """Utility to reset database storage of limits to default (enabled)."""
+    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = True
 class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
     """
     Live trading specialized limits cog with database persistence.
@@ -230,7 +236,7 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
     - Audit trail for compliance
 
     Attributes:
-        _position_limits (Dict[str, PositionLimits]): Memory cache of position limits
+        position_limits (Dict[str, PositionLimits]): Memory cache of position limits
         cool_off_period (int): Seconds between limit updates (0 = no limit)
 
     Note:
@@ -238,18 +244,25 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
         state must persist across restarts and limit history must be maintained
         for compliance and analysis.
     """
+    SAVE_LIMITS_TO_DB: bool = True
 
     def __init__(
         self, config: LimitsEnabledConfig = None, sizer_configs: BaseSizerConfigs = None, underlier_list: list = None
     ):
         super().__init__(config=config, sizer_configs=sizer_configs, underlier_list=underlier_list)
-        self._position_limits: Dict[str, PositionLimits] = {}
+        self.position_limits: Dict[str, PositionLimits] = {}
         self.cool_off_period = 0
 
     def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
         """
         Save the position limits for a given trade ID and signal ID.
         """
+
+        ## Use in-memory cache only if DB persistence is disabled
+        if not self.SAVE_LIMITS_TO_DB:
+            self.position_limits[trade_id] = limits
+            return
+        
         store_position_limits(
             delta_limit=limits.delta,
             gamma_limit=limits.gamma,
@@ -267,7 +280,7 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
         """
         if trade_id in self.position_limits:
             return self.position_limits[trade_id]
-
+    
         lm = PositionLimits()
         for risk_measure in MEASURES_SET:
             date, limit_value = get_position_limit(
