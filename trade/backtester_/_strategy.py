@@ -893,6 +893,7 @@ class StrategyBase(ABC):
             height=300 * (1 + num_non_overlay),
             title_text=f"Strategy Indicators for {self.__class__.__name__}",
             showlegend=True,
+            width=1000,
         )
         fig.update_layout(xaxis=dict(rangeslider=dict(visible=False)))
         fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])  # hide weekends
@@ -942,7 +943,7 @@ class StrategyBase(ABC):
         name = self.__class__.__name__ if self.ticker is None else f"{self.ticker} - {self.__class__.__name__}"
         fig.update_layout(
             height=550,
-            width=1500,
+            width=1000,
             title_text=f"Strategy Signals for {name}",
             showlegend=True,
         )

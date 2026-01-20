@@ -19,9 +19,10 @@ from ..utils.timing import format_dates, subtract_dates, validate_dates
 from ..config.defaults import DAILY_BASIS, DIVIDEND_LOOKBACK_YEARS, DIVIDEND_FORECAST_METHOD
 from trade.helpers.Logging import setup_logger
 
-logger = setup_logger("trade.optionlib.assets.dividend")
+logger = setup_logger("trade.optionlib.assets.dividend", stream_log_level="DEBUG")
 
-
+SECONDS_IN_YEAR = 365.0 * 24.0 * 3600.0
+SECONDS_IN_DAY = 24.0 * 3600.0
 FREQ_MAP = {
     "monthly": 1,
     "quarterly": 3,
@@ -205,13 +206,14 @@ def _dual_project_dividends(
     """
     end_date, valuation_date = format_dates(end_date, valuation_date)
     typical_spacing = div_history.index.to_series().diff().dt.days.mode()[0]
-    expected_dividend_size = int((subtract_dates(end_date, valuation_date) // typical_spacing) + 1)
-    logger.info(f"Expected Dividend Size before adjustment: {expected_dividend_size}")
     period_inferred = classify_frequency(typical_spacing)
+
+    ## Push back valuation date by period & typical spacing * 2 to capture historical dividends
+    new_valuation_date = valuation_date - relativedelta(days=typical_spacing * 8)
 
     ## Get dividends btwn valuation date and today
     historical_divs = div_history.loc[
-        (div_history.index.date >= valuation_date.date())
+        (div_history.index.date >= new_valuation_date.date())
         &
         ## Filter to include only dividends between valuation date and today. With today inclusive
         (div_history.index.date <= datetime.today().date())
@@ -222,6 +224,16 @@ def _dual_project_dividends(
     if not date_list:
         return [], [], valuation_date
 
+    ## Expected dividend size:
+    ## Since we pushed valuation date back, we will include it in expected dividend size calculation
+    expected_dividend_size = int((subtract_dates(end_date, new_valuation_date) // typical_spacing) + 1)
+    expected_dividend_size_for_original_valuation = int(
+        (subtract_dates(end_date, valuation_date) // typical_spacing) + 1
+    )
+    logger.info(
+        f"Expected Dividend Size before adjustment: {expected_dividend_size}, for original valuation: {expected_dividend_size_for_original_valuation}. Size from historical divs: {len(date_list)}"
+    )
+
     ## Project future dividends after today
     last_div = amount_list[-1] if amount_list else 0.0
 
@@ -230,19 +242,27 @@ def _dual_project_dividends(
 
     ## We reduce expected dividend size by the number of historical dividends we have
     expected_dividend_size -= len(date_list)
-    logger.info(f"Expected Dividend Size after adjustment: {expected_dividend_size}")
+
+    ## If expected dividend size is less than 0, set to 0
+    if expected_dividend_size < 0:
+        expected_dividend_size = 0
+
+    logger.info(f"Expected Dividend Size to be projected: {expected_dividend_size}")
     periodic_growth = inferred_growth_rate / (12 / FREQ_MAP[period_inferred])
 
     ## Generate projected dividends starting from last_date
     dividend_list = [last_div * (1 + periodic_growth) ** i for i in range(expected_dividend_size)]
+    logger.info(f"Projected Dividend List: {dividend_list}")
 
     ## Combine historical and projected dividends
     dividend_list = amount_list + dividend_list
+    logger.info(f"Combined Dividend List: {dividend_list}")
 
     ## Combine historical and projected dates
     date_list = date_list + [
         last_date + relativedelta(months=i * FREQ_MAP[period_inferred]) for i in range(1, expected_dividend_size + 1, 1)
     ]
+    logger.info(f"Combined Date List: {date_list}")
 
     ## Cutoff any dates beyond end_date
     filtered_dividends = [
@@ -302,13 +322,19 @@ class ScheduleEntry(tuple):
     def amount(self) -> float:
         return self[1]
 
+    def __mul__(self, value) -> "ScheduleEntry":
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Can only multiply ScheduleEntry by int or float, not {type(value)}")
+        return ScheduleEntry(self.date, self.amount * value)
+
     def __repr__(self) -> str:
-        return f"<ScheduleEntry: {self.date.strftime('%Y-%m-%d')} - {self.amount}>"
+        use_date = self.date.strftime('%Y-%m-%d') if isinstance(self.date, datetime) else str(self.date)
+        return f"<ScheduleEntry: {use_date} - {self.amount}>"
 
 
 class Schedule:
     """
-    Class to represent a dividend schedule.
+    Class to represent a dividend schedule for a given date.
     """
 
     def __init__(self, schedule: List[Tuple[datetime, float]]):
@@ -316,7 +342,7 @@ class Schedule:
         Initialize a Schedule object.
         schedule: List[Tuple[datetime, float]] - A list of tuples containing dividend dates and amounts.
         """
-        self._schedule = schedule
+        self._schedule: List[Tuple[datetime, float]] = schedule
 
     @property
     def schedule(self) -> List[ScheduleEntry]:
@@ -352,6 +378,18 @@ class Schedule:
             str: A string representation of the schedule.
         """
         return self.__repr__()
+
+    def __mul__(self, value: float) -> "Schedule":
+        """
+        Multiply all amounts in the schedule by a scalar value.
+        value: float - The scalar value to multiply by.
+        Returns:
+            Schedule: A new Schedule object with updated amounts.
+        """
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Can only multiply Schedule by int or float, not {type(value)}")
+        new_schedule = [(entry.date, entry.amount * value) for entry in self.schedule]
+        return Schedule(new_schedule)
 
     def __iter__(self):
         """
@@ -782,23 +820,29 @@ def vector_convert_to_time_frac(
 
     Returns a list of lists containing time fractions and amounts.
     """
-    assert_equal_length(schedules, valuation_dates, end_dates)
-    time_fractions = []
-    for i, sch in enumerate(schedules):
-        time_fractions.append(
-            Schedule(
-                [
-                    (time_distance_helper(dt, valuation_dates[i]), amt)
-                    for amt, dt in sch
-                    if compare_dates.is_after(dt, valuation_dates[i])
-                ]
-            )
-        )
-    return time_fractions
+    # assert_equal_length(schedules, valuation_dates, end_dates)
+
+    out: List[Schedule] = []
+
+    for sch, val, end in zip(schedules, valuation_dates, end_dates):
+        # Convert once
+
+        # If schedule dates are sorted, you can optionally early-break (see note below)
+        converted = []
+        for dt, amt in sch:  # dt is datetime, amt is float
+            # Exclusive bounds: val < dt < end
+            days_in_seconds = (dt - val.date()).days * 86400
+            if val.date() < dt < end.date():
+                t = days_in_seconds / SECONDS_IN_YEAR
+                converted.append((t, amt))
+
+        out.append(Schedule(converted))
+
+    return out
 
 
 def vectorized_discrete_pv(
-    schedules: List[list], r: List[list], _valuation_dates: List[datetime], _end_dates: List[datetime]
+    schedules: List[List[ScheduleEntry]], r: List[list], _valuation_dates: List[datetime], _end_dates: List[datetime]
 ) -> List[float]:
     """
     Calculate the present value of a list of dividend schedules using vectorized operations.
@@ -808,21 +852,42 @@ def vectorized_discrete_pv(
     _end_dates: List[datetime] - List of end dates corresponding to each schedule.
     Returns a list of present values for each schedule.
     """
-    assert_equal_length(schedules, r, _end_dates, _valuation_dates)
+    assert_equal_length(
+        schedules, r, _end_dates, _valuation_dates, names=["schedules", "r", "_end_dates", "_valuation_dates"]
+    )
+    df_cache = {}
+
     pv = []
+    SECONDS_IN_YEAR = 365.0 * 24.0 * 3600.0
+
     for i, sch in enumerate(schedules):
-        pv.append(
-            sum(
-                [  ## Calculating the sum
-                    (x * math.exp(-r[i] * time_distance_helper(dt, _valuation_dates[i])))  ## Applying discount factor
-                    for x, dt in sch
-                    if compare_dates.inbetween(
-                        dt, start=_valuation_dates[i], end=_end_dates[i], inclusive=False
-                    )  ## Filtering for dt after Val
-                ]
-            )
-        )
-    return pv[0] if len(pv) == 1 else pv
+        ri = r[i]  # rate for this schedule
+        val = _valuation_dates[i]
+        end = _end_dates[i]
+
+        # Use integer seconds
+        val_ts = int(val.timestamp())
+
+        total = 0.0
+
+        # sch entries are (date, div) per your point (2)
+        for dt, x in sch:
+            if val.date() < dt < end.date():
+                days_in_seconds = (dt - val.date()).days * 86400
+
+                key = (ri, val_ts, days_in_seconds)
+                df = df_cache.get(key)
+
+                if df is None:
+                    t = days_in_seconds / SECONDS_IN_YEAR
+                    df = math.exp(-ri * t)
+                    df_cache[key] = df
+
+                total += x * df
+
+        pv.append(total)
+
+    return pv
 
 
 def get_vectorized_dividend_rate(tickers: str | List[str], spots: List[float], valuation_dates: List[float]):
@@ -855,6 +920,8 @@ def get_vectorized_continuous_dividends(
     assert_equal_length(
         div_rates,
         _valuation_dates,
+        _end_dates,
+        names=["div_rates", "_valuation_dates", "_end_dates"],
     )
     discounted = [
         math.exp(

@@ -452,7 +452,7 @@ class MarketBlackScholes(BlackScholes):
 
         else:
             # Set valuation date back so that (end_date - valuation_date) = T
-            temp_val_date = self.forward.valuation_date
+            _ = self.forward.valuation_date
             new_val_date = self.expiration - timedelta(days=T * DAILY_BASIS)
             self.forward.valuation_date = new_val_date
             self.forward.dividend.valuation_date = new_val_date

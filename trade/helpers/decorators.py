@@ -412,7 +412,7 @@ def cProfiler(func):
         stream = io.StringIO()
         stats = pstats.Stats(profiler, stream=stream).sort_stats("cumulative")
         stats.print_stats()
-        return results, stream.getvalue()
+        return results, stats
 
     return wrapper
 
@@ -426,7 +426,7 @@ def cprofiler_func(func, *args, **kwargs):
     stream = io.StringIO()
     stats = pstats.Stats(profiler, stream=stream).sort_stats("cumulative")
     stats.print_stats()
-    return results, stream.getvalue()
+    return results, stats
 
 
 def copy_doc(from_func):

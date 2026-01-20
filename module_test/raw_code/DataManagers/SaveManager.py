@@ -22,11 +22,10 @@ from .shared_obj import (get_shared_queue,
                          get_int_value,
                          get_shared_lock, 
                          get_request_list)
-from trade import is_allowed_user, USER
-from trade.helpers.Logging import setup_logger
+from trade import is_allowed_user
 from .vars import ALLOWED_SCHEDULE_USERS
 
-logger = setup_logger('DataManager.py', stream_log_level = logging.CRITICAL)
+logger = setup_logger("DataManager.py", stream_log_level=logging.CRITICAL)
 if is_allowed_user(ALLOWED_SCHEDULE_USERS):
     print('\n')
     print("Scheduled Data Requests will be saved to:", f"{os.environ['WORK_DIR']}/module_test/raw_code/DataManagers/scheduler/requests.jsonl")

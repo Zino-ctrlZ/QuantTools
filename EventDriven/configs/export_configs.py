@@ -107,7 +107,7 @@ class RunConfigBundle:
             yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     
     @classmethod
-    def load_from_yaml(cls, filename: str) -> 'RunConfigBundle':
+    def load_from_yaml(cls, filename: str = None, data = None) -> 'RunConfigBundle':
         """
         Load a config bundle from a YAML file.
         
@@ -117,10 +117,13 @@ class RunConfigBundle:
         Returns:
             RunConfigBundle: The loaded config bundle.
         """
-        with open(filename, "r") as f:
-            data = yaml.safe_load(f)
+        if data is None:
+            assert filename is not None, "Either filename or confs must be provided."
+            with open(filename, "r") as f:
+                data = yaml.safe_load(f)
 
         confs = data.get('configs', {})
+        
         conf_bund_cls: ConfigsDict = {}  # type: ignore
         for label in confs.keys():
             # Extract class name without _1, _2 suffixes

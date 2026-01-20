@@ -10,10 +10,11 @@ import datetime
 import yfinance as yf
 import pandas as pd
 import warnings
-from trade.helpers.helper import change_to_last_busday, setup_logger, retrieve_timeseries
+from trade.helpers.helper import change_to_last_busday, setup_logger, ny_now
 from threading import Thread
 import logging
 from pandas.tseries.offsets import BDay
+import time
 
 warnings.filterwarnings("ignore")
 logger = setup_logger("rates")
@@ -25,6 +26,7 @@ rates_thread_logger = setup_logger("rates_thread", stream_log_level=logging.INFO
 
 ## Rates cache variable
 _rates_cache = None
+DAILY_RATES_CACHE = None
 
 
 def reset_rates_cache():
@@ -32,7 +34,9 @@ def reset_rates_cache():
     Reset the rates cache
     """
     global _rates_cache
+    global DAILY_RATES_CACHE
     _rates_cache = None
+    DAILY_RATES_CACHE = None
     logger.info("Rates cache reset")
 
 
@@ -40,7 +44,7 @@ def deannualize(annual_rate, periods=365):
     return (1 + annual_rate) ** (1 / periods) - 1
 
 
-def get_risk_free_rate_helper(interval="1d", use="db"):
+def get_risk_free_rate_helper(interval="1d", use="db") -> pd.DataFrame:
     # download 3-month us treasury bills rates
     """
     Return timeseries of 3-month US treasury bills rates
@@ -54,9 +58,10 @@ def get_risk_free_rate_helper(interval="1d", use="db"):
         Source of the data. Default is 'yf', other option is 'db'
 
     """
-
     data = _fetch_rates(interval=interval).copy()
-    data = resample(data, interval)
+
+    if interval != "1d":
+        data = resample(data, interval)
     data = data[~data.index.duplicated(keep="first")]
     return data  ## Not adding the resample schema for now
 
@@ -66,8 +71,17 @@ def _fetch_rates(interval):
     Handles _rates_cache logic picking
     """
     global _rates_cache
+    global DAILY_RATES_CACHE
+
+    choice_cache = _rates_cache if interval != "1d" else DAILY_RATES_CACHE
+    
+    ## First we only resample if:
+    ## interval != '1d'
+    ## DAILY_RATES_CACHE is not None
+
+    resample_bool = interval != "1d" or DAILY_RATES_CACHE is None
     ## First check data base.
-    if _rates_cache is None:
+    if choice_cache is None:
         data = query_database(
             "securities_master",
             "rates_timeseries",
@@ -78,10 +92,13 @@ def _fetch_rates(interval):
         data.rename(columns={"daily_rate": "daily", "annualized_rate": "annualized", "yf_tick": "name"}, inplace=True)
         data.index.name = "Datetime"
     else:
-        data = _rates_cache.copy()
+        data = choice_cache.copy()
 
     ## Drop today's date to ensure forced update
-    data = data[data.index.date < change_to_last_busday(datetime.datetime.now()).date()]
+    if ny_now().hour >= 16:
+        data = data[data.index.date <= change_to_last_busday(datetime.datetime.now()).date()]
+    else:
+        data = data[data.index.date < change_to_last_busday(datetime.datetime.now()).date()]
 
     ## Now, if data is not up to date, update it
     if data.index.max().date() < change_to_last_busday(datetime.datetime.now()).date():
@@ -110,9 +127,16 @@ def _fetch_rates(interval):
         data = pd.concat([data, data_min])
         data = data[~data.index.duplicated(keep="first")]
 
-    _rates_cache = resample(
-        data, "30m", {"daily": "ffill", "annualized": "ffill", "name": "ffill", "description": "ffill"}
-    )
+    ## Have to resample all intervals
+    resample_int = interval if interval == "1d" else "30m"
+    if resample_bool:
+        data = resample(
+            data, resample_int, {"daily": "ffill", "annualized": "ffill", "name": "ffill", "description": "ffill"}
+        )
+    if interval != "1d":
+        _rates_cache = data.copy()
+    else:
+        DAILY_RATES_CACHE = data.copy()
     return data
 
 

@@ -335,12 +335,12 @@ def vectorized_forward_discrete(S, r, T, pv_divs):
     T: time to maturity (array)
     pv_divs: Summation of present value of all dividends till end date
     """
-    assert_equal_length(S, r, pv_divs, T)
+    assert_equal_length(S, r, pv_divs, T, names=['S', 'r', 'pv_divs', 'T'])
     S, r, T, pv_divs = convert_to_array(S, r, T, pv_divs)
     forward = (S - pv_divs) * np.exp(r * T)
     return forward
 
-
+# TODO: Rework on this function. I need to include back-adjusted dividends.
 def vectorized_market_forward_calc(ticks: List[str], 
                                    S: List[float], 
                                    valuation_dates: List[datetime], 

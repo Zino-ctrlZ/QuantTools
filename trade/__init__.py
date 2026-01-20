@@ -14,13 +14,13 @@ from .helpers.Logging import setup_logger
 warnings.filterwarnings("ignore")
 
 
-USER = str(os.environ.get("USER", "unknown_user")).lower() ## Temporary fix to allow only chidi utilize some features
+USER = str(os.environ.get("USER", "unknown_user")).lower()  ## Temporary fix to allow only chidi utilize some features
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 EXIT_HANDLERS = []  # Handlers for normal program exit
 _ATEXIT_REGISTERED = False
 OWNER_PID = os.getpid()
-logger = setup_logger('trade.__init__')
+logger = setup_logger("trade.__init__", stream_log_level="WARNING")
 cleanup_expired_caches()
 
 
@@ -28,18 +28,35 @@ cleanup_expired_caches()
 ## Get Business days FOR NYSE (Some days are still trading days)
 ##TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
 NY = ZoneInfo("America/New_York")
-nyse = mcal.get_calendar('NYSE')
-schedule = nyse.schedule(start_date='2000-01-01', end_date='2040-01-01', tz=NY)
+nyse = mcal.get_calendar("NYSE")
+schedule = nyse.schedule(start_date="2000-01-01", end_date="2040-01-01", tz=NY)
 # pylint: disable=E1101
-all_trading_days = mcal.date_range(schedule, frequency='1D').date ## type: ignore
-all_days = pd.date_range(start='2000-01-01', end='2040-01-01', freq='B')
-holidays = set(all_days.difference(all_trading_days).strftime('%Y-%m-%d').to_list())
+all_trading_days = mcal.date_range(schedule, frequency="1D").date  ## type: ignore
+all_days = pd.date_range(start="2000-01-01", end="2040-01-01", freq="B")
+holidays = set(all_days.difference(all_trading_days).strftime("%Y-%m-%d").to_list())
 HOLIDAY_SET = set(holidays)
 
 ## Additional holidays
-HOLIDAY_SET.update({
-    '2025-01-09', ## Jimmy Carter's Death
-}) 
+HOLIDAY_SET.update(
+    {
+        "2025-01-09",  ## Jimmy Carter's Death
+    }
+)
+
+
+def get_current_user() -> str:
+    """
+    Get the current user's name from the USER environment variable.
+
+    Returns:
+    -------
+    str
+        The current user's name (lowercase).
+    """
+    user = str(os.environ.get("USER", "unknown_user")).lower()
+    if user == "unknown_user":
+        logger.warning("USER environment variable is not set. Please set it for proper user identification.")
+    return user
 
 
 def is_allowed_user(allowed_users: list) -> bool:
@@ -57,12 +74,10 @@ def is_allowed_user(allowed_users: list) -> bool:
         True if the current user is allowed, False otherwise.
     """
     allowed_users = [user.lower() for user in allowed_users]
-    if USER.lower() in allowed_users:
+    if get_current_user() in allowed_users:
         return True
     else:
-        logger.warning("User %s is not allowed to perform this action.", USER)
         return False
-    
 
 
 def _run_exit_handlers():
@@ -86,7 +101,7 @@ def register_signal(signum, signal_func):
         The signal number (e.g., signal.SIGINT, signal.SIGTERM) or 'exit' for normal program exit.
     signal_func : callable
         The function to execute when the signal is received or program exits.
-        
+
     Examples:
     --------
     >>> register_signal(signal.SIGTERM, cleanup_function)
@@ -94,12 +109,12 @@ def register_signal(signum, signal_func):
     >>> register_signal('exit', save_data_function)  # For normal program exit
     """
     global _ATEXIT_REGISTERED
-    
+
     if not callable(signal_func):
         raise ValueError(f"Signal function {signal_func} is not callable.")
-    
+
     # Handle normal program exit
-    if signum == 'exit' or signum == 0:
+    if signum == "exit" or signum == 0:
         EXIT_HANDLERS.append(signal_func)
         # Register atexit handler only once
         if not _ATEXIT_REGISTERED:
@@ -108,13 +123,13 @@ def register_signal(signum, signal_func):
             logger.info("Registered atexit handler for normal program exit.")
         logger.info("Exit handler `%s` registered for normal program exit.", signal_func.__name__)
         return
-    
+
     # Handle signal-based interrupts
     if signum not in SIGNALS_TO_RUN:
         SIGNALS_TO_RUN[signum] = []
         signal.signal(signum, run_signals)
         logger.info("Registered signal number %d.", signum)
-    
+
     SIGNALS_TO_RUN[signum].append(signal_func)
     logger.info("Signal function for `%s` added to signal number %d.", signal_func.__name__, signum)
 
@@ -145,13 +160,14 @@ def str_to_bool(value: str) -> bool:
     Returns:
         bool: True if the string is 'True', '1', or 'yes' (case-insensitive), False otherwise.
     """
-    if value.lower() in ['true', '1', 'yes']:
+    if value.lower() in ["true", "1", "yes"]:
         return True
-    elif value.lower() in ['false', '0', 'no']:
+    elif value.lower() in ["false", "0", "no"]:
         return False
     else:
         raise ValueError("Invalid boolean string. Expected 'True', 'False', '1', '0', 'yes', or 'no'.")
-            
+
+
 def get_signals_to_run():
     """
     Get the registered signals to run.
@@ -167,25 +183,27 @@ def set_pool_enabled(value: bool):
     global POOL_ENABLED
     POOL_ENABLED = value
 
+
 def get_pool_enabled():
     """
     Get the pool enabled flag.
     """
     return POOL_ENABLED
 
+
 def reset_pool_enabled():
     """
     Reset the pool enabled flag to None.
     """
     load_dotenv(f"{os.environ['WORK_DIR']}/.env")
-    set_pool_enabled(str_to_bool(os.environ.get('POOL_ENABLED', 'False')))
+    set_pool_enabled(str_to_bool(os.environ.get("POOL_ENABLED", "False")))
+
 
 reset_pool_enabled()
 
 
-
 ## Import Pricing Config
-with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as f:
+with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding="utf-8") as f:
     PRICING_CONFIG = json.load(f)
 
 
@@ -194,12 +212,12 @@ def get_pricing_config() -> dict:
     Get the pricing configuration.
     """
     MISSING_DEFAULTS = {
-        'VOL_SURFACE_MAX_DTE_THRESHOLD': 365,
-        'VOL_SURFACE_MIN_DTE_THRESHOLD': 0,
-        'VOL_SURFACE_MAX_MONEYNESS_THRESHOLD': 1,
-        'VOL_SURFACE_MIN_MONEYNESS_THRESHOLD': 0
+        "VOL_SURFACE_MAX_DTE_THRESHOLD": 365,
+        "VOL_SURFACE_MIN_DTE_THRESHOLD": 0,
+        "VOL_SURFACE_MAX_MONEYNESS_THRESHOLD": 1,
+        "VOL_SURFACE_MIN_MONEYNESS_THRESHOLD": 0,
     }
-    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as f:
+    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding="utf-8") as f:
         PRICING_CONFIG = json.load(f)
 
     for key, value in MISSING_DEFAULTS.items():
@@ -208,18 +226,14 @@ def get_pricing_config() -> dict:
             logger.warning(f"Missing key {key} in pricing config. Setting default value {value}.")
     return PRICING_CONFIG
 
+
 def reload_pricing_config():
     """
     Reload the pricing configuration from the file.
     """
 
-
-
     global PRICING_CONFIG
-    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding='utf-8') as pricing_file:
+    with open(f"{os.environ['WORK_DIR']}/pricingConfig.json", encoding="utf-8") as pricing_file:
         PRICING_CONFIG = json.load(pricing_file)
 
-    
     logger.info("Pricing configuration reloaded.")
-
-

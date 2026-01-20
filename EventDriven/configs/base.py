@@ -1,96 +1,18 @@
 from trade.helpers.Logging import setup_logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict, Field
-from typing import ClassVar, Literal
+from typing import ClassVar
+from trade.helpers.helper_types import validate_inputs
 from weakref import WeakSet
-from typing import get_origin, get_args, Union, get_type_hints
 from EventDriven.exceptions import (
-    BacktesterIncorrectTypeError, 
     BacktestConfigAttributeError
 )
-import types
-from dataclasses import fields
+
 from EventDriven.configs.vars import get_class_config_descriptions, get_config_class_description
 
 
 logger = setup_logger(__name__, stream_log_level="WARNING")
 
-def validate_inputs(self):
-    type_hints = get_type_hints(type(self))
-
-    for f in fields(self):
-        try:
-            field_name = f.name
-            field_value = getattr(self, field_name)
-
-            type_hint = type_hints.get(field_name)
-            if type_hint is None:
-                continue  # no annotation, skip
-
-            origin = get_origin(type_hint)
-            args = get_args(type_hint)
-
-            # --- Handle Literal[...] ---
-            if origin is Literal:
-                # e.g. name: Literal["LimitsCog", "OtherCog"]
-                allowed_values = args  # tuple of literals
-
-                if field_value is None:
-                    # If you want to allow None here, add it to the Literal.
-                    logger.warning(f"Configuration '{field_name}' is None but expected one of {allowed_values}.")
-                elif field_value not in allowed_values:
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected one of {allowed_values}, " f"but got {field_value!r}."
-                    )
-                continue
-
-            # --- Handle Optional / Union[...] ---
-            if origin in (Union, types.UnionType):
-                allows_none = any(arg is type(None) for arg in args)
-                if field_value is None:
-                    if not allows_none:
-                        logger.warning(
-                            f"Configuration '{field_name}' is not set (None) and is not Optional. Please review."
-                        )
-                    continue
-
-                valid_types = tuple(arg for arg in args if arg is not type(None))
-                if not isinstance(field_value, valid_types):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected types {valid_types}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Simple (non-generic) types ---
-            if origin is None:
-                if field_value is None:
-                    logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                    continue
-
-                if not isinstance(field_value, type_hint):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {type_hint}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Other generics (List, Dict, etc.) – shallow check ---
-            if field_value is None:
-                logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                continue
-
-            try:
-                if not isinstance(field_value, origin):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {origin}, " f"but got {type(field_value)}."
-                    )
-            except TypeError:
-                logger.warning(
-                    f"Could not validate field '{field_name}' with value '{field_value}' against type '{type_hint}' due to TypeError."
-                )
-                pass
-
-        except Exception as e:
-            logger.critical(f"Failed to validate field '{f.name}' in {self.__class__.__name__}. Error: {e}")
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
