@@ -141,6 +141,9 @@ def run_signals(signum, frame):
     if os.getpid() != OWNER_PID:
         logger.info("Signal received in child process (PID: %d). Ignoring signal %d.", os.getpid(), signum)
         return
+    
+    logger.info("Signal %d received - running ALL cleanup handlers", signum)
+    
     if signum in SIGNALS_TO_RUN:
         for signal_func in SIGNALS_TO_RUN[signum]:
             try:
@@ -150,7 +153,10 @@ def run_signals(signum, frame):
                 logger.info("Error running signal function %s: %s", signal_func.__name__, e)
     else:
         logger.info("No registered signals for signal number %d.", signum)
-    
+
+    # Run exit handlers
+    _run_exit_handlers()
+
     # Actually terminate the program after cleanup for interrupt/termination signals
     if signum in (signal.SIGINT, signal.SIGTERM):
         logger.info("Exiting after signal %d.", signum)
