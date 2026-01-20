@@ -150,6 +150,13 @@ def run_signals(signum, frame):
                 logger.info("Error running signal function %s: %s", signal_func.__name__, e)
     else:
         logger.info("No registered signals for signal number %d.", signum)
+    
+    # Actually terminate the program after cleanup for interrupt/termination signals
+    if signum in (signal.SIGINT, signal.SIGTERM):
+        logger.info("Exiting after signal %d.", signum)
+        # Re-raise with default handler to properly terminate
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
 
 
 def str_to_bool(value: str) -> bool:
