@@ -75,9 +75,21 @@ def _fetch_rates(interval):
 
     choice_cache = _rates_cache if interval != "1d" else DAILY_RATES_CACHE
     
-    ## First we only resample if:
-    ## interval != '1d'
-    ## DAILY_RATES_CACHE is not None
+    if ny_now().hour < 25:
+        print("Fetching rates data from yfinance directly during market hours")
+        ## Just use yfinance directly during market hours to avoid stale data
+        data = yf.download(
+            "^IRX",
+            start="2010-01-01",
+            end=(datetime.datetime.today() + BDay(1)).strftime("%Y-%m-%d"),
+            interval="1d",
+            progress=False,
+            multi_level_index=False,
+        )
+
+        data["daily"] = data["Close"].apply(deannualize)
+        data["annualized"] = data["Close"] / 100
+        return data[["daily", "annualized"]]
 
     resample_bool = interval != "1d" or DAILY_RATES_CACHE is None
     ## First check data base.

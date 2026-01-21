@@ -247,6 +247,7 @@ class TimeseriesData:
     dividends: pd.Series
     dividend_yield: pd.Series
     split_factor: pd.Series
+    rates: Optional[pd.Series] = None
     additional_data: Dict[str, pd.Series] = field(default_factory=dict)
 
     def __repr__(self) -> str:
@@ -385,7 +386,7 @@ class MarketTimeseries:
         except Exception as e:
             logger.error("Error during sanitization: %s", e, exc_info=True)
 
-    @timeit
+    # @timeit
     def _already_loaded(
         self, sym: str, interval: str = "1d", start: str | datetime = None, end: str | datetime = None
     ) -> Tuple[bool, List[pd.Timestamp]]:
@@ -399,18 +400,19 @@ class MarketTimeseries:
         all_dates_present = False
 
         data_to_check = [
-            self._spot.get(sym),
-            self._chain_spot.get(sym),
-            self._dividends.get(sym),
-            self._split_factor.get(sym),
+            (self._spot.get(sym), 'spot'),
+            (self._chain_spot.get(sym), 'chain_spot'),
+            (self._dividends.get(sym), 'dividends'),
+            (self._split_factor.get(sym), 'split_factor'),
         ]
 
         missing_dates_set = set()
         all_dates_present = False
-        for data in data_to_check:
+        for data, data_type in data_to_check: # noqa
             if data is not None:
                 missing_dates = get_missing_dates(data, start, end)
                 missing_dates_set.update(missing_dates)
+
                 if not missing_dates:
                     all_dates_present = True
                 else:
@@ -419,6 +421,7 @@ class MarketTimeseries:
                 missing_dates = pd.bdate_range(start=start, end=end).to_pydatetime().tolist()
                 missing_dates_set.update(missing_dates)
                 all_dates_present = False
+
         ## If all dates not present, return missing dates
         return_dates = list(missing_dates_set)
         if not all_dates_present:
@@ -576,7 +579,9 @@ class MarketTimeseries:
 
         ## Ensure datetime index
         divs.index = pd.to_datetime(divs.index)
-        divs = divs.reindex(pd.bdate_range(start=self._start, end=self._end, freq=interval), method="ffill")
+        use_start = min(spot.index.min(), chain_spot.index.min(), divs.index.min())
+        use_end = max(spot.index.max(), chain_spot.index.max(), divs.index.max())
+        divs = divs.reindex(pd.bdate_range(start=use_start, end=use_end, freq=interval), method="ffill")
         divs = resample(divs["amount"], method="ffill", interval=interval)
 
         ## Current Data
@@ -865,6 +870,7 @@ class MarketTimeseries:
                 dividends=dividends,
                 dividend_yield=dividend_yield,
                 split_factor=split_factor,
+                rates=self.rates["annualized"],
             )
 
         return ts
