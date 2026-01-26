@@ -238,9 +238,9 @@ def delta_position_sizing(
         int: The calculated position size."""
     ## TODO: Add docstring
     ## TODO: Raise error if delta is 0 or cash_available is <= 0
-    if delta == 0 or cash_available <= 0 or option_price_at_time <= 0:
+    if delta == 0 or math.isnan(delta) or cash_available <= 0 or option_price_at_time <= 0:
         logger.critical(
-            f"Delta is 0 or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0."
+            f"Delta is 0/NaN or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0."
         )
         return 0
     try:
