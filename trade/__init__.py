@@ -13,6 +13,8 @@ from .helpers.Logging import setup_logger
 
 warnings.filterwarnings("ignore")
 
+# Load .env file first before accessing any environment variables
+load_dotenv()
 
 USER = str(os.environ.get("USER", "unknown_user")).lower()  ## Temporary fix to allow only chidi utilize some features
 POOL_ENABLED = None
@@ -53,7 +55,7 @@ def get_current_user() -> str:
     str
         The current user's name (lowercase).
     """
-    user = str(os.environ.get("USER", "unknown_user")).lower()
+    user = str(os.environ.get("QUANTTOOLS_USER", "unknown_user")).lower()
     if user == "unknown_user":
         logger.warning("USER environment variable is not set. Please set it for proper user identification.")
     return user
@@ -138,14 +140,20 @@ def run_signals(signum, frame):
     """
     Run all registered signals.
     """
+    ALREADY_RAN = []
     if os.getpid() != OWNER_PID:
         logger.info("Signal received in child process (PID: %d). Ignoring signal %d.", os.getpid(), signum)
         return
-    
+
     logger.info("Signal %d received - running ALL cleanup handlers", signum)
-    
+
     if signum in SIGNALS_TO_RUN:
         for signal_func in SIGNALS_TO_RUN[signum]:
+            if signal_func in ALREADY_RAN:
+                logger.info("Signal function %s for signal %d has already run. Skipping.", signal_func.__name__, signum)
+                continue
+
+            ALREADY_RAN.append(signal_func)
             try:
                 logger.info("Running signal function %s for signal %d.", signal_func.__name__, signum)
                 signal_func()
@@ -208,7 +216,8 @@ def reset_pool_enabled():
     """
     Reset the pool enabled flag to None.
     """
-    load_dotenv(f"{os.environ['WORK_DIR']}/.env")
+    # .env already loaded at module import, just reload if needed
+    load_dotenv(override=False)
     set_pool_enabled(str_to_bool(os.environ.get("POOL_ENABLED", "False")))
 
 

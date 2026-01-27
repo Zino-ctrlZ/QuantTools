@@ -1,6 +1,7 @@
 from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Dict, Optional, Type, TypeVar
+from trade.datamanager.config import OptionDataConfig
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
 from pathlib import Path
@@ -55,6 +56,7 @@ class BaseDataManager(ABC):
     DEFAULT_INTERVAL: ClassVar[Optional["Interval"]] = None
     DEFAULT_SERIES_ID: ClassVar["SeriesId"]  # prefer explicit in subclasses
     _CACHE_NAME_REGISTRY: ClassVar[Dict[str, Type["BaseDataManager"]]] = {}
+    CONFIG: OptionDataConfig = OptionDataConfig()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Enforces that all subclasses define CACHE_NAME and DEFAULT_SERIES_ID."""

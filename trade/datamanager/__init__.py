@@ -4,12 +4,15 @@ from .rates import RatesDataManager
 from .option_spot import OptionSpotDataManager
 from .spot import SpotDataManager
 from .base import BaseDataManager, CacheSpec
+from .vol import VolDataManager
 from .result import (Result,
                      SpotResult,
                      ForwardResult,
                      DividendsResult,
                      RatesResult,
-                     OptionSpotResult)
+                     OptionSpotResult
+)
+from .utils.model import assert_synchronized_model
 
 __all__ = [
     "DividendDataManager",
@@ -24,5 +27,7 @@ __all__ = [
     "DividendsResult",
     "RatesResult",
     "OptionSpotResult",
-    "CacheSpec"
+    "CacheSpec",
+    "VolDataManager",
+    "assert_synchronized_model",
 ]

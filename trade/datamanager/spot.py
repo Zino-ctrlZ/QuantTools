@@ -17,12 +17,18 @@ Typical usage:
 from datetime import datetime
 from typing import Any, ClassVar, Optional, Union
 from EventDriven.riskmanager.market_data import AtIndexResult
+from trade.datamanager.utils.date import is_available_on_date
+from trade.helpers.Logging import setup_logger
+
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.result import SpotResult
-from trade.datamanager.vars import TS
-from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
-from trade.datamanager._enums import SeriesId
+from trade.datamanager.vars import TS, load_name
+from trade.helpers.helper import change_to_last_busday, to_datetime
+from trade.datamanager._enums import RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
+
+
+logger = setup_logger("trade.datamanager.spot", stream_log_level="INFO")
 
 
 class SpotDataManager(BaseDataManager):
@@ -89,7 +95,6 @@ class SpotDataManager(BaseDataManager):
             >>> assert mgr1 is mgr2  # Same instance
         """
         if symbol not in cls.INSTANCES:
-            TS.load_timeseries(symbol, start_date=OPTION_TIMESERIES_START_DATE, end_date=datetime.now())
             instance = super(SpotDataManager, cls).__new__(cls)
             cls.INSTANCES[symbol] = instance
         return cls.INSTANCES[symbol]
@@ -113,6 +118,7 @@ class SpotDataManager(BaseDataManager):
         """
         if getattr(self, "_initialized", False):
             return
+        self._initialized = True
         super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
         self.symbol = symbol
 
@@ -166,7 +172,9 @@ class SpotDataManager(BaseDataManager):
             - Data loaded directly from global TS cache (no additional caching)
             - Automatically filters to business days (excludes weekends/holidays)
         """
-
+        ## Load first
+        load_name(self.symbol)
+        
         timeseries = TS.get_timeseries(self.symbol, skip_preload_check=True, start_date=start_date, end_date=end_date)
         if undo_adjust:
             spot_series = timeseries.chain_spot["close"]
@@ -183,6 +191,8 @@ class SpotDataManager(BaseDataManager):
         result.daily_spot = spot_series
         result.undo_adjust = undo_adjust
         result.key = key
+        result.symbol = self.symbol
+
         return result
 
     def get_at_time(
@@ -220,5 +230,40 @@ class SpotDataManager(BaseDataManager):
             - Delegates to global TS.get_at_index method
             - Result includes open, high, low, close, volume, and other fields
         """
-
+        ## Load first
+        load_name(self.symbol)
         return TS.get_at_index(sym=self.symbol, index=date)
+    
+    def rt(
+        self,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
+    ) -> AtIndexResult:
+        """Returns the most recent spot price for the symbol.
+
+        Retrieves the latest available spot price from the MarketTimeseries cache.
+        Useful for real-time pricing scenarios.
+
+        Returns:
+            Most recent spot price as a float.
+        Examples:
+            >>> spot_mgr = SpotDataManager("AAPL")
+            >>> latest_price = spot_mgr.rt()
+            >>> print(f"Latest AAPL Price: ${latest_price:.2f}")    
+            Latest AAPL Price: $158.23
+        """
+        fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+        date = datetime.now()
+        if not is_available_on_date(to_datetime(date).date()):
+            logger.warning(
+                f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
+            )
+            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
+                raise ValueError(f"Date {date} is not available for risk-free rate data.")
+            
+            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
+                date = change_to_last_busday(date)
+            else:
+                raise ValueError(f"Unsupported fallback option: {fallback_option}")
+            
+        at_index_result = TS.get_at_index(sym=self.symbol, index=date)
+        return at_index_result

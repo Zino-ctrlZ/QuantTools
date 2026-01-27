@@ -6,7 +6,11 @@ class Interval(str, Enum):
     EOD = "eod"  # end-of-day daily snapshot
     NA = "na"  # not applicable
 
-
+class RealTimeFallbackOption(str, Enum):
+    RAISE_ERROR = "raise_error"
+    USE_LAST_AVAILABLE = "use_last_available"
+    ZEROED = "zeroed"
+    NAN = "nan"
 class SeriesId(str, Enum):
     HIST = "hist"
     AT_TIME = "at_time"
@@ -52,6 +56,7 @@ class OptionPricingModel(Enum):
 
     BSM = "Black-Scholes"
     BINOMIAL = "Binomial"
+    EURO_EQIV = "European Equivalent"
 
 
 class VolatilityModel(Enum):

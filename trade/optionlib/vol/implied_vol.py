@@ -1,41 +1,303 @@
-from typing import List, Union, Literal, Callable, Optional
+from typing import Any, List, Union, Literal, Callable, Optional
 import numpy as np
 import pandas as pd
+import time
 from scipy.optimize import minimize, minimize_scalar
-from functools import lru_cache  # noqa
+from trade.optionlib.utils.format import assert_equal_length  # noqa
+from trade.optionlib.utils.batch_operation import vector_batch_processor
 from ..pricing.black_scholes import black_scholes_vectorized, black_scholes_vectorized_scalar
 from ..pricing.bjs2002 import bjerksund_stensland_2002_vectorized
 from ..pricing.binomial import crr_binomial_pricing
 from ..config.defaults import BRUTE_FORCE_MAX_ITERATIONS
 from trade.helpers.Logging import setup_logger
+from trade.helpers.exit_helpers import _record_time
 
 logger = setup_logger("trade.optionlib.vol.implied_vol")
 
 
-def intrinsic_check(F, K, T, r, sigma, market_price, option_type) -> None:
-    """
-    Check if the intrinsic value of the option is greater than the market price.
-    If not, log a warning and return NaN.
-    Parameters:
-    - F: Forward price
-    - K: Strike price
-    - T: Time to maturity
-    - r: Risk-free rate
-    - sigma: Volatility
-    - market_price: Market price of the option
-    - option_type: 'c' for call, 'p' for put
+def vector_crr_iv_estimation(
+    S: List[float],
+    K: List[float],
+    T: List[float],
+    r: List[float],
+    market_price: List[float],
+    dividends: List[Any],
+    option_type: List[str],
+    N: List[int] = None,
+    dividend_type: List[str] = None,
+    american: List[bool] = None,
+) -> List[float]:
+    """Estimate implied volatilities using Cox-Ross-Rubinstein binomial model for multiple options.
+
+    Vectorized implementation that computes implied volatilities by matching market prices
+    to CRR binomial tree prices. Automatically selects between standard and batch processing
+    based on input size (threshold: 200 options). Supports both American and European options
+    with discrete or continuous dividend treatments.
+
+    Args:
+        S: List of spot prices for each option.
+        K: List of strike prices for each option.
+        T: List of times to maturity (in years) for each option.
+        r: List of risk-free interest rates (annualized) for each option.
+        market_price: List of observed market prices to match.
+        dividends: List of dividend inputs. Format depends on dividend_type:
+            - For "discrete": Schedule objects or tuples of (ex_date, amount)
+            - For "continuous": continuous dividend yields (floats)
+        option_type: List of option types ('c' for call, 'p' for put).
+        N: Number of time steps in binomial tree for each option. Defaults to 100 for all.
+        dividend_type: List of dividend types ('discrete' or 'continuous').
+            Defaults to 'discrete' for all.
+        american: List of booleans indicating American (True) or European (False) exercise.
+            Defaults to True (American) for all.
+
     Returns:
-    - None
+        List of estimated implied volatilities, one per input option. Returns None for
+        options where optimization fails to converge.
+
+    Raises:
+        ValueError: If input lists have inconsistent lengths (via assert_equal_length).
+
+    Examples:
+        >>> # Basic usage with European calls
+        >>> spots = [100.0, 105.0, 110.0]
+        >>> strikes = [100.0, 100.0, 100.0]
+        >>> maturities = [0.25, 0.25, 0.25]
+        >>> rates = [0.05, 0.05, 0.05]
+        >>> prices = [5.2, 7.8, 11.3]
+        >>> divs = [0.02, 0.02, 0.02]
+        >>> types = ['c', 'c', 'c']
+        >>>
+        >>> ivs = vector_crr_iv_estimation(
+        ...     S=spots,
+        ...     K=strikes,
+        ...     T=maturities,
+        ...     r=rates,
+        ...     market_price=prices,
+        ...     dividends=divs,
+        ...     option_type=types,
+        ...     N=[100, 100, 100],
+        ...     dividend_type=['continuous', 'continuous', 'continuous'],
+        ...     american=[False, False, False]
+        ... )
+        >>> print(ivs)
+        [0.234, 0.241, 0.248]
+
+        >>> # American options with discrete dividends (using defaults)
+        >>> from trade.optionlib.utils.schedule import Schedule
+        >>> div_schedule = Schedule([("2026-03-15", 0.50), ("2026-06-15", 0.50)])
+        >>> ivs = vector_crr_iv_estimation(
+        ...     S=[150.0, 155.0],
+        ...     K=[150.0, 150.0],
+        ...     T=[0.5, 0.5],
+        ...     r=[0.04, 0.04],
+        ...     market_price=[8.5, 10.2],
+        ...     dividends=[div_schedule, div_schedule],
+        ...     option_type=['p', 'p']
+        ... )  # Uses defaults: N=100, dividend_type='discrete', american=True
+    """
+
+    if not american:
+        american = [True] * len(S)
+
+    if not dividend_type:
+        dividend_type = ["discrete"] * len(S)
+
+    if not N:
+        N = [100] * len(S)
+
+    assert_equal_length(
+        S,
+        K,
+        T,
+        r,
+        market_price,
+        dividends,
+        option_type,
+        N,
+        dividend_type,
+        american,
+        names=[
+            "S",
+            "K",
+            "T",
+            "r",
+            "market_price",
+            "dividends",
+            "option_type",
+            "N",
+            "dividend_type",
+            "american",
+        ],
+    )
+    if len(S) < 200:
+        logger.info("Using non-batch processor for CRR implied volatility estimation.")
+        start = time.time()
+        result = vector_vol_estimation(
+            estimate_crr_implied_volatility,
+            S,
+            K,
+            T,
+            r,
+            market_price,
+            dividends,
+            option_type,
+            N,
+            dividend_type,
+            american,
+        )
+        _record_time(start, 
+                     time.time(), 
+                     "crr_iv_estimation", 
+                        {
+                         "method": "non-batch crr iv estimation", 
+                         "num_options": len(S)
+                        }
+                    )
+    
+    else:
+        start = time.time()
+        result = vector_batch_processor(
+            vector_vol_estimation,
+            estimate_crr_implied_volatility,
+            S,
+            K,
+            T,
+            r,
+            market_price,
+            dividends,
+            option_type,
+            N,
+            dividend_type,
+            american,
+        )
+        _record_time(start, time.time(), 
+                     "crr_iv_estimation", 
+                        {
+                         "method": "batch crr iv estimation", 
+                         "num_options": len(S)
+                        }
+                )
+    return result
+
+
+def vector_bsm_iv_estimation(
+    F: List[float],
+    K: List[float],
+    T: List[float],
+    r: List[float],
+    market_price: List[float],
+    right: List[str],
+) -> List[float]:
+    """Estimate implied volatilities using Black-Scholes-Merton model for multiple European options.
+
+    Vectorized implementation that computes implied volatilities by matching market prices
+    to Black-Scholes-Merton prices using a brute force grid search method. This function
+    is optimized for European-style options and uses forward prices (F) directly rather
+    than spot prices with dividend adjustments.
+
+    The brute force approach tests a range of volatilities (0.001 to 5.0) and selects the
+    one that minimizes the difference between calculated and market prices. Returns NaN for
+    options that violate no-arbitrage bounds (intrinsic value or upper bound constraints).
+
+    Args:
+        F: List of forward prices for each option. Forward price should already incorporate
+            dividends and cost of carry: F = S * exp((r-q)*T).
+        K: List of strike prices for each option.
+        T: List of times to maturity (in years) for each option.
+        r: List of risk-free interest rates (annualized) for each option.
+        market_price: List of observed market prices to match.
+        right: List of option types ('c' for call, 'p' for put).
+
+    Returns:
+        List of estimated implied volatilities, one per input option. Returns np.nan for
+        options where arbitrage bounds are violated.
+
+    Raises:
+        ValueError: If input lists have inconsistent lengths (via assert_equal_length).
+
+    Examples:
+        >>> # Basic usage with European call options
+        >>> forwards = [102.5, 107.3, 112.8]
+        >>> strikes = [100.0, 100.0, 100.0]
+        >>> maturities = [0.25, 0.25, 0.25]
+        >>> rates = [0.05, 0.05, 0.05]
+        >>> prices = [5.8, 9.2, 13.5]
+        >>> types = ['c', 'c', 'c']
+        >>>
+        >>> ivs = vector_bsm_iv_estimation(
+        ...     F=forwards,
+        ...     K=strikes,
+        ...     T=maturities,
+        ...     r=rates,
+        ...     market_price=prices,
+        ...     right=types
+        ... )
+        >>> print(ivs)
+        [0.235, 0.242, 0.251]
+
+        >>> # Mixed calls and puts with varying parameters
+        >>> ivs = vector_bsm_iv_estimation(
+        ...     F=[100.0, 105.0, 98.0],
+        ...     K=[100.0, 110.0, 100.0],
+        ...     T=[0.5, 0.75, 0.25],
+        ...     r=[0.04, 0.045, 0.035],
+        ...     market_price=[8.5, 7.2, 3.1],
+        ...     right=['c', 'c', 'p']
+        ... )
+    """
+
+    assert_equal_length(
+        F,
+        K,
+        T,
+        r,
+        market_price,
+        right,
+        names=[
+            "F",
+            "K",
+            "T",
+            "r",
+            "market_price",
+            "right",
+        ],
+    )
+    return vector_vol_estimation(bsm_vol_est_brute_force, F, K, T, r, market_price, right)
+
+
+def intrinsic_check(F, K, T, r, sigma, market_price, option_type) -> bool:
+    """
+    Check no-arbitrage bounds (intrinsic + upper bound).
+    Returns False if violated, True otherwise.
     """
     df = np.exp(-r * T)
-    intrinsic_value = df * max(F - K if option_type == "c" else K - F, 0)
 
-    ##TODO: Take this out of objective function to avoid repeated logging during minimization
-    if intrinsic_value < market_price:
-        logger.warning("Market price exceeds intrinsic value, returning NaN.")
+    if option_type == "c":
+        intrinsic_value = df * max(F - K, 0.0)
+        upper_bound = df * F
+    else:
+        intrinsic_value = df * max(K - F, 0.0)
+        upper_bound = df * K
+
+    # Lower bound (intrinsic) violation
+    if market_price < intrinsic_value:
+        logger.warning("Market price below intrinsic value.")
         logger.warning(
-            f"Intrinsic Value: {intrinsic_value}, Market Price: {market_price}. Option Details: F={F}, K={K}, T={T}, r={r}, sigma={sigma}, option_type={option_type}"
+            f"Intrinsic Value: {intrinsic_value}, Market Price: {market_price}. "
+            f"Option Details: F={F}, K={K}, T={T}, r={r}, sigma={sigma}, option_type={option_type}"
         )
+        return False
+
+    # Upper bound (no-arbitrage) violation
+    if market_price > upper_bound:
+        logger.warning("Market price exceeds no-arbitrage upper bound.")
+        logger.warning(
+            f"Upper Bound: {upper_bound}, Market Price: {market_price}. "
+            f"Option Details: F={F}, K={K}, T={T}, r={r}, sigma={sigma}, option_type={option_type}"
+        )
+        return False
+
+    return True
 
 
 def bsm_vol_est_minimization(
@@ -101,7 +363,10 @@ def bsm_vol_est_brute_force(
     Returns:
     - Estimated volatility
     """
-    intrinsic_check(F, K, T, r, 0.2, market_price, option_type)  # Check intrinsic value
+
+    check = intrinsic_check(F, K, T, r, 0.2, market_price, option_type)  # Check intrinsic value
+    if not check:
+        return np.nan
     sigmas = np.linspace(0.001, 5, BRUTE_FORCE_MAX_ITERATIONS)  # Range of volatilities to test
 
     prices = black_scholes_vectorized_scalar(F=F, K=K, T=T, r=r, sigma=sigmas, option_type=option_type)

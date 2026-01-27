@@ -10,7 +10,7 @@ Typical usage:
     ...     start_date="2025-01-01",
     ...     end_date="2025-01-31",
     ...     maturity_date="2025-06-20",
-    ...     div_type=DivType.DISCRETE,
+    ...     dividend_type=DivType.DISCRETE,
     ...     use_chain_spot=True
     ... )
     >>> forwards = result.daily_discrete_forward
@@ -19,9 +19,11 @@ Typical usage:
 from datetime import datetime, date
 from typing import Any, ClassVar, Optional, Tuple, Union
 import pandas as pd
+import numpy as np
 from EventDriven.riskmanager.market_data import TimeseriesData
+from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import get_missing_dates
+from trade.helpers.helper import change_to_last_busday, get_missing_dates
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.dividend import DividendDataManager
@@ -29,11 +31,10 @@ from trade.datamanager.result import ForwardResult
 from trade.datamanager.rates import RatesDataManager
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult, RatesResult
-from trade.datamanager._enums import ArtifactType, Interval, SeriesId
+from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.cache import _data_structure_cache_it
-from trade.datamanager.vars import TS
+from trade.datamanager.vars import TS, load_name
 from trade.optionlib.config.types import DivType
-from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 from trade.optionlib.assets.dividend import (
     vectorized_discrete_pv,
     SECONDS_IN_DAY,
@@ -45,7 +46,7 @@ from trade.optionlib.assets.forward import (
     get_vectorized_continuous_dividends,
 )
 
-logger = setup_logger("trade.datamanager.forward")
+logger = setup_logger("trade.datamanager.forward", stream_log_level="DEBUG")
 
 
 class ForwardDataManager(BaseDataManager):
@@ -73,7 +74,7 @@ class ForwardDataManager(BaseDataManager):
         ...     start_date="2025-01-01",
         ...     end_date="2025-01-31",
         ...     maturity_date="2025-06-20",
-        ...     div_type=DivType.DISCRETE,
+        ...     dividend_type=DivType.DISCRETE,
         ...     use_chain_spot=True
         ... )
         >>> forwards = result.daily_discrete_forward
@@ -82,7 +83,7 @@ class ForwardDataManager(BaseDataManager):
         >>> result = fwd_mgr1.get_forward(
         ...     date="2025-01-15",
         ...     maturity_date="2025-06-20",
-        ...     div_type=DivType.DISCRETE
+        ...     dividend_type=DivType.DISCRETE
         ... )
     """
 
@@ -111,7 +112,6 @@ class ForwardDataManager(BaseDataManager):
             >>> assert mgr1 is mgr2  # Same instance
         """
         if symbol not in cls.INSTANCES:
-            TS.load_timeseries(symbol, start_date=OPTION_TIMESERIES_START_DATE, end_date=datetime.now())
             instance = super(ForwardDataManager, cls).__new__(cls)
             cls.INSTANCES[symbol] = instance
         return cls.INSTANCES[symbol]
@@ -149,7 +149,7 @@ class ForwardDataManager(BaseDataManager):
         start_date: Union[datetime, str],
         end_date: Union[datetime, str],
         maturity_date: Union[datetime, str],
-        div_type: Optional[DivType],
+        dividend_type: Optional[DivType],
     ) -> Tuple[DivType, date, date, date, str, str, str]:
         """Converts date inputs to both date objects and strings.
         
@@ -160,7 +160,7 @@ class ForwardDataManager(BaseDataManager):
             start_date: Start date (YYYY-MM-DD string or datetime).
             end_date: End date (YYYY-MM-DD string or datetime).
             maturity_date: Maturity date (YYYY-MM-DD string or datetime).
-            div_type: Optional DivType. Defaults to DISCRETE if None.
+            dividend_type: Optional DivType. Defaults to DISCRETE if None.
         
         Returns:
             Tuple containing:
@@ -174,16 +174,16 @@ class ForwardDataManager(BaseDataManager):
         
         Examples:
             >>> fwd_mgr = ForwardDataManager("AAPL")
-            >>> div_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str = \
+            >>> dividend_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str = \
             ...     fwd_mgr._normalize_inputs(
             ...         start_date="2025-01-01",
             ...         end_date="2025-01-31",
             ...         maturity_date="2025-06-20",
-            ...         div_type=None
+            ...         dividend_type=None
             ...     )
-            >>> print(div_type)  # DivType.DISCRETE
+            >>> logger.info(dividend_type)  # DivType.DISCRETE
         """
-        div_type = DivType(div_type) if div_type is not None else DivType.DISCRETE
+        dividend_type = DivType(dividend_type) if dividend_type is not None else self.CONFIG.dividend_type
 
         start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
         end_dt = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
@@ -192,9 +192,9 @@ class ForwardDataManager(BaseDataManager):
         start_str = datetime.strftime(start_dt, "%Y-%m-%d")
         end_str = datetime.strftime(end_dt, "%Y-%m-%d")
         mat_str = datetime.strftime(mat_dt, "%Y-%m-%d")
-        return div_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str
+        return dividend_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str
 
-    def _build_key(self, *, mat_str: str, div_type: DivType, use_chain_spot: bool) -> str:
+    def _build_key(self, *, mat_str: str, dividend_type: DivType, use_chain_spot: bool) -> str:
         """Constructs cache key from maturity, dividend type, and spot type.
 
         Creates unique cache identifier incorporating symbol, maturity date, dividend type,
@@ -202,7 +202,7 @@ class ForwardDataManager(BaseDataManager):
 
         Args:
             mat_str: Maturity date string (YYYY-MM-DD).
-            div_type: DivType.DISCRETE or DivType.CONTINUOUS.
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS.
             use_chain_spot: If True, uses split-adjusted chain_spot prices.
 
         Returns:
@@ -212,7 +212,7 @@ class ForwardDataManager(BaseDataManager):
             >>> fwd_mgr = ForwardDataManager("AAPL")
             >>> key = fwd_mgr._build_key(
             ...     mat_str="2025-06-20",
-            ...     div_type=DivType.DISCRETE,
+            ...     dividend_type=DivType.DISCRETE,
             ...     use_chain_spot=True
             ... )
         """
@@ -221,7 +221,7 @@ class ForwardDataManager(BaseDataManager):
             artifact_type=ArtifactType.FWD,
             series_id=SeriesId.HIST,
             maturity=mat_str,
-            div_type=div_type.value,
+            dividend_type=dividend_type.value,
             use_chain_spot=use_chain_spot,
             interval=Interval.EOD,
         )
@@ -234,7 +234,8 @@ class ForwardDataManager(BaseDataManager):
         end_str: str,
         start_date: Union[datetime, str],
         end_date: Union[datetime, str],
-        div_type: DivType,
+        dividend_type: DivType,
+        use_chain_spot: bool,
     ) -> Tuple[Optional[pd.Series], bool, str, str, Optional[ForwardResult]]:
         """Checks cache for existing data and identifies missing dates.
 
@@ -248,8 +249,8 @@ class ForwardDataManager(BaseDataManager):
             end_str: End date string (YYYY-MM-DD).
             start_date: Start date (string or datetime).
             end_date: End date (string or datetime).
-            div_type: DivType.DISCRETE or DivType.CONTINUOUS.
-
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS.
+            use_chain_spot: If True, uses split-adjusted chain_spot prices.
         Returns:
             Tuple containing:
                 - Optional[pd.Series]: Cached series if partial hit, None otherwise
@@ -266,7 +267,8 @@ class ForwardDataManager(BaseDataManager):
             ...     end_str="2025-01-31",
             ...     start_date="2025-01-01",
             ...     end_date="2025-01-31",
-            ...     div_type=DivType.DISCRETE
+            ...     dividend_type=DivType.DISCRETE,
+            ...     use_chain_spot=True
             ... )
         """
         cached_series = self.get(key, default=None)
@@ -283,12 +285,14 @@ class ForwardDataManager(BaseDataManager):
             )
 
             result = ForwardResult()
-            if div_type == DivType.DISCRETE:
+            if dividend_type == DivType.DISCRETE:
                 result.daily_discrete_forward = cached_series
             else:
                 result.daily_continuous_forward = cached_series
-            result.dividend_type = div_type
+            result.dividend_type = dividend_type
             result.key = key
+            result.symbol = self.symbol
+            result.undo_adjust = use_chain_spot
             return cached_series, False, start_str, end_str, result
 
         logger.info(
@@ -303,7 +307,7 @@ class ForwardDataManager(BaseDataManager):
         start_str: str,
         end_str: str,
         mat_str: str,
-        div_type: DivType,
+        dividend_type: DivType,
         dividend_result: Optional[DividendsResult],
         use_chain_spot: bool,
     ) -> DividendsResult:
@@ -317,7 +321,7 @@ class ForwardDataManager(BaseDataManager):
             start_str: Start date string (YYYY-MM-DD).
             end_str: End date string (YYYY-MM-DD).
             mat_str: Maturity date string (YYYY-MM-DD).
-            div_type: DivType.DISCRETE or DivType.CONTINUOUS.
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS.
             dividend_result: Optional pre-computed dividend data. Fetched if None.
             use_chain_spot: If True, uses split-adjusted chain_spot prices.
 
@@ -334,7 +338,7 @@ class ForwardDataManager(BaseDataManager):
             ...     start_str="2025-01-01",
             ...     end_str="2025-01-31",
             ...     mat_str="2025-06-20",
-            ...     div_type=DivType.DISCRETE,
+            ...     dividend_type=DivType.DISCRETE,
             ...     dividend_result=None,
             ...     use_chain_spot=True
             ... )
@@ -348,7 +352,7 @@ class ForwardDataManager(BaseDataManager):
                 start_date=start_str,
                 end_date=end_str,
                 maturity_date=mat_str,
-                div_type=div_type,
+                dividend_type=dividend_type,
                 undo_adjust=use_chain_spot,  # If using chain spot, back adjust dividends
             )
 
@@ -376,7 +380,7 @@ class ForwardDataManager(BaseDataManager):
         Examples:
             >>> fwd_mgr = ForwardDataManager("AAPL")
             >>> spot_prices = fwd_mgr._load_spot(use_chain_spot=True)
-            >>> print(spot_prices.head())
+            >>> logger.info(spot_prices.head())
             datetime
             2025-01-02    155.32
             2025-01-03    156.01
@@ -412,7 +416,7 @@ class ForwardDataManager(BaseDataManager):
             ...     start_str="2025-01-01",
             ...     end_str="2025-01-31"
             ... )
-            >>> print(rates.head())
+            >>> logger.info(rates.head())
             Datetime
             2025-01-02    0.0485
             2025-01-03    0.0487
@@ -511,7 +515,7 @@ class ForwardDataManager(BaseDataManager):
             ...     discrete_divs=dividend_schedules,
             ...     mat_dt=date(2025, 6, 20)
             ... )
-            >>> print(forwards.head())
+            >>> logger.info(forwards.head())
             datetime
             2025-01-02    156.45
             2025-01-03    157.12
@@ -574,7 +578,7 @@ class ForwardDataManager(BaseDataManager):
             ...     continuous_divs=dividend_yields,
             ...     mat_dt=date(2025, 6, 20)
             ... )
-            >>> print(forwards.head())
+            >>> logger.info(forwards.head())
             datetime
             2025-01-02    156.28
             2025-01-03    156.95
@@ -635,7 +639,7 @@ class ForwardDataManager(BaseDataManager):
         start_date: Union[datetime, str],
         end_date: Union[datetime, str],
         maturity_date: Union[datetime, str],
-        div_type: Optional[DivType] = None,
+        dividend_type: Optional[DivType] = None,
         spot: Optional[TimeseriesData] = None,
         rates: Optional[RatesResult] = None,
         *,
@@ -646,13 +650,13 @@ class ForwardDataManager(BaseDataManager):
 
         Computes forward prices for each business day in [start_date, end_date],
         where each forward is valued to the fixed maturity_date. Uses discrete
-        dividends (Schedule objects) or continuous yields depending on div_type.
+        dividends (Schedule objects) or continuous yields depending on dividend_type.
 
         Args:
             start_date: First valuation date (YYYY-MM-DD string or datetime).
             end_date: Last valuation date (YYYY-MM-DD string or datetime).
             maturity_date: Fixed horizon date for all forwards (e.g., option expiry).
-            div_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to DISCRETE.
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to DISCRETE.
             spot: Optional pre-loaded TimeseriesData. Fetched if None.
             rates: Optional pre-computed rates data. Fetched if None.
             dividend_result: Pre-computed dividend data. If None, fetches internally.
@@ -673,10 +677,10 @@ class ForwardDataManager(BaseDataManager):
             ...     start_date="2025-01-01",
             ...     end_date="2025-01-31",
             ...     maturity_date="2025-06-20",
-            ...     div_type=DivType.DISCRETE,
+            ...     dividend_type=DivType.DISCRETE,
             ...     use_chain_spot=True
             ... )
-            >>> print(result.daily_discrete_forward.head())
+            >>> logger.info(result.daily_discrete_forward.head())
             datetime
             2025-01-02    155.32
             2025-01-03    156.01
@@ -705,20 +709,25 @@ class ForwardDataManager(BaseDataManager):
             - start_date/end_date define valuation date range
             - maturity_date is the fixed horizon (e.g., option expiry)
         """
+
+        ## Load first
+        load_name(self.symbol)
+
+        ## Normalize inputs
         result = ForwardResult()
         og_start_date = start_date
         og_end_date = end_date
-        div_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str = self._normalize_inputs(
+        dividend_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str = self._normalize_inputs(
             start_date=start_date,
             end_date=end_date,
             maturity_date=maturity_date,
-            div_type=div_type,
+            dividend_type=dividend_type,
         )
 
         if mat_dt < start_dt:
             raise ValueError("maturity_date must be >= start_date")
 
-        key = self._build_key(mat_str=mat_str, div_type=div_type, use_chain_spot=use_chain_spot)
+        key = self._build_key(mat_str=mat_str, dividend_type=dividend_type, use_chain_spot=use_chain_spot)
 
         cached_series, partial_hit, start_str, end_str, cached_result = self._try_get_cached(
             key=key,
@@ -726,7 +735,8 @@ class ForwardDataManager(BaseDataManager):
             end_str=end_str,
             start_date=start_date,
             end_date=end_date,
-            div_type=div_type,
+            dividend_type=dividend_type,
+            use_chain_spot=use_chain_spot,
         )
         if cached_result is not None:
             return cached_result
@@ -735,7 +745,7 @@ class ForwardDataManager(BaseDataManager):
             start_str=start_str,
             end_str=end_str,
             mat_str=mat_str,
-            div_type=div_type,
+            dividend_type=dividend_type,
             dividend_result=dividend_result,
             use_chain_spot=use_chain_spot,
         )
@@ -743,7 +753,7 @@ class ForwardDataManager(BaseDataManager):
         spot = self._load_spot(use_chain_spot=use_chain_spot, spot=spot)
         rates = self._load_rates(start_str=start_str, end_str=end_str, rates=rates)
 
-        if div_type == DivType.DISCRETE:
+        if dividend_type == DivType.DISCRETE:
             discrete_divs = dividend_result.daily_discrete_dividends
 
             spot, rates, discrete_divs = self._align_3(
@@ -763,7 +773,7 @@ class ForwardDataManager(BaseDataManager):
             result.daily_discrete_forward = forward_series
             result.dividend_result = dividend_result
 
-        elif div_type == DivType.CONTINUOUS:
+        elif dividend_type == DivType.CONTINUOUS:
             continuous_divs = dividend_result.daily_continuous_dividends
 
             spot, rates, continuous_divs = self._align_3(
@@ -782,17 +792,19 @@ class ForwardDataManager(BaseDataManager):
 
             result.daily_continuous_forward = forward_series
             result.dividend_result = dividend_result
+            result.symbol = self.symbol
+            result.undo_adjust = use_chain_spot
 
         else:
-            raise ValueError(f"Unsupported dividend type: {div_type}")
+            raise ValueError(f"Unsupported dividend type: {dividend_type}")
 
-        result.dividend_type = div_type
+        result.dividend_type = dividend_type
         result.key = key
 
         if partial_hit:
             forward_series = self._merge_partial(cached_series=cached_series, forward_series=forward_series)
 
-        self.cache_it(key, forward_series, expire=86400 / 2)  # 12 hours expiry
+        self.cache_it(key, forward_series, expire=86400)  # 24 hours expiry
 
         forward_series = _data_structure_sanitize(
             forward_series,
@@ -800,11 +812,13 @@ class ForwardDataManager(BaseDataManager):
             end=og_end_date,
         )
 
-        if div_type == DivType.DISCRETE:
+        if dividend_type == DivType.DISCRETE:
             result.daily_discrete_forward = forward_series
         else:
             result.daily_continuous_forward = forward_series
 
+        result.undo_adjust = use_chain_spot
+        result.symbol = self.symbol
         result.undo_adjust = use_chain_spot
 
         return result
@@ -819,7 +833,7 @@ class ForwardDataManager(BaseDataManager):
             interval: Time interval (e.g., Interval.EOD).
             artifact_type: Type of artifact (e.g., ArtifactType.FWD).
             series_id: Series identifier (e.g., SeriesId.HIST).
-            **extra_parts: Additional key components (maturity, div_type, etc.).
+            **extra_parts: Additional key components (maturity, dividend_type, etc.).
 
         Returns:
             Unique cache key string.
@@ -865,12 +879,13 @@ class ForwardDataManager(BaseDataManager):
         self,
         date: Union[datetime, str],
         maturity_date: Union[datetime, str],
-        div_type: Optional[DivType] = None,
+        dividend_type: Optional[DivType] = None,
         dividend_result: Optional[DividendsResult] = None,
         spot: Optional[TimeseriesData] = None,
         rates: Optional[RatesResult] = None,
         *,
         use_chain_spot: bool = True,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
     ) -> ForwardResult:
         """Returns the forward price at a specific valuation date.
 
@@ -880,12 +895,12 @@ class ForwardDataManager(BaseDataManager):
         Args:
             date: Valuation date (YYYY-MM-DD string or datetime).
             maturity_date: Horizon date (e.g., option expiry).
-            div_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to DISCRETE.
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to DISCRETE.
             dividend_result: Optional pre-computed dividend data.
             spot: Optional pre-loaded TimeseriesData.
             rates: Optional pre-computed rates data.
             use_chain_spot: If True, uses split-adjusted chain_spot prices.
-
+            fallback_option: Optional fallback option for real-time data.
         Returns:
             ForwardResult containing single forward price in daily_discrete_forward
             or daily_continuous_forward Series.
@@ -895,18 +910,50 @@ class ForwardDataManager(BaseDataManager):
             >>> result = fwd_mgr.get_forward(
             ...     date="2025-01-15",
             ...     maturity_date="2025-06-20",
-            ...     div_type=DivType.DISCRETE,
+            ...     dividend_type=DivType.DISCRETE,
             ...     use_chain_spot=True
             ... )
             >>> forward_price = result.daily_discrete_forward.iloc[0]
-            >>> print(f"Forward: ${forward_price:.2f}")
+            >>> logger.info(f"Forward: ${forward_price:.2f}")
             Forward: $156.45
 
         Notes:
             - Suitable for real-time pricing scenarios
             - Internally calls get_forward_timeseries with date as both start and end
         """
-        div_type = DivType(div_type) if div_type is not None else DivType.DISCRETE
+        load_name(self.symbol)
+        dividend_type = DivType(dividend_type) if dividend_type is not None else DivType.DISCRETE
+        fallback_option = fallback_option if fallback_option is not None else self.CONFIG.real_time_fallback_option
+
+        if not is_available_on_date(date):
+            logger.warning(
+                f"Valuation date {date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}"
+            )
+            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
+                raise ValueError(f"Valuation date {date} is not a business day or holiday.")
+            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
+                date = change_to_last_busday(date)
+            else:
+                result = ForwardResult()
+                if dividend_type == DivType.DISCRETE:
+                    result.daily_discrete_forward = pd.Series(
+                        dtype=float,
+                        index=[date],
+                        data=[np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0],
+                    )
+                else:
+                    result.daily_continuous_forward = pd.Series(
+                        dtype=float,
+                        index=[date],
+                        data=[np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0],
+                    )
+
+                result.key = None
+                result.undo_adjust = use_chain_spot
+                result.dividend_type = dividend_type
+                result.symbol = self.symbol
+                return result
+
         date_str = date.strftime("%Y-%m-%d") if isinstance(date, datetime) else date
         mat_str = maturity_date.strftime("%Y-%m-%d") if isinstance(maturity_date, datetime) else maturity_date
         start = date_str
@@ -916,13 +963,65 @@ class ForwardDataManager(BaseDataManager):
             start_date=start,
             end_date=end,
             maturity_date=mat_str,
-            div_type=div_type,
+            dividend_type=dividend_type,
             use_chain_spot=use_chain_spot,
             dividend_result=dividend_result,
             spot=spot,
             rates=rates,
         )
         return result
+    
+    def rt(
+        self,
+        maturity_date: Union[datetime, str],
+        dividend_type: Optional[DivType] = None,
+        dividend_result: Optional[DividendsResult] = None,
+        spot: Optional[TimeseriesData] = None,
+        rates: Optional[RatesResult] = None,
+        *,
+        use_chain_spot: bool = True,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
+    ) -> ForwardResult:
+        """Shortcut for get_forward method.
+
+        Provides a concise alias for retrieving forward prices at the current date.
+
+        Args:
+            maturity_date: Horizon date (e.g., option expiry).
+            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to DISCRETE.
+            dividend_result: Optional pre-computed dividend data.
+            spot: Optional pre-loaded TimeseriesData.
+            rates: Optional pre-computed rates data.
+            use_chain_spot: If True, uses split-adjusted chain_spot prices.
+            fallback_option: Optional fallback option for real-time data.
+
+        Returns:
+            ForwardResult containing single forward price in daily_discrete_forward
+            or daily_continuous_forward Series.
+
+        Examples:
+            >>> fwd_mgr = ForwardDataManager("AAPL")
+            >>> result = fwd_mgr.rt(
+            ...     date="2025-01-15",
+            ...     maturity_date="2025-06-20",
+            ...     dividend_type=DivType.DISCRETE,
+            ...     use_chain_spot=True
+            ... )
+            >>> forward_price = result.daily_discrete_forward.iloc[0]
+            >>> logger.info(f"Forward: ${forward_price:.2f}")
+            Forward: $156.45
+        """
+        load_name(self.symbol)
+        return self.get_forward(
+            date=datetime.now(),
+            maturity_date=maturity_date,
+            dividend_type=dividend_type,
+            dividend_result=dividend_result,
+            spot=spot,
+            rates=rates,
+            use_chain_spot=use_chain_spot,
+            fallback_option=fallback_option,
+    )
 
     def offload(self, *args: Any, **kwargs: Any) -> None:
         """Placeholder for offload logic (not implemented).
@@ -938,4 +1037,4 @@ class ForwardDataManager(BaseDataManager):
             >>> fwd_mgr = ForwardDataManager("AAPL")
             >>> fwd_mgr.offload()  # No-op
         """
-        print(f"No offload logic implemented for {self.CACHE_NAME}")
+        logger.info(f"No offload logic implemented for {self.CACHE_NAME}")

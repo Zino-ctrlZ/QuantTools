@@ -26,17 +26,12 @@ from trade.datamanager._enums import ArtifactType, Interval, SeriesId, OptionSpo
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from trade.datamanager.config import OptionDataConfig
-from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, to_datetime
-from dbase.DataAPI.ThetaData import (
-    list_dates,
-    retrieve_eod_ohlc,
-    quote_to_eod_patch,
-)
+from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date
+from dbase.DataAPI.ThetaData import retrieve_eod_ohlc, quote_to_eod_patch, retrieve_quote_rt
 from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
-logger = setup_logger("trade.datamanager.option_spot")
-
+logger = setup_logger("trade.datamanager.option_spot", stream_log_level="INFO")
 
 class OptionSpotDataManager(BaseDataManager):
     """Manages option spot price retrieval for a specific symbol from Thetadata API.
@@ -76,9 +71,8 @@ class OptionSpotDataManager(BaseDataManager):
     """
 
     CACHE_NAME: str = "option_spot_manager"
-    DEFAULT_SERIES_ID: str = SeriesId.HIST
+    DEFAULT_SERIES_ID: SeriesId = SeriesId.HIST
     CONFIG = OptionDataConfig()
-    INSTANCES = {}
 
     def __init__(
         self,
@@ -110,6 +104,7 @@ class OptionSpotDataManager(BaseDataManager):
         strike: Optional[float] = None,
         expiration: Optional[Union[datetime, str]] = None,
         right: Optional[str] = None,
+        endpoint_source: Optional[OptionSpotEndpointSource] = OptionSpotEndpointSource.EOD
     ) -> Tuple[DATE_HINT, DATE_HINT]:
         """Synchronizes requested dates with available data range from Thetadata.
 
@@ -142,21 +137,16 @@ class OptionSpotDataManager(BaseDataManager):
             - Constrains end_date to min(requested_end, max_available_date)
             - Prevents requesting dates outside available data range
         """
-
-        dates = list_dates(
+        return _sync_date(
             symbol=self.symbol,
-            exp=expiration,
-            right=right,
+            start_date=start_date,
+            end_date=end_date,
             strike=strike,
+            expiration=expiration,
+            right=right,
+            endpoint_source=endpoint_source
         )
-        print(dates)
-        dates = to_datetime(dates)
-        min_date, max_date = min(dates), max(dates)
-        start_date = max(min_date, start_date)
-        end_date = min(end_date, max_date)
-
-        return start_date, end_date
-
+    
     def get_option_spot(
         self,
         date: Union[datetime, str],
@@ -290,18 +280,23 @@ class OptionSpotDataManager(BaseDataManager):
             symbol=self.symbol,
             exp=expiration,
             opttick=opttick,
+            enforce_single_option=True,
         )
 
-        date_packet = DateRangePacket(start_date=start_date, end_date=end_date)
-        start_date, end_date = date_packet.start_date, date_packet.end_date
+        ## Sync requested dates with available data range
         start_date, end_date = self._sync_date(
             start_date=start_date,
             end_date=end_date,
             strike=float(strike),
             expiration=expiration,
             right=right,
+            endpoint_source=endpoint_source,
         )
+
+        date_packet = DateRangePacket(start_date=start_date, end_date=end_date, maturity_date=expiration)
+        start_date, end_date = date_packet.start_date, date_packet.end_date
         start_str, end_str = date_packet.start_str, date_packet.end_str
+        expiration = date_packet.maturity_date
 
         # Construct cache key
         key = self.make_key(
@@ -355,7 +350,7 @@ class OptionSpotDataManager(BaseDataManager):
         fetched_data.index = default_timestamp(fetched_data.index)
 
         # Cache the fetched data
-        _data_structure_cache_it(self, key, fetched_data)  # 24 hours expiry
+        _data_structure_cache_it(self, key, fetched_data)
 
         # Sanitize before returning
         fetched_data = _data_structure_sanitize(
@@ -440,3 +435,50 @@ class OptionSpotDataManager(BaseDataManager):
             right=right,
             ohlc_format=True,
         )
+    
+    def rt(
+        self,
+        strike: float,
+        right: str,
+        expiration: Union[datetime, str],
+    ) -> OptionSpotResult:
+        """
+        Fetches real-time option spot price from Thetadata Quote endpoint.
+
+        Retrieves the most recent OHLC data for a specific option contract using
+        Thetadata's Quote endpoint.
+
+        Args:
+            strike: Option strike price.
+            right: Option type ("C" for call, "P" for put).
+            expiration: Option expiration date.
+
+        Returns:
+            OptionSpotResult containing daily_option_spot DataFrame with OHLC data,
+            plus metadata (key, endpoint_source).
+    """
+        rt = retrieve_quote_rt(
+            symbol=self.symbol,
+            exp=expiration,
+            strike=strike,
+            right=right,
+        )
+        rt.index = default_timestamp(rt.index)
+        rt.columns = rt.columns.str.lower()
+        result = OptionSpotResult()
+        result.daily_option_spot = rt
+        result.key = self.make_key(
+            symbol=self.symbol,
+            time = datetime.now().time(),
+            date = datetime.now(),
+            artifact_type=ArtifactType.OPTION_SPOT,
+            series_id=SeriesId.AT_TIME,
+            endpoint_source=OptionSpotEndpointSource.QUOTE,
+        )
+        result.symbol = self.symbol
+        result.strike = strike
+        result.right = right
+        result.expiration = pd.to_datetime(expiration)
+        result.endpoint_source = OptionSpotEndpointSource.QUOTE
+        return result
+    

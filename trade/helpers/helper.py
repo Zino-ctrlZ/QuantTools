@@ -105,6 +105,22 @@ def is_weekend(dt: str | datetime) -> bool:
         dt = pd.to_datetime(dt)
     return dt.weekday() >= 5  # Saturday is 5, Sunday is 6
 
+def is_market_hours_today() -> bool:
+    """
+    Check if the current time in New York is within market hours (9:30 AM to 4:00 PM) on a business day.
+
+    Returns:
+        bool: True if within market hours, False otherwise.
+    """
+    now = ny_now()
+    if now.weekday() >= 5:  # Saturday or Sunday
+        return False
+
+    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    return market_open <= now <= market_close
+
 
 def assert_member_of_enum(value: Any, enum_class: Enum) -> None:
     """
@@ -1666,7 +1682,7 @@ def not_trading_day(date: str | datetime, time_aware: bool = False) -> bool:
     return ret_bool
 
 
-def change_to_last_busday(end, offset=1):
+def change_to_last_busday(end, offset=1, eod_time=True):
     """
     Change the end date to the last business day if it falls on a weekend or holiday.
     If the time is before 9:30, move to the previous business day.
@@ -1710,7 +1726,12 @@ def change_to_last_busday(end, offset=1):
     while is_USholiday(end):
         end_dt = pd.to_datetime(end)
         end = (end_dt - BDay(offset)).strftime("%Y-%m-%d %H:%M:%S")
-
+    
+    if not eod_time:
+        end = to_datetime(end)
+        end = end.replace(hour=0, minute=0, second=0, microsecond=0)
+        return end
+    
     return datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
 
 

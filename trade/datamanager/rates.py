@@ -17,17 +17,18 @@ from datetime import datetime
 from typing import ClassVar, Optional, Union
 import pandas as pd
 import yfinance as yf
+import numpy as np
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import get_missing_dates
+from trade.helpers.helper import get_missing_dates, change_to_last_busday
 from .utils.cache import _data_structure_cache_it
 from .utils.date import is_available_on_date, to_datetime
 from .utils.data_structure import _data_structure_sanitize
 from .config import OptionDataConfig
-from ._enums import ArtifactType, Interval, SeriesId
+from ._enums import ArtifactType, Interval, SeriesId, RealTimeFallbackOption
 from .result import RatesResult
 from .base import BaseDataManager, CacheSpec
 
-logger = setup_logger("trade.datamanager.rates")
+logger = setup_logger("trade.datamanager.rates", stream_log_level="INFO")
 
 
 def deannualize(annual_rate: float, periods: int = 365) -> float:
@@ -121,7 +122,7 @@ class RatesDataManager(BaseDataManager):
 
         if cls.INSTANCE is not None:
             return cls.INSTANCE
-        instance = super(RatesDataManager, cls).__new__(cls)
+        instance = object.__new__(cls)
         cls.INSTANCE = instance
         return instance
 
@@ -149,6 +150,7 @@ class RatesDataManager(BaseDataManager):
         date: Union[datetime, str],
         interval: Interval = Interval.EOD,
         str_interval: Optional[str] = None,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
     ) -> RatesResult:
         """Returns risk-free rate for a single date.
 
@@ -183,12 +185,23 @@ class RatesDataManager(BaseDataManager):
             - Uses internal timeseries method with single-date range
             - Returns annualized rate (e.g., 0.0485 = 4.85%)
         """
+        fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
 
         if not is_available_on_date(to_datetime(date).date()):
             logger.warning(
-                f"Requested date {date} is not a business day or is a US holiday. Returning empty RatesResult."
+                f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
             )
-            return RatesResult(daily_risk_free_rates=pd.Series(dtype=float))
+            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
+                raise ValueError(f"Date {date} is not available for risk-free rate data.")
+            
+            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
+                date = change_to_last_busday(date)
+            else:
+                value = pd.Series(dtype=float,
+                                  index = [pd.to_datetime(date)],
+                                  value = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
+                
+                return RatesResult(timeseries=value, symbol=self.DEFAULT_YFINANCE_TICKER)
         date_str = pd.to_datetime(date).strftime("%Y-%m-%d") if isinstance(date, datetime) else date
 
         rates_data = self.get_risk_free_rate_timeseries(
@@ -197,11 +210,11 @@ class RatesDataManager(BaseDataManager):
             interval=interval,
             str_interval=str_interval,
         )
-        rate = rates_data.daily_risk_free_rates
+        rate = rates_data.timeseries
         if rate is not None and not rate.empty:
             rate = rate.iloc[0:1]
 
-        return RatesResult(daily_risk_free_rates=rate)
+        return RatesResult(timeseries=rate, symbol=self.DEFAULT_YFINANCE_TICKER)
 
     def get_risk_free_rate_timeseries(
         self,
@@ -256,8 +269,26 @@ class RatesDataManager(BaseDataManager):
             - Cache automatically merges and deduplicates by date
         """
 
+        if str_interval is not None:
+            # normalize common yfinance strings
+            intraday_tokens = ["m", "h"]
+            if any(t in str_interval for t in intraday_tokens):
+                raise ValueError(
+                    "RatesDataManager supports daily-or-higher intervals only. " f"Received str_interval={str_interval}."
+                )
+
+        if interval != Interval.EOD:
+            raise ValueError("RatesDataManager is EOD-only.")
+
+
         start_str = pd.to_datetime(start_date).strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
         end_str = pd.to_datetime(end_date).strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
+        
+        ## Determine yfinance interval
+        if not str_interval:
+            fn_interval = "1d" if interval == Interval.EOD else "30m"
+        else:
+            fn_interval = str_interval
 
         ## Make cache key
         key = self.make_key(
@@ -265,13 +296,10 @@ class RatesDataManager(BaseDataManager):
             artifact_type=ArtifactType.RATES,
             series_id=SeriesId.HIST,
             interval=interval,
+            fn_interval=fn_interval,
         )
 
-        ## Determine yfinance interval
-        if not str_interval:
-            fn_interval = "1d" if interval == Interval.EOD else "30m"
-        else:
-            fn_interval = str_interval
+
 
         ## Check cache
         series = self.get(key, default=None)
@@ -293,7 +321,7 @@ class RatesDataManager(BaseDataManager):
                     start=start_str,
                     end=end_str,
                 )
-                return RatesResult(daily_risk_free_rates=series)
+                return RatesResult(timeseries=series, symbol=self.DEFAULT_YFINANCE_TICKER)
             else:
                 ## Fetch missing dates
                 start_date = min(missing)
@@ -326,7 +354,7 @@ class RatesDataManager(BaseDataManager):
             end=end_str,
         )
 
-        return RatesResult(rates_data)
+        return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=rates_data)
 
     def cache_it(self, key: str, value: pd.Series, *, expire: Optional[int] = None) -> None:
         """Merges and caches rate time-series, excluding today's partial data.
@@ -411,8 +439,8 @@ class RatesDataManager(BaseDataManager):
         )
 
         data_min.columns = data_min.columns.str.lower()
-        data_min["daily"] = data_min["close"].apply(deannualize)
         data_min["annualized"] = data_min["close"] / 100
+        data_min["daily"] = (data_min["annualized"]).apply(deannualize)
         data_min["name"] = "^IRX"
         data_min["description"] = "13 WEEK TREASURY BILL"
         data_min.index.name = "Datetime"
@@ -421,3 +449,20 @@ class RatesDataManager(BaseDataManager):
             (data_min.index >= pd.to_datetime(start_date)) & (data_min.index <= pd.to_datetime(end_date))
         ]
         return data_min
+    
+    def rt(self, fallback_option: Optional[RealTimeFallbackOption] = None) -> RatesResult:
+        """Shortcut for get_rate method.
+
+        Provides a concise alias for retrieving risk-free rate at the current date.
+
+        Returns:
+            RatesResult containing daily_risk_free_rates Series with single value
+            for today's date.
+        Examples:
+            >>> rates_mgr = RatesDataManager()
+            >>> result = rates_mgr.rt()
+            >>> rate = result.daily_risk_free_rates.iloc[0]
+            >>> print(f"Today's Rate: {rate:.4f}")  
+            Today's Rate: 0.0485
+        """
+        return self.get_rate(date=datetime.now(), fallback_option=fallback_option)

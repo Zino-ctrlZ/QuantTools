@@ -2,6 +2,9 @@ from datetime import datetime
 from typing import Union
 import pandas as pd
 from trade.helpers.helper import to_datetime
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("trade.datamanager.utils", stream_log_level="INFO")
 
 
 def _data_structure_sanitize(
@@ -10,7 +13,7 @@ def _data_structure_sanitize(
     end: Union[datetime, str],
 ) -> Union[pd.Series, pd.DataFrame]:
     """Sanitizes the data structure by removing duplicates and sorting the index."""
-    print(f"Sanitizing data from {start} to {end}...")
+    logger.info(f"Sanitizing data from {start} to {end}...")
     if not isinstance(df, (pd.Series, pd.DataFrame)):
         raise TypeError(f"Expected pd.Series or pd.DataFrame for sanitization, got {type(df)}")
 

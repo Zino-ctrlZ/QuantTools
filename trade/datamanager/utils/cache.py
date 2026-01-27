@@ -6,7 +6,7 @@ from trade.helpers.helper import get_missing_dates
 from .date import _should_save_today, DATE_HINT
 from ..base import BaseDataManager
 from .data_structure import _data_structure_sanitize
-logger = setup_logger("trade.datamanager.utils.cache")
+logger = setup_logger("trade.datamanager.utils", stream_log_level="INFO")
 
 
 def _data_structure_cache_it(
@@ -37,6 +37,24 @@ def _data_structure_cache_it(
     if not _should_save_today(max_date=value.index.max().date()):
         logger.info(f"Cutting off today's data for key: {key} to avoid saving partial day data.")
         value = value[value.index < pd.to_datetime(date.today())]
+
+    ## Do not cache rules:
+    cache_data = True
+    
+    ## 1) If after removing today's data, there is no data left
+    if value.empty:
+        cache_data = False
+        logger.info(f"No data left to cache for key: {key} after removing today's data.")
+    
+    ## 2) If all data points are NaN
+    if value.isna().all().all():
+        cache_data = False
+        logger.info(f"All data points are NaN for key: {key}. Not caching.")
+
+
+    if not cache_data:
+        return
+    
 
     value.sort_index(inplace=True)
 

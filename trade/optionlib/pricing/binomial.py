@@ -351,7 +351,7 @@ def vector_crr_binomial_pricing(
         dividend_yield = [0.0] * len(K)
 
     if dividends is None:
-        dividends = [(0.0)] * len(K)
+        dividends = [()] * len(K)
 
     if dividend_type is None:
         dividend_type = ["continuous"] * len(K)

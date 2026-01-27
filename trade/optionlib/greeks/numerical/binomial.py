@@ -1,5 +1,4 @@
 import numpy as np
-from typing import Union, List
 from ...utils.format import convert_to_array, assert_equal_length,equalize_lengths
 from ...pricing.binomial import VectorBinomialCRR
 from trade.helpers.Logging import setup_logger

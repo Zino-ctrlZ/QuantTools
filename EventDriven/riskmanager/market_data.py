@@ -205,10 +205,10 @@ from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
 from EventDriven.exceptions import UnaccessiblePropertyError
-from trade import register_signal
+from trade import register_signal, SIGNALS_TO_RUN
 
 
-logger = setup_logger("EventDriven.riskmanager.market_data", stream_log_level="WARNING")
+logger = setup_logger("EventDriven.riskmanager.market_data", stream_log_level="INFO")
 
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals
@@ -218,6 +218,7 @@ DIVIDEND_CACHE: CustomCache = load_riskmanager_cache(target="dividend_timeseries
 SPOT_CACHE: CustomCache = load_riskmanager_cache(target="spot_timeseries")
 CHAIN_SPOT_CACHE: CustomCache = load_riskmanager_cache(target="chain_spot_timeseries")
 SPLIT_FACTOR_CACHE: CustomCache = load_riskmanager_cache(target="split_factor_timeseries", create_on_missing=True)
+_SANITIZED_ON_EXIT: bool = False
 
 
 @dataclass
@@ -324,6 +325,10 @@ class MarketTimeseries:
     @timeit
     def _on_exit_sanitize(self):
         """Remove today's data from all stored timeseries data."""
+        global _SANITIZED_ON_EXIT
+        if _SANITIZED_ON_EXIT:
+            print("Sanitization on exit already performed. Skipping.")
+            return
         try:
 
             def _check_instance(d):
@@ -383,6 +388,7 @@ class MarketTimeseries:
                 self._split_factor[sym] = d
 
             logger.info("Sanitization of today's data on exit completed successfully.")
+            _SANITIZED_ON_EXIT = True
         except Exception as e:
             logger.error("Error during sanitization: %s", e, exc_info=True)
 
@@ -400,15 +406,15 @@ class MarketTimeseries:
         all_dates_present = False
 
         data_to_check = [
-            (self._spot.get(sym), 'spot'),
-            (self._chain_spot.get(sym), 'chain_spot'),
-            (self._dividends.get(sym), 'dividends'),
-            (self._split_factor.get(sym), 'split_factor'),
+            (self._spot.get(sym), "spot"),
+            (self._chain_spot.get(sym), "chain_spot"),
+            (self._dividends.get(sym), "dividends"),
+            (self._split_factor.get(sym), "split_factor"),
         ]
 
         missing_dates_set = set()
         all_dates_present = False
-        for data, data_type in data_to_check: # noqa
+        for data, data_type in data_to_check:  # noqa
             if data is not None:
                 missing_dates = get_missing_dates(data, start, end)
                 missing_dates_set.update(missing_dates)
@@ -473,9 +479,14 @@ class MarketTimeseries:
             raise ValueError("Data must be a pandas DataFrame or Series. Got type: {}".format(type(data)))
 
     @timeit
-    def _sanitize_today_data(self) -> None:
+    def _sanitize_today_data(self, force_after_eod: bool = False) -> None:
         """Remove today's data from all stored timeseries data."""
-
+        current_time = ny_now()
+        if not force_after_eod and current_time.hour > 18:
+            logger.info("Current time is after 6 PM NY time. Skipping sanitization of today's data.")
+            return
+        
+        logger.info("Sanitizing today's data from all stored timeseries data...")
         for sym in self._spot.keys():
             self._spot[sym] = self._remove_today_data(self._spot[sym])
         for sym in self._chain_spot.keys():
@@ -528,6 +539,30 @@ class MarketTimeseries:
             data = data.sort_index()
             data.dropna(how="all", inplace=True)
             self._split_factor[sym] = data
+
+    def get_split_factor_at_index(self, sym: str, index: pd.Timestamp) -> float | int:
+        """
+        Retrieve the split factor for a given symbol at a specific index (date).
+        Args:
+            sym (str): The stock symbol.
+            index (pd.Timestamp or str): The date for which to retrieve the split factor.
+        Returns:
+            float | int: The split factor at the specified date.
+        """
+        split_factor_series = self._split_factor.get(sym)
+        if split_factor_series is None:
+            return 1.0
+
+        index = pd.to_datetime(index)
+        if index in split_factor_series.index:
+            return split_factor_series.loc[index]
+        else:
+            prior_dates = split_factor_series.index[split_factor_series.index <= index]
+            if not prior_dates.empty:
+                nearest_date = prior_dates.max()
+                return split_factor_series.loc[nearest_date]
+            else:
+                return 1.0
 
     def _pre_sanitize_load_timeseries(
         self,
@@ -685,6 +720,7 @@ class MarketTimeseries:
         rates = self.rates.loc[index_str] if self.rates is not None else None
         dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
         split_factor = self._split_factor[sym].loc[index_str] if sym in self._split_factor else None
+        self._sanitize_today_data()
 
         return AtIndexResult(
             spot=spot,
@@ -780,9 +816,26 @@ class MarketTimeseries:
             TimeseriesData: A dataclass containing the requested timeseries data.
         """
         sym = sym.upper()
+        must_preload = False
+        end_date = end_date or self._end
+        
+        ## Adding `must_preload`. This will be determined based on if 
+        ## 1. Today's date is in end_date
+        ## 2. Current time is before market close
+        if pd.to_datetime(end_date).date() >= ny_now().date():
+            current_time = ny_now()
+            if current_time.hour < 20:
+                must_preload = True
+
+        if must_preload:
+            logger.warning(
+                "End date %s is today or in the future and current time is before market close. Forcing preload check.",
+                end_date,
+            )
+
 
         ## Check if data is already loaded
-        if skip_preload_check:
+        if skip_preload_check and not must_preload:
             already_loaded = True
         else:
             already_loaded, _ = self._already_loaded(sym, interval, start_date, end_date)
@@ -872,6 +925,7 @@ class MarketTimeseries:
                 split_factor=split_factor,
                 rates=self.rates["annualized"],
             )
+            self._sanitize_today_data()
 
         return ts
 
@@ -890,3 +944,11 @@ def get_timeseries_obj() -> MarketTimeseries:
 def reset_timeseries_obj() -> None:
     global OPTIMESERIES
     OPTIMESERIES = None
+
+
+if __name__ == "__main__":
+    mts = get_timeseries_obj()
+    mts.load_timeseries("BA", force=True)
+    ts = mts.get_timeseries("BA")
+    print(ts)
+    print(SIGNALS_TO_RUN)

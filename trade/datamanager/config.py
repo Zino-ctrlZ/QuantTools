@@ -6,7 +6,10 @@ from ._enums import (
     OptionSpotEndpointSource,
     OptionPricingModel,
     VolatilityModel,
+    RealTimeFallbackOption
 )
+from typeguard import check_type
+from typing import get_type_hints
 
 @dataclass
 class OptionDataConfig(metaclass=SingletonMetaClass):
@@ -17,8 +20,12 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     default_forecast_method: DiscreteDivGrowthModel = DiscreteDivGrowthModel.CONSTANT
     dividend_type: DivType = DivType.DISCRETE
     include_special_dividends: bool = False
-    option_model: OptionPricingModel = OptionPricingModel.BSM
+    option_model: OptionPricingModel = OptionPricingModel.BINOMIAL
     volatility_model: VolatilityModel = VolatilityModel.MARKET
+    n_steps: int = 100 
+    undo_adjust: bool = True
+    real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
+
 
     def assert_valid(self) -> None:
         """Validates all configuration values against business rules."""
@@ -45,5 +52,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
 
     def __setattr__(self, name, value):
         """Validates configuration after any attribute change."""
+        all_hints = get_type_hints(self.__class__)
+        hint = all_hints.get(name)
+        if hint is not None:
+            check_type(value, hint)
         super().__setattr__(name, value)
-        self.assert_valid()

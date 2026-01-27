@@ -297,8 +297,12 @@ def greek_check(greek_value: float, greek_threshold: float, qty: int = 1, greate
         per_greek = greek_value / qty
         _bool = abs(greek_value) > abs(greek_threshold)
         logger.info(
-            f"Greek Check: greek_value={greek_value}, greek_threshold={greek_threshold}, per_greek={per_greek}, _bool={_bool}"
+            (f"Greek Check: greek_value={greek_value}, greek_threshold={greek_threshold}, per_greek={per_greek}, _bool={_bool}"
+             f", qty={qty}")
         )
+        if greek_value == 0:
+            logger.critical("Greek value is zero, cannot compute required quantity. Returning False and 0.")
+            return False, 0
         required_qty = max(int(abs(greek_threshold) // abs(per_greek)), 1)
         quantity_diff = abs(qty) - abs(required_qty)
         return _bool, quantity_diff
