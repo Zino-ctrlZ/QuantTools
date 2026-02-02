@@ -37,6 +37,7 @@ all_trading_days = mcal.date_range(schedule, frequency="1D").date  ## type: igno
 all_days = pd.date_range(start="2000-01-01", end="2040-01-01", freq="B")
 holidays = set(all_days.difference(all_trading_days).strftime("%Y-%m-%d").to_list())
 HOLIDAY_SET = set(holidays)
+DATETIME_HOLIDAY_SET = set(pd.to_datetime(list(HOLIDAY_SET), format="%Y-%m-%d"))
 
 ## Additional holidays
 HOLIDAY_SET.update(

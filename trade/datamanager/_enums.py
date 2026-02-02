@@ -1,5 +1,5 @@
 from enum import Enum
-
+from typing import Literal, get_args
 
 class Interval(str, Enum):
     INTRADAY = "intraday"  # historical intraday timestamp
@@ -36,7 +36,17 @@ class ArtifactType(str, Enum):
     GAMMA = "gamma"
     VEGA = "vega"
     THETA = "theta"
-    VOMMA = "vomma"
+    VOLGA = "volga"
+    VANNA = "vanna"
+    RHO = "rho"
+
+class GreekType(str, Enum):
+    GREEKS = "greeks"
+    DELTA = "delta"
+    GAMMA = "gamma"
+    VEGA = "vega"
+    THETA = "theta"
+    VOLGA = "volga"
     VANNA = "vanna"
     RHO = "rho"
 
@@ -49,6 +59,16 @@ class OptionSpotEndpointSource(Enum):
 
     EOD = "eod"
     QUOTE = "quote"
+
+class ModelPrice(Enum):
+    """Enumeration of model price type."""
+
+    MIDPOINT = "midpoint"
+    BID = "bid"
+    ASK = "ask"
+    OPEN = "open"
+    CLOSE = "close"
+
 
 
 class OptionPricingModel(Enum):
@@ -64,3 +84,14 @@ class VolatilityModel(Enum):
 
     MARKET = "market"
     MODEL_DYNAMIC = "model_dynamic"
+
+
+GREEKS = Literal[
+    GreekType.DELTA.value,
+    GreekType.GAMMA.value,
+    GreekType.THETA.value,
+    GreekType.VEGA.value,
+    GreekType.RHO.value,
+    GreekType.VOLGA.value,
+]
+AVAILABLE_GREEKS = get_args(GREEKS)

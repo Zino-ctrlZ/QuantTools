@@ -36,7 +36,7 @@ def _ptched_bsm_for_analytical(
         r=r,
         div_type=div_type
     )
-    T = [time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))]
+    T = [time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))]
     greeks = black_scholes_analytic_greeks_vectorized(
         F=F, 
         K=K, 

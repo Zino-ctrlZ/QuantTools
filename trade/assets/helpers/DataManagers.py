@@ -342,7 +342,7 @@ class OptionDataManager:
                                                 price = x[p],
                                                 S = s0,
                                                 K = self.strike,
-                                                t = time_distance_helper(exp = self.exp, strt = query_date),
+                                                t = time_distance_helper(end = self.exp, start = query_date),
                                                 r = r,
                                                 q = y,
                                                 flag = self.right.lower()), axis = 1)
@@ -617,7 +617,7 @@ class OptionDataManager:
                                                 price = x[price],
                                                 S = x['underlier_price'],
                                                 K = x['strike'],
-                                                t = time_distance_helper(exp = x['expiration'], strt = x['datetime']),
+                                                t = time_distance_helper(end = x['expiration'], start = x['datetime']),
                                                 r = x['rf_rate'],
                                                 q = x['dividend'],
                                                 flag = x['put/call'].lower()), axis = 1)

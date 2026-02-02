@@ -388,15 +388,44 @@ def analyze_position(
 
         if _greek_bool:
             abs_q_diff = abs(q_diff)
+
+            ## Will use this later when adding short/long direction info to log
+            direction = "L" if qty > 0 else "S" # noqa
+            logger.info(
+                (f"Greek limit breach for {trade_id}: greek={greek}, greek_v={greek_v}, "
+                 f"greek_limit_v={greek_limit_v}, qty={qty}, direction={direction}, "
+                 f"abs_q_diff={abs_q_diff}, q_diff={q_diff}")
+            )
+
             # Keep track of the largest adjustment needed
             if abs_q_diff > max_qty_diff:
                 max_qty_diff = abs_q_diff
                 # Adjust sign based on position direction
+                # Eg: when LONG=qty>0 we set negative qty_diff to reduce position size
+                # TODO: q_diff sign logic needs review for situations where we want to increase position size
                 q_diff = abs_q_diff if qty < 0 else -abs_q_diff
-                max_adjust_action = ADJUST(
-                    trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=qty + q_diff)
-                )
-                max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v})"
+                new_qty = qty + q_diff
+
+                ## IF new quantity is positive, create ADJUST action
+                if new_qty > 0:
+                    max_adjust_action = ADJUST(
+                        trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=qty + q_diff)
+                    )
+                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v})"
+                
+                ## IF new quantity is zero, create ROLL action instead. To avoid complete close.
+                elif new_qty == 0:
+                    max_adjust_action = ROLL(
+                        trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=0)
+                    )
+                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v}), New qty=0, rolling instead of closing."
+                
+                else:
+                    logger.warning(
+                        (f"Calculated new quantity for {trade_id} is negative ({new_qty}). "
+                         "Skipping ADJUST action creation.")
+                    )
+
                 logger.debug(f"ADJUST action candidate for {trade_id}: {greek} limit breach.")
         else:
             logger.debug(f"No {greek} limit breach for {trade_id}: {greek_v} within {greek_limit_v}.")

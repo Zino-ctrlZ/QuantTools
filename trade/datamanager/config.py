@@ -6,7 +6,8 @@ from ._enums import (
     OptionSpotEndpointSource,
     OptionPricingModel,
     VolatilityModel,
-    RealTimeFallbackOption
+    RealTimeFallbackOption,
+    ModelPrice
 )
 from typeguard import check_type
 from typing import get_type_hints
@@ -25,6 +26,7 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     n_steps: int = 100 
     undo_adjust: bool = True
     real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
+    model_price: ModelPrice = ModelPrice.MIDPOINT
 
 
     def assert_valid(self) -> None:
@@ -45,7 +47,12 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
         assert isinstance(
             self.volatility_model, VolatilityModel
         ), "Invalid volatility_model. Expected VolatilityModel Enum."
-
+        assert isinstance(
+            self.real_time_fallback_option, RealTimeFallbackOption
+        ), "Invalid real_time_fallback_option. Expected RealTimeFallbackOption Enum."
+        assert isinstance(self.n_steps, int) and self.n_steps > 0, "n_steps must be a positive integer."
+        assert isinstance(self.undo_adjust, bool), "undo_adjust must be a boolean."
+        assert isinstance(self.model_price, ModelPrice), "Invalid model_price. Expected ModelPrice Enum."
     def __post_init__(self) -> None:
         """Validates configuration after initialization."""
         self.assert_valid()

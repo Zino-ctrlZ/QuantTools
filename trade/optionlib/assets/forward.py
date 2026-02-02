@@ -171,7 +171,7 @@ class Forward(ForwardModel):
         q = dividend yield
         T = time to maturity in years
         """
-        T = time_distance_helper(self.end_date, self.valuation_date)
+        T = time_distance_helper(end=self.end_date, start=self.valuation_date)
         if T <= 0:
             raise ValueError("End date must be after valuation date.")
         
@@ -377,7 +377,7 @@ def vectorized_market_forward_calc(ticks: List[str],
         F = vectorized_forward_discrete(
             S=S,
             r=r,
-            T=[time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))],
+            T=[time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))],
             pv_divs=div_amt
         )
 
@@ -397,7 +397,7 @@ def vectorized_market_forward_calc(ticks: List[str],
             S=S,
             r=r,
             q_factor=div_amt,
-            T=[time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))]
+            T=[time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))]
         )
 
         div_amt = (div_rate, div_amt)  # Return the dividend rate and present value of dividends

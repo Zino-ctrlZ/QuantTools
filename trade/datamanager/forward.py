@@ -23,16 +23,17 @@ import numpy as np
 from EventDriven.riskmanager.market_data import TimeseriesData
 from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday, get_missing_dates
+from trade.helpers.helper import change_to_last_busday, get_missing_dates, to_datetime
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.dividend import DividendDataManager
-from trade.datamanager.result import ForwardResult
+from trade.datamanager.result import ForwardResult, SpotResult
 from trade.datamanager.rates import RatesDataManager
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult, RatesResult
 from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.cache import _data_structure_cache_it
+from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.vars import TS, load_name
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import (
@@ -46,7 +47,7 @@ from trade.optionlib.assets.forward import (
     get_vectorized_continuous_dividends,
 )
 
-logger = setup_logger("trade.datamanager.forward", stream_log_level="DEBUG")
+logger = setup_logger("trade.datamanager.forward", stream_log_level=get_logging_level())
 
 
 class ForwardDataManager(BaseDataManager):
@@ -89,8 +90,9 @@ class ForwardDataManager(BaseDataManager):
 
     CACHE_NAME: ClassVar[str] = "forward_data_manager"
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
-    INSTANCES = {}
-    CONFIG = OptionDataConfig()
+    INSTANCES: ClassVar[dict[str, "ForwardDataManager"]] = {}
+    CONFIG: OptionDataConfig = OptionDataConfig()
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
 
     def __new__(cls, symbol: str, *args: Any, **kwargs: Any) -> "ForwardDataManager":
         """Returns cached instance for symbol, creating new one if needed.
@@ -120,7 +122,6 @@ class ForwardDataManager(BaseDataManager):
         self,
         symbol: str,
         *,
-        cache_spec: Optional[CacheSpec] = None,
         enable_namespacing: bool = False,
     ) -> None:
         """Initializes manager once per symbol instance.
@@ -130,18 +131,17 @@ class ForwardDataManager(BaseDataManager):
 
         Args:
             symbol: Equity ticker symbol.
-            cache_spec: Optional cache configuration. Uses default if None.
             enable_namespacing: If True, enables namespace isolation in cache keys.
 
         Examples:
             >>> mgr = ForwardDataManager("AAPL")
-            >>> mgr = ForwardDataManager("AAPL", cache_spec=CacheSpec(expire_days=30))
+            >>> mgr = ForwardDataManager("AAPL", enable_namespacing=True)
         """
         if getattr(self, "_initialized", False):
             return
 
         self._initialized = True
-        super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
+        super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
 
     def _normalize_inputs(
@@ -364,7 +364,7 @@ class ForwardDataManager(BaseDataManager):
 
         return dividend_result
 
-    def _load_spot(self, *, use_chain_spot: bool, spot: Optional[TimeseriesData] = None) -> pd.Series:
+    def _load_spot(self, *, use_chain_spot: bool, spot: Optional[SpotResult] = None) -> pd.Series:
         """Loads spot or chain_spot price series.
 
         Retrieves either split-adjusted (chain_spot) or unadjusted (spot) closing prices
@@ -392,9 +392,10 @@ class ForwardDataManager(BaseDataManager):
         """
         if spot is None:
             spot = TS.get_timeseries(self.symbol, skip_preload_check=True)
-        if use_chain_spot:
-            return spot.chain_spot["close"]
-        return spot.spot["close"]
+            if use_chain_spot:
+                return spot.chain_spot["close"]
+            return spot.spot["close"]
+        return spot.timeseries
 
     def _load_rates(self, *, start_str: str, end_str: str, rates: Optional[RatesResult] = None) -> pd.Series:
         """Loads risk-free rates for date range.
@@ -526,7 +527,6 @@ class ForwardDataManager(BaseDataManager):
             - Discounts each dividend in schedule to valuation date
             - Time to maturity calculated as (mat_dt - val_dt) in years
         """
-
         pv_divs = vectorized_discrete_pv(
             schedules=discrete_divs.to_list(),
             r=rates.tolist(),
@@ -749,7 +749,6 @@ class ForwardDataManager(BaseDataManager):
             dividend_result=dividend_result,
             use_chain_spot=use_chain_spot,
         )
-
         spot = self._load_spot(use_chain_spot=use_chain_spot, spot=spot)
         rates = self._load_rates(start_str=start_str, end_str=end_str, rates=rates)
 
@@ -805,7 +804,6 @@ class ForwardDataManager(BaseDataManager):
             forward_series = self._merge_partial(cached_series=cached_series, forward_series=forward_series)
 
         self.cache_it(key, forward_series, expire=86400)  # 24 hours expiry
-
         forward_series = _data_structure_sanitize(
             forward_series,
             start=og_start_date,
@@ -924,6 +922,8 @@ class ForwardDataManager(BaseDataManager):
         load_name(self.symbol)
         dividend_type = DivType(dividend_type) if dividend_type is not None else DivType.DISCRETE
         fallback_option = fallback_option if fallback_option is not None else self.CONFIG.real_time_fallback_option
+        date = to_datetime(date)
+
 
         if not is_available_on_date(date):
             logger.warning(
@@ -932,7 +932,12 @@ class ForwardDataManager(BaseDataManager):
             if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
                 raise ValueError(f"Valuation date {date} is not a business day or holiday.")
             if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                date = change_to_last_busday(date)
+                ## Move date back to last business day
+                ## Using only change_to_last_busday assumes input date is not business day or is holiday
+                ## Which the function would roll back
+                ## But there's a possibility input date is today's date but before market open
+                ## In that case we need to move back one more business day
+                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
             else:
                 result = ForwardResult()
                 if dividend_type == DivType.DISCRETE:
@@ -952,12 +957,14 @@ class ForwardDataManager(BaseDataManager):
                 result.undo_adjust = use_chain_spot
                 result.dividend_type = dividend_type
                 result.symbol = self.symbol
+                result.fallback_option = fallback_option
                 return result
 
         date_str = date.strftime("%Y-%m-%d") if isinstance(date, datetime) else date
         mat_str = maturity_date.strftime("%Y-%m-%d") if isinstance(maturity_date, datetime) else maturity_date
         start = date_str
         end = date_str
+
 
         result = self.get_forward_timeseries(
             start_date=start,
@@ -969,6 +976,7 @@ class ForwardDataManager(BaseDataManager):
             spot=spot,
             rates=rates,
         )
+        result.fallback_option = fallback_option
         return result
     
     def rt(
@@ -1012,7 +1020,7 @@ class ForwardDataManager(BaseDataManager):
             Forward: $156.45
         """
         load_name(self.symbol)
-        return self.get_forward(
+        res = self.get_forward(
             date=datetime.now(),
             maturity_date=maturity_date,
             dividend_type=dividend_type,
@@ -1022,6 +1030,8 @@ class ForwardDataManager(BaseDataManager):
             use_chain_spot=use_chain_spot,
             fallback_option=fallback_option,
     )
+        res.rt = True
+        return res
 
     def offload(self, *args: Any, **kwargs: Any) -> None:
         """Placeholder for offload logic (not implemented).

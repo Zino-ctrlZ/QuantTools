@@ -1548,7 +1548,7 @@ def calc_vol_for_data(
         lambda x:IV_handler(S = x[col_kwargs['underlier_price']], 
                             K = x[col_kwargs['strike']], 
                             price = x[price_col], 
-                            t = time_distance_helper(x[col_kwargs['expiration']], x[col_kwargs['datetime']]), 
+                            t = time_distance_helper(end = x[col_kwargs['expiration']], start = x[col_kwargs['datetime']]), 
                             r = x[col_kwargs['rf_rate']], 
                             q = x[col_kwargs['dividend']], 
                             flag = x[col_kwargs['put/call']].lower()), axis = 1
@@ -1606,7 +1606,7 @@ def calc_vol_for_data_parallel(
         }
     temp_df = df.copy()
     temp_df.rename(columns=col_kwargs, inplace=True)
-    temp_df['t'] = temp_df.apply(lambda x: time_distance_helper(x[col_kwargs['expiration']], x[col_kwargs['datetime']]), axis=1)
+    temp_df['t'] = temp_df.apply(lambda x: time_distance_helper(end = x[col_kwargs['expiration']], start = x[col_kwargs['datetime']]), axis=1)
     binomial_column = [price_col, col_kwargs['underlier_price'], 
                        col_kwargs['strike'], col_kwargs['rf_rate'], col_kwargs['expiration'],
                         col_kwargs['put/call'], col_kwargs['datetime'], col_kwargs['dividend'],]
@@ -1729,7 +1729,7 @@ def calc_greeks_for_data_parallel(
 
     temp_df = df.copy()
     temp_df.rename(columns=col_kwargs, inplace=True)
-    temp_df['t'] = temp_df.apply(lambda x: time_distance_helper(x[col_kwargs['expiration']], x[col_kwargs['datetime']]), axis=1)
+    temp_df['t'] = temp_df.apply(lambda x: time_distance_helper(end = x[col_kwargs['expiration']], start = x[col_kwargs['datetime']]), axis=1)
     temp_df['asset'] = None
     temp_df['model'] = model
     greeks_colums_use = ['asset',col_kwargs['underlier_price'], col_kwargs['strike'], 

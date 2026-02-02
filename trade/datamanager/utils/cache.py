@@ -6,7 +6,8 @@ from trade.helpers.helper import get_missing_dates
 from .date import _should_save_today, DATE_HINT
 from ..base import BaseDataManager
 from .data_structure import _data_structure_sanitize
-logger = setup_logger("trade.datamanager.utils", stream_log_level="INFO")
+from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 
 def _data_structure_cache_it(

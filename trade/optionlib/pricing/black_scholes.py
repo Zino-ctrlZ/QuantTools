@@ -25,6 +25,7 @@ from ..assets.forward import (
     vectorized_market_forward_calc
 )
 from trade.helpers.Logging import setup_logger
+from trade.optionlib.utils.format import assert_equal_length
 logger = setup_logger('trade.optionlib.pricing.black_scholes')
 
 
@@ -53,6 +54,7 @@ def black_scholes_vectorized(F: Union[float, np.ndarray],
     r = convert_to_array_individual(r, dtype=float)
     sigma = convert_to_array_individual(sigma, dtype=float)
     option_type = convert_to_array_individual(option_type, dtype=str)
+    assert_equal_length(F, K, T, r, sigma, option_type, names=['F', 'K', 'T', 'r', 'sigma', 'option_type'])
 
 
     d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))
@@ -143,7 +145,7 @@ def black_scholes_vectorized_market(ticks: List[str],
         raise ValueError("option_type must be a single string or a list of strings with the same length as ticks.")
     
     # Convert valuation_dates and end_dates to Timedelta
-    T = [time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))]
+    T = [time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))]
 
     return black_scholes_vectorized_base(
         F=F, 
@@ -183,7 +185,7 @@ class BlackScholes:
         - volatility: sigma (annualized)
         - option_type: "call" or "put"
         """ 
-        self.T = time_distance_helper(expiration, valuation_date)
+        self.T = time_distance_helper(end=expiration, start=valuation_date)
         risk_free_rate = float(risk_free_rate) if risk_free_rate else 0  # Ensure risk-free rate is a float
         option_inputs_assert(sigma=volatility,
                              K=strike_price,

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+from pandas.tseries.offsets import BDay # noqa
+from trade.helpers.helper import change_to_last_busday # noqa
 from ._types import Side, SideInt  # noqa
 
 
@@ -167,7 +169,12 @@ class StrategyBase(ABC):
                 )
 
     def __init__(
-        self, data: PTDataset, start_trading_date: Optional[str] = None, ticker: Optional[str] = None, **kwargs
+        self, 
+        data: PTDataset, 
+        start_trading_date: Optional[str] = None, 
+        ticker: Optional[str] = None, 
+        tplusn: Optional[int | float] = 1,
+        **kwargs
     ):
         """
         Initializes the strategy with data and parameters.
@@ -175,6 +182,8 @@ class StrategyBase(ABC):
         - data: PTDataset containing the market data.
         - start_trading_date: Optional start date for trading (YYYY-MM-DD).
         - kwargs: Additional parameters defined in bt_params.
+        - ticker: Optional ticker symbol for the strategy.
+        - tplusn: Optional time offset parameter.
 
         Please always call super().__init__() in subclass __init__.
         """
@@ -182,6 +191,7 @@ class StrategyBase(ABC):
         self.data: PTDataset = data
         self.start_date = pd.Timestamp(start_trading_date) if start_trading_date else None
         self.ticker = ticker
+        self.tplusn = tplusn
 
         self.position_open: bool = False
         self.position_side: Optional[SideInt] = SideInt.BUY
@@ -698,6 +708,7 @@ class StrategyBase(ABC):
         n = self._n
         close = self._close
         dates = self._index  # pd.DatetimeIndex for consistent timestamps
+        tn = self.tplusn # noqa
 
         trades = []
         equity = np.empty(n, dtype=float)

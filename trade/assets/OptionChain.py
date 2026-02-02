@@ -59,7 +59,7 @@ def get_set(
 ) -> dict:
     try:
         price = retrieve_quote(ticker, date, exp, right, date, strike, start_time = '9:00')['Midpoint'][-1] #To-do: Handle None values
-        vol = IV_handler(S = spot, K = strike, t = time_distance_helper(exp = exp, strt = date), r = r, flag = right.lower(), price = price, q = q)
+        vol = IV_handler(S = spot, K = strike, t = time_distance_helper(end = exp, start = date), r = r, flag = right.lower(), price = price, q = q)
     except Exception as e:
         logger.error(f'Error in get_set: {e}', exc_info=True)
         raise e

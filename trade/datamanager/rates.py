@@ -27,8 +27,9 @@ from .config import OptionDataConfig
 from ._enums import ArtifactType, Interval, SeriesId, RealTimeFallbackOption
 from .result import RatesResult
 from .base import BaseDataManager, CacheSpec
+from .utils.logging import get_logging_level
 
-logger = setup_logger("trade.datamanager.rates", stream_log_level="INFO")
+logger = setup_logger("trade.datamanager.rates", stream_log_level=get_logging_level())
 
 
 def deannualize(annual_rate: float, periods: int = 365) -> float:
@@ -92,9 +93,10 @@ class RatesDataManager(BaseDataManager):
 
     CACHE_NAME: ClassVar[str] = "rates_data_manager"
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
-    INSTANCE = None
-    DEFAULT_YFINANCE_TICKER = "^IRX"  # 13 WEEK TREASURY BILL
+    INSTANCE: ClassVar[Optional["RatesDataManager"]] = None
+    DEFAULT_YFINANCE_TICKER :str = "^IRX"  # 13 WEEK TREASURY BILL
     CONFIG: OptionDataConfig = OptionDataConfig()
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
 
     def __new__(
         cls,
@@ -126,14 +128,13 @@ class RatesDataManager(BaseDataManager):
         cls.INSTANCE = instance
         return instance
 
-    def __init__(self, *, cache_spec: Optional[CacheSpec] = None, enable_namespacing: bool = False) -> None:
+    def __init__(self, *, enable_namespacing: bool = False) -> None:
         """Initializes singleton instance once, skipping subsequent calls.
 
         Sets up persistent cache for rates data. Only executes initialization logic
         on first instantiation due to singleton pattern.
 
         Args:
-            cache_spec: Optional cache configuration. Uses default if None.
             enable_namespacing: If True, enables namespace isolation in cache keys.
 
         Examples:
@@ -143,7 +144,17 @@ class RatesDataManager(BaseDataManager):
         if getattr(self, "_init_called", False):
             return
         self._init_called = True
-        super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
+        super().__init__(enable_namespacing=enable_namespacing)
+
+    @property
+    def symbol(self) -> str:
+        """Returns the symbol associated with this RatesDataManager."""
+        return self.DEFAULT_YFINANCE_TICKER
+    
+    @symbol.setter
+    def symbol(self, value: str) -> None:
+        """Sets the symbol associated with this RatesDataManager."""
+        pass
 
     def get_rate(
         self,
@@ -151,6 +162,8 @@ class RatesDataManager(BaseDataManager):
         interval: Interval = Interval.EOD,
         str_interval: Optional[str] = None,
         fallback_option: Optional[RealTimeFallbackOption] = None,
+        *,
+        force_fail_n: int = 0,
     ) -> RatesResult:
         """Returns risk-free rate for a single date.
 
@@ -185,9 +198,14 @@ class RatesDataManager(BaseDataManager):
             - Uses internal timeseries method with single-date range
             - Returns annualized rate (e.g., 0.0485 = 4.85%)
         """
+        ## To avoid infinite recursion in fallback
+        if force_fail_n > 7:
+            raise ValueError("Exceeded maximum recursion attempts in get_rate fallback handling.")
+        force_fail_n += 1 
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+        date = to_datetime(date)
 
-        if not is_available_on_date(to_datetime(date).date()):
+        if not is_available_on_date(date.date()):
             logger.warning(
                 f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
             )
@@ -195,13 +213,27 @@ class RatesDataManager(BaseDataManager):
                 raise ValueError(f"Date {date} is not available for risk-free rate data.")
             
             if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                date = change_to_last_busday(date)
+                ## Move date back to last business day
+                ## Using only change_to_last_busday assumes input date is not business day or is holiday
+                ## Which the function would roll back
+                ## But there's a possibility input date is today's date but before market open
+                ## In that case we need to move back one more business day
+                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+                return self.get_rate(
+                    date=date,
+                    interval=interval,
+                    str_interval=str_interval,
+                    fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE,
+                    force_fail_n=force_fail_n,
+                )
             else:
                 value = pd.Series(dtype=float,
                                   index = [pd.to_datetime(date)],
-                                  value = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
+                                  data = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
                 
-                return RatesResult(timeseries=value, symbol=self.DEFAULT_YFINANCE_TICKER)
+                res = RatesResult(timeseries=value, symbol=self.DEFAULT_YFINANCE_TICKER)
+                res.fallback_option = fallback_option
+                return res
         date_str = pd.to_datetime(date).strftime("%Y-%m-%d") if isinstance(date, datetime) else date
 
         rates_data = self.get_risk_free_rate_timeseries(
@@ -213,8 +245,30 @@ class RatesDataManager(BaseDataManager):
         rate = rates_data.timeseries
         if rate is not None and not rate.empty:
             rate = rate.iloc[0:1]
+        else:
+            logger.warning(
+                f"No rate data found for date {date}. Resorting to fallback option `{fallback_option}`."
+            )
+            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
+                raise ValueError(f"No rate data found for date {date}.")
+            elif fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
+                ## Move date back to last business day
+                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+                return self.get_rate(
+                    date=date,
+                    interval=interval,
+                    str_interval=str_interval,
+                    fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE,
+                    force_fail_n=force_fail_n,
+                )
+            else:
+                rate = pd.Series(dtype=float,
+                                 index = [pd.to_datetime(date)],
+                                 value = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
 
-        return RatesResult(timeseries=rate, symbol=self.DEFAULT_YFINANCE_TICKER)
+        res = RatesResult(timeseries=rate, symbol=self.DEFAULT_YFINANCE_TICKER)
+        res.fallback_option = fallback_option
+        return res
 
     def get_risk_free_rate_timeseries(
         self,
@@ -428,9 +482,10 @@ class RatesDataManager(BaseDataManager):
         ## Date buffer to ensure we get all data
         start_date = to_datetime(start_date) - pd.Timedelta(days=5)
         end_date = to_datetime(end_date) + pd.Timedelta(days=5)
+        yf_ticker = yf.Ticker(self.DEFAULT_YFINANCE_TICKER)
 
         data_min = yf.download(
-            "^IRX",
+            yf_ticker.ticker,
             start=start_date,
             end=end_date,
             interval=interval,
@@ -441,8 +496,8 @@ class RatesDataManager(BaseDataManager):
         data_min.columns = data_min.columns.str.lower()
         data_min["annualized"] = data_min["close"] / 100
         data_min["daily"] = (data_min["annualized"]).apply(deannualize)
-        data_min["name"] = "^IRX"
-        data_min["description"] = "13 WEEK TREASURY BILL"
+        data_min["name"] = self.DEFAULT_YFINANCE_TICKER
+        data_min["description"] = yf_ticker.info.get("shortName", "UNKNOWN")
         data_min.index.name = "Datetime"
         data_min = data_min[["name", "description", "daily", "annualized"]]
         data_min = data_min[
@@ -465,4 +520,6 @@ class RatesDataManager(BaseDataManager):
             >>> print(f"Today's Rate: {rate:.4f}")  
             Today's Rate: 0.0485
         """
-        return self.get_rate(date=datetime.now(), fallback_option=fallback_option)
+        res = self.get_rate(date=datetime.now(), fallback_option=fallback_option)
+        res.rt = True
+        return res

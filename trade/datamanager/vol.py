@@ -38,6 +38,7 @@ import pandas as pd
 from trade.datamanager._enums import (
     ArtifactType,
     Interval,
+    ModelPrice,
     OptionPricingModel,
     RealTimeFallbackOption,
     VolatilityModel,
@@ -70,9 +71,10 @@ from trade.optionlib.config.types import DivType
 from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.date import is_available_on_date, sync_date_index
+from trade.datamanager.utils.logging import get_logging_level
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
 
-logger = setup_logger("trade.datamanager.vol", stream_log_level="INFO")
+logger = setup_logger("trade.datamanager.vol", stream_log_level=get_logging_level())
 
 class VolDataManager(BaseDataManager):
     """Manager for computing and caching implied volatilities from option market prices.
@@ -126,8 +128,9 @@ class VolDataManager(BaseDataManager):
     """
     CACHE_NAME: ClassVar[str] = "vol_data_manager_cache"
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
-    CONFIG = OptionDataConfig()
-    INSTANCES = {}
+    CONFIG: OptionDataConfig = OptionDataConfig()
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
+    INSTANCES: ClassVar[dict[str, "VolDataManager"]] = {}
 
     def __new__(cls, symbol: str, *args: Any, **kwargs: Any) -> "VolDataManager":
         if symbol not in cls.INSTANCES:
@@ -136,13 +139,12 @@ class VolDataManager(BaseDataManager):
         return cls.INSTANCES[symbol]
 
     def __init__(
-        self, symbol: str, *, cache_spec: Optional[CacheSpec] = None, enable_namespacing: bool = False
+        self, symbol: str, *, enable_namespacing: bool = False
     ) -> None:
         """Initialize VolDataManager with symbol-specific configuration.
 
         Args:
             symbol: Ticker symbol for the underlying asset (e.g., "AAPL", "MSFT").
-            cache_spec: Optional cache configuration. If None, uses default cache settings.
             enable_namespacing: If True, enables namespace prefixing for cache keys.
 
         Examples:
@@ -163,8 +165,8 @@ class VolDataManager(BaseDataManager):
             return
         self._initialized = True
         super().__init__(
-            cache_spec=cache_spec,
             enable_namespacing=enable_namespacing,
+            symbol=symbol,
         )
 
     def _get_bsm_implied_volatility_timeseries(
@@ -180,6 +182,7 @@ class VolDataManager(BaseDataManager):
         F: Optional[ForwardResult] = None,
         r: Optional[RatesResult] = None,
         market_price: Optional[OptionSpotResult] = None,
+        model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
     ) -> VolatilityResult:
         """Compute implied volatilities using Black-Scholes-Merton model.
@@ -200,7 +203,9 @@ class VolDataManager(BaseDataManager):
             r: Optional pre-computed risk-free rates. If None, loads automatically.
             market_price: Optional pre-computed option market prices. If None, loads automatically.
             undo_adjust: If True, uses split-adjusted prices.
-
+            model_price: Optional[ModelPrice] = None,
+                Specifies which price to use from option spot data (CLOSE, OPEN, MIDPOINT).
+                If None, defaults to CONFIG.model_price.
         Returns:
             VolatilityResult containing daily implied volatilities with DatetimeIndex,
             model metadata, and cache key.
@@ -231,6 +236,7 @@ class VolDataManager(BaseDataManager):
             series_id=SeriesId.HIST,
             option_pricing_model=OptionPricingModel.BSM,
             volatility_model=VolatilityModel.MARKET,
+            model_price=model_price or self.CONFIG.model_price,
             dividend_type=dividend_type,
             endpoint_source=endpoint_source,
             expiration=expiration,
@@ -262,6 +268,7 @@ class VolDataManager(BaseDataManager):
             right=right,
             undo_adjust=undo_adjust,
             endpoint_source=endpoint_source,
+            model_price=model_price,
         )
         model_data = _load_model_data_timeseries(load_request)
 
@@ -271,7 +278,7 @@ class VolDataManager(BaseDataManager):
         # Extract data
         forward = F.daily_continuous_forward if dividend_type == DivType.CONTINUOUS else F.daily_discrete_forward
         rates = r.daily_risk_free_rates
-        option_spot = market_price.daily_option_spot.midpoint
+        option_spot = market_price.price
         forward, rates, option_spot = sync_date_index(forward, rates, option_spot)
 
         # Use utility: Prepare T
@@ -312,6 +319,7 @@ class VolDataManager(BaseDataManager):
         r: Optional[RatesResult] = None,
         dividends: Optional[DividendsResult] = None,
         market_price: Optional[OptionSpotResult] = None,
+        model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
         n_steps: Optional[int] = None,
     ) -> VolatilityResult:
@@ -370,6 +378,7 @@ class VolDataManager(BaseDataManager):
             series_id=SeriesId.HIST,
             option_pricing_model=OptionPricingModel.BINOMIAL,
             volatility_model=VolatilityModel.MARKET,
+            model_price=model_price or self.CONFIG.model_price,
             dividend_type=dividend_type,
             endpoint_source=endpoint_source,
             expiration=expiration,
@@ -394,6 +403,7 @@ class VolDataManager(BaseDataManager):
             end_date=end_date,
             expiration=expiration,
             dividend_type=dividend_type,
+            model_price=model_price or self.CONFIG.model_price,
             load_spot=S is None,
             load_rates=r is None,
             load_dividend=dividends is None,
@@ -415,7 +425,7 @@ class VolDataManager(BaseDataManager):
         # Extract data
         spot = S.daily_spot
         rates = r.daily_risk_free_rates
-        option_spot = market_price.midpoint
+        option_spot = market_price.price
 
         # Use utility: Prepare dividends and sync
         spot, rates, option_spot, dividends_ts = _prepare_dividend_data_for_pricing(
@@ -640,6 +650,7 @@ class VolDataManager(BaseDataManager):
         n_steps: Optional[int] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         vol_model: Optional[VolatilityModel] = None,
+        model_price: Optional[ModelPrice] = None,
     ) -> VolatilityResult:
         """Compute daily implied volatilities for a specific option across a date range.
 
@@ -656,6 +667,7 @@ class VolDataManager(BaseDataManager):
             dividend_type: Dividend treatment (DISCRETE or CONTINUOUS). Defaults to DISCRETE.
             american: If True, uses American exercise; if False, European.
             model: Pricing model to use (BSM, BINOMIAL, EURO_EQIV). Defaults to CONFIG.option_model.
+            model_price: Pricing model price to use (CLOSE, MIDPOINT). Defaults to CONFIG.model_price.
             S: Optional pre-computed spot prices. If None, loads automatically.
             F: Optional pre-computed forward prices. If None, loads automatically.
             dividends: Optional pre-computed dividend data. If None, loads automatically.
@@ -665,6 +677,7 @@ class VolDataManager(BaseDataManager):
             n_steps: Number of binomial tree steps. Only used for BINOMIAL/EURO_EQIV models.
             endpoint_source: Data source for option prices (e.g., CHAIN, QUOTE).
             vol_model: Volatility model to use (MARKET). Defaults to CONFIG.volatility_model.
+            model_price: Pricing model price to use (CLOSE, MIDPOINT). Defaults to CONFIG.model_price.
         Returns:
             VolatilityResult containing:
                 - timeseries: Daily implied volatilities as pandas Series
@@ -672,7 +685,7 @@ class VolDataManager(BaseDataManager):
                 - market_model: Pricing model used (BSM, BINOMIAL, or EURO_EQIV)
                 - dividend_type: Dividend treatment used
                 - key: Cache key for result
-
+                - model_price: Pricing model price used (CLOSE, MIDPOINT)
         Raises:
             ValueError: If unsupported pricing model is specified.
 
@@ -724,6 +737,8 @@ class VolDataManager(BaseDataManager):
             logger.info(f"VolDm Using specified dividend type: {dividend_type}")
         dividend_type = dividend_type or self.CONFIG.dividend_type
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
+        model_price = model_price or self.CONFIG.model_price
+        logger.info(f"VolDm Using model price: {model_price}")
 
         # Prepare result container
         result = VolatilityResult()
@@ -735,6 +750,8 @@ class VolDataManager(BaseDataManager):
         result.vol_model = vol_model
         result.endpoint_source = endpoint_source
         result.market_model = market_model
+        result.undo_adjust = undo_adjust
+        result.model_price = model_price
 
         if market_model == OptionPricingModel.BSM:
             return self._get_bsm_implied_volatility_timeseries(
@@ -747,6 +764,7 @@ class VolDataManager(BaseDataManager):
                 F=F,
                 r=r,
                 market_price=market_price,
+                model_price=model_price,
                 undo_adjust=undo_adjust,
                 result=result,
             )
@@ -763,6 +781,7 @@ class VolDataManager(BaseDataManager):
                 dividends=dividends,
                 market_price=market_price,
                 undo_adjust=undo_adjust,
+                model_price=model_price,
                 american=american,
                 n_steps=n_steps,
                 result=result,
@@ -783,6 +802,8 @@ class VolDataManager(BaseDataManager):
                 undo_adjust=undo_adjust,
                 american=True,
                 n_steps=n_steps,
+                model_price=model_price,
+                result=result,
             )
             return self._get_european_equivalent_volatility_timeseries(
                 start_date=start_date,
@@ -822,6 +843,7 @@ class VolDataManager(BaseDataManager):
         undo_adjust: bool = True,
         n_steps: Optional[int] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
+        model_price: Optional[ModelPrice] = None,
     ) -> VolatilityResult:
         """Compute implied volatility at a specific point in time.
 
@@ -873,6 +895,8 @@ class VolDataManager(BaseDataManager):
             ...     iv_value = vol_result.timeseries.iloc[0]
         """
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+        model_price = model_price or self.CONFIG.model_price
+        as_of = to_datetime(as_of)
         if not is_available_on_date(as_of):
             logger.warning(
                 f"Valuation date {as_of} is not a business day or holiday. Resolving using fallback options {fallback_option}."
@@ -880,7 +904,12 @@ class VolDataManager(BaseDataManager):
             if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
                 raise ValueError(f"Valuation date {as_of} is not a business day or holiday.")
             if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                as_of = change_to_last_busday(as_of, eod_time=False)
+                ## Move date back to last business day
+                ## Using only change_to_last_busday assumes input date is not business day or is holiday
+                ## Which the function would roll back
+                ## But there's a possibility input date is today's date but before market open
+                ## In that case we need to move back one more business day
+                as_of = change_to_last_busday(as_of - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
             else:
                 result = VolatilityResult()
                 result.timeseries = pd.Series(dtype=float,
@@ -896,6 +925,10 @@ class VolDataManager(BaseDataManager):
                 result.endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
                 result.dividend_type = dividend_type or self.CONFIG.dividend_type
                 result.symbol = self.symbol
+                result.undo_adjust = undo_adjust
+                result.model_price = model_price
+                result.fallback_option = fallback_option
+
                 return result
 
         iv_timeseries = self.get_implied_volatility_timeseries(
@@ -916,8 +949,10 @@ class VolDataManager(BaseDataManager):
             n_steps=n_steps,
             endpoint_source=endpoint_source,
             vol_model=vol_model,
+            model_price=model_price,
         )
         iv_timeseries.timeseries = iv_timeseries.timeseries.loc[to_datetime(as_of) : to_datetime(as_of)]
+        iv_timeseries.fallback_option = fallback_option
         return iv_timeseries
 
     def rt(
@@ -928,6 +963,7 @@ class VolDataManager(BaseDataManager):
         dividend_type: Optional[DivType] = DivType.DISCRETE,
         american: bool = True,
         *,
+        vol_model: Optional[VolatilityModel] = None,
         fallback_option: Optional[RealTimeFallbackOption] = None,
         market_model: Optional[OptionPricingModel] = None,
         S: Optional[SpotResult] = None,
@@ -937,6 +973,7 @@ class VolDataManager(BaseDataManager):
         market_price: Optional[OptionSpotResult] = None,
         undo_adjust: bool = True,
         n_steps: Optional[int] = None,
+        model_price: Optional[ModelPrice] = None,
     ) -> VolatilityResult:
         """Compute current real-time implied volatility using latest market data.
 
@@ -993,7 +1030,6 @@ class VolDataManager(BaseDataManager):
             ...     market_model=OptionPricingModel.BSM
             ... )
         """
-
         res = self.get_at_time_implied_volatility(
             as_of=datetime.now().strftime("%Y-%m-%d"),
             expiration=expiration,
@@ -1010,5 +1046,9 @@ class VolDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
             n_steps=n_steps,
             endpoint_source=OptionSpotEndpointSource.QUOTE,
+            fallback_option=fallback_option,
+            model_price=model_price,
+            vol_model=vol_model,
         )
+        res.rt = True
         return res

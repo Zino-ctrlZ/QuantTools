@@ -22,8 +22,9 @@ from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
+from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 
-logger = setup_logger("trade.datamanager.utils", stream_log_level="INFO")
+logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 
 def _prepare_vol_calculation_setup(
@@ -64,6 +65,7 @@ def _handle_cache_for_vol(
     start_date: datetime,
     end_date: datetime,
     result: VolatilityResult,
+    optional_name: Optional[str] = "vol"
 ) -> Tuple[Optional[pd.Series], bool, datetime, datetime, Optional[VolatilityResult]]:
     """Handle cache checking logic for volatility calculations.
 
@@ -76,7 +78,7 @@ def _handle_cache_for_vol(
     )
 
     if cached_data is not None and not is_partial:
-        logger.info(f"Cache hit for vol timeseries key: {key}")
+        logger.info(f"Cache hit for {optional_name} timeseries key: {key}")
         result.timeseries = cached_data
         return cached_data, is_partial, start_date, end_date, result
     elif is_partial:

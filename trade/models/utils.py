@@ -115,7 +115,7 @@ def resolve_missing_vol(
                                                                 price = x['Midpoint'],
                                                                 S = S,
                                                                 K = x['strike'],
-                                                                t = time_distance_helper(exp = expiration, strt = datetime),
+                                                                t = time_distance_helper(end = expiration, start = datetime),
                                                                 r = r,
                                                                 q = q,
                                                                 flag = x['right'].lower()), axis = 1)
@@ -124,7 +124,7 @@ def resolve_missing_vol(
                                                                 price = x['Close'],
                                                                 S = S,
                                                                 K = x['strike'],
-                                                                t = time_distance_helper(exp = expiration, strt = datetime),
+                                                                t = time_distance_helper(end = expiration, start = datetime),
                                                                 r = r,
                                                                 q = q,
                                                                 flag = x['right'].lower()), axis = 1)

@@ -29,14 +29,15 @@ from trade.datamanager._enums import ArtifactType, SeriesId, Interval, RealTimeF
 from trade.datamanager.utils import slice_schedule
 from trade.datamanager.utils.date import DateRangePacket, is_available_on_date
 from trade.datamanager.utils.cache import _data_structure_cache_it
-from trade.helpers.helper import CustomCache, get_missing_dates, change_to_last_busday
+from trade.datamanager.utils.logging import get_logging_level
+from trade.helpers.helper import CustomCache, get_missing_dates, change_to_last_busday, to_datetime
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import get_vectorized_dividend_scehdule
 
 from trade import HOLIDAY_SET
 from .utils.data_structure import _data_structure_sanitize
 
-logger = setup_logger("trade.datamanager.dividend", stream_log_level="DEBUG")
+logger = setup_logger("trade.datamanager.dividend", stream_log_level=get_logging_level())
 
 
 class DividendDataManager(BaseDataManager):
@@ -78,6 +79,7 @@ class DividendDataManager(BaseDataManager):
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
     CONFIG = OptionDataConfig()
     INSTANCES = {}
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
 
     def __new__(cls, symbol: str, *args: Any, **kwargs: Any) -> "DividendDataManager":
         """Returns cached instance for symbol, creating new one if needed.
@@ -104,7 +106,7 @@ class DividendDataManager(BaseDataManager):
         return cls.INSTANCES[symbol]
 
     def __init__(
-        self, symbol: str, *, cache_spec: Optional[CacheSpec] = None, enable_namespacing: bool = False
+        self, symbol: str, *, enable_namespacing: bool = False
     ) -> None:
         """Initializes manager for a symbol with cache and temp cache for short-lived data.
 
@@ -113,18 +115,17 @@ class DividendDataManager(BaseDataManager):
 
         Args:
             symbol: Equity ticker symbol.
-            cache_spec: Optional cache configuration. Uses default if None.
             enable_namespacing: If True, enables namespace isolation in cache keys.
 
         Examples:
             >>> mgr = DividendDataManager("AAPL")
-            >>> mgr = DividendDataManager("AAPL", cache_spec=CacheSpec(expire_days=30))
+            >>> mgr = DividendDataManager("AAPL", enable_namespacing=True)
         """
 
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
-        super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
+        super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
         self.temp_cache: CustomCache = CustomCache(
             location=DM_GEN_PATH.as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
@@ -422,7 +423,8 @@ class DividendDataManager(BaseDataManager):
             d_date = datetime.strptime(d, "%Y-%m-%d").date()
 
             ## Simple filter approach
-            series[d_date] = Schedule(slice_schedule(full_schedule, d_date, mat_dt))
+            sliced = slice_schedule(full_schedule, d_date, mat_dt)
+            series[d_date] = Schedule(sliced)
         data = pd.Series(series, name="dividend_schedule")
 
         # Back-adjust to represent cashflows as of valuation date. Ie undoing splits
@@ -523,6 +525,9 @@ class DividendDataManager(BaseDataManager):
             end_str = pd.to_datetime(end_date).strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
             yield_history = self.get_div_yield_history(self.symbol, skip_preload_check=True)
             filtered = yield_history[(yield_history.index >= start_str) & (yield_history.index <= end_str)]
+            filtered.index.name = "datetime"
+            filtered.index = to_datetime(filtered.index)
+            filtered = filtered.sort_index()
             result.daily_continuous_dividends = filtered
             result.key = None
         return result
@@ -569,13 +574,19 @@ class DividendDataManager(BaseDataManager):
         load_name(self.symbol)
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
         dividend_type = DivType(dividend_type) if dividend_type is not None else self.CONFIG.dividend_type
+        valuation_date = to_datetime(valuation_date)
 
         if not is_available_on_date(valuation_date):
             logger.warning(f"Valuation date {valuation_date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}")
             if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
                 raise ValueError(f"Valuation date {valuation_date} is not a business day or holiday.")
             if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                valuation_date = change_to_last_busday(valuation_date)
+                ## Move date back to last business day
+                ## Using only change_to_last_busday assumes input date is not business day or is holiday
+                ## Which the function would roll back
+                ## But there's a possibility input date is today's date but before market open
+                ## In that case we need to move back one more business day
+                valuation_date = change_to_last_busday(valuation_date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
             else:
                 result = DividendsResult()
                 dividend = pd.Series(dtype=float)
@@ -587,6 +598,7 @@ class DividendDataManager(BaseDataManager):
                 result.undo_adjust = undo_adjust
                 result.dividend_type = dividend_type
                 result.symbol = self.symbol
+                result.fallback_option = fallback_option
                 return result
             
 
@@ -607,9 +619,13 @@ class DividendDataManager(BaseDataManager):
                 split_factor = 1.0
             data = Schedule(schedule=[entry * split_factor for entry in data])
             data = pd.Series({val_str: data})
+            data.index = to_datetime(data.index)
+            data.index.name = "datetime"
         elif dividend_type == DivType.CONTINUOUS:
             data = self.get_div_yield_history(self.symbol)
             data = data[(data.index.date >= pd.to_datetime(valuation_date).date()) & (data.index.date <= pd.to_datetime(maturity_date).date())]
+            data.index.name = "datetime"
+            data.index = to_datetime(data.index)
             key = None
         else:
             raise ValueError(f"Unsupported dividend type: {dividend_type}")
@@ -624,6 +640,7 @@ class DividendDataManager(BaseDataManager):
         result.undo_adjust = undo_adjust
         result.dividend_type = dividend_type
         result.symbol = self.symbol
+        result.fallback_option = fallback_option
 
         return result
 
@@ -660,6 +677,7 @@ class DividendDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
             fallback_option=fallback_option,
         )
+        result.rt = True
         return result
         
     def offload(self, *args: Any, **kwargs: Any) -> None:

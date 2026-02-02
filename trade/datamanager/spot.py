@@ -16,20 +16,19 @@ Typical usage:
 
 from datetime import datetime
 from typing import Any, ClassVar, Optional, Union
-from EventDriven.riskmanager.market_data import AtIndexResult
 from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
-
+import pandas as pd
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.result import SpotResult
 from trade.datamanager.vars import TS, load_name
 from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager._enums import RealTimeFallbackOption, SeriesId
+from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 
 
-logger = setup_logger("trade.datamanager.spot", stream_log_level="INFO")
-
+logger = setup_logger("trade.datamanager.spot", stream_log_level=get_logging_level())
 
 class SpotDataManager(BaseDataManager):
     """Manages spot price retrieval for a specific symbol with split adjustment support.
@@ -74,6 +73,7 @@ class SpotDataManager(BaseDataManager):
     CACHE_NAME: ClassVar[str] = "spot_data_manager"
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
     INSTANCES = {}
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
 
     def __new__(cls, symbol: str, *args: Any, **kwargs: Any) -> "SpotDataManager":
         """Returns cached instance for symbol, creating new one if needed.
@@ -100,7 +100,7 @@ class SpotDataManager(BaseDataManager):
         return cls.INSTANCES[symbol]
 
     def __init__(
-        self, symbol: str, *, cache_spec: Optional[CacheSpec] = None, enable_namespacing: bool = False
+        self, symbol: str, *, enable_namespacing: bool = False
     ) -> None:
         """Initializes manager once per symbol instance.
 
@@ -119,7 +119,7 @@ class SpotDataManager(BaseDataManager):
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
-        super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
+        super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
 
     def get_spot_timeseries(
@@ -198,7 +198,9 @@ class SpotDataManager(BaseDataManager):
     def get_at_time(
         self,
         date: Union[datetime, str],
-    ) -> AtIndexResult:
+        undo_adjust: bool = True,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
+    ) -> SpotResult:
         """Returns spot data at a specific datetime from MarketTimeseries.
 
         Retrieves comprehensive market data (OHLCV + other fields) for a specific date
@@ -230,14 +232,42 @@ class SpotDataManager(BaseDataManager):
             - Delegates to global TS.get_at_index method
             - Result includes open, high, low, close, volume, and other fields
         """
+        fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+        if not is_available_on_date(to_datetime(date).date()):
+            logger.warning(
+                f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
+            )
+            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
+                raise ValueError(f"Date {date} is not available for risk-free rate data.")
+
+            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
+                ## Move date back to last business day
+                ## Using only change_to_last_busday assumes input date is not business day or is holiday
+                ## Which the function would roll back
+                ## But there's a possibility input date is today's date but before market open
+                ## In that case we need to move back one more business day
+                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+            else:
+                raise ValueError(f"Unsupported fallback option: {fallback_option}")
+            
         ## Load first
         load_name(self.symbol)
-        return TS.get_at_index(sym=self.symbol, index=date)
+        res = TS.get_at_index(sym=self.symbol, index=date)
+        container = SpotResult()
+        container.symbol = self.symbol
+        container.rt = True
+        container.timeseries = res.chain_spot if undo_adjust else res.spot
+        container.timeseries = container.timeseries.to_frame().T["close"]
+        container.undo_adjust = undo_adjust
+        container.timeseries.index = pd.to_datetime(container.timeseries.index, format="%Y-%m-%d")
+        container.fallback_option = fallback_option
+        return container
     
     def rt(
         self,
         fallback_option: Optional[RealTimeFallbackOption] = None,
-    ) -> AtIndexResult:
+        undo_adjust: bool = True,
+    ) -> SpotResult:
         """Returns the most recent spot price for the symbol.
 
         Retrieves the latest available spot price from the MarketTimeseries cache.
@@ -251,19 +281,7 @@ class SpotDataManager(BaseDataManager):
             >>> print(f"Latest AAPL Price: ${latest_price:.2f}")    
             Latest AAPL Price: $158.23
         """
-        fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+
         date = datetime.now()
-        if not is_available_on_date(to_datetime(date).date()):
-            logger.warning(
-                f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Date {date} is not available for risk-free rate data.")
-            
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                date = change_to_last_busday(date)
-            else:
-                raise ValueError(f"Unsupported fallback option: {fallback_option}")
-            
-        at_index_result = TS.get_at_index(sym=self.symbol, index=date)
+        at_index_result = self.get_at_time(date=date, undo_adjust=undo_adjust)
         return at_index_result

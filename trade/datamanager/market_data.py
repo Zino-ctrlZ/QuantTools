@@ -208,7 +208,7 @@ from EventDriven.exceptions import UnaccessiblePropertyError
 from trade import register_signal, SIGNALS_TO_RUN
 
 
-logger = setup_logger("EventDriven.riskmanager.market_data", stream_log_level="INFO")
+logger = setup_logger("trade.datamanager.market_data", stream_log_level="INFO")
 
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals

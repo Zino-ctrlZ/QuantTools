@@ -1,3 +1,5 @@
+from typing import Iterable, List
+from trade.optionlib.assets.dividend import Schedule
 import numpy as np
 from ...utils.format import convert_to_array, assert_equal_length,equalize_lengths
 from ...pricing.binomial import VectorBinomialCRR
@@ -12,7 +14,7 @@ def binomial_tree_price_batch(
     N: float|np.ndarray,
     S: float|np.ndarray,
     dividend_type: float|np.ndarray,
-    div_amount: float|np.ndarray,
+    div_amount: List[Schedule] | Iterable[float] | np.ndarray,
     option_type: float|np.ndarray,
     start_date: float|np.ndarray,
     valuation_date: float|np.ndarray,
@@ -74,16 +76,6 @@ def binomial_tree_price_batch(
         )
     ]
     price = np.array([model.price() for model in models])
-    # price = []
-    # for i, model in enumerate(models):
-    #     try:
-    #         print(f"Model {i}: K={model.K}, S={model.S0}, N={model.N}, T={model.T}, option_type={model.option_type}")
-    #         price.append(model.price())
-    #     except Exception as e:
-    #         print(f"Error in model {i}: {e}")
-    #         print(model.stock_tree)
-    #         print(model, )
-    #         raise
     price = np.array(price)
 
     return price, models
@@ -96,7 +88,7 @@ def binomial_tree_greeks(
     N: float|np.ndarray,
     S: float|np.ndarray,
     dividend_type: float|np.ndarray,
-    div_amount: float|np.ndarray,
+    div_amount: List[Schedule] | Iterable[float] | np.ndarray,
     option_type: float|np.ndarray,
     start_date: float|np.ndarray,
     valuation_date: float|np.ndarray,
@@ -113,6 +105,8 @@ def binomial_tree_greeks(
     - N: Number of time steps in the binomial tree
     - spot_price: Current price of the underlying asset (optional)
     - dividend_type: Type of dividend ('discrete' or 'continuous')
+        - Discrete dividends: (time_frac, amount) schedule
+        - Continuous dividends: continuous yield rate
     - div_amount: Amount of dividend (if applicable)
     - option_type: 'c' for call, 'p' for put
     - start_date: Start date for the option pricing (optional)

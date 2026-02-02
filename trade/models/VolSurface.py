@@ -140,7 +140,7 @@ def fit_svi_model(
                     price = x['price'],
                     S = x['Spot'],
                     K = x['Strike'],
-                    t = time_distance_helper(exp = x['Expiration'].strftime('%Y-%m-%d'), strt = x.name.strftime('%Y-%m-%d')),
+                    t = time_distance_helper(end = x['Expiration'].strftime('%Y-%m-%d'), start = x.name.strftime('%Y-%m-%d')),
                     r = x['r'],
                     q = x['q'],
                     flag = x['right'].lower()), axis = 1)

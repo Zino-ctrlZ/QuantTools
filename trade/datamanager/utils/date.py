@@ -4,23 +4,30 @@ from datetime import datetime, date
 from pandas.tseries.offsets import BDay
 from trade.helpers.helper import to_datetime, is_busday, is_USholiday
 from trade.helpers.helper import ny_now
-from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR
-from trade.datamanager.vars import TODAY_RELOAD_CUTOFF
+from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR # noqa
+from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME
+from trade.helpers.helper_types import DATE_HINT
+from trade.helpers.helper import time_distance_helper # noqa
 from trade.helpers.helper import CustomCache, generate_option_tick_new
 from trade.datamanager._enums import OptionSpotEndpointSource
 from trade.helpers.helper import is_market_hours_today
+from trade.helpers.helper_types import is_iterable # noqa
 from trade.helpers.Logging import setup_logger
+from trade.optionlib.utils.format import assert_equal_length # noqa
 from dbase.DataAPI.ThetaData import list_dates
 from pathlib import Path
 import os
 from typing import Tuple, List, Optional, Union
-logger = setup_logger("trade.datamanager.utils", stream_log_level="INFO")
+from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
-DATE_HINT = Union[datetime, str]
 PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
 
 ## This cache will be used to save the min trading date for each option tick
 ## This is to avoid calling API all the time
+
+
+
 LIST_DATE_CACHE = CustomCache(
     location=PATH.as_posix(),
     fname="list_date_cache",
@@ -44,10 +51,6 @@ def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
     return synced_series
 
 
-def time_distance_helper(start: datetime, end: datetime) -> float:
-    """Calculates time distance in years between two dates."""
-    delta = (to_datetime(end) - to_datetime(start)).days * SECONDS_IN_DAY
-    return delta / SECONDS_IN_YEAR
 
 
 def _sync_date(
@@ -210,6 +213,19 @@ def _should_save_today(max_date: date) -> bool:
 def is_available_on_date(date: date) -> bool:
     """
     Returns True if the given date is a business day and not a US holiday, False otherwise.
+    For when date == today, it checks current time to see if market is open.
     """
-    date = to_datetime(date).strftime("%Y-%m-%d")
-    return is_busday(date) and not is_USholiday(date)
+    date = to_datetime(date)
+    is_today = date.date() == ny_now().date()
+    is_trading_day = is_busday(date) and not is_USholiday(date)
+
+    ## If both today and trading day, check time
+    if is_today and is_trading_day:
+        current_time = ny_now().time()
+
+        ## If before min time, return False
+        if current_time < MIN_TIME_BEFORE_REAL_TIME:
+            return False
+    
+    ## Else just return trading day status
+    return is_trading_day

@@ -1,10 +1,20 @@
 import pandas as pd
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, List
 from trade.optionlib.config.types import DivType
-from ._enums import OptionSpotEndpointSource, OptionPricingModel, VolatilityModel, SeriesId
+from ._enums import (
+    GreekType, 
+    OptionSpotEndpointSource, 
+    OptionPricingModel, 
+    VolatilityModel, 
+    SeriesId, 
+    ModelPrice, 
+    RealTimeFallbackOption,
+    AVAILABLE_GREEKS
+)
 from .utils.date import DATE_HINT
 from typeguard import check_type
+from trade.helpers.helper import to_datetime
 from typing import get_type_hints
 
 
@@ -13,10 +23,24 @@ class Result:
     """Base class for all data manager result containers."""
 
     model_input_keys: Optional[Dict[str, Any]] = None
+    rt: Optional[bool] = False
+    fallback_option: Optional[RealTimeFallbackOption] = None
+
+    def __post_init__(self):
+        """Simple formatting"""
+        timeseries = getattr(self, "timeseries", None)
+        if timeseries is not None:
+            if isinstance(timeseries, (pd.Series, pd.DataFrame)):
+                timeseries.index.name = "datetime"
+                timeseries.index = to_datetime(timeseries.index)
 
     def _additional_repr_fields(self) -> Dict[str, Any]:
         """Provides additional fields for string representation. Override in subclasses."""
         return {}
+
+    def is_empty(self) -> bool:
+        """Checks if the result container has no data. Override in subclasses if needed."""
+        raise NotImplementedError("is_empty method must be implemented in subclasses.")
 
     def __repr__(self) -> str:
         """Returns string representation with additional fields from subclass."""
@@ -228,6 +252,30 @@ class _OptionResultsBase(Result):
     strike: Optional[float] = None
     expiration: Optional[DATE_HINT] = None
     right: Optional[str] = None
+    model_price: Optional[ModelPrice] = ModelPrice.MIDPOINT
+
+    def _additional_repr_fields(self) -> Dict[str, Any]:
+        """Provides option-specific fields for string representation."""
+        return {
+            "symbol": self.symbol,
+            "strike": self.strike,
+            "expiration": self.expiration,
+            "right": self.right,
+            "model_price": self.model_price,
+        }
+
+    def __repr__(self) -> str:
+        """Delegates to base Result repr."""
+        return super().__repr__()
+    
+@dataclass
+class _OptionModelResultsBase(_OptionResultsBase):
+    """Base class for option model result containers."""
+    endpoint_source: Optional[OptionSpotEndpointSource] = None
+    market_model: Optional[OptionPricingModel] = None
+    vol_model: Optional[VolatilityModel] = None
+    dividend_type: Optional[DivType] = None
+    undo_adjust: Optional[bool] = None
 
     def __repr__(self) -> str:
         """Delegates to base Result repr."""
@@ -241,6 +289,7 @@ class OptionSpotResult(_OptionResultsBase):
     timeseries: Optional[pd.DataFrame] = None
     key: Optional[str] = None
     endpoint_source: Optional[OptionSpotEndpointSource] = None
+    
 
     ## For option spot timeseries, this will be the actual endpoint parameters
     model_input_keys: Optional[Dict[str, Any]] = None
@@ -252,6 +301,31 @@ class OptionSpotResult(_OptionResultsBase):
     @daily_option_spot.setter
     def daily_option_spot(self, value: Optional[pd.DataFrame]) -> None:
         self.timeseries = value
+
+    @property
+    def price(self) -> pd.Series:
+        if self.rt:
+            return self.midpoint
+        
+        if not self.is_empty():
+            if self.model_price == ModelPrice.CLOSE:
+                p = self.daily_option_spot.get("close")
+            elif self.model_price == ModelPrice.MIDPOINT:
+                p = self.daily_option_spot.get("midpoint")
+            elif self.model_price == ModelPrice.BID:
+                p = self.daily_option_spot.get("closebid")
+            elif self.model_price == ModelPrice.ASK:
+                p = self.daily_option_spot.get("closeask")
+            elif self.model_price == ModelPrice.OPEN:
+                p = self.daily_option_spot.get("open")
+            else:
+                p = self.daily_option_spot.get("midpoint")
+        else:
+            return pd.Series(name="price", index=pd.DatetimeIndex([]), dtype=float)
+        
+        if p is None:
+            raise ValueError(f"Requested model price '{self.model_price}' not found in option spot data. Available columns: {self.daily_option_spot.columns.tolist()}")
+        return p
 
     @property
     def close(self) -> pd.Series:
@@ -289,15 +363,11 @@ class OptionSpotResult(_OptionResultsBase):
 
 
 @dataclass
-class VolatilityResult(_OptionResultsBase):
+class VolatilityResult(_OptionModelResultsBase):
     """Contains volatility surface data."""
 
     timeseries: Optional[pd.Series] = None
     key: Optional[str] = None
-    endpoint_source: Optional[OptionSpotEndpointSource] = None
-    market_model: Optional[OptionPricingModel] = None
-    vol_model: Optional[VolatilityModel] = None
-    dividend_type: Optional[DivType] = None
     model_input_keys: Optional[Dict[str, Any]] = None
 
     def is_empty(self) -> bool:
@@ -322,7 +392,99 @@ class VolatilityResult(_OptionResultsBase):
     def __repr__(self) -> str:
         return super().__repr__()
 
+@dataclass
+class GreekResultSet(_OptionModelResultsBase):
+    key: Optional[str] = None
+    timeseries: Optional[pd.DataFrame] = None
 
+    def is_empty(self) -> bool:
+        return self.timeseries is None or self.timeseries.empty
+    
+    def _additional_repr_fields(self) -> Dict[str, Any]:
+        super_additional = super()._additional_repr_fields()
+        return {
+            **super_additional,
+            "Available Greeks": [g for g in AVAILABLE_GREEKS if self.timeseries is not None and g in self.timeseries.columns],
+            "empty": self.is_empty(),
+        }
+
+    def __repr__(self):
+        return super().__repr__()
+
+    @property
+    def delta(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.DELTA.value in self.timeseries.columns:
+            return self.timeseries[GreekType.DELTA.value]
+        return None
+    
+    @property
+    def gamma(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.GAMMA.value in self.timeseries.columns:
+            return self.timeseries[GreekType.GAMMA.value]
+        return None
+    
+    @property
+    def theta(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.THETA.value in self.timeseries.columns:
+            return self.timeseries[GreekType.THETA.value]
+        return None
+    
+    @property
+    def vega(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.VEGA.value in self.timeseries.columns:
+            return self.timeseries[GreekType.VEGA.value]
+        return None
+    
+    @property
+    def rho(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.RHO.value in self.timeseries.columns:
+            return self.timeseries[GreekType.RHO.value]
+        return None
+    
+    @property
+    def volga(self) -> Optional[pd.Series]:
+        if self.timeseries is not None and GreekType.VOLGA.value in self.timeseries.columns:
+            return self.timeseries[GreekType.VOLGA.value]
+        return None
+
+
+@dataclass
+class TheoreticalPriceResult(_OptionModelResultsBase):
+    timeseries: Optional[pd.Series] = None
+
+    def is_empty(self) -> bool:
+        return self.timeseries is None or self.timeseries.empty
+
+    def __repr__(self) -> str:
+        return super().__repr__() 
+    
+
+
+@dataclass
+class ScenariosResult(_OptionModelResultsBase):
+    grid: Optional[pd.DataFrame] = None
+    spot_scenarios: List[float] = field(default_factory=lambda: [])
+    vol_scenarios: List[float] = field(default_factory=lambda: [])
+    as_of: Optional[DATE_HINT] = None
+
+    def is_empty(self) -> bool:
+        return self.grid is None or self.grid.empty
+
+    def _additional_repr_fields(self):
+        return {
+            "symbol": self.symbol,
+            "expiration": self.expiration,
+            "right": self.right,
+            "strike": self.strike,
+            "market_model": self.market_model,
+            "dividend_type": self.dividend_type,
+            "num_spot_scenarios": len(self.spot_scenarios),
+            "num_vol_scenarios": len(self.vol_scenarios),
+            "is_empty": self.is_empty(),
+        }
+
+    def __repr__(self) -> str:
+        return super().__repr__()
 @dataclass
 class ModelResultPack(Result):
     """
@@ -336,12 +498,16 @@ class ModelResultPack(Result):
     rates: Optional[RatesResult] = None
     option_spot: Optional[OptionSpotResult] = None
     vol: Optional[VolatilityResult] = None
+    greek: Optional[GreekResultSet] = None
 
     ## Guiding Enums
     series_id: Optional[SeriesId] = None
     dividend_type: Optional[DivType] = None
     undo_adjust: bool = True
     endpoint_source: Optional[OptionSpotEndpointSource] = None
+    price: Optional[ModelPrice] = None
+    rt: Optional[bool] = False
+    on_date: Optional[bool] = False
 
     ## Diagnostic Info
     time_to_load: Optional[Dict[str, float]] = None
@@ -349,6 +515,10 @@ class ModelResultPack(Result):
     def _additional_repr_fields(self):
         """Provides model-specific fields for string representation."""
         return {
+            "symbol": self.spot.symbol if self.spot else None,
+            "strike": self.option_spot.strike if self.option_spot else None,
+            "expiration": self.option_spot.expiration if self.option_spot else None,
+            "right": self.option_spot.right if self.option_spot else None,
             "series_id": self.series_id,
             "dividend_type": self.dividend_type,
             "undo_adjust": self.undo_adjust,
@@ -361,6 +531,7 @@ class ModelResultPack(Result):
                     self.rates,
                     self.option_spot,
                     self.vol,
+                    self.greek,
                 ]
                 if result is None or result.is_empty()
             ),
@@ -368,3 +539,53 @@ class ModelResultPack(Result):
 
     def __repr__(self) -> str:
         return super().__repr__()
+    
+    def list_all_loaded(self) -> Dict[str, bool]:
+        return {
+            "spot": self.spot is not None and not self.spot.is_empty(),
+            "forward": self.forward is not None and not self.forward.is_empty(),
+            "dividend": self.dividend is not None and not self.dividend.is_empty(),
+            "rates": self.rates is not None and not self.rates.is_empty(),
+            "option_spot": self.option_spot is not None and not self.option_spot.is_empty(),
+            "vol": self.vol is not None and not self.vol.is_empty(),
+            "greek": self.greek is not None and not self.greek.is_empty(),
+        }
+    
+    def any_loaded(self) -> bool:
+        return any(
+            [
+                self.load_spot,
+                self.load_forward,
+                self.load_dividend,
+                self.load_rates,
+                self.load_option_spot,
+                self.load_vol,
+                self.load_greek,
+            ]
+        )
+    
+    
+    def all_loaded(self) -> bool:
+        return all(
+            [
+                self.load_spot,
+                self.load_forward,
+                self.load_dividend,
+                self.load_rates,
+                self.load_option_spot,
+                self.load_vol,
+                self.load_greek,
+            ]
+        )
+    
+    # def all_passed_loaded(self, requested: List[str]) -> bool:
+    #     mapping = {
+    #         "spot": self.load_spot,
+    #         "forward": self.load_forward,
+    #         "dividend": self.load_dividend,
+    #         "rates": self.load_rates,
+    #         "option_spot": self.load_option_spot,
+    #         "vol": self.load_vol,
+    #     }
+    #     return all([mapping[req] for req in requested if req in mapping])
+

@@ -20,18 +20,20 @@ from datetime import datetime
 from typing import Optional, Tuple, Union
 import pandas as pd
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.result import OptionSpotResult
-from trade.datamanager._enums import ArtifactType, Interval, SeriesId, OptionSpotEndpointSource
+from trade.datamanager._enums import ArtifactType, Interval, ModelPrice, SeriesId, OptionSpotEndpointSource
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from trade.datamanager.config import OptionDataConfig
-from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date
+from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date, is_available_on_date
+from trade.datamanager.utils.logging import get_logging_level
 from dbase.DataAPI.ThetaData import retrieve_eod_ohlc, quote_to_eod_patch, retrieve_quote_rt
 from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
-logger = setup_logger("trade.datamanager.option_spot", stream_log_level="INFO")
+logger = setup_logger("trade.datamanager.option_spot", stream_log_level=get_logging_level())
 
 class OptionSpotDataManager(BaseDataManager):
     """Manages option spot price retrieval for a specific symbol from Thetadata API.
@@ -72,13 +74,13 @@ class OptionSpotDataManager(BaseDataManager):
 
     CACHE_NAME: str = "option_spot_manager"
     DEFAULT_SERIES_ID: SeriesId = SeriesId.HIST
-    CONFIG = OptionDataConfig()
+    CONFIG: OptionDataConfig = OptionDataConfig()
+    CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
 
     def __init__(
         self,
         symbol: str,
         *,
-        cache_spec: Optional[CacheSpec] = None,
         enable_namespacing: bool = False,
     ) -> None:
         """Initializes manager for a specific symbol.
@@ -87,14 +89,13 @@ class OptionSpotDataManager(BaseDataManager):
 
         Args:
             symbol: Underlying equity ticker symbol (e.g., "AAPL", "SPY").
-            cache_spec: Optional cache configuration. Uses default if None.
             enable_namespacing: If True, enables namespace isolation in cache keys.
 
         Examples:
             >>> opt_mgr = OptionSpotDataManager("AAPL")
             >>> opt_mgr = OptionSpotDataManager("AAPL", cache_spec=CacheSpec(expire_days=7))
         """
-        super().__init__(cache_spec=cache_spec, enable_namespacing=enable_namespacing)
+        super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
 
     def _sync_date(
@@ -156,6 +157,7 @@ class OptionSpotDataManager(BaseDataManager):
         right: Optional[str] = None,
         opttick: Optional[str] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
+        model_price: Optional[ModelPrice] = None,
     ) -> OptionSpotResult:
         """Fetches option spot price for a single date from Thetadata API.
 
@@ -206,6 +208,7 @@ class OptionSpotDataManager(BaseDataManager):
             right=right,
             opttick=opttick,
             endpoint_source=endpoint_source,
+            model_price=model_price,
         )
         return result
 
@@ -219,6 +222,7 @@ class OptionSpotDataManager(BaseDataManager):
         right: Optional[str] = None,
         opttick: Optional[str] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
+        model_price: Optional[ModelPrice] = None,
     ) -> OptionSpotResult:
         """Fetches option spot price time-series from Thetadata API.
 
@@ -234,6 +238,7 @@ class OptionSpotDataManager(BaseDataManager):
             opttick: Optional ticker string (e.g., "AAPL250620C00150000"). If provided,
                 overrides strike, expiration, and right parameters.
             endpoint_source: API endpoint to use (EOD or QUOTE). Uses config default if None.
+            model_price: Optional model price type to use.
 
         Returns:
             OptionSpotResult containing daily_option_spot DataFrame indexed by datetime
@@ -273,6 +278,16 @@ class OptionSpotDataManager(BaseDataManager):
         """
         if endpoint_source is None:
             endpoint_source = self.CONFIG.option_spot_endpoint_source
+
+        result = OptionSpotResult()
+        result.symbol = self.symbol
+        result.endpoint_source = endpoint_source
+        result.strike = strike
+        result.right = right
+        result.expiration = to_datetime(expiration) if expiration is not None else None
+        result.rt = False
+        result.model_price = model_price or self.CONFIG.model_price
+
 
         strike, right, symbol, expiration = _handle_opttick_param(
             strike=strike,
@@ -320,7 +335,6 @@ class OptionSpotDataManager(BaseDataManager):
 
         if cached_data is not None and not is_partial:
             logger.info(f"Cache hit for option spot timeseries key: {key}")
-            result = OptionSpotResult()
             result.daily_option_spot = cached_data
             result.key = key
             result.endpoint_source = endpoint_source
@@ -359,7 +373,6 @@ class OptionSpotDataManager(BaseDataManager):
             end=end_str,
         )
 
-        result = OptionSpotResult()
         result.daily_option_spot = fetched_data
         result.key = key
         result.endpoint_source = endpoint_source
@@ -457,9 +470,23 @@ class OptionSpotDataManager(BaseDataManager):
             OptionSpotResult containing daily_option_spot DataFrame with OHLC data,
             plus metadata (key, endpoint_source).
     """
+        as_of = datetime.now().date()
+        if not is_available_on_date(as_of):
+            as_of = change_to_last_busday(as_of - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+            logger.info(
+                f"Real-time data not available for {self.symbol} on {as_of}. Market may be closed."
+            )
+            res = self.get_option_spot(
+                strike=strike,
+                right=right,
+                expiration=to_datetime(expiration) if expiration is not None else None,
+                date=as_of,
+            )
+            res.rt = True
+            return res
         rt = retrieve_quote_rt(
             symbol=self.symbol,
-            exp=expiration,
+            exp=to_datetime(expiration) if expiration is not None else None,
             strike=strike,
             right=right,
         )
@@ -478,7 +505,8 @@ class OptionSpotDataManager(BaseDataManager):
         result.symbol = self.symbol
         result.strike = strike
         result.right = right
-        result.expiration = pd.to_datetime(expiration)
+        result.expiration = to_datetime(expiration) if expiration is not None else None
         result.endpoint_source = OptionSpotEndpointSource.QUOTE
+        result.rt = True
         return result
     

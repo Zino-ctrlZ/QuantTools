@@ -51,7 +51,7 @@ def pnl_data_organizer_helper(strike, exp, flag, op_ts = None, stock_ts = None, 
         vol = implied_vol_bt(S0= S0, K = K,r=r, market_price=market_price,exp_date = exp,flag = flag,start=start)
         if math.isnan(vol):
             try:
-                vol = implied_volatility(price = market_price, S = S0, K = K, t = time_distance_helper(exp, start), r = r, q = 0, flag = flag)
+                vol = implied_volatility(price = market_price, S = S0, K = K, t = time_distance_helper(end=exp, start=start), r = r, q = 0, flag = flag)
             except:
                 vol = np.nan
         merged.at[index, 'vol'] = vol

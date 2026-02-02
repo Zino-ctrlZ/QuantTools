@@ -368,7 +368,7 @@ class ZcoreScalar:
         """
 
         ## Get timeseries object
-        timeseries = get_timeseries_obj()
+        timeseries = get_timeseries_obj(live=True)
 
         ## If syms is None, use the existing syms
         ## This is to avoid reloading timeseries if already loaded

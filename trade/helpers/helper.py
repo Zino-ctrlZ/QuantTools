@@ -7,7 +7,9 @@ import os
 import shutil
 import backoff
 from dotenv import load_dotenv
-
+from trade.helpers.helper_types import DATE_HINT, is_iterable
+from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR
+from typing import Union, Iterable
 import sys
 from enum import Enum
 from typing import Any, Dict
@@ -26,6 +28,7 @@ import yfinance as yf
 from pandas.tseries.offsets import BDay
 from trade.helpers.parse import parse_date, parse_time
 import yfinance as yf
+from trade.helpers.vars import register_on_exit
 from py_vollib.black_scholes import black_scholes as bs
 from py_vollib.black_scholes.greeks.numerical import delta, vega, theta, rho
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
@@ -248,6 +251,14 @@ class CustomCache(Cache):
             for key, value in data.items():
                 self[key] = value
 
+    @classmethod
+    def register_to_on_exit(cls, func):
+        """
+        Register a function to be called on exit.
+        This is useful for when an exit needs to be run BEFORE CustomCache closes connection.
+        """
+        register_on_exit(func)
+
     def __getstate__(self):
         """
         Custom serialization to avoid pickling the cache directory.
@@ -318,8 +329,6 @@ class CustomCache(Cache):
         depending on self._clear_on_exit.
         """
         if self._clear_on_exit:
-            # atexit.register(self._on_exit)
-            # signal.signal(signal.SIGTERM, self._on_signal)
             register_signal(signum=signal.SIGTERM, signal_func=self._on_exit)
             register_signal(signum=signal.SIGINT, signal_func=self._on_exit)
             register_signal("exit", self._on_exit)
@@ -955,27 +964,46 @@ def contains_time_format(date_str: str) -> bool:
         return False
 
 
-def time_distance_helper(exp: str, strt: str = None) -> float:
+def assert_equal_length(*args, names: list = None):
     """
-    Calculate the time distance between two dates in years.
+    Assert that all input lists have the same length.
     """
-    if strt is None:
-        strt = datetime.today()
+    lengths = [len(arg) for arg in args]
+    if len(set(lengths)) != 1:
+        if names is not None:
+            name_length_pairs = ", ".join(f"{name}: {length}" for name, length in zip(names, lengths))
+            raise ValueError(f"Input lists must have the same length. Lengths are: {name_length_pairs}")
+        else:
+            raise ValueError(f"Input lists must have the same length. Lengths are: {lengths}")
+    return True
 
-    exp = pd.to_datetime(exp)
-    exp = exp.replace(
-        hour=16,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    parsed_dte, start_date = pd.to_datetime(exp), pd.to_datetime(strt)
-    if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
-        start_date = start_date.replace(hour=16, minute=0, second=0, microsecond=0)
-    days = (parsed_dte - start_date).total_seconds()
 
-    T = days / (365.25 * 24 * 3600)
-    return T
+def time_distance_helper(start: Union[DATE_HINT, Iterable[DATE_HINT]], 
+                         end: Union[DATE_HINT, Iterable[DATE_HINT]]) -> Union[float, np.ndarray]:
+    """Calculates time distance in years between two dates."""
+    initial_is_iterable = is_iterable(start, include_str=False) or is_iterable(end, include_str=False)
+    ## Ensure iterable
+    if not is_iterable(start, include_str=False):
+        start = [start]
+    if not is_iterable(end, include_str=False):
+        end = [end]
+
+    ## Assert equal length
+    assert_equal_length(start, end, names=("start", "end"))
+
+    ## Convert to datetime
+    start = np.array(start, dtype='datetime64[D]')
+    end = np.array(end, dtype='datetime64[D]')
+
+    ## Calculate time distance in years
+    dte = (end - start)/np.timedelta64(1, 'D')
+    dte_in_seconds = dte * SECONDS_IN_DAY
+    dte_in_years = dte_in_seconds / SECONDS_IN_YEAR
+
+
+    if not initial_is_iterable:
+        return dte_in_years[0]
+    return dte_in_years
 
 
 def binomial(
@@ -1025,7 +1053,7 @@ def binomial(
         r = rates.iloc[len(rates) - 1, 0] / 100
 
     # Create a formula to get implied vol
-    T = time_distance_helper(exp_date, start)
+    T = time_distance_helper(end=exp_date, start=start)
     dt = T / N
     nu = r - 0.5 * sigma**2
     u = np.exp(nu * dt + sigma * np.sqrt(dt))
@@ -1102,7 +1130,7 @@ def implied_vol_bt(
             f"Expiration date {exp_date} is the same as start date {start}. Include HH:MM:SS in the start date, to prevent pricing EOD"
         )
 
-    T = time_distance_helper(exp_date, start)
+    T = time_distance_helper(end=exp_date, start=start)
     max_iter = 200  # max number of iterations
     vol_old = 0.2  # initial guess
     count = 0
@@ -1682,7 +1710,10 @@ def not_trading_day(date: str | datetime, time_aware: bool = False) -> bool:
     return ret_bool
 
 
-def change_to_last_busday(end, offset=1, eod_time=True):
+def change_to_last_busday(end, 
+                          offset=1, 
+                          eod_time=True,
+                          time_of_day_aware: bool = True) -> datetime:
     """
     Change the end date to the last business day if it falls on a weekend or holiday.
     If the time is before 9:30, move to the previous business day.
@@ -1693,6 +1724,15 @@ def change_to_last_busday(end, offset=1, eod_time=True):
             if offset < 0 it will move forward
             if offset = 0 it will stay on the same day if it is a business day
             if offset > 0 it will move back
+        eod_time: bool, if True, return the end date at 16:00:00, else at 00:00:00
+        time_of_day_aware: bool, 
+            if True:
+                - If time is missing (00:00:00), default to 16:00:00
+                - If time is before 9:30, move to previous business day at 16:00:00
+                - If time is after 16:00, move to same business day at 16:00:00
+            if False:
+                - Ignore time of day, always return date at 00:00:00
+
     returns: datetime
     """
 
@@ -1701,7 +1741,7 @@ def change_to_last_busday(end, offset=1, eod_time=True):
     if not isinstance(end, str):
         end = end.strftime("%Y-%m-%d %H:%M:%S")
 
-    if pd.to_datetime(end).time() == pd.Timestamp("00:00:00").time():
+    if pd.to_datetime(end).time() == pd.Timestamp("00:00:00").time() and time_of_day_aware:
         end = end + " 16:00:00"
 
     ## Make End Comparison Busday
@@ -1713,12 +1753,12 @@ def change_to_last_busday(end, offset=1, eod_time=True):
         isBiz = bool(len(pd.bdate_range(end, end)))
 
     ## Make End Comparison prev day if before 9:30
-    if pd.Timestamp(end).time() < pd.Timestamp("9:30").time():
+    if pd.Timestamp(end).time() < pd.Timestamp("9:30").time() and time_of_day_aware:
         end = pd.to_datetime(end) - BDay(offset)
         end = end.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
 
     ## Make End Comparison same day if after 16:00
-    elif pd.Timestamp(end).time() >= pd.Timestamp("16:00").time():
+    elif pd.Timestamp(end).time() >= pd.Timestamp("16:00").time() and time_of_day_aware:
         end_dt = pd.to_datetime(end)
         end = end_dt.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
 

@@ -1,6 +1,7 @@
 from dataclasses import fields
-from typing import TypedDict
+from typing import Iterable, TypedDict, Any
 from enum import Enum
+from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import ClassVar
 from weakref import WeakSet
@@ -10,7 +11,7 @@ import types
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger(__name__)
-
+DATE_HINT = Union[datetime, str]
 
 class IncorrectTypeError(Exception):
     """Custom exception for incorrect type errors in configuration validation."""
@@ -178,3 +179,11 @@ class SingletonMetaClass(type):
             instance = super().__call__(*args, **kwargs)
             cls._instances[cls] = instance
         return cls._instances[cls]
+
+
+def is_iterable(obj: Any, include_str: bool = False) -> bool:
+    """Check if an object is iterable, optionally excluding strings."""
+    if include_str:
+        return isinstance(obj, Iterable)
+    else:
+        return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))

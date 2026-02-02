@@ -2,13 +2,14 @@ from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Dict, Optional, Type, TypeVar
 from trade.datamanager.config import OptionDataConfig
+from trade.datamanager.utils.logging import get_logging_level
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
 from pathlib import Path
 from .vars import DM_GEN_PATH
 from ._enums import Interval, ArtifactType, SeriesId
 from .utils.enums_utils import construct_cache_key
-logger = setup_logger("trade.datamanager.base")
+logger = setup_logger("trade.datamanager.base", stream_log_level=get_logging_level())
 
 # Assumes you already have these (from your cache_key module)
 # from cache_key import construct_cache_key, Interval, ArtifactType, SeriesId
@@ -52,7 +53,6 @@ class BaseDataManager(ABC):
     - Keep business logic out of the base.
     """
 
-    CACHE_NAME: ClassVar[str] = ""
     DEFAULT_INTERVAL: ClassVar[Optional["Interval"]] = None
     DEFAULT_SERIES_ID: ClassVar["SeriesId"]  # prefer explicit in subclasses
     _CACHE_NAME_REGISTRY: ClassVar[Dict[str, Type["BaseDataManager"]]] = {}
@@ -66,9 +66,13 @@ class BaseDataManager(ABC):
             return
 
         cache_name = getattr(cls, "CACHE_NAME", None)
+        cache_spec = getattr(cls, "CACHE_SPEC", None)
 
         if not isinstance(cache_name, str) or not cache_name.strip():
             raise TypeError(f"{cls.__name__} must define a non-empty class variable CACHE_NAME: str")
+        
+        if not isinstance(cache_spec, CacheSpec):
+            raise TypeError(f"{cls.__name__} must define a class variable CACHE_SPEC of type CacheSpec")
 
         cache_name = cache_name.strip()
 
@@ -90,20 +94,19 @@ class BaseDataManager(ABC):
     def __init__(
         self,
         *,
-        cache_spec: Optional[CacheSpec] = None,
         enable_namespacing: bool = False,
+        symbol: Optional[str] = None,
     ) -> None:
         """
         Parameters
         ----------
         cache:
             Your existing CustomCache instance (diskcache-backed).
-        cache_spec:
-            Optional shared configuration (base_dir, TTL defaults, etc.).
         enable_namespacing:
             If True, keys are prefixed with CACHE_NAME to avoid collisions.
         """
-        self.cache_spec = cache_spec or CacheSpec(cache_fname=self.CACHE_NAME)
+        self.cache_spec = self.CACHE_SPEC
+        self.symbol = symbol
         self.cache = CustomCache(
             location=self.cache_spec.base_dir,
             fname=self.cache_spec.cache_fname,
@@ -114,6 +117,34 @@ class BaseDataManager(ABC):
         out = self.cache.expire()
         if out > 0:
             logger.info(f"{self.CACHE_NAME} has expired {out} entries")
+
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(symbol={self.symbol}, cache='{self.CACHE_NAME}', all_entries={len(self.cache)})>"
+    
+    @classmethod
+    def get_cache(cls) -> CustomCache:
+        """Returns the cache instance."""
+        
+        c = CustomCache(
+            location=cls.CACHE_SPEC.base_dir,
+            fname=cls.CACHE_SPEC.cache_fname,
+            expire_days=cls.CACHE_SPEC.default_expire_days,
+            clear_on_exit=cls.CACHE_SPEC.clear_on_exit,
+        )
+        return c
+    
+    @classmethod
+    def clear_all_caches(cls) -> None:
+        """Clears caches for all registered DataManager subclasses."""
+        for cache_name, manager_cls in cls._CACHE_NAME_REGISTRY.items():
+            logger.info(f"Clearing cache for {manager_cls.__name__} (CACHE_NAME='{cache_name}')")
+            manager_cls.get_cache().clear()
+
+    def clear_cache(self) -> None:
+        """Clears this DataManager's cache."""
+        logger.info(f"Clearing cache for {self.__class__.__name__} (CACHE_NAME='{self.CACHE_NAME}')")
+        self.cache.clear()
 
     # Key construction
     def make_key(

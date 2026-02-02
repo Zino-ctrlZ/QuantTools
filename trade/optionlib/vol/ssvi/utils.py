@@ -194,8 +194,8 @@ def get_chain(tick: str, date: str) -> pd.DataFrame:
     chain["log_moneyness"] = np.log(chain["moneyness"])
     chain["T"] = chain["Expiration"].apply(
         lambda x: time_distance_helper(
-            x,
-            date,
+            end=x,
+            start=date,
         )
     )
     chain["T"] = chain["T"].astype(float)

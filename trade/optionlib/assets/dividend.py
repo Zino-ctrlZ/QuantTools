@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Tuple, Union, Any
+from typing import List, Tuple, Union, Any, Iterable
 import math
 from dateutil.rrule import rrule, MONTHLY
 from dateutil.relativedelta import relativedelta
@@ -18,11 +18,10 @@ from ..utils.format import assert_equal_length
 from ..utils.timing import format_dates, subtract_dates, validate_dates
 from ..config.defaults import DAILY_BASIS, DIVIDEND_LOOKBACK_YEARS, DIVIDEND_FORECAST_METHOD
 from trade.helpers.Logging import setup_logger
+from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR
+from trade.helpers.helper_types import DATE_HINT
 
 logger = setup_logger("trade.optionlib.assets.dividend", stream_log_level="DEBUG")
-
-SECONDS_IN_YEAR = 365.0 * 24.0 * 3600.0
-SECONDS_IN_DAY = 24.0 * 3600.0
 FREQ_MAP = {
     "monthly": 1,
     "quarterly": 3,
@@ -470,7 +469,7 @@ class DividendSchedule(Dividend):
         """
         return Schedule(
             [
-                (time_distance_helper(dt, self.valuation_date), amt)
+                (time_distance_helper(end=dt, start=self.valuation_date), amt)
                 for dt, amt in self.schedule
                 if dt > self.valuation_date
             ]
@@ -484,7 +483,7 @@ class DividendSchedule(Dividend):
         pv = []
         for dt, amt in self.schedule:
             if compare_dates.is_after(dt, self.valuation_date):
-                time_fraction = time_distance_helper(dt, self.valuation_date)
+                time_fraction = time_distance_helper(end=dt, start=self.valuation_date)
                 pv_amt = amt * math.exp(-discount_rate * time_fraction)
                 pv.append(pv_amt)
         return sum(pv) if sum_up else pv
@@ -523,8 +522,8 @@ class ContinuousDividendYield(Dividend):
         self.valuation_date = valuation_date or start_date
         self.end_date = end_date
         self.T = time_distance_helper(
-            self.end_date,
-            self.valuation_date,
+            end=self.end_date,
+            start=self.valuation_date,
         )
 
     def get_yield(self) -> float:
@@ -540,7 +539,7 @@ class ContinuousDividendYield(Dividend):
         Return the exponential discount factor from q over T:
         e^{-qT}
         """
-        T = self.T if end_date is None else time_distance_helper(end_date, self.valuation_date)
+        T = self.T if end_date is None else time_distance_helper(end=end_date, start=self.valuation_date)
         return math.exp(-self.yield_rate * T)
 
     def get_type(self) -> str:
@@ -907,8 +906,10 @@ def get_vectorized_dividend_rate(tickers: str | List[str], spots: List[float], v
 
 
 def get_vectorized_continuous_dividends(
-    div_rates: List[float], _valuation_dates: List[datetime], _end_dates: List[datetime]
-):
+        div_rates: Iterable[float],
+        _valuation_dates: Iterable[DATE_HINT],
+        _end_dates: Iterable[DATE_HINT],
+) -> np.ndarray:
     """
     Get the vectorized continuous dividend discount factors.
     div_rates: List[float] - List of continuous dividend rates.
@@ -916,21 +917,11 @@ def get_vectorized_continuous_dividends(
     _end_dates: List[datetime] - List of end dates.
     Returns a numpy array of discount factors.
     """
-
-    assert_equal_length(
-        div_rates,
-        _valuation_dates,
-        _end_dates,
-        names=["div_rates", "_valuation_dates", "_end_dates"],
+    div_rates = np.array(div_rates, dtype=float)
+    _valuation_dates = np.array(_valuation_dates, dtype='datetime64[D]')
+    _end_dates = np.array(_end_dates, dtype='datetime64[D]')
+    t = time_distance_helper(
+        start=_valuation_dates,
+        end=_end_dates,
     )
-    discounted = [
-        math.exp(
-            -div_rate
-            * time_distance_helper(
-                _end_dates[i],
-                _valuation_dates[i],
-            )
-        )
-        for i, div_rate in enumerate(div_rates)
-    ]
-    return np.array(discounted)
+    return np.exp(-div_rates * t)
