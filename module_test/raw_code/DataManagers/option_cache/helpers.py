@@ -2,7 +2,6 @@
 Cache helpers for DataManagers with option data caching.
 
 This module provides cache instances for option spot, volatility, and greeks data.
-Follows the pattern from EventDriven.riskmanager.market_data.py for consistency.
 """
 from __future__ import annotations
 

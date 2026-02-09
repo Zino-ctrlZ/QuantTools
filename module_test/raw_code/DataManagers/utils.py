@@ -17,8 +17,6 @@ def set_global_market_timeseries(market_timeseries_instance):
     """
     Set the global MarketTimeseries instance for caching underlier data.
     
-    Args:
-        market_timeseries_instance: MarketTimeseries instance from EventDriven.riskmanager.market_data
     """
     global _GLOBAL_MARKET_TIMESERIES
     _GLOBAL_MARKET_TIMESERIES = market_timeseries_instance

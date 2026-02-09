@@ -18,6 +18,7 @@ Running Todo:
     ☐ Aggregator should take trades & equity data only
     ☐ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it)
     ☐ Update start date in Backtesting.py stats generated during PTBacktester.
+    ☐ Discontinue all use of module_test.raw_code.DataManagers
 
 Todo before going back to backtesting:
     ☐ Clean up evb order getter + preset orders
