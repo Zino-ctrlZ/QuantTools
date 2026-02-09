@@ -121,7 +121,19 @@ class DividendsResult(_EquityResultsBase):
             "is_empty": self.is_empty(),
             "undo_adjust": self.undo_adjust,
         }
-
+    
+    def __setattr__(self, name, value):
+        
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "dividends"
+        
+        super().__setattr__(name, value)
 
 @dataclass
 class RatesResult(Result):
@@ -150,6 +162,18 @@ class RatesResult(Result):
 
     def __repr__(self) -> str:
         return super().__repr__()
+
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "r"
+
+        super().__setattr__(name, value)
 
 
 @dataclass
@@ -208,6 +232,18 @@ class ForwardResult(_EquityResultsBase):
     def __repr__(self) -> str:
         return super().__repr__()
 
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "forward"
+
+        super().__setattr__(name, value)
+
 
 @dataclass
 class SpotResult(_EquityResultsBase):
@@ -242,6 +278,18 @@ class SpotResult(_EquityResultsBase):
 
     def __repr__(self) -> str:
         return super().__repr__()
+
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "spot" if self.undo_adjust else "spot_unadjusted"
+
+        super().__setattr__(name, value)
 
 
 @dataclass
@@ -361,6 +409,18 @@ class OptionSpotResult(_OptionResultsBase):
         """Delegates to base Result repr."""
         return super().__repr__()
 
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "option_spot"
+
+        super().__setattr__(name, value)
+
 
 @dataclass
 class VolatilityResult(_OptionModelResultsBase):
@@ -391,6 +451,19 @@ class VolatilityResult(_OptionModelResultsBase):
 
     def __repr__(self) -> str:
         return super().__repr__()
+
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "iv"
+
+        super().__setattr__(name, value)
+
 
 @dataclass
 class GreekResultSet(_OptionModelResultsBase):
@@ -447,6 +520,18 @@ class GreekResultSet(_OptionModelResultsBase):
             return self.timeseries[GreekType.VOLGA.value]
         return None
 
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "greeks"
+
+        super().__setattr__(name, value)
+
 
 @dataclass
 class TheoreticalPriceResult(_OptionModelResultsBase):
@@ -456,7 +541,19 @@ class TheoreticalPriceResult(_OptionModelResultsBase):
         return self.timeseries is None or self.timeseries.empty
 
     def __repr__(self) -> str:
-        return super().__repr__() 
+        return super().__repr__()
+
+    def __setattr__(self, name, value):
+        ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
+        ## Not ideal to do it here, but easier than finding all places where timeseries is set.
+        if name == "timeseries" and value is not None:
+            if isinstance(value, (pd.Series, pd.DataFrame)):
+                value.index.name = "datetime"
+                if isinstance(value, pd.Series):
+                    if value.name is None:
+                        value.name = "theoretical_price"
+
+        super().__setattr__(name, value)
     
 
 
@@ -554,30 +651,29 @@ class ModelResultPack(Result):
     def any_loaded(self) -> bool:
         return any(
             [
-                self.load_spot,
-                self.load_forward,
-                self.load_dividend,
-                self.load_rates,
-                self.load_option_spot,
-                self.load_vol,
-                self.load_greek,
+                self.spot is not None and not self.spot.is_empty(),
+                self.forward is not None and not self.forward.is_empty(),
+                self.dividend is not None and not self.dividend.is_empty(),
+                self.rates is not None and not self.rates.is_empty(),
+                self.option_spot is not None and not self.option_spot.is_empty(),
+                self.vol is not None and not self.vol.is_empty(),
+                self.greek is not None and not self.greek.is_empty(),
             ]
         )
-    
     
     def all_loaded(self) -> bool:
         return all(
             [
-                self.load_spot,
-                self.load_forward,
-                self.load_dividend,
-                self.load_rates,
-                self.load_option_spot,
-                self.load_vol,
-                self.load_greek,
+                self.spot is not None and not self.spot.is_empty(),
+                self.forward is not None and not self.forward.is_empty(),
+                self.dividend is not None and not self.dividend.is_empty(),
+                self.rates is not None and not self.rates.is_empty(),
+                self.option_spot is not None and not self.option_spot.is_empty(),
+                self.vol is not None and not self.vol.is_empty(),
+                self.greek is not None and not self.greek.is_empty(),
             ]
         )
-    
+
     # def all_passed_loaded(self, requested: List[str]) -> bool:
     #     mapping = {
     #         "spot": self.load_spot,

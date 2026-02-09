@@ -206,9 +206,9 @@ from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
 from EventDriven.exceptions import UnaccessiblePropertyError
 from trade import register_signal, SIGNALS_TO_RUN
-
-
+raise DeprecationWarning("This module is deprecated. Refer to `trade.datamanager.market_data` instead.")
 logger = setup_logger("EventDriven.riskmanager.market_data", stream_log_level="INFO")
+logger.critical("Market data from EventDriven.riskmanager.market_data. This module is deprecated. Refer to `trade.datamanager.market_data` instead.")
 
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals
@@ -722,7 +722,7 @@ class MarketTimeseries:
         spot = self._spot[sym].loc[index_str] if sym in self._spot else None
         chain_spot = self._chain_spot[sym].loc[index_str] if sym in self._chain_spot else None
         dividends = self._dividends[sym].loc[index_str] if sym in self._dividends else None
-        rates = self.rates.loc[index_str] if self.rates is not None else None
+        rates = None
         dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
         split_factor = self._split_factor[sym].loc[index_str] if sym in self._split_factor else None
         self._sanitize_today_data()

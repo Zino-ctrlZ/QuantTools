@@ -5,12 +5,14 @@ import time
 from scipy.optimize import minimize, minimize_scalar
 from trade.optionlib.utils.format import assert_equal_length  # noqa
 from trade.optionlib.utils.batch_operation import vector_batch_processor
+from trade import set_pool_enabled, get_pool_enabled
 from ..pricing.black_scholes import black_scholes_vectorized, black_scholes_vectorized_scalar
 from ..pricing.bjs2002 import bjerksund_stensland_2002_vectorized
 from ..pricing.binomial import crr_binomial_pricing
 from ..config.defaults import BRUTE_FORCE_MAX_ITERATIONS
 from trade.helpers.Logging import setup_logger
 from trade.helpers.exit_helpers import _record_time
+import random
 
 logger = setup_logger("trade.optionlib.vol.implied_vol")
 
@@ -95,7 +97,7 @@ def vector_crr_iv_estimation(
         ...     option_type=['p', 'p']
         ... )  # Uses defaults: N=100, dividend_type='discrete', american=True
     """
-
+    randint = random.randint(1,3)
     if not american:
         american = [True] * len(S)
 
@@ -129,7 +131,7 @@ def vector_crr_iv_estimation(
             "american",
         ],
     )
-    if len(S) < 200:
+    if randint == 1:
         logger.info("Using non-batch processor for CRR implied volatility estimation.")
         start = time.time()
         result = vector_vol_estimation(
@@ -150,11 +152,21 @@ def vector_crr_iv_estimation(
                      "crr_iv_estimation", 
                         {
                          "method": "non-batch crr iv estimation", 
-                         "num_options": len(S)
+                         "nsize": len(S),
+                         "randint": randint
                         }
                     )
     
     else:
+        logger.info("Using batch processor for CRR implied volatility estimation.")
+        current_pool_status = get_pool_enabled()
+        additional_info = "Batch CRR With "
+        if randint == 3:
+            set_pool_enabled(False) ## Use Threading
+            additional_info += "Threading."
+        elif randint ==2:
+            set_pool_enabled(True) ## Use Multiprocessing
+            additional_info += "Multiprocessing."
         start = time.time()
         result = vector_batch_processor(
             vector_vol_estimation,
@@ -173,10 +185,12 @@ def vector_crr_iv_estimation(
         _record_time(start, time.time(), 
                      "crr_iv_estimation", 
                         {
-                         "method": "batch crr iv estimation", 
-                         "num_options": len(S)
+                         "method": additional_info, 
+                         "nsize": len(S),
+                         "randint": randint
                         }
                 )
+        set_pool_enabled(current_pool_status)  ## Reset to original state
     return result
 
 

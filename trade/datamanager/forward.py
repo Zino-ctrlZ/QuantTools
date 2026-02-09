@@ -20,7 +20,7 @@ from datetime import datetime, date
 from typing import Any, ClassVar, Optional, Tuple, Union
 import pandas as pd
 import numpy as np
-from EventDriven.riskmanager.market_data import TimeseriesData
+from trade.datamanager.market_data import TimeseriesData
 from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday, get_missing_dates, to_datetime
@@ -34,7 +34,7 @@ from trade.datamanager.result import DividendsResult, RatesResult
 from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.cache import _data_structure_cache_it
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.vars import TS, load_name
+from trade.datamanager.vars import get_times_series, load_name
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import (
     vectorized_discrete_pv,
@@ -48,7 +48,7 @@ from trade.optionlib.assets.forward import (
 )
 
 logger = setup_logger("trade.datamanager.forward", stream_log_level=get_logging_level())
-
+TS = get_times_series()  # Load market timeseries data on module import to avoid circular imports
 
 class ForwardDataManager(BaseDataManager):
     """Manages forward price computation and caching for a specific symbol using spot, rates, and dividends.
@@ -282,6 +282,7 @@ class ForwardDataManager(BaseDataManager):
                 cached_series,
                 start=start_str,
                 end=end_str,
+                source_name=f"cached forward timeseries for {self.symbol}",
             )
 
             result = ForwardResult()
@@ -391,10 +392,10 @@ class ForwardDataManager(BaseDataManager):
             - spot: Unadjusted prices (use with undo_adjust=False dividends)
         """
         if spot is None:
-            spot = TS.get_timeseries(self.symbol, skip_preload_check=True)
             if use_chain_spot:
-                return spot.chain_spot["close"]
-            return spot.spot["close"]
+                spot = TS._get_chain_spot_timeseries(sym=self.symbol)["close"]
+            else:
+                spot = TS._get_spot_timeseries(sym=self.symbol)["close"]
         return spot.timeseries
 
     def _load_rates(self, *, start_str: str, end_str: str, rates: Optional[RatesResult] = None) -> pd.Series:
@@ -808,6 +809,7 @@ class ForwardDataManager(BaseDataManager):
             forward_series,
             start=og_start_date,
             end=og_end_date,
+            source_name=f"forward timeseries for {self.symbol} with maturity {mat_str}",
         )
 
         if dividend_type == DivType.DISCRETE:

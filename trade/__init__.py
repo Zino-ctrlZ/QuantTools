@@ -10,6 +10,7 @@ import pandas_market_calendars as mcal
 from dotenv import load_dotenv
 from trade.helpers.clear_cache import cleanup_expired_caches
 from .helpers.Logging import setup_logger
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
@@ -17,6 +18,9 @@ warnings.filterwarnings("ignore")
 load_dotenv()
 
 USER = str(os.environ.get("USER", "unknown_user")).lower()  ## Temporary fix to allow only chidi utilize some features
+GEN_CACHE_PATH = Path(os.environ.get("GEN_CACHE_PATH", Path(os.environ.get("WORK_DIR", ".")) / ".cache"))
+TIMING_ANALYSIS_CACHE_PATH = GEN_CACHE_PATH / "timing_analysis"
+TIMING_ANALYSIS_CACHE_PATH.mkdir(parents=True, exist_ok=True)
 POOL_ENABLED = None
 SIGNALS_TO_RUN = {}
 EXIT_HANDLERS = []  # Handlers for normal program exit

@@ -169,7 +169,7 @@ from typing import Literal, ClassVar
 import pandas as pd
 from EventDriven.riskmanager.utils import logger
 from ..._vars import Y2_LAGGED_START_DATE
-from ..market_data import get_timeseries_obj
+from trade.datamanager.market_data import get_timeseries_obj
 
 
 def default_delta_limit(
@@ -398,9 +398,9 @@ class ZcoreScalar:
         ## Load timeseries for each symbol and calculate the z-score scaler
         for sym in syms:
             timeseries.load_timeseries(
-                sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now(), interval=self.interval
+                sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now()
             )
-            ts = timeseries.get_timeseries(sym=sym, interval=self.interval).spot["close"]
+            ts = timeseries.get_timeseries(sym=sym).spot["close"]
 
             if self.vol_type == "window":
                 func = lambda x: realized_vol(x, self.rvol_window)

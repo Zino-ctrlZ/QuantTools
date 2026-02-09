@@ -1,6 +1,15 @@
 import time
 from trade.helpers.Logging import setup_logger
-from trade.datamanager.result import DividendsResult, ModelResultPack, SpotResult, ForwardResult, RatesResult, VolatilityResult, OptionSpotResult, GreekResultSet
+from trade.datamanager.result import (
+    DividendsResult,
+    ModelResultPack,
+    SpotResult,
+    ForwardResult,
+    RatesResult,
+    VolatilityResult,
+    OptionSpotResult,
+    GreekResultSet,
+)
 from trade.datamanager._enums import ModelPrice, SeriesId
 from trade.datamanager.requests import LoadRequest
 from trade.datamanager.utils.date import DateRangePacket
@@ -10,18 +19,22 @@ import pandas as pd
 from trade.datamanager._enums import OptionSpotEndpointSource, VolatilityModel, OptionPricingModel
 from trade.optionlib.config.types import DivType
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade.datamanager.vars import add_to_log_bucket
+
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
-def log_model_load_info(log_info: dict, 
-                        is_rt: bool, 
-                        is_timeseries: bool, 
-                        symbol: str, 
-                        expiration: str, 
-                        strike: float,
-                        right: str,
-                        dividend_type: str,
-                        market_model: str 
-                        ) -> None:
+
+def log_model_load_info(
+    log_info: dict,
+    is_rt: bool,
+    is_timeseries: bool,
+    symbol: str,
+    expiration: str,
+    strike: float,
+    right: str,
+    dividend_type: str,
+    market_model: str,
+) -> None:
     """Logs model load information in a structured format."""
     log_info["symbol"] = symbol
     log_info["expiration"] = expiration
@@ -30,9 +43,11 @@ def log_model_load_info(log_info: dict,
     log_info["dividend_type"] = dividend_type
     log_info["market_model"] = market_model
     log_info["is_rt"] = is_rt
-    log_info["is_timeseries"] = is_timeseries   
+    log_info["is_timeseries"] = is_timeseries
+    log_info["date"] = pd.Timestamp.now().date().strftime("%Y-%m-%d")
+    add_to_log_bucket(log_info)
 
-    
+
 def _adjust_div_yield_for_spot_shock(
     shock: float,
     div: float,
@@ -41,22 +56,20 @@ def _adjust_div_yield_for_spot_shock(
     adjusted_div = div / shock
     return adjusted_div
 
+
 def assert_synchronized_model(
     packet: Optional[ModelResultPack] = None,
     *,
-
     # Hard-required guiding attributes (per your instruction)
     symbol: str,
     undo_adjust: bool,
     dividend_type: DivType,
-
     # Optional guiding attributes (enable if you want stricter checks)
     series_id: Optional[SeriesId] = None,
     endpoint_source: Optional[OptionSpotEndpointSource] = None,
     market_model: Optional[OptionPricingModel] = None,
     vol_model: Optional[VolatilityModel] = None,
     model_price: Optional[ModelPrice] = None,
-
     # Individual results (override packet fields if provided)
     spot: Optional[SpotResult] = None,
     dividend: Optional[DividendsResult] = None,
@@ -65,11 +78,9 @@ def assert_synchronized_model(
     option_spot: Optional[OptionSpotResult] = None,
     vol: Optional[VolatilityResult] = None,
     greek: Optional[GreekResultSet] = None,
-
     # Point in time check
     is_rt: bool = True,
     check_fallback_option: bool = False,
-
     # Alignment policy
     anchor: str = "option_spot_midpoint",
     require_anchor: bool = True,
@@ -129,7 +140,11 @@ def assert_synchronized_model(
         # If caller provided series_id/endpoint_source etc, verify packet matches.
         if series_id is not None and packet.series_id is not None and packet.series_id != series_id:
             raise ValueError(f"series_id mismatch: expected {series_id}, packet has {packet.series_id}")
-        if endpoint_source is not None and packet.endpoint_source is not None and packet.endpoint_source != endpoint_source:
+        if (
+            endpoint_source is not None
+            and packet.endpoint_source is not None
+            and packet.endpoint_source != endpoint_source
+        ):
             raise ValueError(
                 f"endpoint_source mismatch: expected {endpoint_source}, packet has {packet.endpoint_source}"
             )
@@ -177,11 +192,7 @@ def assert_synchronized_model(
         "vol",
     ]
 
-    model_price_factors = [
-        "vol",
-        "option_spot",
-        "greek"
-    ]
+    model_price_factors = ["vol", "option_spot", "greek"]
 
     fallback_option_factors = [
         "spot",
@@ -240,7 +251,7 @@ def assert_synchronized_model(
             res_vol_model = getattr(res, "vol_model", None)
             if vol_model is not None and res_vol_model is not None and res_vol_model != vol_model:
                 raise ValueError(f"vol_model mismatch: expected {vol_model}, {name} has {res_vol_model}")
-        
+
     # Generic market_model checks
     if market_model is not None:
         for name in market_model_factors:
@@ -250,7 +261,6 @@ def assert_synchronized_model(
             res_market_model = getattr(res, "market_model", None)
             if market_model is not None and res_market_model is not None and res_market_model != market_model:
                 raise ValueError(f"market_model mismatch: expected {market_model}, {name} has {res_market_model}")
-
 
     # Generic model_price checks
     if model_price is not None:
@@ -275,7 +285,7 @@ def assert_synchronized_model(
             raise ValueError(f"{name} missing undo_adjust attribute.")
         if res_undo_adjust != undo_adjust:
             raise ValueError(f"undo_adjust mismatch: expected {undo_adjust}, {name} has {res_undo_adjust}")
-        
+
     if is_rt:
         for name in rt_factors:
             res = results.get(name)
@@ -286,7 +296,7 @@ def assert_synchronized_model(
                 raise ValueError(f"{name} missing rt attribute.")
             if res_rt != is_rt:
                 raise ValueError(f"rt mismatch: expected {is_rt}, {name} has {res_rt}")
-    
+
     if check_fallback_option:
         for name in fallback_option_factors:
             res = results.get(name)
@@ -307,7 +317,7 @@ def assert_synchronized_model(
         if not x.index.is_monotonic_increasing:
             raise ValueError(f"{label} index must be sorted increasing.")
         return x.index
-    
+
     for name, res in results.items():
         if res is None:
             continue
@@ -375,8 +385,6 @@ def assert_synchronized_model(
         )
 
 
-
-
 def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     """
     Loads model data based on the provided load request.
@@ -396,7 +404,6 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     from trade.datamanager.vol import VolDataManager
     from trade.datamanager.greeks import GreekDataManager
 
-    ## Begin loading data
     is_as_of = load_request.on_date
     is_rt = load_request.rt
     load_info = {}
@@ -418,7 +425,15 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     greek = load_request.load_greek
     model_price = load_request.model_price
     dividend_type = load_request.dividend_type or OptionDataConfig().dividend_type
-    D, R, S, F, V, G = None, None, None, None, None, None
+    D, R, S, F, V, G, OPTION_SPOT = (
+        load_request.dividend_timeseries,
+        load_request.rates_timeseries,
+        load_request.spot_timeseries,
+        load_request.forward_timeseries,
+        load_request.vol_timeseries,
+        load_request.greek_timeseries,
+        load_request.option_spot_timeseries,
+    )
 
     model_data = ModelResultPack()
 
@@ -455,7 +470,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             R = RatesDataManager().get_risk_free_rate_timeseries(start_date=start_date, end_date=end_date)
         elif is_as_of and not is_rt:
             R = RatesDataManager().get_rate(date=end_date, fallback_option=load_request.fall_back_option)
-        else:  # is_rt 
+        else:  # is_rt
             R = RatesDataManager().rt(fallback_option=load_request.fall_back_option)
         load_info["rates_load_time"] = time.time() - start_time
 
@@ -527,7 +542,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             )
 
         load_info["option_spot_load_time"] = time.time() - start_time
-        model_data.option_spot = market_price
+        OPTION_SPOT = market_price
 
     if vol:
         start_time = time.time()
@@ -542,7 +557,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             "S": S,
             "r": R,
             "dividend_type": dividend_type,
-            "market_price": model_data.option_spot,
+            "market_price": OPTION_SPOT,
             "undo_adjust": load_request.undo_adjust,
             "endpoint_source": load_request.endpoint_source,
             "model_price": model_price,
@@ -606,16 +621,30 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_info["greek_load_time"] = time.time() - start_time
         model_data.greek = G
 
-
     model_data.dividend = D
     model_data.dividend_type = dividend_type
     model_data.forward = F
     model_data.rates = R
     model_data.spot = S
-    model_data.series_id = SeriesId.HIST
+    model_data.option_spot = OPTION_SPOT
+    model_data.series_id = SeriesId.HIST if (not is_as_of and not is_rt) else SeriesId.AT_TIME
     model_data.undo_adjust = load_request.undo_adjust
     model_data.time_to_load = load_info
     model_data.endpoint_source = load_request.endpoint_source
+
+    ## Log what was loaded
+    log_model_load_info(
+        log_info=load_info,
+        is_rt=is_rt,
+        is_timeseries=not is_as_of,
+        symbol=symbol,
+        expiration=expiration,
+        strike=load_request.strike,
+        right=load_request.right,
+        dividend_type=dividend_type,
+        market_model=load_request.market_model.name if load_request.market_model else "N/A",
+    )
+
     if not any(
         [
             load_request.load_dividend,
@@ -624,11 +653,14 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             load_request.load_forward,
             load_request.load_option_spot,
             load_request.load_vol,
+            load_request.load_greek,
         ]
     ):
-        logger.warning("No data requested to load in _load_model_data_timeseries().")
+        logger.info(("No data requested to load in _load_model_data_timeseries()."
+                        f" Option: Symbol={symbol}, exp={expiration}, strike={load_request.strike} right={load_request.right}"
+                        f" Load bools: d={d}, r={r}, s={s}, f={f}, opt_spot={opt_spot}, vol={vol}, greek={greek}"))
         return model_data
-    ## Print what was loaded
+    
     assert_synchronized_model(
         packet=model_data,
         symbol=symbol,
@@ -640,6 +672,3 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     )
 
     return model_data
-
-
-

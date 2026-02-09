@@ -2,9 +2,9 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict, Field
 from typing import Optional, List
 from datetime import datetime
+from trade.datamanager.market_data import AtIndexResult
 from EventDriven.types import Order
 from EventDriven.dataclasses.orders import OrderRequest
-from EventDriven.riskmanager.market_data import AtIndexResult
 from EventDriven.dataclasses.timeseries import AtTimePositionData
 from EventDriven.dataclasses.limits import PositionLimits
 from EventDriven.riskmanager.actions import RMAction

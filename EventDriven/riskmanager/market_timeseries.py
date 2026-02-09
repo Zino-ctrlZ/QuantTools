@@ -146,13 +146,14 @@ Notes:
 ## Options Timeseries class for handling data retrieval
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from EventDriven.riskmanager.market_data import MarketTimeseries
+from trade.datamanager.market_data import MarketTimeseries
 from EventDriven._vars import load_riskmanager_cache, ADD_COLUMNS_FACTORY
 from EventDriven.riskmanager.utils import (
     parse_position_id,
     swap_ticker,
-    load_position_data,
+    load_position_data, # noqa
     add_skip_columns,
+    load_position_data_new
 )
 from trade.helpers.decorators import timeit
 from trade.helpers.threads import runThreads
@@ -323,7 +324,7 @@ class BacktestTimeseries:
             for p in position_dict.values():
                 for s in p:
                     ticker = swap_ticker(s["ticker"])
-            self.market_timeseries.load_timeseries(sym=ticker, interval=self.undl_timeseries_config.interval)
+            self.market_timeseries.load_timeseries(sym=ticker)
             timeseries_data = self.market_timeseries.get_timeseries(sym=ticker)
 
             @timeit
@@ -444,7 +445,7 @@ class BacktestTimeseries:
         return position_data
         # self.position_data[position_id] = position_data
 
-    def load_position_data(self, opttick) -> pd.DataFrame:
+    def load_position_data(self, opttick) -> pd.DataFrame: # noqa
         """
         Load position data for a given option tick.
 
@@ -453,18 +454,23 @@ class BacktestTimeseries:
         """
         ## Get Meta
         meta = parse_option_tick(opttick)
-        self.market_timeseries.load_timeseries(sym=meta["ticker"], interval=self.undl_timeseries_config.interval)
-        timeseries_data = self.market_timeseries.get_timeseries(sym=meta["ticker"])
-        return load_position_data(
-            opttick,
-            self.options_cache,
-            self.start_date,
-            self.end_date,
-            s=timeseries_data.chain_spot["close"],
-            r=self.rf_timeseries,
-            y=timeseries_data.dividends,
-            s0_close=timeseries_data.spot["close"],
-        )
+        self.market_timeseries.load_timeseries(sym=meta["ticker"])
+        # timeseries_data = self.market_timeseries.get_timeseries(sym=meta["ticker"])
+        # return load_position_data(
+        #     opttick,
+        #     self.options_cache,
+        #     self.start_date,
+        #     self.end_date,
+        #     s=timeseries_data.chain_spot["close"],
+        #     r=self.rf_timeseries,
+        #     y=timeseries_data.dividends,
+        #     s0_close=timeseries_data.spot["close"],
+        # )
+        return load_position_data_new(
+            opttick=opttick,
+            processed_option_data=self.options_cache,
+            start=self.start_date,
+            end=self.end_date)
 
     def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """

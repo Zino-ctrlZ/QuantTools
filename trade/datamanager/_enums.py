@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Literal, get_args
+from trade.optionlib.config.types import DivType # noqa
 
 class Interval(str, Enum):
     INTRADAY = "intraday"  # historical intraday timestamp

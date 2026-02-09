@@ -9,7 +9,7 @@ import backoff
 from dotenv import load_dotenv
 from trade.helpers.helper_types import DATE_HINT, is_iterable
 from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR
-from typing import Union, Iterable
+from typing import Union, Iterable, TypedDict
 import sys
 from enum import Enum
 from typing import Any, Dict
@@ -1541,8 +1541,14 @@ def generate_option_tick(symbol, right, exp, strike):
     key = symbol.upper() + tick_date + pad_string(strike) + right.upper()
     return key
 
+class OptionTickComponents(TypedDict):
+    ticker: str
+    put_call: str
+    exp_date: str
+    strike: float
 
-def parse_option_tick(tick: str):
+
+def parse_option_tick(tick: str) -> OptionTickComponents:
     """
     Parse the option tick into its components.
     returns a dictionary with the following keys

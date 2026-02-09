@@ -1,9 +1,8 @@
-import os
+
 import signal
-from pathlib import Path
 import pandas as pd
 from trade.helpers.Logging import setup_logger
-from trade import register_signal
+from trade import register_signal, TIMING_ANALYSIS_CACHE_PATH
 logger = setup_logger("trade.optionlib.vol.implied_vol")
 
 TIME_BUCKET = []
@@ -26,7 +25,7 @@ def _offload_time_bucket():
         return
 
     ## Loc
-    loc = Path(os.environ.get("GEN_CACHE_PATH", ".")) / "timing_analysis"
+    loc = TIMING_ANALYSIS_CACHE_PATH
     file_name = loc / "time_analysis.csv"
     loc.mkdir(parents=True, exist_ok=True)
 

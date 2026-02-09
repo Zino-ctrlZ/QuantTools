@@ -112,6 +112,7 @@ def _merge_and_cache_vol_result(
         iv_timeseries,
         start=start_str,
         end=end_str,
+        source_name=f"final {key} timeseries after merging cache and fetched data.",
     )
 
     return iv_timeseries

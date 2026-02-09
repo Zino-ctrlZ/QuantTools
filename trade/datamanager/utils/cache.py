@@ -2,7 +2,7 @@ import pandas as pd
 from datetime import date
 from typing import Any, List, Optional, Union, Tuple
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import get_missing_dates
+from trade.helpers.helper import CustomCache, get_missing_dates
 from .date import _should_save_today, DATE_HINT
 from ..base import BaseDataManager
 from .data_structure import _data_structure_sanitize
@@ -11,7 +11,11 @@ logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 
 def _data_structure_cache_it(
-    self: BaseDataManager, key: str, value: Union[pd.Series, pd.DataFrame], *, expire: Optional[int] = None
+    self: BaseDataManager, 
+    key: str, 
+    value: Union[pd.Series, pd.DataFrame], 
+    *, 
+    expire: Optional[int] = None,
 ):
     """Merges and caches rate timeseries, excluding today's partial data."""
     value = value.copy()
@@ -23,9 +27,29 @@ def _data_structure_cache_it(
 
     if not isinstance(self, BaseDataManager):
         raise TypeError(f"{self.__class__.__name__} must be a subclass of BaseDataManager.")
+    
+    existing: Optional[Union[pd.Series, pd.DataFrame]] = self.get(key, default=None)
+    _cache_it_timeseries_data_structure(
+        existing=existing,
+        key=key,
+        value=value,
+        expire=expire,
+        cache=self,
+    )
+    
+def _cache_it_timeseries_data_structure(
+    existing: Union[pd.Series, pd.DataFrame],
+    key: str,
+    value: Union[pd.Series, pd.DataFrame],
+    expire: Optional[int] = None,
+    cache: CustomCache = None,
+    skip_today_check: bool = False,
+):
+    """Caches a timeseries data structure, merging with existing data and handling today's data."""
+    assert isinstance(value, (pd.Series, pd.DataFrame)), f"Expected pd.Series or pd.DataFrame for caching, got {type(value)}"
+    assert isinstance(existing, (pd.Series, pd.DataFrame, type(None))), f"Expected pd.Series, pd.DataFrame, or None for existing data, got {type(existing)}"
 
     ## Since it is a timeseries, we will append to existing if exists
-    existing = self.get(key, default=None)
     if existing is not None:
         # Merge existing and new values. We're expecting pd.Series
         merged = pd.concat([existing, value])
@@ -35,7 +59,7 @@ def _data_structure_cache_it(
         logger.info(f"Not caching empty timeseries for key: {key}")
         return
 
-    if not _should_save_today(max_date=value.index.max().date()):
+    if not _should_save_today(max_date=value.index.max().date()) and not skip_today_check:
         logger.info(f"Cutting off today's data for key: {key} to avoid saving partial day data.")
         value = value[value.index < pd.to_datetime(date.today())]
 
@@ -59,7 +83,7 @@ def _data_structure_cache_it(
 
     value.sort_index(inplace=True)
 
-    self.set(key, value, expire=expire)
+    cache.set(key, value, expire=expire)
 
 
 def _simple_list_cache_it(self: BaseDataManager, key: str, value: List[Any], *, expire: Optional[int] = None):
@@ -98,6 +122,28 @@ def _check_cache_for_timeseries_data_structure(
 
     if cached_data is None:
         return None, False, start_dt, end_dt
+    
+    return _data_structure_cache_check_missing(
+        cached_data=cached_data,
+        key=key,
+        start_dt=start_dt,
+        end_dt=end_dt,
+    )
+    
+def _data_structure_cache_check_missing(
+    cached_data: Union[pd.Series, pd.DataFrame],
+    key: str,
+    start_dt: DATE_HINT,
+    end_dt: DATE_HINT,
+) -> Tuple[Union[pd.Series, pd.DataFrame], bool, DATE_HINT, DATE_HINT]:
+    """
+    Checks cached timeseries data structure for missing dates within a specified range.
+    Return args order:
+    - cached_data: The cached pd.Series or pd.DataFrame, sanitized to the requested date range
+    - is_partial: True if some dates are missing, False if fully present
+    - missing_start_date: The earliest missing date if partially present, else start_dt
+    - missing_end_date: The latest missing date if partially present, else end_dt
+    """
 
     missing = get_missing_dates(cached_data, _start=start_dt, _end=end_dt)
     if not missing:
@@ -106,6 +152,7 @@ def _check_cache_for_timeseries_data_structure(
             cached_data,
             start=start_dt,
             end=end_dt,
+            source_name=f"cached timeseries for key {key}",
         )
         return cached_data, False, start_dt, end_dt
     logger.info(

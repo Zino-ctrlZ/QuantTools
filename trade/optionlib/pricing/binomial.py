@@ -470,8 +470,7 @@ class BinomialBase(ABC):
         This method can be overridden in subclasses to provide specific warnings.
         """
         if not self.priced:
-            # logger.warning("Option has not been priced yet. Please call the price() method first.")
-            print("Option has not been priced yet. Please call the price() method first.")
+            logger.warning("Option has not been priced yet. Please call the price() method first.")
 
     def reset_pricing_variables(self):
         """
@@ -583,7 +582,7 @@ class BinomialBase(ABC):
             "T",
             "american",
         ]
-
+        
         if not hasattr(self, "_initialized") or not self._initialized:
             # Allow setting attributes before initialization
             super().__setattr__(name, value)
@@ -591,8 +590,7 @@ class BinomialBase(ABC):
 
         if hasattr(self, "_initialized") and self._initialized:
             if name in protected:
-                # raise AttributeError(f"'{name}' is read-only after initialization.")
-                logger.warning(f"'{name}' is read-only after initialization. Resetting pricing variables.")
+                logger.info(f"'{name}' is read-only after initialization. Resetting pricing variables. This will not change the value of '{name}' but will reset the pricing variables for a new calculation.")
         super().__setattr__(name, value)  ## Set
         if name in protected:
             # Reset pricing variables if a protected attribute is set

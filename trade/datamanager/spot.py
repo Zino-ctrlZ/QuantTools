@@ -21,7 +21,7 @@ from trade.helpers.Logging import setup_logger
 import pandas as pd
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.result import SpotResult
-from trade.datamanager.vars import TS, load_name
+from trade.datamanager.vars import get_times_series, load_name
 from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager._enums import RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
@@ -29,7 +29,7 @@ from trade.datamanager.utils.data_structure import _data_structure_sanitize
 
 
 logger = setup_logger("trade.datamanager.spot", stream_log_level=get_logging_level())
-
+TS = get_times_series()  # Load market timeseries data on module import to avoid circular imports
 class SpotDataManager(BaseDataManager):
     """Manages spot price retrieval for a specific symbol with split adjustment support.
 
@@ -175,16 +175,16 @@ class SpotDataManager(BaseDataManager):
         ## Load first
         load_name(self.symbol)
         
-        timeseries = TS.get_timeseries(self.symbol, skip_preload_check=True, start_date=start_date, end_date=end_date)
         if undo_adjust:
-            spot_series = timeseries.chain_spot["close"]
+            spot_series = TS._get_chain_spot_timeseries(sym=self.symbol, start=start_date, end=end_date)["close"]
         else:
-            spot_series = timeseries.spot["close"]
+            spot_series = TS._get_spot_timeseries(sym=self.symbol, start=start_date, end=end_date)["close"]
 
         spot_series = _data_structure_sanitize(
             spot_series,
             start=start_date,
             end=end_date,
+            source_name=f"{'chain_spot' if undo_adjust else 'spot'} timeseries for {self.symbol} from MarketTimeseries cache",
         )
         result = SpotResult()
         key = None  # No caching key for now

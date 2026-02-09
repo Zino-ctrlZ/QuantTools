@@ -319,7 +319,7 @@ class GreekDataManager(BaseDataManager):
         dividend_type: Optional[DivType] = None,
         *,
         result: Optional[GreekResultSet] = None,
-        greeks_to_compute: Optional[Union[List[GreekType], GreekType]] = GreekType.GREEKS,
+        greeks_to_compute: Optional[Union[List[GreekType], GreekType]] = None,
         S: Optional[SpotResult] = None,
         r: Optional[RatesResult] = None,
         d: Optional[DividendsResult] = None,
@@ -373,7 +373,7 @@ class GreekDataManager(BaseDataManager):
         ## biomial tree greeks calculation function calculates all greeks at once. So I'll check cache
         ## for a greek and if missing, compute all and store in cache.
         ## endpoint_source & div_type will resolved at `get_timeseries` level; the frontend function.
-
+        
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
         model_price = model_price or self.CONFIG.model_price
         result = result or GreekResultSet()
@@ -382,7 +382,9 @@ class GreekDataManager(BaseDataManager):
                 self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
             )
         )
-
+        ## Using self.CONFIG allows frontend to override default settings for greeks_to_compute.
+        ## Also allows user to specify greeks_to_compute at function call level which can get hidden as calls become nested.
+        greeks_to_compute = greeks_to_compute or self.CONFIG.greeks_to_compute
         greeks_to_compute = _prepare_greeks_to_compute(greeks_to_compute)
         key = self.make_key(
             symbol=self.symbol,

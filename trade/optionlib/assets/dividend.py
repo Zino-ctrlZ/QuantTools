@@ -18,7 +18,7 @@ from ..utils.format import assert_equal_length
 from ..utils.timing import format_dates, subtract_dates, validate_dates
 from ..config.defaults import DAILY_BASIS, DIVIDEND_LOOKBACK_YEARS, DIVIDEND_FORECAST_METHOD
 from trade.helpers.Logging import setup_logger
-from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR
+from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR # noqa
 from trade.helpers.helper_types import DATE_HINT
 
 logger = setup_logger("trade.optionlib.assets.dividend", stream_log_level="DEBUG")

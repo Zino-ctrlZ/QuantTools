@@ -1,8 +1,10 @@
 from dataclasses import dataclass
+from typing import List, Union
 from trade.helpers.helper_types import SingletonMetaClass
 from trade.optionlib.config.types import (DiscreteDivGrowthModel, DivType,)
 from trade.optionlib.config.defaults import DIVIDEND_LOOKBACK_YEARS
 from ._enums import (
+    GreekType,
     OptionSpotEndpointSource,
     OptionPricingModel,
     VolatilityModel,
@@ -27,6 +29,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     undo_adjust: bool = True
     real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
     model_price: ModelPrice = ModelPrice.MIDPOINT
+    filter_out_special_dividends: bool = True
+    greeks_to_compute: Union[List[GreekType], GreekType] = GreekType.GREEKS
 
 
     def assert_valid(self) -> None:

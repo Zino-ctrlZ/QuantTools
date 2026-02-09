@@ -1,0 +1,26 @@
+Running Todo:
+
+    ☐ Write steps to add new strategy to backtest framework
+    ☐ Write steps to add new strategy to live trading framework
+    ☐ Check if thetadata v3 is backward compatible with v2
+    ☐ Write proper docstring for binomial model in optlib
+    ☐ Allow preset orders in Evb order getter
+    ☐ How do we handle reverse splits?
+    ☐ Write a ChainDataManager
+    ☐ Add full dataframe tp Spot Result
+        - Include price property to pick from columns. Create enum for standard columns
+    ☐ Remove all import for riskmanager.market_data
+    ☐ Save scaling in position sizing info to database
+    ☐ Make order picker faster & more efficient
+    ☐ Singleton Metaclass with attribute picking
+    ☐ Find a way to save historically closed in signals tabled.
+    ☐ Add slippage pnl to live attribution
+    ☐ Aggregator should take trades & equity data only
+    ☐ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it)
+    ☐ Update start date in Backtesting.py stats generated during PTBacktester.
+
+Todo before going back to backtesting:
+    ☐ Clean up evb order getter + preset orders
+    ☐ Close signals added to signals table
+    ☐ Ensure backtesting a live strategy works seamlessly
+    ☐ Decipher the diff btwn backtest and live strategy performance

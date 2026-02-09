@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Optional, Tuple, Union, List
 import pandas as pd
 from trade.helpers.Logging import setup_logger
 from trade.optionlib.assets.dividend import Schedule, ScheduleEntry
-from trade.datamanager.vars import TS, DM_GEN_PATH, load_name
+from trade.datamanager.vars import get_times_series, DM_GEN_PATH, load_name
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult
 from trade.datamanager.base import BaseDataManager, CacheSpec
@@ -38,7 +38,7 @@ from trade import HOLIDAY_SET
 from .utils.data_structure import _data_structure_sanitize
 
 logger = setup_logger("trade.datamanager.dividend", stream_log_level=get_logging_level())
-
+TS = get_times_series()
 
 class DividendDataManager(BaseDataManager):
     """Manages dividend data retrieval, caching, and schedule construction for a specific symbol.
@@ -181,7 +181,7 @@ class DividendDataManager(BaseDataManager):
         self.set(key, value, expire=expire)
 
     ## Dividend yield history retrieval for continuous dividends. Already cached in MarketTimeseries.
-    def get_div_yield_history(self, symbol: str, skip_preload_check: bool = False) -> pd.Series:
+    def get_div_yield_history(self, symbol: str) -> pd.Series:
         """Retrieves continuous dividend yield history from MarketTimeseries.
 
         Fetches annual dividend yield as a percentage time-series from the global
@@ -189,7 +189,7 @@ class DividendDataManager(BaseDataManager):
 
         Args:
             symbol: Equity ticker symbol.
-            skip_preload_check: If True, skips validation that timeseries is preloaded.
+
 
         Returns:
             Time-indexed Series of annualized dividend yields (e.g., 0.025 = 2.5%).
@@ -203,9 +203,8 @@ class DividendDataManager(BaseDataManager):
             2020-01-03    0.0125
             ...
         """
-        div_history = TS.get_timeseries(symbol, skip_preload_check=skip_preload_check)
-        return div_history.dividend_yield
-
+        div_history = TS._get_dividend_yield_timeseries(symbol)
+        return div_history
     ## Discrete dividend schedule retrieval with caching.
     def get_discrete_dividend_schedule(
         self,
@@ -277,15 +276,15 @@ class DividendDataManager(BaseDataManager):
             ## If max date in available schedule >= end_date, we can use cache
             max_cached_date = max(entry.date for entry in available_schedule)
             min_cached_date = min(entry.date for entry in available_schedule)
-            fully_covered = (min_cached_date <= datetime.strptime(start_str, "%Y-%m-%d").date()) and (
-                max_cached_date >= datetime.strptime(end_str, "%Y-%m-%d").date()
+            fully_covered = (min_cached_date <= to_datetime(start_str).date()) and (
+                max_cached_date >= to_datetime(end_str).date()
             )
             if fully_covered:
                 logger.info(f"Cache fully covers requested date range. Key: {key}")
 
                 ## Filter to requested date range
-                start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+                start_dt = to_datetime(start_str).date()
+                end_dt = to_datetime(end_str).date()
                 filtered_schedule = [e for e in available_schedule if start_dt <= e.date <= end_dt]
                 return filtered_schedule, key
             else:
@@ -430,7 +429,8 @@ class DividendDataManager(BaseDataManager):
         # Back-adjust to represent cashflows as of valuation date. Ie undoing splits
         if undo_adjust:
             data = data.to_frame()
-            split_factors = TS._split_factor[self.symbol].copy()
+            # split_factors = TS._split_factor[self.symbol].copy()
+            split_factors = TS._get_split_factor_timeseries(sym=self.symbol)
             data["split_factor"] = split_factors
             data["dividend_schedule"] = data["dividend_schedule"] * data["split_factor"]
             data = data["dividend_schedule"]
@@ -441,7 +441,7 @@ class DividendDataManager(BaseDataManager):
             merged = pd.concat([cached_series, data])
             data = merged[~merged.index.duplicated(keep="last")]
 
-        data = _data_structure_sanitize(data, start_date, end_date)
+        data = _data_structure_sanitize(data, start_date, end_date, source_name=f"discrete_schedule_timeseries for {self.symbol}")
 
         _data_structure_cache_it(self, key, data, expire=86400)
         return data, key
@@ -523,7 +523,7 @@ class DividendDataManager(BaseDataManager):
                 pd.to_datetime(start_date).strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
             )
             end_str = pd.to_datetime(end_date).strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
-            yield_history = self.get_div_yield_history(self.symbol, skip_preload_check=True)
+            yield_history = self.get_div_yield_history(self.symbol)
             filtered = yield_history[(yield_history.index >= start_str) & (yield_history.index <= end_str)]
             filtered.index.name = "datetime"
             filtered.index = to_datetime(filtered.index)
@@ -623,7 +623,10 @@ class DividendDataManager(BaseDataManager):
             data.index.name = "datetime"
         elif dividend_type == DivType.CONTINUOUS:
             data = self.get_div_yield_history(self.symbol)
-            data = data[(data.index.date >= pd.to_datetime(valuation_date).date()) & (data.index.date <= pd.to_datetime(maturity_date).date())]
+            data = data[
+                (data.index.date >= pd.to_datetime(valuation_date).date())
+                & (data.index.date <= pd.to_datetime(valuation_date).date())
+            ]
             data.index.name = "datetime"
             data.index = to_datetime(data.index)
             key = None

@@ -204,7 +204,8 @@ class RatesDataManager(BaseDataManager):
         force_fail_n += 1 
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
         date = to_datetime(date)
-
+        
+        ## Resolving date availability
         if not is_available_on_date(date.date()):
             logger.warning(
                 f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
@@ -242,6 +243,8 @@ class RatesDataManager(BaseDataManager):
             interval=interval,
             str_interval=str_interval,
         )
+
+        ## Date is available, but resolving no data found
         rate = rates_data.timeseries
         if rate is not None and not rate.empty:
             rate = rate.iloc[0:1]
@@ -253,18 +256,27 @@ class RatesDataManager(BaseDataManager):
                 raise ValueError(f"No rate data found for date {date}.")
             elif fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
                 ## Move date back to last business day
+                ## We are retaining the original date for logging and index purposes.
+                ## Because the returned rate should still be indexed by the requested date, which would be used in further calculations.
+                original_date = to_datetime(date).date()
                 date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-                return self.get_rate(
+                res = self.get_rate(
                     date=date,
                     interval=interval,
                     str_interval=str_interval,
                     fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE,
                     force_fail_n=force_fail_n,
                 )
+                rate = res.timeseries
+                rate = rate.iloc[0:1]
+                logger.warning(
+                    f"Using last available rate for date {date} for {original_date} as fallback."
+                )
+                rate.index = [pd.to_datetime(original_date)]
             else:
                 rate = pd.Series(dtype=float,
-                                 index = [pd.to_datetime(date)],
-                                 value = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
+                                 index = [to_datetime(date)],
+                                 data = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
 
         res = RatesResult(timeseries=rate, symbol=self.DEFAULT_YFINANCE_TICKER)
         res.fallback_option = fallback_option
@@ -374,6 +386,7 @@ class RatesDataManager(BaseDataManager):
                     series,
                     start=start_str,
                     end=end_str,
+                    source_name=f"cached risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER}",
                 )
                 return RatesResult(timeseries=series, symbol=self.DEFAULT_YFINANCE_TICKER)
             else:
@@ -392,6 +405,13 @@ class RatesDataManager(BaseDataManager):
             end_date=end_date,
             interval=fn_interval,
         )["annualized"]
+        rates_data = rates_data[(rates_data.index >= pd.to_datetime(start_str)) & (rates_data.index <= pd.to_datetime(end_str))]
+        # If data is empty, return empty result
+        if rates_data.empty:
+            logger.warning(
+                f"No risk-free rate data found for date range {start_date} to {end_date}."
+            )
+            return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=pd.Series(dtype=float))
 
         if series is not None:
             # Merge with existing cached series
@@ -406,6 +426,7 @@ class RatesDataManager(BaseDataManager):
             rates_data,
             start=start_str,  # Ensure only requested range
             end=end_str,
+            source_name=f"final risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER} after merging cache and fetched data",
         )
 
         return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=rates_data)
@@ -480,18 +501,29 @@ class RatesDataManager(BaseDataManager):
         """
 
         ## Date buffer to ensure we get all data
-        start_date = to_datetime(start_date) - pd.Timedelta(days=5)
-        end_date = to_datetime(end_date) + pd.Timedelta(days=5)
+        buffered_start = to_datetime(start_date) - pd.Timedelta(days=5)
+        buffered_end = to_datetime(end_date) + pd.Timedelta(days=1)
         yf_ticker = yf.Ticker(self.DEFAULT_YFINANCE_TICKER)
 
-        data_min = yf.download(
-            yf_ticker.ticker,
-            start=start_date,
-            end=end_date,
-            interval=interval,
-            progress=False,
-            multi_level_index=False,
-        )
+
+        try:
+            data_min = yf_ticker.history(
+                start=buffered_start,
+                end=buffered_end,
+                interval=interval,
+            )
+            data_min.index = data_min.index.tz_localize(None)
+
+        ## Fallback in case of yfinance issues
+        except Exception as e: # noqa
+            data_min = yf.download(
+                yf_ticker.ticker,
+                start=buffered_start,
+                end=buffered_end,
+                interval=interval,
+                progress=False,
+                multi_level_index=False,
+            )
 
         data_min.columns = data_min.columns.str.lower()
         data_min["annualized"] = data_min["close"] / 100

@@ -371,6 +371,7 @@ class OptionSpotDataManager(BaseDataManager):
             fetched_data,
             start=start_str,
             end=end_str,
+            source_name=f"option spot timeseries for {self.symbol} with strike {strike}, right {right}, expiration {expiration} from {endpoint_source.value}",
         )
 
         result.daily_option_spot = fetched_data

@@ -2,6 +2,7 @@ from datetime import datetime
 import numpy as np
 from typing import Union
 import pandas as pd
+from trade.datamanager.exceptions import EmptyDataException
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
@@ -14,6 +15,7 @@ def _data_structure_sanitize(
     df: Union[pd.Series, pd.DataFrame],
     start: Union[datetime, str],
     end: Union[datetime, str],
+    source_name: str = "",
 ) -> Union[pd.Series, pd.DataFrame]:
     """Sanitizes the data structure by removing duplicates and sorting the index."""
     logger.info(f"Sanitizing data from {start} to {end}...")
@@ -39,6 +41,9 @@ def _data_structure_sanitize(
 
     # Filter by start and end dates
     df = df[(df.index.date >= pd.to_datetime(start).date()) & (df.index.date <= pd.to_datetime(end).date())]
+
+    if df.empty:
+        raise EmptyDataException(f"No data available after sanitization between {start} and {end}. Source: {source_name}")
 
     # Re-sort after filtering
     df = df.sort_index()

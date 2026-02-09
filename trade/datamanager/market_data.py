@@ -192,20 +192,20 @@ Notes:
     - Thread-safe via proper locking mechanisms
 """
 
+import numpy as np
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, Optional
 import pandas as pd
 from pandas.tseries.offsets import BDay
-from openbb import obb
-from dbase.DataAPI.ThetaData import resample
-from trade.helpers.helper import retrieve_timeseries, ny_now, CustomCache, get_missing_dates, YFinanceEmptyData
-from trade.helpers.decorators import timeit
+from dbase.DataAPI.ThetaData import resample  # noqa
+from trade.helpers.helper import retrieve_timeseries, ny_now, CustomCache, YFinanceEmptyData, to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
 from EventDriven.exceptions import UnaccessiblePropertyError
-from trade import register_signal, SIGNALS_TO_RUN
+from trade.datamanager.utils.cache import _cache_it_timeseries_data_structure, _data_structure_cache_check_missing
+from trade import SIGNALS_TO_RUN
 
 
 logger = setup_logger("trade.datamanager.market_data", stream_log_level="INFO")
@@ -217,13 +217,39 @@ OPTIMESERIES: Optional["MarketTimeseries"] = None
 DIVIDEND_CACHE: CustomCache = load_riskmanager_cache(target="dividend_timeseries")
 SPOT_CACHE: CustomCache = load_riskmanager_cache(target="spot_timeseries")
 CHAIN_SPOT_CACHE: CustomCache = load_riskmanager_cache(target="chain_spot_timeseries")
-SPLIT_FACTOR_CACHE: CustomCache = load_riskmanager_cache(target="split_factor_timeseries", create_on_missing=True, clear_on_exit=False)
-_SANITIZED_ON_EXIT: bool = False
+SPLIT_FACTOR_CACHE: CustomCache = load_riskmanager_cache(
+    target="split_factor_timeseries", create_on_missing=True, clear_on_exit=False
+)
 
 
 @dataclass
 class AtIndexResult:
-    """Dataclass to hold the result of retrieving market data at a specific index (date)."""
+    """Point-in-time market data snapshot for a symbol at a specific date.
+
+    Container for all market data retrieved at a single date/timestamp. Used for
+    accessing complete market state at a specific point in time for pricing, risk
+    analysis, or strategy decisions.
+
+    Attributes:
+        sym: Equity ticker symbol (e.g., "AAPL", "MSFT").
+        date: Query date as pd.Timestamp.
+        spot: OHLCV data series with keys ['open', 'high', 'low', 'close', 'volume'].
+        chain_spot: Chain-derived spot series (split-adjusted from ThetaData).
+        rates: Risk-free rate series (currently np.nan, reserved for future use).
+        dividends: Dividend amount paid on this date (0 if no dividend).
+        dividend_yield: Calculated yield (dividend / spot close price).
+        split_factor: Cumulative split adjustment factor (1.0 = no adjustment).
+        additional: Dictionary of custom/additional data computed for this date.
+
+    Examples:
+        >>> mts = MarketTimeseries()
+        >>> result = mts.get_at_index("AAPL", "2025-06-15")
+        >>> print(f"Close: ${result.spot['close']:.2f}")
+        >>> print(f"Dividend: ${result.dividends:.2f}")
+        >>> print(f"Split Factor: {result.split_factor}")
+        >>> if result.dividends > 0:
+        ...     print(f"Ex-dividend date with yield: {result.dividend_yield:.2%}")
+    """
 
     sym: str
     date: pd.Timestamp
@@ -241,7 +267,45 @@ class AtIndexResult:
 
 @dataclass
 class TimeseriesData:
-    """Class to hold timeseries data for a specific symbol."""
+    """Complete timeseries data container for a specific symbol.
+
+    Holds all market data types for a symbol as full timeseries (DataFrames or Series).
+    Returned by MarketTimeseries.get_timeseries() with requested factors populated and
+    non-requested factors set to None. Used for bulk analysis, backtesting, and
+    vectorized calculations.
+
+    Attributes:
+        spot: OHLCV DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
+            and DatetimeIndex. None if not requested.
+        chain_spot: Chain-derived spot DataFrame (split-adjusted) with same structure
+            as spot plus 'split_factor' column. None if not requested.
+        dividends: Daily dividend amounts as Series with DatetimeIndex. Values are 0
+            on non-dividend dates. None if not requested.
+        dividend_yield: Calculated yield series (dividends / spot close). None if not
+            requested or cannot be calculated.
+        split_factor: Cumulative split adjustment factors as Series with DatetimeIndex.
+            None if not requested.
+        rates: Risk-free rate series (annualized). None if not requested.
+        additional_data: Dictionary mapping custom data names to their Series/DataFrames.
+            Empty dict if no additional data.
+
+    Examples:
+        >>> mts = MarketTimeseries()
+        >>> # Get all data
+        >>> ts_data = mts.get_timeseries("AAPL")
+        >>> print(ts_data.spot.head())
+        >>> print(f"Total dividends: ${ts_data.dividends.sum():.2f}")
+
+        >>> # Get specific factor only
+        >>> spot_only = mts.get_timeseries("AAPL", factor="spot")
+        >>> assert spot_only.dividends is None  # Not requested
+        >>> print(spot_only.spot['close'].mean())
+
+        >>> # Work with additional custom data
+        >>> custom = mts.get_timeseries("AAPL", factor="additional",
+        ...                             additional_data_name="sma_20")
+        >>> print(custom.additional_data['sma_20'].tail())
+    """
 
     spot: pd.DataFrame
     chain_spot: pd.DataFrame
@@ -257,7 +321,90 @@ class TimeseriesData:
 
 @dataclass
 class MarketTimeseries:
-    """Class to manage market timeseries data for equities."""
+    """Comprehensive market data manager with multi-tier caching and lazy loading.
+
+    Central hub for retrieving equity market data (spot prices, dividends, splits, rates)
+    with intelligent caching at memory and disk levels. Implements lazy loading to minimize
+    memory footprint and API calls. Prevents direct property access to ensure consistent
+    data retrieval patterns.
+
+    Architecture:
+        - Three-tier caching: memory (instant), disk (fast), source (slow)
+        - Lazy loading: data loaded only when accessed
+        - Partial cache support: loads missing date ranges incrementally
+        - Property protection: forces use of get_timeseries() or get_at_index()
+        - Custom data support: user-defined transformations via callables
+
+    Data Sources:
+        - Spot prices: OpenBB/YFinance (equity OHLCV)
+        - Chain spot: ThetaData (option chain underlying prices)
+        - Dividends: OpenBB (regular and special dividends)
+        - Rates: Federal Reserve (treasury yield curve)
+
+    Attributes:
+        additional_data: Dict of custom computed data {name: {symbol: Series}}.
+        rates: DataFrame of risk-free rates with annualized yields.
+        DEFAULT_NAMES: Class constant listing standard data types.
+        _refresh_delta: Time interval for auto-refresh (None = disabled).
+        _last_refresh: Timestamp of last data refresh.
+        _start: Default start date for data retrieval (YYYY-MM-DD).
+        _end: Default end date for data retrieval (YYYY-MM-DD).
+        _today: Current date string (YYYY-MM-DD).
+        should_refresh: Enable/disable auto-refresh behavior.
+
+    Protected Properties:
+        spot, chain_spot, dividends, split_factor: Direct access raises
+        UnaccessiblePropertyError. Use get_timeseries() or get_at_index() instead.
+
+    Cache Management:
+        Uses module-level CustomCache instances:
+        - SPOT_CACHE: 45-day expiration
+        - CHAIN_SPOT_CACHE: 30-day expiration
+        - DIVIDEND_CACHE: 60-day expiration
+        - SPLIT_FACTOR_CACHE: Persistent (no expiration)
+
+    Examples:
+        >>> # Initialize with custom date range
+        >>> mts = MarketTimeseries(
+        ...     _start="2025-01-01",
+        ...     _end="2025-12-31"
+        ... )
+
+        >>> # Get complete timeseries for a symbol
+        >>> ts_data = mts.get_timeseries("AAPL")
+        >>> print(ts_data.spot['close'].mean())
+
+        >>> # Get point-in-time snapshot
+        >>> snapshot = mts.get_at_index("AAPL", "2025-06-15")
+        >>> print(f"Close: ${snapshot.spot['close']:.2f}")
+
+        >>> # Add custom indicator
+        >>> mts.calculate_additional_data(
+        ...     factor="spot",
+        ...     sym="AAPL",
+        ...     additional_data_name="sma_50",
+        ...     _callable=lambda s: s.rolling(50).mean(),
+        ...     column="close"
+        ... )
+
+        >>> # Preload data for multiple symbols
+        >>> for sym in ["AAPL", "MSFT", "GOOGL"]:
+        ...     mts.load_timeseries(sym)
+
+        >>> # Clear all caches
+        >>> MarketTimeseries.clear_caches()
+
+    Integration:
+        Used by:
+        - RiskManager for all market data access
+        - BacktestTimeseries for historical simulations
+        - OrderPicker for option chain data
+        - Position analysis for Greek calculations
+
+    Thread Safety:
+        Cache operations are thread-safe via CustomCache locking mechanisms.
+        Multiple readers can access cached data concurrently.
+    """
 
     additional_data: Dict[str, Any] = field(default_factory=dict)
     rates: pd.DataFrame = field(default_factory=get_risk_free_rate_helper)
@@ -268,10 +415,6 @@ class MarketTimeseries:
     _end: str = (datetime.now() - BDay(1)).strftime("%Y-%m-%d")
     _today: str = datetime.now().strftime("%Y-%m-%d")
     should_refresh: bool = True
-
-    def __post_init__(self):
-        register_signal(signum=15, signal_func=self._on_exit_sanitize)
-        register_signal(signum=0, signal_func=self._on_exit_sanitize)
 
     @property
     def spot(self) -> dict:
@@ -314,245 +457,392 @@ class MarketTimeseries:
         return SPLIT_FACTOR_CACHE
 
     @classmethod
-    def clear_caches(cls):
-        """Clear all caches used by MarketTimeseries."""
+    def clear_caches(cls) -> None:
+        """Clear all caches used by MarketTimeseries.
+
+        Removes all cached data from spot, chain_spot, dividend, and split_factor caches.
+        Useful for forcing fresh data retrieval or reducing memory usage.
+
+        Examples:
+            >>> MarketTimeseries.clear_caches()
+            >>> # All caches cleared, next data access will reload from source
+        """
         SPOT_CACHE.clear()
         CHAIN_SPOT_CACHE.clear()
         DIVIDEND_CACHE.clear()
         SPLIT_FACTOR_CACHE.clear()
         logger.info("All MarketTimeseries caches have been cleared.")
 
-    @timeit
-    def _on_exit_sanitize(self):
-        """Remove today's data from all stored timeseries data."""
-        global _SANITIZED_ON_EXIT
-        if _SANITIZED_ON_EXIT:
-            return
+    def _load_spot_into_cache(self, sym: str, start: str, end: str) -> None:
+        """Load spot OHLCV data for a symbol into the cache.
+
+        Retrieves equity spot prices from data source (OpenBB/YFinance) and stores in
+        the spot cache with intelligent merge logic for existing data. Handles missing
+        data gracefully with warning logging.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Start date string (YYYY-MM-DD format).
+            end: End date string (YYYY-MM-DD format).
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> mts._load_spot_into_cache("AAPL", "2025-01-01", "2025-01-31")
+            >>> # Spot data now cached and available for retrieval
+        """
+
+        try:
+            spot_data = retrieve_timeseries(
+                tick=sym,
+                start=start,
+                end=end,
+            )
+            _cache_it_timeseries_data_structure(
+                existing=self._spot.get(sym),
+                key=sym,
+                value=spot_data,
+                expire=None,
+                cache=self._spot,
+            )
+            logger.info("Loaded spot data for symbol %s into cache.", sym)
+            return spot_data
+        except YFinanceEmptyData:
+            logger.warning("No spot data found for symbol %s from data source. Will skip caching.", sym)
+            return None
+
+    def _load_chain_spot_into_cache(self, sym: str, start: str, end: str) -> None:
+        """Load chain-derived spot data for a symbol into the cache.
+
+        Retrieves underlying prices from option chain data (ThetaData) and stores in
+        the chain_spot cache. Chain spot is split-adjusted and may differ from equity
+        spot due to timing. Used for consistent option pricing.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Start date string (YYYY-MM-DD format).
+            end: End date string (YYYY-MM-DD format).
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> mts._load_chain_spot_into_cache("AAPL", "2025-01-01", "2025-01-31")
+            >>> # Chain spot data now cached with split adjustments
+        """
+        try:
+            chain_spot_data = retrieve_timeseries(
+                tick=sym,
+                start=start,
+                end=end,
+                spot_type="chain_spot",
+            )
+            _cache_it_timeseries_data_structure(
+                existing=self._chain_spot.get(sym),
+                key=sym,
+                value=chain_spot_data,
+                expire=None,
+                cache=self._chain_spot,
+            )
+            logger.info("Loaded chain spot data for symbol %s into cache.", sym)
+            return chain_spot_data
+        except YFinanceEmptyData:
+            logger.warning("No chain spot data found for symbol %s from data source. Will skip caching.", sym)
+            return None
+
+    def _load_dividends_into_cache(self, sym: str, start: str = None, end: str = None) -> None:
+        """Load daily dividend timeseries for a symbol into the cache.
+
+        Retrieves regular and special dividends with ex-dates from data source and stores
+        in the dividends cache. Used for American option pricing and forward calculations.
+        Defaults to instance start/end dates if not provided.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> mts._load_dividends_into_cache("AAPL")
+            >>> # Loads dividends for instance's full date range
+            >>> mts._load_dividends_into_cache("MSFT", "2025-01-01", "2025-06-30")
+            >>> # Loads dividends for specific date range
+        """
+        from trade.datamanager.market_data_helpers.dividends import get_daily_dividends_timeseries
+
         try:
 
-            def _check_instance(d):
-                return isinstance(d, pd.DataFrame) or isinstance(d, pd.Series)
+            divs = get_daily_dividends_timeseries(sym, start=start or self._start, end=end or self._end)
+            _cache_it_timeseries_data_structure(
+                existing=self._dividends.get(sym),
+                key=sym,
+                value=divs,
+                expire=None,
+                cache=self._dividends,
+                skip_today_check=True,  # Dividends don't change intraday, so skip today check
+            )
+            logger.info("Loaded dividend data for symbol %s into cache.", sym)
+            return divs
+        except YFinanceEmptyData:
+            logger.warning("No dividend data found for symbol %s from data source. Will skip caching.", sym)
 
-            for sym in self._spot.keys():
-                d = self._spot[sym]
-                if not _check_instance(d):
-                    logger.critical(
-                        "Data for symbol %s in spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s",
-                        sym,
-                        d,
-                    )
-                    del self._spot[sym]
-                    continue
-                d = d[d.index < self._today]
-                self._spot[sym] = d
-            for sym in self._chain_spot.keys():
-                d = self._chain_spot[sym]
+    def _load_split_factor_into_cache(self, sym: str, start: str) -> None:
+        """Load split factor timeseries for a symbol into the cache.
 
-                if not _check_instance(d):
-                    logger.critical(
-                        "Data for symbol %s in chain_spot cache is not a DataFrame or Series. Skipping sanitization. Data: %s",
-                        sym,
-                        d,
-                    )
-                    del self._chain_spot[sym]
-                    continue
+        Extracts split factors from chain spot data and stores in the split_factor cache.
+        Split factors are cumulative multipliers for historical price adjustment. Skips
+        today check since splits don't change intraday.
 
-                d = d[d.index < self._today]
-                self._chain_spot[sym] = d
-            for sym in self._dividends.keys():
-                d = self._dividends[sym]
-                if not _check_instance(d):
-                    logger.critical(
-                        "Data for symbol %s in dividends cache is not a DataFrame or Series. Skipping sanitization. Data: %s",
-                        sym,
-                        d,
-                    )
-                    del self._dividends[sym]
-                    continue
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Start date string (YYYY-MM-DD format). End date uses instance _end.
 
-                d = d[d.index < self._today]
-                self._dividends[sym] = d
-            for sym in self._split_factor.keys():
-                d = self._split_factor[sym]
-                if not _check_instance(d):
-                    logger.critical(
-                        "Data for symbol %s in split_factor cache is not a DataFrame or Series. Skipping sanitization. Data: %s",
-                        sym,
-                        d,
-                    )
-                    del self._split_factor[sym]
-                    continue
-
-                d = d[d.index < self._today]
-                self._split_factor[sym] = d
-
-            logger.info("Sanitization of today's data on exit completed successfully.")
-            _SANITIZED_ON_EXIT = True
-        except Exception as e:
-            logger.error("Error during sanitization: %s", e, exc_info=True)
-
-    # @timeit
-    def _already_loaded(
-        self, sym: str, interval: str = "1d", start: str | datetime = None, end: str | datetime = None
-    ) -> Tuple[bool, List[pd.Timestamp]]:
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> mts._load_split_factor_into_cache("AAPL", "2025-01-01")
+            >>> # Split factors loaded from chain spot data
         """
-        Check if the timeseries for a given symbol and interval is already loaded.
-        Hidden method that also returns missing dates if not fully loaded.
+        try:
+            self._load_chain_spot_into_cache(sym, start, self._end)
+            chain_spot = self._chain_spot.get(sym)
+            split_factor = chain_spot["split_factor"]
+            _cache_it_timeseries_data_structure(
+                existing=self._split_factor.get(sym),
+                key=sym,
+                value=split_factor,
+                expire=None,
+                cache=self._split_factor,
+                ## Cutting out today check as split factors don't change intraday
+                skip_today_check=True,
+            )
+            logger.info("Loaded split factor data for symbol %s into cache.", sym)
+        except YFinanceEmptyData:
+            logger.warning("No split factor data found for symbol %s from data source. Will skip caching.", sym)
+
+    def _clip_to_date_range(self, df: pd.DataFrame | pd.Series, start: str, end: str) -> pd.DataFrame | pd.Series:
+        """Clip a DataFrame or Series to the specified date range.
+
+        Filters timeseries data to only include dates within [start, end] inclusive.
+        Uses date objects for comparison to handle datetime vs date mismatches.
+
+        Args:
+            df: DataFrame or Series with DatetimeIndex to filter.
+            start: Start date string (YYYY-MM-DD format).
+            end: End date string (YYYY-MM-DD format).
+
+        Returns:
+            Filtered DataFrame or Series with only dates in range.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> spot_full = mts._get_spot_timeseries("AAPL")
+            >>> spot_q1 = mts._clip_to_date_range(spot_full, "2025-01-01", "2025-03-31")
+            >>> # Returns only Q1 2025 data
+        """
+        clipped = df[(df.index.date >= to_datetime(start).date()) & (df.index.date <= to_datetime(end).date())]
+        return clipped
+
+    def _get_spot_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.DataFrame:
+        """Retrieve spot OHLCV timeseries for a symbol with automatic cache management.
+
+        Checks cache for existing data, loads from source if missing, and handles partial
+        cache hits by loading only missing dates. Automatically clips to requested range.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+            **kwargs: Additional arguments (currently unused, for extensibility).
+
+        Returns:
+            DataFrame with OHLCV columns (open, high, low, close, volume) and DatetimeIndex.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> spot = mts._get_spot_timeseries("AAPL", "2025-01-01", "2025-01-31")
+            >>> print(spot.columns)  # ['open', 'high', 'low', 'close', 'volume']
         """
         start = start or self._start
         end = end or self._end
-        sym_available = sym in self._spot
-        all_dates_present = False
+        cached_data = self._spot.get(sym)
+        if cached_data is None:
+            cached_data = self._load_spot_into_cache(sym, start, end)
 
-        data_to_check = [
-            (self._spot.get(sym), "spot"),
-            (self._chain_spot.get(sym), "chain_spot"),
-            (self._dividends.get(sym), "dividends"),
-            (self._split_factor.get(sym), "split_factor"),
-        ]
+        cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
+            cached_data=cached_data,
+            key=sym,
+            start_dt=start,
+            end_dt=end,
+        )
+        if is_partial:
+            data = self._load_spot_into_cache(
+                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
+            )
+            cached_data = pd.concat([cached_data, data]).sort_index()
 
-        missing_dates_set = set()
-        all_dates_present = False
-        for data, data_type in data_to_check:  # noqa
-            if data is not None:
-                missing_dates = get_missing_dates(data, start, end)
-                missing_dates_set.update(missing_dates)
+        return self._clip_to_date_range(cached_data, start, end)
 
-            else:
-                missing_dates = pd.bdate_range(start=start, end=end).to_pydatetime().tolist()
-                missing_dates_set.update(missing_dates)
-                all_dates_present = False
-        
-        ## If no missing dates, all dates present
-        if not missing_dates_set:
-            all_dates_present = True
-        else:
-            all_dates_present = False
+    def _get_chain_spot_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.DataFrame:
+        """Retrieve chain-derived spot timeseries for a symbol with automatic cache management.
 
-        ## If all dates not present, return missing dates
-        return_dates = list(missing_dates_set)
-        if not all_dates_present:
-            ## If missing dates is empty, return start and end
-            if not return_dates:
-                return_dates = [pd.Timestamp(start), pd.Timestamp(end)]
-            else:
-                return_dates = [min(return_dates), max(return_dates)]
+        Checks cache for existing chain spot data, loads from ThetaData if missing, and
+        handles partial cache hits. Chain spot is split-adjusted and used for option pricing.
 
-        ## If all dates present, return empty list
-        else:
-            return_dates = []
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+            **kwargs: Additional arguments (currently unused, for extensibility).
 
-        return (sym_available and all_dates_present), return_dates
+        Returns:
+            DataFrame with chain spot columns including split_factor and DatetimeIndex.
 
-    def cache_it(self, timeseries: TimeseriesData, sym: str) -> None:
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> chain_spot = mts._get_chain_spot_timeseries("AAPL", "2025-01-01", "2025-01-31")
+            >>> print(chain_spot['split_factor'])  # Cumulative split adjustments
         """
-        Cache the provided timeseries data for the given symbol.
+
+        start = start or self._start
+        end = end or self._end
+        cached_data = self._chain_spot.get(sym)
+        if cached_data is None:
+            cached_data = self._load_chain_spot_into_cache(sym, start, end)
+        cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
+            cached_data=cached_data,
+            key=sym,
+            start_dt=start,
+            end_dt=end,
+        )
+        if is_partial:
+            data = self._load_chain_spot_into_cache(
+                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
+            )
+            cached_data = pd.concat([cached_data, data]).sort_index()
+
+        return self._clip_to_date_range(cached_data, start, end)
+
+    def _get_dividends_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.Series:
+        """Retrieve daily dividend timeseries for a symbol with automatic cache management.
+
+        Checks cache for existing dividend data, loads from source if missing, and handles
+        partial cache hits. Returns daily dividend amounts with ex-dates as index.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+            **kwargs: Additional arguments (currently unused, for extensibility).
+
+        Returns:
+            Series with dividend amounts and DatetimeIndex of ex-dates.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> divs = mts._get_dividends_timeseries("AAPL", "2025-01-01", "2025-12-31")
+            >>> print(divs[divs > 0])  # Show only dividend payment dates
         """
-        ## Remove today's data before caching
-        spot = timeseries.spot.copy()
-        chain_spot = timeseries.chain_spot.copy()
-        dividends = timeseries.dividends.copy()
-        split_factor = timeseries.split_factor.copy()
-        self._spot[sym] = self._remove_today_data(spot)
-        self._chain_spot[sym] = self._remove_today_data(chain_spot)
-        self._dividends[sym] = self._remove_today_data(dividends)
-        self._split_factor[sym] = self._remove_today_data(split_factor)
-        logger.info("Cached timeseries data for symbol %s", sym)
+        if start is None:
+            start = self._start
+        if end is None:
+            end = self._end
+        cached_data = self._dividends.get(sym)
+        if cached_data is None:
+            cached_data = self._load_dividends_into_cache(sym, start, end)
+        cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
+            cached_data=cached_data,
+            key=sym,
+            start_dt=start,
+            end_dt=end,
+        )
+        if is_partial:
+            data = self._load_dividends_into_cache(
+                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
+            )
+            cached_data = pd.concat([cached_data, data]).sort_index()
 
-    def already_loaded(
-        self, sym: str, interval: str = "1d", start: str | datetime = None, end: str | datetime = None
-    ) -> bool:
+        return self._clip_to_date_range(cached_data, start, end)
+
+    def _get_split_factor_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.Series:
+        """Retrieve split factor timeseries for a symbol with automatic cache management.
+
+        Checks cache for existing split factor data, extracts from chain spot if missing,
+        and handles partial cache hits. Split factors are cumulative multipliers for
+        historical price adjustment.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+            **kwargs: Additional arguments (currently unused, for extensibility).
+
+        Returns:
+            Series with cumulative split factors and DatetimeIndex.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> splits = mts._get_split_factor_timeseries("AAPL", "2025-01-01", "2025-12-31")
+            >>> print(splits[splits != 1.0])  # Show dates with splits
         """
-        Public method to check if the timeseries for a given symbol and interval is already loaded.
+        start = start or self._start
+        end = end or self._end
+        cached_data = self._split_factor.get(sym)
+        if cached_data is None:
+            self._load_split_factor_into_cache(sym, start)
+            cached_data = self._split_factor.get(sym)
+        cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
+            cached_data=cached_data,
+            key=sym,
+            start_dt=start,
+            end_dt=self._end,
+        )
+        if is_partial:
+            self._load_split_factor_into_cache(sym, missing_start_date.strftime("%Y-%m-%d"))
+            cached_data = self._split_factor.get(sym)
+
+        return self._clip_to_date_range(cached_data, start, end)
+
+    def _get_dividend_yield_timeseries(self, sym: str, **kwargs) -> pd.Series:
+        """Calculate and retrieve dividend yield timeseries for a symbol.
+
+        Computes daily dividend yield by dividing dividend amounts by spot close prices.
+        Automatically retrieves spot and dividend data from cache or loads if needed.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            **kwargs: Additional arguments (currently unused, for extensibility).
+
+        Returns:
+            Series with dividend yields (as decimals, not percentages) and DatetimeIndex.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> yield_ts = mts._get_dividend_yield_timeseries("AAPL")
+            >>> print(yield_ts.mean() * 100)  # Average yield as percentage
         """
-        already_loaded, _ = self._already_loaded(sym, interval, start, end)
-        return already_loaded
+        spot = self._get_spot_timeseries(sym)
+        dividends = self._get_dividends_timeseries(sym)
+        dividend_yield = dividends / spot["close"]
 
-    @timeit
-    def _remove_today_data(self, data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
-        """Remove today's data from the given DataFrame or Series."""
-        today_str = ny_now().strftime("%Y-%m-%d")
-        if isinstance(data, pd.DataFrame):
-            return data[data.index < today_str]
-        elif isinstance(data, pd.Series):
-            return data[data.index < today_str]
-        else:
-            raise ValueError("Data must be a pandas DataFrame or Series. Got type: {}".format(type(data)))
-
-    @timeit
-    def _sanitize_today_data(self, force_after_eod: bool = False) -> None:
-        """Remove today's data from all stored timeseries data."""
-        current_time = ny_now()
-        if not force_after_eod and current_time.hour > 18:
-            logger.info("Current time is after 6 PM NY time. Skipping sanitization of today's data.")
-            return
-        
-        logger.info("Sanitizing today's data from all stored timeseries data...")
-        for sym in self._spot.keys():
-            self._spot[sym] = self._remove_today_data(self._spot[sym])
-        for sym in self._chain_spot.keys():
-            self._chain_spot[sym] = self._remove_today_data(self._chain_spot[sym])
-
-        ## No need to sanitize dividends often.
-        # for sym in self._dividends.keys():
-        #     self._dividends[sym] = self._remove_today_data(self._dividends[sym])
-
-        ## No need to sanitize split factor often.
-        # for sym in self._split_factor.keys():
-        #     self._split_factor[sym] = self._remove_today_data(self._split_factor[sym])
-
-    @timeit
-    def _sanitize_data(self) -> None:
-        """
-        Sanitize all stored timeseries data by removing today's data.
-        Dropping duplicates, ensuring datetime index, and sorting.
-        """
-        self._sanitize_today_data()
-
-        for sym in self._spot.keys():
-            sym = sym.upper()
-            data = self._spot[sym]
-            data.index = pd.to_datetime(data.index)
-            data = data[~data.index.duplicated(keep="last")]
-            data = data.sort_index()
-            data.dropna(how="all", inplace=True)
-            self._spot[sym] = data
-
-        for sym in self._chain_spot.keys():
-            sym = sym.upper()
-            data = self._chain_spot[sym]
-            data.index = pd.to_datetime(data.index)
-            data = data[~data.index.duplicated(keep="last")]
-            data = data.sort_index()
-            data.dropna(how="all", inplace=True)
-            self._chain_spot[sym] = data
-
-        for sym in self._dividends.keys():
-            sym = sym.upper()
-            data = self._dividends[sym]
-            data.index = pd.to_datetime(data.index)
-            data = data[~data.index.duplicated(keep="last")]
-            data = data.sort_index()
-            data.dropna(how="all", inplace=True)
-            self._dividends[sym] = data
-
-        for sym in self._split_factor.keys():
-            sym = sym.upper()
-            data = self._split_factor[sym]
-            data.index = pd.to_datetime(data.index)
-            data = data[~data.index.duplicated(keep="last")]
-            data = data.sort_index()
-            data.dropna(how="all", inplace=True)
-            self._split_factor[sym] = data
+        return self._clip_to_date_range(dividend_yield, self._start, self._end)
 
     def get_split_factor_at_index(self, sym: str, index: pd.Timestamp) -> float | int:
-        """
-        Retrieve the split factor for a given symbol at a specific index (date).
+        """Retrieve the split factor for a symbol at a specific date with forward-fill logic.
+
+        Returns the cumulative split factor at the requested date. If the exact date is not
+        in the series, returns the most recent prior split factor (forward-fill). Returns
+        1.0 if no data exists or the date precedes all split data.
+
         Args:
-            sym (str): The stock symbol.
-            index (pd.Timestamp or str): The date for which to retrieve the split factor.
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            index: Date for split factor lookup (pd.Timestamp or date string).
+
         Returns:
-            float | int: The split factor at the specified date.
+            Cumulative split factor at the specified date (1.0 = no adjustment).
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> factor = mts.get_split_factor_at_index("AAPL", "2025-06-15")
+            >>> print(f"Split factor: {factor}")
+            >>> # Returns 1.0 if no splits, or adjustment factor if splits occurred
         """
         split_factor_series = self._split_factor.get(sym)
         if split_factor_series is None:
@@ -569,163 +859,46 @@ class MarketTimeseries:
             else:
                 return 1.0
 
-    def _pre_sanitize_load_timeseries(
-        self,
-        sym: str,
-        start_date: str | datetime = None,
-        end_date: str | datetime = None,
-        interval="1d",
-        force: bool = False,
-    ) -> None:
-        """
-        Pre-sanitization before loading timeseries data for a given symbol and interval.
-        """
-        sym = sym.upper()
-        if start_date is None:
-            start_date = self._start
-        if end_date is None:
-            end_date = self._end
-        already_loaded, dt_range = self._already_loaded(sym, interval, start_date, end_date)
-        if already_loaded and not force:
-            logger.info("Timeseries for %s already loaded. Use force=%s to reload.", sym, force)
-            return
-
-        start_date = min(dt_range)
-        end_date = max(dt_range)
-
-        try:
-            spot = retrieve_timeseries(sym, start_date, end_date, interval)
-        except YFinanceEmptyData:
-            logger.error("Failed to retrieve spot data for symbol %s. Skipping load.", sym)
-            return
-
-        try:
-            chain_spot = retrieve_timeseries(sym, start_date, end_date, interval, spot_type="chain_price")
-        except YFinanceEmptyData:
-            logger.error("Failed to retrieve chain spot data for symbol %s. Skipping load.", sym)
-            return
-        try:
-            divs = obb.equity.fundamental.dividends(symbol=sym, provider="yfinance").to_df()
-            divs.set_index("ex_dividend_date", inplace=True)
-        except Exception:
-            logger.error("Failed to retrieve dividends for symbol %s", sym)
-            divs = pd.DataFrame({"amount": [0]}, index=pd.bdate_range(start=self._start, end=self._end, freq=interval))
-
-        try:
-            split_factor = chain_spot["split_factor"]
-        except Exception:
-            logger.error("Failed to retrieve split factor for symbol %s", sym)
-            split_factor = pd.Series(1, index=pd.bdate_range(start=self._start, end=self._end, freq=interval))
-
-        ## Ensure datetime index
-        divs.index = pd.to_datetime(divs.index)
-        use_start = min(spot.index.min(), chain_spot.index.min(), divs.index.min())
-        use_end = max(spot.index.max(), chain_spot.index.max(), divs.index.max())
-        divs = divs.reindex(pd.bdate_range(start=use_start, end=use_end, freq=interval), method="ffill")
-        divs = resample(divs["amount"], method="ffill", interval=interval)
-
-        ## Current Data
-        current_spot = self._spot.get(sym)
-        current_chain_spot = self._chain_spot.get(sym)
-        current_divs = self._dividends.get(sym)
-        current_split_factor = self._split_factor.get(sym)
-
-        ## We are moving from overwritting prev data to merging new data
-        if current_spot is not None:
-            spot = pd.concat([current_spot, spot]).sort_index()
-            spot = spot[~spot.index.duplicated(keep="last")]
-        else:
-            logger.info("No previous spot data for symbol %s, adding new data.", sym)
-        if current_chain_spot is not None:
-            chain_spot = pd.concat([current_chain_spot, chain_spot]).sort_index()
-            chain_spot = chain_spot[~chain_spot.index.duplicated(keep="last")]
-        if current_divs is not None:
-            divs = pd.concat([current_divs, divs]).sort_index()
-            divs = divs[~divs.index.duplicated(keep="last")]
-        if current_split_factor is not None:
-            split_factor = pd.concat([current_split_factor, split_factor]).sort_index()
-            split_factor = split_factor[~split_factor.index.duplicated(keep="last")]
-
-        ## Assign data directly to cache
-        ## We remove today's data to avoid situations where it was loaded intraday and remains in database
-        ## This ensures only historical data is stored.
-        self._spot[sym] = spot
-        self._chain_spot[sym] = chain_spot
-        self._dividends[sym] = divs
-        self._split_factor[sym] = split_factor
-
-    def load_timeseries(
-        self,
-        sym: str,
-        start_date: str | datetime = None,
-        end_date: str | datetime = None,
-        interval="1d",
-        force: bool = False,
-    ) -> None:
-        """
-        Public method to load timeseries data for a given symbol and interval.
-        """
-        self._pre_sanitize_load_timeseries(sym, start_date, end_date, interval, force)
-
-    def _is_date_in_index(self, sym: str, date: pd.Timestamp, interval: str = "1d") -> bool:
-        """
-        Check if a specific date is present in the timeseries index for a given symbol and interval.
-        Args:
-            sym (str): The stock symbol.
-            date (pd.Timestamp or str): The date to check.
-            interval (str): The interval of the timeseries data. Defaults to '1d'.
-        Returns:
-            bool: True if the date is present, False otherwise.
-        """
-        all_data = [
-            self._spot.get(sym),
-            self._chain_spot.get(sym),
-            self._dividends.get(sym),
-            self._split_factor.get(sym),
-        ]
-
-        for data in all_data:
-            date = pd.to_datetime(date).date()
-            if data is not None and date in data.index.date:
-                continue
-            else:
-                return False
-        return True
-
     def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = "1d") -> AtIndexResult:
-        """
-        Retrieve the spot price, chain spot price, and dividends for a given symbol at a specific index (date).
+        """Retrieve point-in-time market data snapshot for a symbol at a specific date.
+
+        Returns a complete snapshot of market data (spot, chain_spot, dividends, rates,
+        split_factor, dividend_yield) for a single date. Ensures all necessary data is
+        loaded before retrieval.
+
         Args:
-            sym (str): The stock symbol.
-            index (pd.Timestamp or str): The date for which to retrieve the data.
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            index: Date for data snapshot (pd.Timestamp or date string YYYY-MM-DD).
+            interval: Time interval (currently only "1d" supported).
+
         Returns:
-            AtIndexResult: A dataclass containing spot price, chain spot price, and dividends."""
+            AtIndexResult containing spot (Series), chain_spot (Series), dividends (float),
+            rates (float), dividend_yield (float), split_factor (float), and metadata.
 
-        ## Only load date if not available. Not loading all unavailable dates
-        already_available = self._is_date_in_index(sym, index, interval)
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> snapshot = mts.get_at_index("AAPL", "2025-06-15")
+            >>> print(snapshot.spot['close'])  # Closing price
+            >>> print(snapshot.dividends)  # Dividend amount on this date
+            >>> print(snapshot.split_factor)  # Cumulative split adjustment
+        """
 
-        if not already_available:
-            logger.critical("Reloading timeseries data for symbol %s.", sym)
-            prev_day = (pd.Timestamp(index) - BDay(1)).strftime("%Y-%m-%d")
-            self._pre_sanitize_load_timeseries(
-                sym=sym, start_date=prev_day, end_date=index, interval=interval, force=True
-            )
+        ## Ensure data is loaded for the symbol
+        sym = sym.upper()
+        index = to_datetime(index, format="%Y-%m-%d")
+        spot = self._get_spot_timeseries(sym, start=index, end=index)
+        chain_spot = self._get_chain_spot_timeseries(sym, start=index, end=index)
+        dividends = self._get_dividends_timeseries(sym, start=index, end=index)
+        split_factor = self._get_split_factor_timeseries(sym, start=index)
 
-        ## OPTIMIZATION: Consolidate type checks and conversions (Task #3)
-        if not isinstance(index, pd.Timestamp):
-            index = pd.Timestamp(index)
-
-        if sym not in self._spot:
-            raise ValueError(f"Symbol {sym} not found in timeseries data.")
-
+        ## Retrieve data at index
         index_str = index.strftime("%Y-%m-%d")
-        spot = self._spot[sym].loc[index_str] if sym in self._spot else None
-        chain_spot = self._chain_spot[sym].loc[index_str] if sym in self._chain_spot else None
-        dividends = self._dividends[sym].loc[index_str] if sym in self._dividends else None
-        rates = self.rates.loc[index_str] if self.rates is not None else None
+        spot = spot.loc[index_str] if index_str in spot.index else None
+        chain_spot = chain_spot.loc[index_str] if index_str in chain_spot.index else None
+        dividends = dividends.loc[index_str] if index_str in dividends.index else 0.0
+        rates = np.nan
         dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
-        split_factor = self._split_factor[sym].loc[index_str] if sym in self._split_factor else None
-        self._sanitize_today_data()
+        split_factor = split_factor.loc[index_str] if index_str in split_factor.index else 1.0
 
         return AtIndexResult(
             spot=spot,
@@ -747,24 +920,45 @@ class MarketTimeseries:
         column: Optional[str] = "close",
         force_add: bool = False,
     ) -> None:
-        """
-        Load additional data for a given factor (spot, chain_spot, dividends, split_factor) using a callable function.
+        """Load additional data for a factor using a custom transformation function.
 
-        Process:
-        Callable passed should only take in a pd.Series and return a pd.Series.
-        It manipulates the timeseries data for the specified factor and appends the result to the additional_data dictionary.
-        The schema of additional_data: {additional_data_name: {sym: pd.Series}}
+        Applies a user-defined callable to existing market data to create custom indicators
+        or derived timeseries. The callable receives a pd.Series and must return a pd.Series.
+        Results are stored in the additional_data dictionary for later retrieval.
+
+        Storage Schema:
+            additional_data = {additional_data_name: {sym: pd.Series}}
 
         Args:
-            factor (Literal['spot', 'chain_spot', 'dividends', 'split_factor']): The factor to process.
-            sym (str): The stock symbol.
-            additional_data_name (str): The name under which to store the additional data.
-            _callable (Any): A callable function that processes the pd.Series.
-            column (Optional[str]): The column to use from the factor data. Defaults to 'close'.
-            force_add (bool): If True, will overwrite existing additional data for the given name and symbol.
+            factor: Base data type to transform ('spot', 'chain_spot', 'dividends', 'split_factor').
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            additional_data_name: Identifier for storing the computed data.
+            _callable: Function that takes pd.Series and returns pd.Series.
+            column: Column to extract from DataFrame factors (e.g., 'close', 'volume').
+            force_add: If True, overwrites existing data for this name and symbol.
 
         Raises:
-            ValueError: If the factor is not recognized or if the symbol is not found in the timeseries data.
+            ValueError: If factor not recognized.
+            ValueError: If symbol data not found for the specified factor.
+            ValueError: If column not found in factor DataFrame.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> # Calculate 20-day moving average of close prices
+            >>> mts.calculate_additional_data(
+            ...     factor="spot",
+            ...     sym="AAPL",
+            ...     additional_data_name="sma_20",
+            ...     _callable=lambda s: s.rolling(20).mean(),
+            ...     column="close"
+            ... )
+            >>> # Calculate RSI from dividends
+            >>> mts.calculate_additional_data(
+            ...     factor="dividends",
+            ...     sym="MSFT",
+            ...     additional_data_name="div_rsi",
+            ...     _callable=lambda s: compute_rsi(s, period=14)
+            ... )
         """
 
         ## Raise error if factor not recognized
@@ -805,54 +999,67 @@ class MarketTimeseries:
         self,
         sym: str,
         factor: Literal["spot", "chain_spot", "dividends", "split_factor", "additional"] = None,
-        interval: str = "1d",
         additional_data_name: Optional[str] = None,
         start_date: str | datetime = None,
         end_date: str | datetime = None,
-        skip_preload_check: bool = False,
     ) -> TimeseriesData:
-        """
-        Retrieve the timeseries data for a given symbol and factor.
+        """Retrieve timeseries data for a symbol with optional factor and date filtering.
+
+        Main method for accessing market data. Can return specific factors (spot, chain_spot,
+        dividends, split_factor), additional custom data, or all factors combined. Automatically
+        handles caching, data loading, and date range filtering.
+
         Args:
-            sym (str): The stock symbol.
-            factor (Literal['spot', 'chain_spot', 'dividends', 'split_factor', 'additional']): The factor to retrieve.
-            additional_data_name (Optional[str]): The name of the additional data if factor is 'additional'.
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            factor: Data type to retrieve. If None, returns all factors.
+            additional_data_name: Required when factor='additional'. Identifies custom data.
+            start_date: Optional start date for filtering (YYYY-MM-DD string or datetime).
+            end_date: Optional end date for filtering (YYYY-MM-DD string or datetime).
+
         Returns:
-            TimeseriesData: A dataclass containing the requested timeseries data.
+            TimeseriesData containing requested data. Non-requested fields are None.
+
+        Raises:
+            ValueError: If factor not recognized.
+            ValueError: If factor='additional' but additional_data_name not provided.
+            ValueError: If additional_data_name not found in cached additional data.
+            ValueError: If no data found for requested factor and symbol.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> # Get all data for a symbol
+            >>> all_data = mts.get_timeseries("AAPL")
+            >>> print(all_data.spot.head())
+            >>> print(all_data.dividends.sum())
+
+            >>> # Get specific factor with date range
+            >>> spot_q1 = mts.get_timeseries(
+            ...     "AAPL",
+            ...     factor="spot",
+            ...     start_date="2025-01-01",
+            ...     end_date="2025-03-31"
+            ... )
+
+            >>> # Get custom additional data
+            >>> sma_data = mts.get_timeseries(
+            ...     "AAPL",
+            ...     factor="additional",
+            ...     additional_data_name="sma_20"
+            ... )
+
+            >>> # Calculate dividend yield on the fly
+            >>> yield_data = mts.get_timeseries("MSFT", factor="dividend_yield")
         """
+
+        data_funcs = {
+            "spot": self._get_spot_timeseries,
+            "chain_spot": self._get_chain_spot_timeseries,
+            "dividends": self._get_dividends_timeseries,
+            "split_factor": self._get_split_factor_timeseries,
+            "dividend_yield": self._get_dividend_yield_timeseries,
+        }
         sym = sym.upper()
-        must_preload = False
         end_date = end_date or self._end
-        
-        ## Adding `must_preload`. This will be determined based on if 
-        ## 1. Today's date is in end_date
-        ## 2. Current time is before market close
-        if pd.to_datetime(end_date).date() >= ny_now().date():
-            current_time = ny_now()
-            if current_time.hour < 20:
-                must_preload = True
-
-        if must_preload:
-            logger.warning(
-                "End date %s is today or in the future and current time is before market close. Forcing preload check.",
-                end_date,
-            )
-        else:
-            logger.warning(
-                "End date %s is in the past or current time is after market close. Preload check will be skipped if specified.",
-                end_date,
-            )
-
-
-        ## Check if data is already loaded
-        if skip_preload_check and not must_preload:
-            already_loaded = True
-        else:
-            already_loaded, _ = self._already_loaded(sym, interval, start_date, end_date)
-
-        if not already_loaded:
-            logger.critical("Timeseries for symbol %s not loaded. Loading now.", sym)
-            self._pre_sanitize_load_timeseries(sym, interval=interval, force=True)
 
         if factor not in self.DEFAULT_NAMES + ["additional", None]:
             raise ValueError(f"Factor {factor} not recognized. Must be one of {self.DEFAULT_NAMES + ['additional']}.")
@@ -872,61 +1079,82 @@ class MarketTimeseries:
             )
 
         elif factor in self.DEFAULT_NAMES:
-            factor = "_" + factor
-            if factor in ["_spot", "_chain_spot", "_dividends", "_split_factor"]:
-                data = getattr(self, factor).get(sym)
-            elif factor == "_dividend_yield":
-                divs = self._dividends.get(sym)
+            ## Retrieve data for the specified factor
+            data = None
+            if factor in ["spot", "chain_spot", "dividends", "split_factor"]:
+                data = data_funcs[factor](sym, start=start_date, end=end_date)
+
+            ## Special handling for dividend_yield
+            elif factor == "dividend_yield":
+                divs = self._get_dividends_timeseries(sym, start=start_date, end=end_date)
+                spot = self._get_spot_timeseries(sym, start=start_date, end=end_date)
+
+                ## Ensure we have both dividends and spot data
                 if divs is None:
                     raise ValueError(f"No dividend data found for symbol {sym} to calculate dividend yield.")
-                spot = self._spot.get(sym)
                 if spot is None:
                     raise ValueError(f"No spot data found for symbol {sym} to calculate dividend yield.")
+
+                ## Calculate dividend yield
                 dividend_yield = divs / spot["close"]
                 data = dividend_yield
+
+            ## Filter data by start_date and end_date if provided
             if start_date is not None or end_date is not None:
                 start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d") if start_date is not None else None
                 end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d") if end_date is not None else None
+
                 if start_date is not None:
                     data = data[data.index >= start_date]
                 if end_date is not None:
                     data = data[data.index <= end_date]
+
+            ## Construct TimeseriesData based on the factor
             if data is None:
                 raise ValueError(f"No data found for factor {factor} and symbol {sym}.")
-            if factor == "_spot":
+            if factor == "spot":
                 ts = TimeseriesData(spot=data, chain_spot=None, dividends=None, dividend_yield=None, split_factor=None)
-            elif factor == "_chain_spot":
+            elif factor == "chain_spot":
                 ts = TimeseriesData(spot=None, chain_spot=data, dividends=None, dividend_yield=None, split_factor=None)
-            elif factor == "_dividends":
+            elif factor == "dividends":
                 ts = TimeseriesData(spot=None, chain_spot=None, dividends=data, dividend_yield=None, split_factor=None)
-            elif factor == "_dividend_yield":
+            elif factor == "dividend_yield":
                 ts = TimeseriesData(spot=None, chain_spot=None, dividends=None, dividend_yield=data, split_factor=None)
-            elif factor == "_split_factor":
+            elif factor == "split_factor":
                 ts = TimeseriesData(spot=None, chain_spot=None, dividends=None, split_factor=data, dividend_yield=None)
             else:
                 raise ValueError(f"Unhandled factor {factor}.")
 
+        ## If no factor specified, return all data
         elif factor is None:
-            spot = self._spot.get(sym)
-            chain_spot = self._chain_spot.get(sym)
-            dividends = self._dividends.get(sym)
+            spot = self._get_spot_timeseries(sym, start=start_date, end=end_date)
+            chain_spot = self._get_chain_spot_timeseries(sym, start=start_date, end=end_date)
+            dividends = self._get_dividends_timeseries(sym, start=start_date, end=end_date)
             dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
-            split_factor = self._split_factor.get(sym)
+            split_factor = self._get_split_factor_timeseries(sym, start=start_date, end=end_date)
+
+            ## Filter data by start_date and end_date if provided
             if start_date is not None or end_date is not None:
                 start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d") if start_date is not None else None
                 end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d") if end_date is not None else None
+
+                ## Start date filter
                 if start_date is not None:
                     spot = spot[spot.index >= start_date]
                     chain_spot = chain_spot[chain_spot.index >= start_date]
                     dividends = dividends[dividends.index >= start_date]
                     dividend_yield = dividend_yield[dividend_yield.index >= start_date]
                     split_factor = split_factor[split_factor.index >= start_date]
+
+                ## End date filter
                 if end_date is not None:
                     spot = spot[spot.index <= end_date]
                     chain_spot = chain_spot[chain_spot.index <= end_date]
                     dividends = dividends[dividends.index <= end_date]
                     dividend_yield = dividend_yield[dividend_yield.index <= end_date]
                     split_factor = split_factor[split_factor.index <= end_date]
+
+            ## Construct TimeseriesData with all data
             ts = TimeseriesData(
                 spot=spot,
                 chain_spot=chain_spot,
@@ -935,23 +1163,92 @@ class MarketTimeseries:
                 split_factor=split_factor,
                 rates=self.rates["annualized"],
             )
-            self._sanitize_today_data()
 
         return ts
+
+    def load_timeseries(self, sym: str, start_date: str = None, end_date: str = None) -> None:
+        """Preload all market data timeseries for a symbol into cache.
+
+        Eagerly loads spot, chain_spot, dividends, and split_factor data into their
+        respective caches. Useful for warming cache before intensive operations or
+        reducing latency for first access. Uses instance date range if not specified.
+
+        Args:
+            sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
+            start_date: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end_date: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> # Preload full date range for a symbol
+            >>> mts.load_timeseries("AAPL")
+            >>> # Now all subsequent access for AAPL will be instant
+
+            >>> # Preload specific date range
+            >>> mts.load_timeseries("MSFT", "2025-01-01", "2025-12-31")
+
+            >>> # Batch preload multiple symbols
+            >>> for sym in ["AAPL", "MSFT", "GOOGL"]:
+            ...     mts.load_timeseries(sym)
+        """
+        sym = sym.upper()
+        start_date = start_date or self._start
+        end_date = end_date or self._end
+        self._load_spot_into_cache(sym, start_date, end_date)
+        self._load_chain_spot_into_cache(sym, start_date, end_date)
+        self._load_dividends_into_cache(sym, start_date, end_date)
+        self._load_split_factor_into_cache(sym, start_date)
 
     def __repr__(self) -> str:
         return f"MarketTimeseries(symbols: {list(self._spot.keys())}, intervals: {list(self._spot.keys())})"
 
 
 def get_timeseries_obj(live: bool = False) -> MarketTimeseries:
+    """Get or create the singleton MarketTimeseries instance.
+
+    Returns the global OPTIMESERIES instance, creating it if necessary. Implements
+    singleton pattern to ensure only one MarketTimeseries exists per session, sharing
+    caches across all callers for optimal performance.
+
+    Args:
+        live: If True, sets end date to today. If False, sets to last business day.
+
+    Returns:
+        Global MarketTimeseries singleton instance.
+
+    Examples:
+        >>> # Get singleton instance for backtesting (end = yesterday)
+        >>> mts = get_timeseries_obj(live=False)
+        >>> data = mts.get_timeseries("AAPL")
+
+        >>> # Get singleton for live trading (end = today)
+        >>> mts_live = get_timeseries_obj(live=True)
+        >>> # Same instance if called again
+        >>> assert get_timeseries_obj() is mts_live
+    """
     global OPTIMESERIES
     if OPTIMESERIES is None:
-        OPTIMESERIES = MarketTimeseries(_end = (datetime.now() - BDay(1)).strftime("%Y-%m-%d") if not live else datetime.now().strftime("%Y-%m-%d"))
+        OPTIMESERIES = MarketTimeseries(
+            _end=(datetime.now() - BDay(1)).strftime("%Y-%m-%d") if not live else datetime.now().strftime("%Y-%m-%d")
+        )
 
     return OPTIMESERIES
 
 
 def reset_timeseries_obj() -> None:
+    """Reset the singleton MarketTimeseries instance to None.
+
+    Clears the global OPTIMESERIES variable, forcing the next call to
+    get_timeseries_obj() to create a fresh instance. Useful for testing or
+    when switching between live and backtest modes. Does not clear caches.
+
+    Examples:
+        >>> mts = get_timeseries_obj(live=False)
+        >>> # ... use mts ...
+        >>> reset_timeseries_obj()  # Clear singleton
+        >>> mts_live = get_timeseries_obj(live=True)  # New instance
+        >>> assert mts is not mts_live
+    """
     global OPTIMESERIES
     OPTIMESERIES = None
 

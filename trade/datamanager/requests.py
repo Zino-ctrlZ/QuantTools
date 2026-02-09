@@ -2,8 +2,15 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Union
 import pandas as pd
+from trade.datamanager.result import SpotResult, ForwardResult, DividendsResult, RatesResult, OptionSpotResult, VolatilityResult, GreekResultSet
 from trade.datamanager._enums import ModelPrice, OptionSpotEndpointSource, SeriesId, VolatilityModel, OptionPricingModel, RealTimeFallbackOption
+from trade.helpers.helper import get_missing_dates
 from trade.optionlib.config.types import DivType
+from trade.helpers.Logging import setup_logger
+from trade.datamanager.utils.logging import get_logging_level, register_to_factor_list
+
+logger = setup_logger("trade.datamanager.requests", stream_log_level=get_logging_level())
+register_to_factor_list("trade.datamanager.requests")
 
 
 @dataclass
@@ -44,6 +51,15 @@ class LoadRequest:
     load_vol: bool = False
     load_greek: bool = False
     undo_adjust: bool = True
+
+    ## Provided inputs
+    spot_timeseries: Optional[SpotResult] = None
+    forward_timeseries: Optional[ForwardResult] = None
+    dividend_timeseries: Optional[DividendsResult] = None
+    rates_timeseries: Optional[RatesResult] = None
+    option_spot_timeseries: Optional[OptionSpotResult] = None
+    vol_timeseries: Optional[VolatilityResult] = None
+    greek_timeseries: Optional[GreekResultSet] = None
 
     def __post_init__(self):
         ## Validation
@@ -86,4 +102,36 @@ class LoadRequest:
         
         if self.model_price is None:
             self.model_price = ModelPrice.MIDPOINT
+
+        self._validate_provided_inputs()
+
+    def _validate_provided_inputs(self):
+        validatees = [
+            (self.load_spot, self.spot_timeseries, "load_spot", "spot_timeseries"),
+            (self.load_forward, self.forward_timeseries, "load_forward", "forward_timeseries"),
+            (self.load_dividend, self.dividend_timeseries, "load_dividend", "dividend_timeseries"),
+            (self.load_rates, self.rates_timeseries, "load_rates", "rates_timeseries"),
+            (self.load_option_spot, self.option_spot_timeseries, "load_option_spot", "option_spot_timeseries"),
+            (self.load_vol, self.vol_timeseries, "load_volatility", "vol_timeseries"),
+            (self.load_greek, self.greek_timeseries, "load_greek", "greek_timeseries")
+        ]
+
+        for load_flag, timeseries, load_name, timeseries_name in validatees:
+            if load_flag and timeseries is not None:
+                if self._is_missing_dates(self.start_date, self.end_date, timeseries.timeseries):
+                    logger.info(f"Provided {timeseries_name} timeseries has missing dates. Consider reloading without providing timeseries to fetch complete data.")
+                    setattr(self, timeseries_name, None)
+                    setattr(self, load_name, load_flag)  # Keep the load flag as is given. Either way we will attempt to load from source, but if provided data is complete we will use it and skip loading from source.
+                else:
+                    logger.info(f"Using provided {timeseries_name} timeseries for loading.")
+                    setattr(self, load_name, False)  # Prevent loading from source since we have provided data
+    
+    
+    def _is_missing_dates(self, start_date, end_date, series: pd.Series) -> bool:
+        missing_dates = get_missing_dates(_start=start_date, _end=end_date, x=series)
+        if missing_dates:
+            logger.warning(f"Missing dates in provided data: {missing_dates}")
+            return True
+        return False
+            
 

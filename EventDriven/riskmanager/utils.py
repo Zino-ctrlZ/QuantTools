@@ -187,7 +187,9 @@ from .config import get_avoid_opticks
 import functools
 from trade.assets.helpers.utils import swap_ticker
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager  # noqa
-from module_test.raw_code.DataManagers.DataManagers_cached import CachedOptionDataManager  # noqa
+from trade.datamanager.loaders import load_full_option_data
+from trade.datamanager.vars import get_times_series
+from trade.datamanager._enums import DivType
 from trade.helpers.helper import generate_option_tick_new, parse_option_tick, CustomCache, change_to_last_busday
 from dbase.DataAPI.ThetaData import retrieve_bulk_open_interest, retrieve_chain_bulk
 from pandas.tseries.offsets import BDay
@@ -502,6 +504,7 @@ def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
 
 
 ##UTILS
+
 def load_position_data(opttick, processed_option_data, start, end, s, r, y, s0_close):
     """
     Load position data for a given option tick.
@@ -527,7 +530,7 @@ def load_position_data(opttick, processed_option_data, start, end, s, r, y, s0_c
     meta = parse_option_tick(opttick)
 
     ## Generate data
-    data = generate_spot_greeks(opttick, start_date=start, end_date=end)
+    data = old_generate_spot_greeks(opttick, start_date=start, end_date=end)
     data = enrich_data(
         data,
         meta["ticker"],
@@ -536,6 +539,59 @@ def load_position_data(opttick, processed_option_data, start, end, s, r, y, s0_c
         y[y.index.isin(data.index)],
         s0_close[s0_close.index.isin(data.index)],
     )
+    processed_option_data[opttick] = data
+    return data
+
+
+def load_position_data_new(opttick, processed_option_data, start, end) -> pd.DataFrame:
+    """
+    Load position data for a given option tick using the new data loading method.
+
+    args:
+        opttick (str): The option tick to load data for.
+        processed_option_data (dict): A dictionary to store processed option data.
+        start (str|datetime): The start date for the data.
+        end (str|datetime): The end date for the data.
+
+    This function retrieves the data for the given option tick using the new data loading method.
+    It does not apply any splits or adjustments. It will only retrieve the data for the given option tick.
+    """
+    ## Check if the option tick is already processed
+    if opttick in processed_option_data:
+        return processed_option_data[opttick]
+
+    ## Get Meta
+    option_meta = parse_option_tick(opttick)
+    new_data = load_full_option_data(
+        symbol=option_meta["ticker"],
+        expiration=option_meta["exp_date"],
+        strike=option_meta["strike"],
+        right=option_meta["put_call"],
+        start_date=start,
+        end_date=end,
+        dividend_type=DivType.CONTINUOUS
+    )
+    
+    ## Convert to DataFrame for easier comparison
+    greeks = new_data.greek.timeseries
+    option_spot = new_data.option_spot.timeseries
+    s = new_data.spot.timeseries
+    y = new_data.dividend.timeseries
+    r = new_data.rates.timeseries
+    s0_close = get_times_series()._get_spot_timeseries(sym=option_meta["ticker"], start=start, end=end)["close"]
+    s0_close.name = "s0_close"
+
+    ## set names properly
+    s.name = "s"
+    y.name = "y"
+    r.name = "r"
+    data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
+    data.columns = data.columns.str.capitalize()
+    data = data.join(s).join(y).join(r).join(s0_close)
+    return data
+
+    ## Generate data
+    data = new_generate_spot_greeks(opttick, start_date=start, end_date=end)
     processed_option_data[opttick] = data
     return data
 
@@ -561,7 +617,7 @@ def enrich_data(data, ticker, s, r, y, s0_close):
     return data
 
 
-def generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:
+def old_generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:
     """
     Generate spot greeks for a given option tick.
     """
@@ -584,6 +640,26 @@ def generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | da
     ).post_processed_data  ## Using chain spot data to account for splits
     spot = spot[["Midpoint", "Closeask", "Closebid"]]  ## This is raw calc place
     data = greeks.join(spot)
+    return data
+
+def new_generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:
+    """
+    Generate spot greeks for a given option tick using the load_full_data.
+    """
+    option_meta = parse_option_tick(opttick)
+    new_data = load_full_option_data(
+        symbol=option_meta["ticker"],
+        expiration=option_meta["exp_date"],
+        strike=option_meta["strike"],
+        right=option_meta["put_call"],
+        start_date=start_date,
+        end_date=end_date,
+    )
+    ## Convert to DataFrame for easier comparison
+    greeks = new_data.greek.timeseries
+    option_spot = new_data.option_spot.timeseries
+    data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
+    data.columns = data.columns.str.capitalize()
     return data
 
 
