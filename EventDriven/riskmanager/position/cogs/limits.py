@@ -255,7 +255,7 @@ class _LimitsMetaData:
     scalar: float
     sizing_lev: float
     delta_lmt: float
-    delta: Optional[float] = None
+    delta_per_contract: Optional[float] = None
     option_price: Optional[float] = None
     undl_price: Optional[float] = None
 
@@ -369,7 +369,7 @@ class LimitsAndSizingCog(BaseCog):
             signal_id=order["signal_id"],
             scalar=scalar,
             sizing_lev=self.sizer_configs.sizing_lev,
-            delta=delta,
+            delta_per_contract=delta,
             option_price=option_price,
             undl_price=undl_data.chain_spot["close"],
             delta_lmt=new_pos_state.limits.delta,
