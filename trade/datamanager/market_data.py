@@ -584,7 +584,7 @@ class MarketTimeseries:
         except YFinanceEmptyData:
             logger.warning("No dividend data found for symbol %s from data source. Will skip caching.", sym)
 
-    def _load_split_factor_into_cache(self, sym: str, start: str) -> None:
+    def _load_split_factor_into_cache(self, sym: str, start: str, *args, **kwargs) -> None:
         """Load split factor timeseries for a symbol into the cache.
 
         Extracts split factors from chain spot data and stores in the split_factor cache.
@@ -617,7 +617,7 @@ class MarketTimeseries:
         except YFinanceEmptyData:
             logger.warning("No split factor data found for symbol %s from data source. Will skip caching.", sym)
 
-    def _clip_to_date_range(self, df: pd.DataFrame | pd.Series, start: str, end: str) -> pd.DataFrame | pd.Series:
+    def _clip_to_date_range(self, df: pd.DataFrame | pd.Series, start: str, end: str, *args, **kwargs) -> pd.DataFrame | pd.Series:
         """Clip a DataFrame or Series to the specified date range.
 
         Filters timeseries data to only include dates within [start, end] inclusive.
@@ -640,7 +640,7 @@ class MarketTimeseries:
         clipped = df[(df.index.date >= to_datetime(start).date()) & (df.index.date <= to_datetime(end).date())]
         return clipped
 
-    def _get_spot_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.DataFrame:
+    def _get_spot_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.DataFrame:
         """Retrieve spot OHLCV timeseries for a symbol with automatic cache management.
 
         Checks cache for existing data, loads from source if missing, and handles partial
@@ -680,7 +680,7 @@ class MarketTimeseries:
 
         return self._clip_to_date_range(cached_data, start, end)
 
-    def _get_chain_spot_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.DataFrame:
+    def _get_chain_spot_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.DataFrame:
         """Retrieve chain-derived spot timeseries for a symbol with automatic cache management.
 
         Checks cache for existing chain spot data, loads from ThetaData if missing, and
@@ -720,7 +720,7 @@ class MarketTimeseries:
 
         return self._clip_to_date_range(cached_data, start, end)
 
-    def _get_dividends_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.Series:
+    def _get_dividends_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.Series:
         """Retrieve daily dividend timeseries for a symbol with automatic cache management.
 
         Checks cache for existing dividend data, loads from source if missing, and handles
@@ -759,9 +759,9 @@ class MarketTimeseries:
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
-        return self._clip_to_date_range(cached_data, start, end)
+        return self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
 
-    def _get_split_factor_timeseries(self, sym: str, start: str = None, end: str = None, **kwargs) -> pd.Series:
+    def _get_split_factor_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.Series:
         """Retrieve split factor timeseries for a symbol with automatic cache management.
 
         Checks cache for existing split factor data, extracts from chain spot if missing,
@@ -798,9 +798,9 @@ class MarketTimeseries:
             self._load_split_factor_into_cache(sym, missing_start_date.strftime("%Y-%m-%d"))
             cached_data = self._split_factor.get(sym)
 
-        return self._clip_to_date_range(cached_data, start, end)
+        return self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
 
-    def _get_dividend_yield_timeseries(self, sym: str, **kwargs) -> pd.Series:
+    def _get_dividend_yield_timeseries(self, sym: str, *args, **kwargs) -> pd.Series:
         """Calculate and retrieve dividend yield timeseries for a symbol.
 
         Computes daily dividend yield by dividing dividend amounts by spot close prices.
@@ -821,10 +821,13 @@ class MarketTimeseries:
         spot = self._get_spot_timeseries(sym)
         dividends = self._get_dividends_timeseries(sym)
         dividend_yield = dividends / spot["close"]
+        # Fill non-dividend dates with 0 yield. I believe it should be fine
+        # TODO: Pay close attention to this. Maybe find an alternative way to handle non-dividend dates if it causes issues.
+        dividend_yield.fillna(0.0, inplace=True)  
 
-        return self._clip_to_date_range(dividend_yield, self._start, self._end)
+        return self._clip_to_date_range(dividend_yield, self._start, self._end, *args, **kwargs)
 
-    def get_split_factor_at_index(self, sym: str, index: pd.Timestamp) -> float | int:
+    def get_split_factor_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> float | int:
         """Retrieve the split factor for a symbol at a specific date with forward-fill logic.
 
         Returns the cumulative split factor at the requested date. If the exact date is not
@@ -859,7 +862,7 @@ class MarketTimeseries:
             else:
                 return 1.0
 
-    def get_at_index(self, sym: str, index: pd.Timestamp, interval: str = "1d") -> AtIndexResult:
+    def get_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> AtIndexResult:
         """Retrieve point-in-time market data snapshot for a symbol at a specific date.
 
         Returns a complete snapshot of market data (spot, chain_spot, dividends, rates,
@@ -919,6 +922,8 @@ class MarketTimeseries:
         _callable: Any,
         column: Optional[str] = "close",
         force_add: bool = False,
+        *args,
+        **kwargs,
     ) -> None:
         """Load additional data for a factor using a custom transformation function.
 
@@ -1002,6 +1007,8 @@ class MarketTimeseries:
         additional_data_name: Optional[str] = None,
         start_date: str | datetime = None,
         end_date: str | datetime = None,
+        *args,
+        **kwargs,
     ) -> TimeseriesData:
         """Retrieve timeseries data for a symbol with optional factor and date filtering.
 
@@ -1166,7 +1173,7 @@ class MarketTimeseries:
 
         return ts
 
-    def load_timeseries(self, sym: str, start_date: str = None, end_date: str = None) -> None:
+    def load_timeseries(self, sym: str, start_date: str = None, end_date: str = None, *args, **kwargs) -> None:
         """Preload all market data timeseries for a symbol into cache.
 
         Eagerly loads spot, chain_spot, dividends, and split_factor data into their
@@ -1197,13 +1204,13 @@ class MarketTimeseries:
         self._load_spot_into_cache(sym, start_date, end_date)
         self._load_chain_spot_into_cache(sym, start_date, end_date)
         self._load_dividends_into_cache(sym, start_date, end_date)
-        self._load_split_factor_into_cache(sym, start_date)
+        self._load_split_factor_into_cache(sym, start_date, end_date)
 
     def __repr__(self) -> str:
         return f"MarketTimeseries(symbols: {list(self._spot.keys())}, intervals: {list(self._spot.keys())})"
 
 
-def get_timeseries_obj(live: bool = False) -> MarketTimeseries:
+def get_timeseries_obj(live: bool = False, *args, **kwargs) -> MarketTimeseries:
     """Get or create the singleton MarketTimeseries instance.
 
     Returns the global OPTIMESERIES instance, creating it if necessary. Implements
@@ -1235,7 +1242,7 @@ def get_timeseries_obj(live: bool = False) -> MarketTimeseries:
     return OPTIMESERIES
 
 
-def reset_timeseries_obj() -> None:
+def reset_timeseries_obj(*args, **kwargs) -> None:
     """Reset the singleton MarketTimeseries instance to None.
 
     Clears the global OPTIMESERIES variable, forcing the next call to
