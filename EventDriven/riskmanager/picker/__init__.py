@@ -98,7 +98,7 @@ Note:
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 from EventDriven.types import ResultsEnum
 from trade.helpers.Logging import setup_logger
 from EventDriven.configs.core import ChainConfig
@@ -413,6 +413,15 @@ def build_strategy(
 
 
 def create_trade_id(legs: Dict[str, Any]) -> str:
+    """
+    Creates a unique trade identifier based on the legs of the option structure.
+    
+    Expected input format for legs:
+    legs = {
+        "long": [ { "opttick": "AAPL230616C00150000", ... }, ... ],
+        "short": [ { "opttick": "AAPL230616P00150000", ... }, ... ]
+    }
+    """
     def _iter_side(side):
         if side is None:
             return []
@@ -425,9 +434,13 @@ def create_trade_id(legs: Dict[str, Any]) -> str:
         raise TypeError(f"legs['long'/'short'] must be dict or list[dict]. Recieved {type(side)}")
 
     parts = []
-    for leg in _iter_side(legs.get("long")):
+    long = legs.get("long")
+    short = legs.get("short")
+    long = sorted(long, key=lambda x: x["opttick"]) if long else []
+    short = sorted(short, key=lambda x: x["opttick"]) if short else []
+    for leg in _iter_side(long):
         parts.append(f"&L:{leg['opttick']}")
-    for leg in _iter_side(legs.get("short")):
+    for leg in _iter_side(short):
         parts.append(f"&S:{leg['opttick']}")
     return "".join(parts)
 
@@ -458,4 +471,29 @@ def extract_order(obj):
             mid = data["mid"]
             order["data"]["close"] += mid if direction == "long" else -mid
     order["data"]["trade_id"] = create_trade_id(pack)
+    return order
+
+def _order_formatting(
+        trade_id: str,
+        legs: List[Tuple[str, str]],
+        close: float,
+) -> Dict[str, Any]:
+    """
+    Formats the order details into a structured dictionary.
+    
+    Args:
+        trade_id (str): Unique identifier for the trade.
+        legs (List[Tuple[str, str]]): A list of tuples containing the long and short leg option ticks. Eg: [('L', "AAPL230616C00150000"), ('S', "AAPL230616P00150000")]
+        close (float): The closing price of the order.
+    """
+    order = {}
+    order["trade_id"] = trade_id
+    order["close"] = close
+    for direction, opttick in legs:
+        if direction.upper() == "L":
+            order.setdefault("long", []).append(opttick)
+        elif direction.upper() == "S":
+            order.setdefault("short", []).append(opttick)
+        else:
+            raise ValueError(f"Invalid leg direction: {direction}. Must be 'L' or 'S'.")
     return order
