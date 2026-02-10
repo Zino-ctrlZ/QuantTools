@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from openbb import obb
 import pandas as pd
 from trade.optionlib.config.defaults import (
-    OPTION_TIMESERIES_START_DATE,
+    OPTION_TIMESERIES_START_DATE, # noqa
 )
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import CustomCache
@@ -93,7 +93,7 @@ def get_div_schedule(ticker: str):
             )
         except Exception as e:  # noqa
             div_history = pd.DataFrame(
-                {"amount": [0]}, index=pd.bdate_range(start=OPTION_TIMESERIES_START_DATE, end=datetime.now(), freq="1Q")
+                {"amount": [0]}, index=pd.bdate_range(start="2001-01-01", end=datetime.now(), freq="1Q")
             )
             dividends_data = SavedDividendsResult(
                 symbol=ticker,
