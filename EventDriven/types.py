@@ -4,7 +4,7 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Any, Dict, List
 from typing_extensions import TypedDict
-from EventDriven.helpers import parse_signal_id, generate_signal_id
+from EventDriven.helpers import parse_signal_id, generate_signal_id, parse_position_id
 
 
 class SignalID(str):
@@ -34,6 +34,23 @@ class SignalID(str):
         return self.signal_id
     def __repr__(self):
         return f"SignalID({self.signal_id})"
+    
+class TradeID(str):
+    """
+    Unique identifier for a trade execution.
+    
+    Format:
+        &L:{LONG_LEG_1}&L:{LONG_LEG_2}...&S:{SHORT_LEG_1}&S:{SHORT_LEG_2}...
+    """
+    def __init__(self, trade_id: str):
+        self.trade_id = trade_id
+        self.meta, self.legs = parse_position_id(trade_id)
+
+    def __str__(self):
+        return self.trade_id
+    
+    def __repr__(self):
+        return f"TradeID({self.trade_id})"
 
 class OrderDataDict(TypedDict):
     trade_id: str
