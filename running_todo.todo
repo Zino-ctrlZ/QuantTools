@@ -4,7 +4,7 @@ Running Todo:
     ☐ Write steps to add new strategy to live trading framework
     ☐ Check if thetadata v3 is backward compatible with v2
     ☐ Write proper docstring for binomial model in optlib
-    ☐ Allow preset orders in Evb order getter
+    
     ☐ How do we handle reverse splits?
     ☐ Write a ChainDataManager
     ☐ Add full dataframe tp Spot Result
@@ -19,9 +19,19 @@ Running Todo:
     ☐ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it)
     ☐ Update start date in Backtesting.py stats generated during PTBacktester.
     ☐ Discontinue all use of module_test.raw_code.DataManagers
+    ☐ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed.
+    ☐ Move all vol and pricing logic to use the new OptLib
+        ☐ Eg FillOptimizer
+    ☐ Ensure MarketTimeseries is not cutting out dividends or split factors for real time
+    ☐ Ensure make position id & signal id comes from one place
+    ☐ Update get_risk_free_rate_helper to use RatesDataManager
+    ☐ Look into alternatives for backfilling dividends with 0.0 in get_timeseries
 
 Todo before going back to backtesting:
+    ☐ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. 
+    ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14)
     ☐ Clean up evb order getter + preset orders
-    ☐ Close signals added to signals table
+    ✔ Close signals added to signals table @done(26-02-09 16:34)
     ☐ Ensure backtesting a live strategy works seamlessly
     ☐ Decipher the diff btwn backtest and live strategy performance
+    ☐ I don't like how limit sizing is going. Look into it.
