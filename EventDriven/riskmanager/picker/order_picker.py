@@ -192,7 +192,7 @@ from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPicke
 from EventDriven.types import ResultsEnum
 
 from ..utils import (
-    dynamic_memoize,
+    dynamic_memoize, # noqa
     parse_position_id
 )
 from trade.helpers.Logging import setup_logger
@@ -323,7 +323,7 @@ class OrderPicker:
         chain_spot = spot
         return self._get_order(schema, date, spot, chain_spot, print_url=print_url)
 
-    @dynamic_memoize
+    # @dynamic_memoize
     def _get_order(
         self,
         schema: tuple,

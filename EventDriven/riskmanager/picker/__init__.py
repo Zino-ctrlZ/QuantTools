@@ -174,6 +174,8 @@ def filter_contracts(
     max_moneyness: float = 1.5,
     increment=0.25,
 ) -> pd.DataFrame:
+    df = df.copy()
+    df = df[df["right"].str.lower() == schema["option_type"].lower()]
     target_dte = schema["target_dte"]
     dte_tol = schema["dte_tolerance"]
     filtered = pd.DataFrame()
@@ -477,6 +479,7 @@ def _order_formatting(
         trade_id: str,
         legs: List[Tuple[str, str]],
         close: float,
+        direction: str,
 ) -> Dict[str, Any]:
     """
     Formats the order details into a structured dictionary.
@@ -486,6 +489,7 @@ def _order_formatting(
         legs (List[Tuple[str, str]]): A list of tuples containing the long and short leg option ticks. Eg: [('L', "AAPL230616C00150000"), ('S', "AAPL230616P00150000")]
         close (float): The closing price of the order.
     """
+    assert direction in ("long", "short"), "Direction must be 'long' or 'short'"
     order = {}
     order["trade_id"] = trade_id
     order["close"] = close
@@ -496,4 +500,5 @@ def _order_formatting(
             order.setdefault("short", []).append(opttick)
         else:
             raise ValueError(f"Invalid leg direction: {direction}. Must be 'L' or 'S'.")
+    order["quantity"] = 1 if direction[0].lower() == "l" else -1
     return order

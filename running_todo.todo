@@ -17,7 +17,7 @@ Running Todo:
     ☐ Add slippage pnl to live attribution
     ☐ Aggregator should take trades & equity data only
     ☐ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it)
-    ☐ Update start date in Backtesting.py stats generated during PTBacktester.
+    
     ☐ Discontinue all use of module_test.raw_code.DataManagers
     ☐ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed.
     ☐ Move all vol and pricing logic to use the new OptLib
@@ -26,12 +26,20 @@ Running Todo:
     ☐ Ensure make position id & signal id comes from one place
     ☐ Update get_risk_free_rate_helper to use RatesDataManager
     ☐ Look into alternatives for backfilling dividends with 0.0 in get_timeseries
+    ☐ Move strategy files to db.
+    ☐ Set evb default market_model = bsm, div = continuous for speed. Disable logging.
+    
 
 Todo before going back to backtesting:
     ☐ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. 
     ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14)
-    ☐ Clean up evb order getter + preset orders
+    ☐ Clean up evb order getter + preset orders (speed up essentially)
+    ☐ Push config change to db (changed min_total_price to 0.5 from 0.95)
+    ☐ Cache checker should use date range info, with missing dates info saved
+    ☐ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval)
+    ☐ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup.
+    ☐ Implement tplusn execution in StrategyBase
     ✔ Close signals added to signals table @done(26-02-09 16:34)
     ☐ Ensure backtesting a live strategy works seamlessly
-    ☐ Decipher the diff btwn backtest and live strategy performance
-    ☐ I don't like how limit sizing is going. Look into it.
+    ✔ Decipher the diff btwn backtest and live strategy performance @done(26-02-10 19:57)
+    ✔ I don't like how limit sizing is going. Look into it. @done(26-02-10 21:25)
