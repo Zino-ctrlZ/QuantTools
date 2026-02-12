@@ -184,7 +184,6 @@ import pandas as pd
 from EventDriven.riskmanager._order_validator import OrderInputs
 from ..utils import (
     LOOKBACKS,
-    get_cache,
     populate_cache_with_chain,
     precompute_lookbacks,
 )
@@ -195,9 +194,10 @@ from ..utils import (
     dynamic_memoize, # noqa
     parse_position_id
 )
+from .builder import order_builder
 from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import timeit
-from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order, _order_formatting
+from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop, order_failed
 from EventDriven.types import Order
@@ -338,32 +338,33 @@ class OrderPicker:
         
         assert isinstance(schema, tuple), "Schema must be a tuple of items."
         schema = OrderSchema(dict(schema))
-        if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(
-                f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-            min_m, max_m = 2 - schema["min_moneyness"], 2 - schema["max_moneyness"]
-            schema["min_moneyness"] = min(min_m, max_m)  ## For Calls, we want the min moneyness to be 2 - min_moneyness
-            schema["max_moneyness"] = max(min_m, max_m)
-            logger.info(
-                f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-        elif (
-            schema["option_type"].lower() == "p"
-        ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(
-                f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-        else:
-            raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
+        # if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        #     logger.info(
+        #         f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        #     min_m, max_m = 2 - schema["min_moneyness"], 2 - schema["max_moneyness"]
+        #     schema["min_moneyness"] = min(min_m, max_m)  ## For Calls, we want the min moneyness to be 2 - min_moneyness
+        #     schema["max_moneyness"] = max(min_m, max_m)
+        #     logger.info(
+        #         f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        # elif (
+        #     schema["option_type"].lower() == "p"
+        # ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        #     logger.info(
+        #         f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        # else:
+        #     raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
 
         chain = populate_cache_with_chain(schema["tick"], date, chain_spot, print_url=print_url)
 
-        cache = get_cache("spot")
-        cache = {k: v for k, v in cache.items()}
+        # cache = get_cache("spot")
+        # cache = {k: v for k, v in cache.items()}
 
-        raw_order = build_strategy(chain, schema, chain_spot, cache)
-        return extract_order(raw_order)
+        # raw_order = build_strategy(chain, schema, chain_spot, cache)
+        # return extract_order(raw_order)
+        return order_builder(unfiltered_chain=chain, schema=schema, spot=chain_spot)
 
     @timeit
     def get_order(self, request: OrderRequest) -> Order:
