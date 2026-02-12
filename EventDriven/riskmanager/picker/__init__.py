@@ -96,12 +96,10 @@ Note:
 ## NOTE: Remember this was previously a file. TO switch btwn old_picker & new_picker. Copy and paste for now
 
 import pandas as pd
-import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
-from EventDriven.types import ResultsEnum
+from EventDriven.types import ResultsEnum, TradeID
 from trade.helpers.Logging import setup_logger
-from EventDriven.configs.core import ChainConfig
 
 logger = setup_logger("EventDriven.riskmanager.picker", stream_log_level="WARNING")
 # order_cache = CustomCache(BASE, fname="order")
@@ -127,8 +125,8 @@ class OrderSchema:
             if key not in self.data:
                 raise ValueError(f"Missing required field: {key}")
 
-        if self.data["strategy"] == "vertical" and not ("spread_pct" in self.data or "spread_ticks" in self.data):
-            raise ValueError("Vertical strategies require either 'spread_pct' or 'spread_ticks'")
+        if self.data["strategy"] == "vertical" and "spread_ticks" not in self.data:
+            raise ValueError("Vertical strategies require 'spread_ticks'")
 
         optional = {
             "min_moneyness": 0.9,
@@ -158,14 +156,6 @@ class OrderSchema:
         return self.data.get(key, default)
 
 
-# --------- Utilities ---------
-def resolve_ordering(option_type, structure_direction):
-    if structure_direction == "long":
-        return (True, ("long", "short")) if option_type.lower() == "c" else (False, ("long", "short"))
-    else:
-        return (False, ("short", "long")) if option_type.lower() == "p" else (True, ("short", "long"))
-
-
 def filter_contracts(
     df: pd.DataFrame,
     schema: OrderSchema,
@@ -174,13 +164,19 @@ def filter_contracts(
     max_moneyness: float = 1.5,
     increment=0.25,
 ) -> pd.DataFrame:
+    
     df = df.copy()
     df = df[df["right"].str.lower() == schema["option_type"].lower()]
+
+    ## Calculate Moneyness
+    if schema["option_type"].lower() == "c":
+        df["moneyness"] = spot / df["strike"]
+    else:
+        df["moneyness"] = df["strike"] / spot
     target_dte = schema["target_dte"]
     dte_tol = schema["dte_tolerance"]
     filtered = pd.DataFrame()
     attempt = 0
-    factor = 1
     max_attempts = schema.get("max_attempts", 3)
     min_moneyness = schema.get("min_moneyness", min_moneyness)
     max_moneyness = schema.get("max_moneyness", max_moneyness)
@@ -194,13 +190,16 @@ def filter_contracts(
         ## Add DTE filter
         _filter &= df["dte"].between(target_dte - dte_tol, target_dte + dte_tol)
 
-        ## Add Moneyness filter
-        lower_strike = spot * (min(min_moneyness, max_moneyness) * factor)
-        upper_strike = spot * (max(min_moneyness, max_moneyness) * factor)
+        ## Add Moneyness filter. Convert to bounds based on increment
+
         logger.info(
-            f"Filtering contracts with strike range [{lower_strike:.2f}, {upper_strike:.2f}] on attempt {attempt + 1}"
+            f"Filtering contracts with strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] on attempt {attempt + 1}"
         )
-        _filter &= df["strike"].between(lower_strike, upper_strike)
+        _filter &= df["moneyness"].between(min_moneyness, max_moneyness)
+
+        ## Update moneyness bounds for next attempt
+        min_moneyness *= 1 - increment
+        max_moneyness *= 1 + increment
 
         ## Add Open Interest filter if specified
         if min_oi is not None:
@@ -215,203 +214,11 @@ def filter_contracts(
         filtered = df[_filter].copy()
         logger.info(f"Number of contracts after filtering: {len(filtered)}")
         attempt += 1
-        factor *= 1 + increment  # Increase the range by a factor of (1 + increment) each attempt
     if filtered.empty:
         logger.critical(
-            f"Failed to filter contracts: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{lower_strike:.2f}, {upper_strike:.2f}] after {attempt} attempts."
+            f"Failed to filter contracts: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] after {attempt} attempts."
         )
     return filtered.reset_index(drop=True)
-
-
-def build_spread_by_ticks(df, schema, cache):
-    df = df[df["right"].str.lower() == schema["option_type"].lower()].copy()
-    try:
-        df["mid"] = df["chain_id"].map(cache)
-    except Exception as e:
-        logger.error(f"Error mapping chain_id to mid prices in cache: {e}")
-        df["mid"] = df["midpoint"]
-    df = df.dropna(subset=["mid"])
-    ascending, _ = resolve_ordering(schema["option_type"], schema["structure_direction"])
-
-    spreads = []
-    for _, group in df.groupby("expiration"):
-        group = group.sort_values("strike", ascending=ascending).reset_index(drop=True)
-        for i in range(len(group) - schema["spread_ticks"]):
-            leg1, leg2 = group.iloc[i], group.iloc[i + schema["spread_ticks"]]
-            long, short = (leg1, leg2)
-            spread_price = long["mid"] - short["mid"]
-            try:
-                spread_bid = long["closebid"] - short["closeask"]
-                spread_ask = long["closeask"] - short["closebid"]
-                spread_pct_ratio = abs(spread_bid - spread_ask) / abs(spread_bid + spread_ask) / 2
-                long_oi = long.get("open_interest", np.nan)
-                short_oi = short.get("open_interest", np.nan)
-                spread_oi = abs(long_oi) + abs(short_oi)
-            except Exception as e:  ## Error handling for missing bid/ask data
-                logger.debug(f"Missing bid/ask or error computing spreads: {e}")
-                spread_bid = 0.0
-                spread_ask = 0.0
-                spread_pct_ratio = 0.0
-                long_oi = 0.0
-                short_oi = 0.0
-                spread_oi = 0.0
-
-            if abs(spread_price) <= schema["max_total_price"] and abs(spread_price) >= schema["min_total_price"]:
-                spreads.append(
-                    {
-                        "long": long,
-                        "short": short,
-                        "spread_price": spread_price,
-                        "width": abs(short["strike"] - long["strike"]),
-                        "dte": int(long["dte"]),
-                        "expiration": long["expiration"],
-                        "option_type": schema["option_type"],
-                        "type": "vertical",
-                        "legs": [long, short],
-                        "spread_pct_ratio": spread_pct_ratio,
-                        "spread_bid": spread_bid,
-                        "spread_ask": spread_ask,
-                        "long_bid": long.get("closebid", np.nan),
-                        "long_ask": long.get("closeask", np.nan),
-                        "short_bid": short.get("closebid", np.nan),
-                        "short_ask": short.get("closeask", np.nan),
-                        "long_pct_spread": long.get("pct_spread", np.nan),
-                        "short_pct_spread": short.get("pct_spread", np.nan),
-                        "spread_mid": (spread_bid + spread_ask) / 2 if (spread_bid + spread_ask) != 0 else np.nan,
-                        "long_oi": long_oi,
-                        "short_oi": short_oi,
-                        "spread_oi": spread_oi,
-                    }
-                )
-    if len(spreads) == 0:
-        ## Priortize:
-        ## 1. Structure Spread Ratio (Bid-Ask)/Mid
-        ## 2. Largest Spread Open Interest (Bid + Ask)
-        ## 3. Lowest Spread Price
-        logger.critical(
-            f"Failed to find spreads: for {schema['option_type']} with DTE {schema['target_dte']} ± {schema['dte_tolerance']} and ticks {schema['spread_ticks']}."
-        )
-        return []
-    if schema["structure_direction"] == "long":
-        pick = min(
-            (s for s in spreads if s["spread_price"] > 0),
-            key=lambda s: (s["spread_pct_ratio"], -s["spread_oi"], s["spread_price"]),
-            default=None,
-        )
-    else:
-        pick = min(
-            (s for s in spreads if s["spread_price"] < 0),
-            key=lambda s: (s["spread_pct_ratio"], -s["spread_oi"], s["spread_price"]),
-            default=None,
-        )
-
-    return [pick] if pick else []
-
-
-def build_spread_by_pct(df, schema, spot, cache):
-    df = df[df["right"].str.lower() == schema["option_type"].lower()].copy()
-    df["mid"] = df["chain_id"].map(cache)
-    df = df.dropna(subset=["mid"])
-    ascending, _ = resolve_ordering(schema["option_type"], schema["structure_direction"])
-    spreads = []
-    for _, group in df.groupby("expiration"):
-        group = group.sort_values("strike", ascending=ascending).reset_index(drop=True)
-        for i in range(len(group)):
-            leg1 = group.iloc[i]
-            target_strike = leg1["strike"] + (
-                spot * schema["spread_pct"] if ascending else -spot * schema["spread_pct"]
-            )
-            group_slice = group.iloc[i + 1 :]  # only look ahead to maintain spread structure
-            if group_slice.empty:
-                continue
-
-            leg2_idx = (group_slice["strike"] - target_strike).abs().idxmin()
-            leg2 = group.loc[leg2_idx]
-            error = (leg2["strike"] - target_strike) ** 2
-
-            ## Controlling distance apart. Avoiding spreads that are too wide or too narrow.
-            actual_width = abs(leg2["strike"] - leg1["strike"])
-            min_width = spot * schema["spread_pct"] * 0.10
-            max_error = (spot * schema["spread_pct"] * 1.5) ** 2
-
-            if actual_width < min_width or error > max_error:
-                logger.info(
-                    f"Skipping spread due to width or error: {actual_width:.2f} < {min_width:.2f} or error {error:.2f} > {max_error:.2f}"
-                )
-                print(
-                    f"Skipping spread due to width or error: {actual_width:.2f} < {min_width:.2f} or error {error:.2f}"
-                )
-                continue
-
-            long, short = (leg1, leg2)
-            spread_price = long["mid"] - short["mid"]
-
-            if abs(spread_price) <= schema["max_total_price"]:
-                spreads.append(
-                    {
-                        "long": long,
-                        "short": short,
-                        "spread_price": spread_price,
-                        "width": abs(short["strike"] - long["strike"]),
-                        "dte": int(long["dte"]),
-                        "expiration": long["expiration"],
-                        "option_type": schema["option_type"],
-                        "type": "vertical",
-                        "legs": [long, short],
-                    }
-                )
-    if schema["structure_direction"] == "long":
-        pick = min(
-            (s for s in spreads if s["spread_price"] > 0),
-            key=lambda s: s["spread_price"],
-            default=None,
-        )
-    else:
-        pick = min(
-            (s for s in spreads if s["spread_price"] < 0),
-            key=lambda s: s["spread_price"],
-            default=None,
-        )
-    return [pick] if pick else []
-
-
-def build_vertical_spread(df, schema, spot, cache):
-    df = filter_contracts(df, schema, spot)
-    return (
-        build_spread_by_ticks(df, schema, cache)
-        if "spread_ticks" in schema
-        else build_spread_by_pct(df, schema, spot, cache)
-    )
-
-
-def build_naked_option(df, schema, spot, cache):
-    df = filter_contracts(df, schema, spot)
-    df = df[df["right"].str.lower() == schema["option_type"].lower()].copy()
-    df["mid"] = df["chain_id"].map(cache)
-    df = df.dropna(subset=["mid"])
-    df = df[df["mid"] <= schema["max_total_price"]]
-    df = df.sort_values("mid", ascending=(schema["structure_direction"] == "long"))
-    pick = df.iloc[0] if not df.empty else None
-    return [{schema["structure_direction"]: pick}] if pick is not None else []
-
-
-STRATEGY_MAP = {
-    "vertical": build_vertical_spread,
-    "naked": build_naked_option,
-}
-
-
-def build_strategy(
-    df,
-    schema: OrderSchema,
-    spot: float,
-    cache: Dict[str, float],
-    chain_cfg: ChainConfig = None,
-):
-    if schema["strategy"] not in STRATEGY_MAP:
-        raise ValueError(f"Unsupported strategy: {schema['strategy']}")
-    builder = STRATEGY_MAP.get(schema["strategy"])
-    return builder(df, schema, spot, cache) if builder else []
 
 
 def create_trade_id(legs: Dict[str, Any]) -> str:
@@ -479,7 +286,7 @@ def _order_formatting(
         trade_id: str,
         legs: List[Tuple[str, str]],
         close: float,
-        direction: str,
+        dir: str,
 ) -> Dict[str, Any]:
     """
     Formats the order details into a structured dictionary.
@@ -489,9 +296,9 @@ def _order_formatting(
         legs (List[Tuple[str, str]]): A list of tuples containing the long and short leg option ticks. Eg: [('L', "AAPL230616C00150000"), ('S', "AAPL230616P00150000")]
         close (float): The closing price of the order.
     """
-    assert direction in ("long", "short"), "Direction must be 'long' or 'short'"
+    assert dir in ("long", "short"), "Direction must be 'long' or 'short'"
     order = {}
-    order["trade_id"] = trade_id
+    order["trade_id"] = TradeID(trade_id)
     order["close"] = close
     for direction, opttick in legs:
         if direction.upper() == "L":
@@ -500,5 +307,5 @@ def _order_formatting(
             order.setdefault("short", []).append(opttick)
         else:
             raise ValueError(f"Invalid leg direction: {direction}. Must be 'L' or 'S'.")
-    order["quantity"] = 1 if direction[0].lower() == "l" else -1
+    order["quantity"] = 1 if dir[0].lower() == "l" else -1
     return order
