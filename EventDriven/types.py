@@ -1,10 +1,17 @@
 from datetime import date
 from enum import Enum
 import pandas as pd
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, List
 from typing_extensions import TypedDict
 from EventDriven.helpers import parse_signal_id, generate_signal_id, parse_position_id
+
+
+class Metrics(TypedDict):
+    spread_pct_ratio: float
+    spread_oi: float
+
 
 
 class SignalID(str):
@@ -65,6 +72,7 @@ class OrderDict(TypedDict):
     map_signal_id: str
     date: date
     data: OrderDataDict
+    metrics: Metrics | None
 
 class PositionsDict(TypedDict):
     position: OrderDataDict
@@ -245,6 +253,7 @@ class Order:
     map_signal_id: str
     date: date
     data: OrderData
+    metrics: Metrics = None
 
     def __getitem__(self, key):
         """Get item like a dict, dict[key]"""
@@ -256,7 +265,7 @@ class Order:
 
     def __repr__(self):
         """String representation of Order"""
-        return (f"Order(signal_id={self.signal_id}), data={self.data})")
+        return (f"Order(signal_id={self.signal_id}), data={self.data}, result={self.result}, metrics={self.metrics})")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
@@ -286,7 +295,8 @@ class Order:
             signal_id=self.signal_id,
             map_signal_id=self.map_signal_id,
             date=self.date,
-            data=data_dict
+            data=data_dict,
+            metrics=self.metrics
         )
         
         # Return the main dictionary
@@ -297,6 +307,7 @@ class Order:
         """Convert dictionary to Order dataclass"""
         # Extract the nested data dict
         data_dict = d['data']
+        metrics = d.get('metrics', None)
         
         # Convert nested data dict to OrderData object
         if data_dict is None:
@@ -306,21 +317,32 @@ class Order:
                 'short': None,
                 'close': None,
                 'quantity': None}
+            
+        if metrics is not None:
+            d['metrics'] = Metrics(
+                spread_pct_ratio=metrics['spread_pct_ratio'],
+                spread_oi=metrics['spread_oi']
+            )
+        else:
+            d['metrics'] = None
+
         order_data = OrderData(
             trade_id=data_dict['trade_id'],
-            long=data_dict['long'],
-            short=data_dict['short'],
-            close=data_dict['close'],
-            quantity=data_dict['quantity']
+            long=data_dict.get('long', []),
+            short=data_dict.get('short', []),
+            close=data_dict.get('close', np.nan),
+            quantity=data_dict.get('quantity', 0),
+            
         )
         
         # Create and return Order object
         raw_date = d.get('date')
         date = pd.to_datetime(raw_date).date() if raw_date is not None else None
         return Order(
-            result=d['result'],
-            signal_id=d['signal_id'],
-            map_signal_id=d['map_signal_id'],
+            result=d["result"],
+            signal_id=d["signal_id"],
+            map_signal_id=d["map_signal_id"],
             date=date,
-            data=order_data
+            data=order_data,
+            metrics=d["metrics"],
         )
