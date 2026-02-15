@@ -1,18 +1,23 @@
 from trade.helpers.Logging import setup_logger
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing import Any, Callable, ClassVar
+
 from pydantic import ConfigDict, Field
-from typing import ClassVar
+from pydantic.dataclasses import dataclass as _pydantic_dataclass
+from typing_extensions import dataclass_transform
 from trade.helpers.helper_types import validate_inputs
 from weakref import WeakSet
-from EventDriven.exceptions import (
-    BacktestConfigAttributeError
-)
+from EventDriven.exceptions import BacktestConfigAttributeError
 
 from EventDriven.configs.vars import get_class_config_descriptions, get_config_class_description
 
 
 logger = setup_logger(__name__, stream_log_level="WARNING")
 
+
+@dataclass_transform()
+def pydantic_dataclass(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    """Typed wrapper for Pydantic dataclasses to improve static analysis."""
+    return _pydantic_dataclass(*args, **kwargs)
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
@@ -21,7 +26,7 @@ class BaseConfigs:
 
     _registry: ClassVar[WeakSet[type]] = WeakSet()
     run_name: str = Field(default="", description="A name identifier for this run/session.")
-    
+
     def set(self, **kwargs):
         """Set multiple configuration attributes at once."""
         for key, value in kwargs.items():
@@ -34,14 +39,13 @@ class BaseConfigs:
         if not hasattr(self, key):
             raise BacktestConfigAttributeError(f"Configuration has no attribute named '{key}'.")
         return getattr(self, key)
-    
+
     def __post_init__(self, ctx=None):
         pass
 
     def validate_inputs(self):
         """Validate configuration inputs based on type hints."""
         validate_inputs(self)
-
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -83,7 +87,7 @@ Configuration Descriptions for {self.__class__.__name__}:
             else:
                 logger.warning(f"No description found for config '{key}' in {self.__class__.__name__}.")
         return header + msg
-    
+
     def display_and_describe_configs(self):
         """Display and describe the configuration settings."""
         class_desc = get_config_class_description(self.__class__.__name__)
@@ -101,7 +105,7 @@ Configuration Descriptions for {self.__class__.__name__}:
         for config_cls in cls._registry:
             configs[config_cls.__name__] = config_cls()
         return configs
-    
+
     @classmethod
     def get_config_instance(cls, class_name: str):
         """Get a specific configuration class instance by name."""
@@ -110,17 +114,17 @@ Configuration Descriptions for {self.__class__.__name__}:
                 return config_cls()
         logger.warning(f"Configuration class '{class_name}' not found.")
         return None
-    
+
     @classmethod
     def list_config_classes(cls):
         """List all registered configuration class names."""
         return [config_cls.__name__ for config_cls in cls._registry]
-    
+
     @classmethod
     def is_config_registered(cls, class_name: str) -> bool:
         """Check if a configuration class is registered."""
         return any(config_cls.__name__ == class_name for config_cls in cls._registry)
-    
+
     @classmethod
     def display_and_describe_all_configs(cls):
         """Display and describe all registered configuration classes."""
@@ -135,7 +139,7 @@ Configuration Descriptions for {self.__class__.__name__}:
                 print(f"Description: {class_desc}")
             else:
                 logger.warning(f"No class description found for {config_cls.__name__}")
-            print('='*80)
+            print("=" * 80)
             instance = config_cls()
             instance.display_and_describe_configs()
 
@@ -150,5 +154,7 @@ class _CustomFrozenBaseConfigs(BaseConfigs):
             super().__setattr__(name, value)
             return
         if name in self.__dict__:
-            raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}. If you need to change it within a class, create a new instance.")
+            raise AttributeError(
+                f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}. If you need to change it within a class, create a new instance."
+            )
         super().__setattr__(name, value)
