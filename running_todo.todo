@@ -28,17 +28,26 @@ Running Todo:
     ☐ Look into alternatives for backfilling dividends with 0.0 in get_timeseries
     ☐ Move strategy files to db.
     ☐ Set evb default market_model = bsm, div = continuous for speed. Disable logging.
+    ☐ Replace populate_chain_cache with ChainDataManager which caches none-today data and reloads today data on each call.
+    ☐ Remind zino about table diffing
+    ☐ Update info in config dictionary in order picker to reflect new changes (eg min_total_price)
     
 
 Todo before going back to backtesting:
-    ☐ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. 
+    ✔ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. @done(26-02-13 14:52)
     ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14)
-    ☐ Clean up evb order getter + preset orders (speed up essentially)
-    ☐ Push config change to db (changed min_total_price to 0.5 from 0.95)
-    ☐ Cache checker should use date range info, with missing dates info saved
+    ✔ Clean up evb order getter + preset orders (speed up essentially) @done(26-02-11 21:44)
+    ✔ Push config change to db (changed min_total_price to 0.5 from 0.95) @done(26-02-13 09:42)
+    ☐ Move emefiele reports to the reports channel
+    ☐ Populate get_strategy_instance with has_position (Optional)
+    ✔ Cache checker should use date range info, with missing dates info saved @done(26-02-14 18:47)
+        - All ts loaders should return the data
+        - Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups
+        - Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual.
+        - New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)`
     ☐ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval)
     ☐ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup.
-    ☐ Implement tplusn execution in StrategyBase
+    ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29)
     ✔ Close signals added to signals table @done(26-02-09 16:34)
     ☐ Ensure backtesting a live strategy works seamlessly
     ✔ Decipher the diff btwn backtest and live strategy performance @done(26-02-10 19:57)

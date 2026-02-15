@@ -22,6 +22,17 @@
     "python.languageServer": "Pylance",
     "python.analysis.useLibraryCodeForTypes": true,
     "python.analysis.typeCheckingMode": "off",
-    "python.analysis.diagnosticMode": "openFilesOnly"
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.indexing": true,
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.includeAliasesFromUserFiles": true,
+    "python.analysis.userFileIndexingLimit": 5000,
+    "python.analysis.packageIndexDepths": [
+        {
+            "name": "pydantic",
+            "depth": 3,
+            "includeAllSymbols": true
+        }
+    ]
 
 }
