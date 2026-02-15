@@ -28,9 +28,9 @@ from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager._enums import ArtifactType, SeriesId, Interval, RealTimeFallbackOption
 from trade.datamanager.utils import slice_schedule
 from trade.datamanager.utils.date import DateRangePacket, is_available_on_date
-from trade.datamanager.utils.cache import _data_structure_cache_it
+from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from trade.datamanager.utils.logging import get_logging_level
-from trade.helpers.helper import CustomCache, get_missing_dates, change_to_last_busday, to_datetime
+from trade.helpers.helper import CustomCache, change_to_last_busday, to_datetime
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import get_vectorized_dividend_scehdule
 
@@ -178,7 +178,9 @@ class DividendDataManager(BaseDataManager):
                 return
 
         # For other types or if no existing, just setattr
-        self.set(key, value, expire=expire)
+        raise NotImplementedError(
+            "Currently only discrete dividend caching with merge logic is implemented in cache_it. Other types should go through _data_structure_cache_it."
+        )
 
     ## Dividend yield history retrieval for continuous dividends. Already cached in MarketTimeseries.
     def get_div_yield_history(self, symbol: str) -> pd.Series:
@@ -383,27 +385,20 @@ class DividendDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
             maturity=mat_str,
         )
+        cached_series, is_partial, missing_start_date, missing_end_date = _check_cache_for_timeseries_data_structure(self, key, start_str, end_str)
 
-        cached_series = self.get(key, default=None)
-        if cached_series is not None:
+        # cached_series = self.get(key, default=None)
+        if cached_series is not None and not is_partial:
             logger.info(f"Cache hit for discrete schedule timeseries key: {key}")
-            missing_dates = get_missing_dates(cached_series, start_str, end_str)
-            if not missing_dates:
-                logger.info(f"Cache fully covers requested date range for timeseries. Key: {key}")
-                cached_series = cached_series[
-                    (cached_series.index >= pd.to_datetime(start_date))
-                    & (cached_series.index <= pd.to_datetime(end_date))
-                ]
-                return cached_series, key
-            else:
-                logger.info(
-                    f"Cache partially covers requested date range for timeseries. Key: {key}. Fetching missing dates: {missing_dates}"
-                )
-                start_str, end_str = min(missing_dates), max(missing_dates)
-                is_partial = True
+            logger.info(f"Cache fully covers requested date range for timeseries. Key: {key}")
+            cached_series = cached_series[
+                (cached_series.index >= pd.to_datetime(start_date))
+                & (cached_series.index <= pd.to_datetime(end_date))
+            ]
+            return cached_series, key
         else:
-            logger.info(f"No cache found for discrete schedule timeseries key: {key}. Building from scratch.")
-
+            start_str, end_str = to_datetime(missing_start_date).strftime("%Y-%m-%d"), to_datetime(missing_end_date).strftime("%Y-%m-%d")
+        
         # Build from scratch for missing dates
         # Fetch ONCE: all events from start_date to maturity_date
         full_schedule, _ = self.get_discrete_dividend_schedule(

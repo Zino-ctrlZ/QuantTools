@@ -204,7 +204,13 @@ from trade.helpers.Logging import setup_logger
 from trade.assets.rates import get_risk_free_rate_helper
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
 from EventDriven.exceptions import UnaccessiblePropertyError
-from trade.datamanager.utils.cache import _cache_it_timeseries_data_structure, _data_structure_cache_check_missing
+from trade.datamanager.utils.cache import (
+    _cache_it_timeseries_data_structure,
+    _data_structure_cache_check_missing,
+    _CachedData, # noqa
+    _extract_data, # noqa
+    _simple_extract_from_cache # noqa
+)
 from trade import SIGNALS_TO_RUN
 
 
@@ -473,7 +479,7 @@ class MarketTimeseries:
         SPLIT_FACTOR_CACHE.clear()
         logger.info("All MarketTimeseries caches have been cleared.")
 
-    def _load_spot_into_cache(self, sym: str, start: str, end: str) -> None:
+    def _load_spot_into_cache(self, sym: str, start: str, end: str) -> pd.DataFrame | None:
         """Load spot OHLCV data for a symbol into the cache.
 
         Retrieves equity spot prices from data source (OpenBB/YFinance) and stores in
@@ -510,7 +516,7 @@ class MarketTimeseries:
             logger.warning("No spot data found for symbol %s from data source. Will skip caching.", sym)
             return None
 
-    def _load_chain_spot_into_cache(self, sym: str, start: str, end: str) -> None:
+    def _load_chain_spot_into_cache(self, sym: str, start: str, end: str) -> pd.DataFrame | None:
         """Load chain-derived spot data for a symbol into the cache.
 
         Retrieves underlying prices from option chain data (ThetaData) and stores in
@@ -547,7 +553,7 @@ class MarketTimeseries:
             logger.warning("No chain spot data found for symbol %s from data source. Will skip caching.", sym)
             return None
 
-    def _load_dividends_into_cache(self, sym: str, start: str = None, end: str = None) -> None:
+    def _load_dividends_into_cache(self, sym: str, start: str = None, end: str = None) -> pd.DataFrame | None:
         """Load daily dividend timeseries for a symbol into the cache.
 
         Retrieves regular and special dividends with ex-dates from data source and stores
@@ -569,7 +575,6 @@ class MarketTimeseries:
         from trade.datamanager.market_data_helpers.dividends import get_daily_dividends_timeseries
 
         try:
-
             divs = get_daily_dividends_timeseries(sym, start=start or self._start, end=end or self._end)
             _cache_it_timeseries_data_structure(
                 existing=self._dividends.get(sym),
@@ -583,8 +588,9 @@ class MarketTimeseries:
             return divs
         except YFinanceEmptyData:
             logger.warning("No dividend data found for symbol %s from data source. Will skip caching.", sym)
+            return None
 
-    def _load_split_factor_into_cache(self, sym: str, start: str, *args, **kwargs) -> None:
+    def _load_split_factor_into_cache(self, sym: str, start: str, *args, **kwargs) -> pd.DataFrame | None:
         """Load split factor timeseries for a symbol into the cache.
 
         Extracts split factors from chain spot data and stores in the split_factor cache.
@@ -601,8 +607,11 @@ class MarketTimeseries:
             >>> # Split factors loaded from chain spot data
         """
         try:
-            self._load_chain_spot_into_cache(sym, start, self._end)
-            chain_spot = self._chain_spot.get(sym)
+            chain_spot = self._load_chain_spot_into_cache(sym, start, self._end)
+            chain_spot = _extract_data(chain_spot)
+            # if isinstance(chain_spot, _CachedData) or chain_spot.__class__.__name__ == "_CachedData":
+            #     chain_spot = chain_spot.data
+
             split_factor = chain_spot["split_factor"]
             _cache_it_timeseries_data_structure(
                 existing=self._split_factor.get(sym),
@@ -614,10 +623,14 @@ class MarketTimeseries:
                 skip_today_check=True,
             )
             logger.info("Loaded split factor data for symbol %s into cache.", sym)
+            return split_factor
         except YFinanceEmptyData:
             logger.warning("No split factor data found for symbol %s from data source. Will skip caching.", sym)
+            return None
 
-    def _clip_to_date_range(self, df: pd.DataFrame | pd.Series, start: str, end: str, *args, **kwargs) -> pd.DataFrame | pd.Series:
+    def _clip_to_date_range(
+        self, df: pd.DataFrame | pd.Series, start: str, end: str, *args, **kwargs
+    ) -> pd.DataFrame | pd.Series:
         """Clip a DataFrame or Series to the specified date range.
 
         Filters timeseries data to only include dates within [start, end] inclusive.
@@ -637,6 +650,9 @@ class MarketTimeseries:
             >>> spot_q1 = mts._clip_to_date_range(spot_full, "2025-01-01", "2025-03-31")
             >>> # Returns only Q1 2025 data
         """
+        df = _extract_data(df)  # Unwrap from _CachedData if needed
+        # if isinstance(df, _CachedData) or df.__class__.__name__ == "_CachedData":
+        #     df = df.data
         clipped = df[(df.index.date >= to_datetime(start).date()) & (df.index.date <= to_datetime(end).date())]
         return clipped
 
@@ -782,12 +798,18 @@ class MarketTimeseries:
             >>> splits = mts._get_split_factor_timeseries("AAPL", "2025-01-01", "2025-12-31")
             >>> print(splits[splits != 1.0])  # Show dates with splits
         """
+
+        ## Decide dates
         start = start or self._start
         end = end or self._end
         cached_data = self._split_factor.get(sym)
+
+        ## If no data, load from chain spot and extract split factor
         if cached_data is None:
-            self._load_split_factor_into_cache(sym, start)
-            cached_data = self._split_factor.get(sym)
+            cached_data = self._load_split_factor_into_cache(sym, start)
+
+        ## No need to access data from _CachedData yet
+        ## Data structure checks this data
         cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
             cached_data=cached_data,
             key=sym,
@@ -795,8 +817,15 @@ class MarketTimeseries:
             end_dt=self._end,
         )
         if is_partial:
-            self._load_split_factor_into_cache(sym, missing_start_date.strftime("%Y-%m-%d"))
+            self._load_split_factor_into_cache(
+                sym, missing_start_date.strftime("%Y-%m-%d"), end=missing_end_date.strftime("%Y-%m-%d")
+            )
             cached_data = self._split_factor.get(sym)
+
+            ## If it is _CachedData, get the data out of it for the next steps
+            cached_data = _extract_data(cached_data)
+            # if isinstance(cached_data, _CachedData):
+            #     cached_data = cached_data.data
 
         return self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
 
@@ -820,10 +849,11 @@ class MarketTimeseries:
         """
         spot = self._get_spot_timeseries(sym)
         dividends = self._get_dividends_timeseries(sym)
+
         dividend_yield = dividends / spot["close"]
         # Fill non-dividend dates with 0 yield. I believe it should be fine
         # TODO: Pay close attention to this. Maybe find an alternative way to handle non-dividend dates if it causes issues.
-        dividend_yield.fillna(0.0, inplace=True)  
+        dividend_yield.fillna(0.0, inplace=True)
 
         return self._clip_to_date_range(dividend_yield, self._start, self._end, *args, **kwargs)
 
@@ -850,6 +880,10 @@ class MarketTimeseries:
         split_factor_series = self._split_factor.get(sym)
         if split_factor_series is None:
             return 1.0
+        
+        split_factor_series = _extract_data(split_factor_series)
+        # if isinstance(split_factor_series, _CachedData) or split_factor_series.__class__.__name__ == "_CachedData":
+        #     split_factor_series = split_factor_series.data
 
         index = pd.to_datetime(index)
         if index in split_factor_series.index:

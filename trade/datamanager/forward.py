@@ -23,8 +23,9 @@ import numpy as np
 from trade.datamanager.market_data import TimeseriesData
 from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday, get_missing_dates, to_datetime
+from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
+from trade.datamanager.utils.cache import _check_cache_for_timeseries_data_structure, _data_structure_cache_it
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.dividend import DividendDataManager
 from trade.datamanager.result import ForwardResult, SpotResult
@@ -32,7 +33,6 @@ from trade.datamanager.rates import RatesDataManager
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult, RatesResult
 from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
-from trade.datamanager.utils.cache import _data_structure_cache_it
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.vars import get_times_series, load_name
 from trade.optionlib.config.types import DivType
@@ -272,11 +272,15 @@ class ForwardDataManager(BaseDataManager):
             ... )
         """
         cached_series = self.get(key, default=None)
-        if cached_series is None:
-            return None, False, start_str, end_str, None
+        cached_series, is_partial, cached_start, cached_end = _check_cache_for_timeseries_data_structure(
+            self=self,
+            key=key,
+            start_dt=start_date,
+            end_dt=end_date,
+        )
 
-        missing = get_missing_dates(cached_series, _start=start_str, _end=end_str)
-        if not missing:
+        # missing = get_missing_dates(cached_series, _start=start_str, _end=end_str)
+        if cached_series is not None and not is_partial:
             logger.info(f"Cache hit for forward timeseries key: {key}")
             cached_series = _data_structure_sanitize(
                 cached_series,
@@ -295,12 +299,7 @@ class ForwardDataManager(BaseDataManager):
             result.symbol = self.symbol
             result.undo_adjust = use_chain_spot
             return cached_series, False, start_str, end_str, result
-
-        logger.info(
-            f"Cache partially covers requested date range for forward timeseries. "
-            f"Key: {key}. Fetching missing dates: {missing}"
-        )
-        return cached_series, True, min(missing), max(missing), None
+        return cached_series, True, cached_start, cached_end, None
 
     def _get_dividend_result(
         self,
@@ -396,6 +395,7 @@ class ForwardDataManager(BaseDataManager):
                 spot = TS._get_chain_spot_timeseries(sym=self.symbol)["close"]
             else:
                 spot = TS._get_spot_timeseries(sym=self.symbol)["close"]
+            return spot
         return spot.timeseries
 
     def _load_rates(self, *, start_str: str, end_str: str, rates: Optional[RatesResult] = None) -> pd.Series:
@@ -472,10 +472,11 @@ class ForwardDataManager(BaseDataManager):
             - Rates and dividend data must be complete (no NaNs allowed)
         """
         idx = spot.index.intersection(rates.index).intersection(third.index)
-
+        
         spot = spot.reindex(idx)
         rates = rates.reindex(idx)
         third = third.reindex(idx)
+        
 
         if rates.isna().any():
             raise ValueError("NaNs in rates after alignment.")

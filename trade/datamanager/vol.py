@@ -227,7 +227,6 @@ class VolDataManager(BaseDataManager):
         result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = _prepare_vol_calculation_setup(
             self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
         )
-
         # Make key for caching
         key = self.make_key(
             symbol=self.symbol,
@@ -250,6 +249,7 @@ class VolDataManager(BaseDataManager):
         )
         if early_return is not None:
             return early_return
+        
 
         # Load model data
         load_request = LoadRequest(
@@ -271,6 +271,7 @@ class VolDataManager(BaseDataManager):
             model_price=model_price,
         )
         model_data = _load_model_data_timeseries(load_request)
+
 
         # Use utility: Merge provided data
         _, F, r, _, market_price = _merge_provided_with_loaded_data(model_data, F=F, r=r, market_price=market_price)

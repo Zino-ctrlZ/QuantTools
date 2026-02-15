@@ -19,8 +19,8 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import get_missing_dates, change_to_last_busday
-from .utils.cache import _data_structure_cache_it
+from trade.helpers.helper import change_to_last_busday
+from .utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from .utils.date import is_available_on_date, to_datetime
 from .utils.data_structure import _data_structure_sanitize
 from .config import OptionDataConfig
@@ -368,37 +368,28 @@ class RatesDataManager(BaseDataManager):
 
 
         ## Check cache
-        series = self.get(key, default=None)
-
-        ## Check if cache covers requested date range
-        if series is not None:
-            logger.info(f"Cache hit for risk-free rate timeseries key: {key}")
-            missing = get_missing_dates(
-                series,
-                pd.to_datetime(start_date).strftime("%Y-%m-%d"),
-                pd.to_datetime(end_date).strftime("%Y-%m-%d"),
-            )
+        series, is_partial, start_date, end_date = _check_cache_for_timeseries_data_structure(
+            self=self, key=key, start_dt=start_str, end_dt=end_str
+        )
 
             ## If no missing dates, return cached series
-            if not missing:
-                logger.info(f"Cache fully covers requested date range for risk-free rate timeseries. Key: {key}")
-                series = _data_structure_sanitize(
-                    series,
-                    start=start_str,
-                    end=end_str,
-                    source_name=f"cached risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER}",
-                )
-                return RatesResult(timeseries=series, symbol=self.DEFAULT_YFINANCE_TICKER)
-            else:
-                ## Fetch missing dates
-                start_date = min(missing)
-                end_date = max(missing)
-                logger.info(
-                    f"Cache partially covers requested date range for risk-free rate timeseries. Key: {key}. Fetching missing dates: {missing}"
-                )
+        if series is not None and not is_partial:
+            logger.info(f"Cache fully covers requested date range for risk-free rate timeseries. Key: {key}")
+            series = _data_structure_sanitize(
+                series,
+                start=start_str,
+                end=end_str,
+                source_name=f"cached risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER}",
+            )
+            return RatesResult(timeseries=series, symbol=self.DEFAULT_YFINANCE_TICKER)
         else:
-            logger.info(f"No cache found for risk-free rate timeseries key: {key}. Fetching from source.")
-
+            ## Fetch overriding date range for missing data
+            start_date = start_str
+            end_date = end_str
+            logger.info(
+                f"Cache partially covers requested date range for risk-free rate timeseries. Key: {key}"
+            )
+            
         # Fetch rates data
         rates_data = self._query_yfinance(
             start_date=start_date,
@@ -406,6 +397,12 @@ class RatesDataManager(BaseDataManager):
             interval=fn_interval,
         )["annualized"]
         rates_data = rates_data[(rates_data.index >= pd.to_datetime(start_str)) & (rates_data.index <= pd.to_datetime(end_str))]
+        
+        # Merge with existing cached series
+        if series is not None:
+            merged = pd.concat([series, rates_data])
+            rates_data = merged[~merged.index.duplicated(keep="last")]
+
         # If data is empty, return empty result
         if rates_data.empty:
             logger.warning(
@@ -413,12 +410,9 @@ class RatesDataManager(BaseDataManager):
             )
             return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=pd.Series(dtype=float))
 
-        if series is not None:
-            # Merge with existing cached series
-            merged = pd.concat([series, rates_data])
-            rates_data = merged[~merged.index.duplicated(keep="last")]
 
-        ## Cache the updated series
+        ## Cache the updated series. This is allowed cause `cache_it` uses the utility function from
+        ## trade.datamanager.utils.cache which wraps into a _CacheData object.
         self.cache_it(key, rates_data)
 
         ## Sanitize before returning
