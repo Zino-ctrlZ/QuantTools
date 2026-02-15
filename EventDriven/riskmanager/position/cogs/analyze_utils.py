@@ -221,7 +221,7 @@ def adjust_for_events(
         if is_backtest:
             raise ValueError(f"No adjusted strike data found for option: {meta}")
         else:
-            logger.warning(f"No adjusted strike data found for option: {meta}. Returning original meta.")
+            logger.info(f"No adjusted strike data found for option: {meta}. Returning original meta.")
             meta_dict = parse_option_tick(meta)
             return meta_dict
 

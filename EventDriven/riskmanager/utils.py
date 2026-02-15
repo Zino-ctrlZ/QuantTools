@@ -188,8 +188,9 @@ import functools
 from trade.assets.helpers.utils import swap_ticker
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager  # noqa
 from trade.datamanager.loaders import load_full_option_data
-from trade.datamanager.vars import get_times_series
+# from trade.datamanager.vars import get_times_series
 from trade.datamanager._enums import DivType
+from trade.datamanager.utils.date import sync_date_index
 from trade.helpers.helper import generate_option_tick_new, parse_option_tick, CustomCache, change_to_last_busday
 from dbase.DataAPI.ThetaData import retrieve_bulk_open_interest, retrieve_chain_bulk
 from pandas.tseries.offsets import BDay
@@ -556,12 +557,14 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     This function retrieves the data for the given option tick using the new data loading method.
     It does not apply any splits or adjustments. It will only retrieve the data for the given option tick.
     """
+    import time
     ## Check if the option tick is already processed
     if opttick in processed_option_data:
         return processed_option_data[opttick]
 
     ## Get Meta
     option_meta = parse_option_tick(opttick)
+    start_time = time.time()
     new_data = load_full_option_data(
         symbol=option_meta["ticker"],
         expiration=option_meta["exp_date"],
@@ -571,6 +574,7 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
         end_date=end,
         dividend_type=DivType.CONTINUOUS
     )
+    logger.info(f"Data loading for {opttick} took {time.time() - start_time:.2f} seconds")
     
     ## Convert to DataFrame for easier comparison
     greeks = new_data.greek.timeseries
@@ -578,16 +582,19 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     s = new_data.spot.timeseries
     y = new_data.dividend.timeseries
     r = new_data.rates.timeseries
-    s0_close = get_times_series()._get_spot_timeseries(sym=option_meta["ticker"], start=start, end=end)["close"]
-    s0_close.name = "s0_close"
+    greeks, option_spot, s, y, r = sync_date_index(greeks, option_spot, s, y, r)
+
 
     ## set names properly
+    start_time = time.time()
     s.name = "s"
     y.name = "y"
     r.name = "r"
     data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
     data.columns = data.columns.str.capitalize()
-    data = data.join(s).join(y).join(r).join(s0_close)
+    data = data.join(s).join(y).join(r)
+    logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
+    processed_option_data[opttick] = data
     return data
 
     ## Generate data

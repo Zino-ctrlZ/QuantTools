@@ -258,6 +258,8 @@ class _LimitsMetaData:
     delta_per_contract: Optional[float] = None
     option_price: Optional[float] = None
     undl_price: Optional[float] = None
+    prev_quantity: Optional[int] = None
+    new_quantity: Optional[int] = None
 
 
 class LimitsAndSizingCog(BaseCog):
@@ -373,6 +375,7 @@ class LimitsAndSizingCog(BaseCog):
             option_price=option_price,
             undl_price=undl_data.chain_spot["close"],
             delta_lmt=new_pos_state.limits.delta,
+            new_quantity=order["data"]["quantity"],
         )
         logger.info(f"Storing position metadata: {metadata}")
         self.position_metadata[order["data"]["trade_id"]] = metadata
