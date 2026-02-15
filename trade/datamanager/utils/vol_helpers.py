@@ -79,6 +79,12 @@ def _handle_cache_for_vol(
 
     if cached_data is not None and not is_partial:
         logger.info(f"Cache hit for {optional_name} timeseries key: {key}")
+        cached_data = _data_structure_sanitize(
+            cached_data,
+            start=start_date.strftime("%Y-%m-%d"),
+            end=end_date.strftime("%Y-%m-%d"),
+            source_name=f"cached {optional_name} timeseries for key: {key}",
+        )
         result.timeseries = cached_data
         return cached_data, is_partial, start_date, end_date, result
     elif is_partial:

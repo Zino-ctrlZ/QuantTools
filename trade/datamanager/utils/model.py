@@ -620,7 +620,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             )
         load_info["greek_load_time"] = time.time() - start_time
         model_data.greek = G
-
+    
     model_data.dividend = D
     model_data.dividend_type = dividend_type
     model_data.forward = F

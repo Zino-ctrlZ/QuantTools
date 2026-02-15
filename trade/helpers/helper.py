@@ -108,6 +108,7 @@ def is_weekend(dt: str | datetime) -> bool:
         dt = pd.to_datetime(dt)
     return dt.weekday() >= 5  # Saturday is 5, Sunday is 6
 
+
 def is_market_hours_today() -> bool:
     """
     Check if the current time in New York is within market hours (9:30 AM to 4:00 PM) on a business day.
@@ -288,6 +289,27 @@ class CustomCache(Cache):
     def __hash__(self):
         return super().__hash__()
 
+    @staticmethod
+    def _normalize_key(key: Any) -> Any:
+        if isinstance(key, str):
+            return str(key)
+        return key
+
+    def __getitem__(self, key: Any) -> Any:
+        return super().__getitem__(self._normalize_key(key))
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        super().__setitem__(self._normalize_key(key), value)
+
+    def __delitem__(self, key: Any) -> None:
+        super().__delitem__(self._normalize_key(key))
+
+    def __contains__(self, key: Any) -> bool:
+        return super().__contains__(self._normalize_key(key))
+
+    def get(self, key: Any, default: Any = None, retry: bool = False) -> Any:
+        return super().get(self._normalize_key(key), default, retry=retry)
+
     @property
     def clear_on_exit(self):
         return self._clear_on_exit
@@ -355,7 +377,7 @@ class CustomCache(Cache):
             self.__delitem__(key)
 
     def pop(self, key, default=None, expire_time=False, tag=False, retry=False):
-        return super().pop(key, default, expire_time, tag, retry)
+        return super().pop(self._normalize_key(key), default, expire_time, tag, retry)
 
     def update(self, other):
         if isinstance(other, dict):
@@ -978,8 +1000,9 @@ def assert_equal_length(*args, names: list = None):
     return True
 
 
-def time_distance_helper(start: Union[DATE_HINT, Iterable[DATE_HINT]], 
-                         end: Union[DATE_HINT, Iterable[DATE_HINT]]) -> Union[float, np.ndarray]:
+def time_distance_helper(
+    start: Union[DATE_HINT, Iterable[DATE_HINT]], end: Union[DATE_HINT, Iterable[DATE_HINT]]
+) -> Union[float, np.ndarray]:
     """Calculates time distance in years between two dates."""
     initial_is_iterable = is_iterable(start, include_str=False) or is_iterable(end, include_str=False)
     ## Ensure iterable
@@ -992,14 +1015,13 @@ def time_distance_helper(start: Union[DATE_HINT, Iterable[DATE_HINT]],
     assert_equal_length(start, end, names=("start", "end"))
 
     ## Convert to datetime
-    start = np.array(start, dtype='datetime64[D]')
-    end = np.array(end, dtype='datetime64[D]')
+    start = np.array(start, dtype="datetime64[D]")
+    end = np.array(end, dtype="datetime64[D]")
 
     ## Calculate time distance in years
-    dte = (end - start)/np.timedelta64(1, 'D')
+    dte = (end - start) / np.timedelta64(1, "D")
     dte_in_seconds = dte * SECONDS_IN_DAY
     dte_in_years = dte_in_seconds / SECONDS_IN_YEAR
-
 
     if not initial_is_iterable:
         return dte_in_years[0]
@@ -1541,6 +1563,7 @@ def generate_option_tick(symbol, right, exp, strike):
     key = symbol.upper() + tick_date + pad_string(strike) + right.upper()
     return key
 
+
 class OptionTickComponents(TypedDict):
     ticker: str
     put_call: str
@@ -1716,69 +1739,187 @@ def not_trading_day(date: str | datetime, time_aware: bool = False) -> bool:
     return ret_bool
 
 
-def change_to_last_busday(end, 
-                          offset=1, 
-                          eod_time=True,
-                          time_of_day_aware: bool = True) -> datetime:
+# def change_to_last_busday(end,
+#                           offset=1,
+#                           eod_time=True,
+#                           time_of_day_aware: bool = True) -> datetime:
+#     """
+#     Change the end date to the last business day if it falls on a weekend or holiday.
+#     If the time is before 9:30, move to the previous business day.
+#     If the time is after 16:00, move to the same business day at 16:00.
+#     params:
+#         end: str or datetime
+#         offset: int, number of business days to move back if end is not a business day
+#             if offset < 0 it will move forward
+#             if offset = 0 it will stay on the same day if it is a business day
+#             if offset > 0 it will move back
+#         eod_time: bool, if True, return the end date at 16:00:00, else at 00:00:00
+#         time_of_day_aware: bool,
+#             if True:
+#                 - If time is missing (00:00:00), default to 16:00:00
+#                 - If time is before 9:30, move to previous business day at 16:00:00
+#                 - If time is after 16:00, move to same business day at 16:00:00
+#             if False:
+#                 - Ignore time of day, always return date at 00:00:00
+
+#     returns: datetime
+#     """
+
+#     # Enfore time is passed
+
+#     if not isinstance(end, str):
+#         end = end.strftime("%Y-%m-%d %H:%M:%S")
+
+#     if pd.to_datetime(end).time() == pd.Timestamp("00:00:00").time() and time_of_day_aware:
+#         end = end + " 16:00:00"
+
+#     ## Convert end to datetime object
+#     end = to_datetime(end).strftime("%Y-%m-%d %H:%M:%S")
+
+#     ## Make End Comparison Busday
+#     isBiz = is_busday(end)
+#     while not isBiz:
+#         end_dt = to_datetime(end)
+#         end_dt = end_dt.replace(hour=16, minute=0, second=0)  ## Defaulting to EOD
+#         end = (end_dt - BDay(offset)).strftime("%Y-%m-%d %H:%M:%S")
+#         isBiz = bool(len(pd.bdate_range(end, end)))
+
+#     ## Make End Comparison prev day if before 9:30
+#     if pd.Timestamp(end).time() < pd.Timestamp("9:30").time() and time_of_day_aware:
+#         end = to_datetime(end) - BDay(offset)
+#         end = end.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+
+#     ## Make End Comparison same day if after 16:00
+#     elif pd.Timestamp(end).time() >= pd.Timestamp("16:00").time() and time_of_day_aware:
+#         end_dt = to_datetime(end)
+#         end = end_dt.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+
+#     # Make End Comparison prev day if holiday
+#     while is_USholiday(end):
+#         end_dt = to_datetime(end)
+#         end = (end_dt - BDay(offset)).strftime("%Y-%m-%d %H:%M:%S")
+
+#     if not eod_time:
+#         end = to_datetime(end)
+#         end = end.replace(hour=0, minute=0, second=0, microsecond=0)
+#         return end
+
+#     return datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+
+
+def change_to_last_busday(
+    end: Union[str, datetime], offset: int = 1, eod_time: bool = True, time_of_day_aware: bool = True
+) -> datetime:
     """
-    Change the end date to the last business day if it falls on a weekend or holiday.
-    If the time is before 9:30, move to the previous business day.
-    If the time is after 16:00, move to the same business day at 16:00.
-    params:
-        end: str or datetime
-        offset: int, number of business days to move back if end is not a business day
-            if offset < 0 it will move forward
-            if offset = 0 it will stay on the same day if it is a business day
-            if offset > 0 it will move back
-        eod_time: bool, if True, return the end date at 16:00:00, else at 00:00:00
-        time_of_day_aware: bool, 
-            if True:
-                - If time is missing (00:00:00), default to 16:00:00
-                - If time is before 9:30, move to previous business day at 16:00:00
-                - If time is after 16:00, move to same business day at 16:00:00
-            if False:
-                - Ignore time of day, always return date at 00:00:00
+    Adjust date to a valid business day, handling weekends, holidays, and market hours.
 
-    returns: datetime
+    Ensures the returned date falls on a U.S. trading day (not weekend/holiday), and
+    optionally adjusts for market hours (9:30 AM - 4:00 PM ET).
+
+    Args:
+        end: Date to adjust (YYYY-MM-DD string or datetime object).
+        offset: Business day offset for adjustment. Positive values move backward,
+            negative values move forward. Default 1 (move back 1 day if invalid).
+        eod_time: If True, return time at market close, else at 00:00:00.
+        time_of_day_aware: If True, adjust times relative to market hours:
+            - Missing time (00:00:00) defaults to market close
+            - Before market open moves to previous business day at market close
+            - After market close caps at market close same day
+            If False, ignore intraday times.
+
+    Returns:
+        Adjusted datetime on a valid business day.
+
+    Raises:
+        TypeError: If end is None.
+        ValueError: If date string cannot be parsed.
+
+    Examples:
+        >>> # Weekend adjustment - Saturday moves to Friday EOD
+        >>> result = change_to_last_busday("2026-02-14")  # Saturday
+        >>> print(result)
+        2026-02-13 16:00:00
+
+        >>> # Before market open - moves to previous day
+        >>> result = change_to_last_busday("2026-02-13 08:00:00")
+        >>> print(result)
+        2026-02-12 16:00:00
+
+        >>> # During market hours - sets to EOD
+        >>> result = change_to_last_busday("2026-02-13 14:30:00")
+        >>> print(result)
+        2026-02-13 16:00:00
+
+        >>> # No time awareness - returns midnight
+        >>> result = change_to_last_busday("2026-02-13", time_of_day_aware=False, eod_time=False)
+        >>> print(result)
+        2026-02-13 00:00:00
+
+        >>> # Forward offset - moves forward to next business day
+        >>> result = change_to_last_busday("2026-02-14", offset=-1)  # Saturday
+        >>> print(result)
+        2026-02-16 16:00:00  # Monday
     """
+    # Validation
+    if end is None:
+        raise TypeError("'end' cannot be None")
 
-    # Enfore time is passed
+    # Get market hours from config
+    config = get_pricing_config()
+    market_open = pd.Timestamp(config["MARKET_OPEN_TIME"]).time()
+    market_close = pd.Timestamp(config["MARKET_CLOSE_TIME"]).time()
 
-    if not isinstance(end, str):
-        end = end.strftime("%Y-%m-%d %H:%M:%S")
+    # Convert to datetime and work with datetime throughout
+    end_dt = to_datetime(end)
 
-    if pd.to_datetime(end).time() == pd.Timestamp("00:00:00").time() and time_of_day_aware:
-        end = end + " 16:00:00"
+    # Step 1: Handle time-of-day adjustments if enabled
+    if time_of_day_aware:
+        current_time = end_dt.time()
 
-    ## Make End Comparison Busday
-    isBiz = is_busday(end)
-    while not isBiz:
-        end_dt = pd.to_datetime(end)
-        end_dt = end_dt.replace(hour=16, minute=0, second=0)  ## Defaulting to EOD
-        end = (end_dt - BDay(offset)).strftime("%Y-%m-%d %H:%M:%S")
-        isBiz = bool(len(pd.bdate_range(end, end)))
+        # If no time specified (midnight), default to market close
+        if current_time == pd.Timestamp("00:00:00").time():
+            end_dt = end_dt.replace(hour=market_close.hour, minute=market_close.minute, second=0, microsecond=0)
+        # Before market open - move to previous business day
+        elif current_time < market_open:
+            # Determine direction based on offset
+            if offset >= 0:
+                end_dt = end_dt - BDay(1)
+            else:
+                end_dt = end_dt + BDay(abs(offset))
+            end_dt = end_dt.replace(hour=market_close.hour, minute=market_close.minute, second=0, microsecond=0)
+        # After or at market close - cap at close time
+        else:
+            end_dt = end_dt.replace(hour=market_close.hour, minute=market_close.minute, second=0, microsecond=0)
 
-    ## Make End Comparison prev day if before 9:30
-    if pd.Timestamp(end).time() < pd.Timestamp("9:30").time() and time_of_day_aware:
-        end = pd.to_datetime(end) - BDay(offset)
-        end = end.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+    # Step 2: Ensure we're on a valid business day (not weekend or holiday)
+    # Use a single consolidated loop to handle both weekends and holidays
+    max_iterations = 10  # Prevent infinite loops
+    iterations = 0
 
-    ## Make End Comparison same day if after 16:00
-    elif pd.Timestamp(end).time() >= pd.Timestamp("16:00").time() and time_of_day_aware:
-        end_dt = pd.to_datetime(end)
-        end = end_dt.replace(hour=16, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+    while (not is_busday(end_dt) or is_USholiday(end_dt)) and iterations < max_iterations:
+        if offset == 0:
+            # Try to find nearest business day (prefer backward)
+            end_dt = end_dt - BDay(1)
+        elif offset > 0:
+            # Move backward
+            end_dt = end_dt - BDay(offset)
+        else:  # offset < 0
+            # Move forward
+            end_dt = end_dt + BDay(abs(offset))
 
-    # Make End Comparison prev day if holiday
-    while is_USholiday(end):
-        end_dt = pd.to_datetime(end)
-        end = (end_dt - BDay(offset)).strftime("%Y-%m-%d %H:%M:%S")
-    
+        iterations += 1
+
+    if iterations >= max_iterations:
+        logger.warning(f"change_to_last_busday exceeded max iterations for date {end}")
+
+    # Step 3: Apply final time setting
     if not eod_time:
-        end = to_datetime(end)
-        end = end.replace(hour=0, minute=0, second=0, microsecond=0)
-        return end
-    
-    return datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+        end_dt = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    # elif not time_of_day_aware:
+    #     # If time_of_day_aware is False but eod_time is True, set to EOD
+    #     end_dt = end_dt.replace(hour=market_close.hour, minute=market_close.minute, second=0, microsecond=0)
+
+    return end_dt
 
 
 def is_class_method(cls, obj):
@@ -1793,7 +1934,7 @@ def is_class_method(cls, obj):
     bool: True if the object is a method of the class, False otherwise.
     """
     if inspect.isroutine(obj):
-        for name, member in inspect.getmembers(cls):
+        for _, member in inspect.getmembers(cls):
             if member is obj:
                 return True
     return False
