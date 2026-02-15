@@ -207,7 +207,8 @@ def _should_save_today(max_date: date) -> bool:
     """
     today = date.today()
     current_time = ny_now().time()
-    return max_date >= today and current_time >= TODAY_RELOAD_CUTOFF
+    _bool = max_date >= today and current_time >= TODAY_RELOAD_CUTOFF
+    return _bool
 
 
 def is_available_on_date(date: date) -> bool:
