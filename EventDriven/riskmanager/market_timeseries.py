@@ -156,7 +156,8 @@ from EventDriven.riskmanager.utils import (
     load_position_data_new
 )
 from trade.helpers.decorators import timeit
-from trade.helpers.threads import runThreads
+from trade.helpers.threads import runThreads # noqa
+from trade.helpers.pools import runProcesses # noqa
 from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
 from trade.assets.rates import get_risk_free_rate_helper
@@ -167,7 +168,6 @@ import numpy as np
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
-from module_test.raw_code.DataManagers.DataManagers import set_skip_mysql_query
 
 logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="WARNING")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
@@ -299,7 +299,7 @@ class BacktestTimeseries:
         """
         Calculate Greeks for a given position at a specific date.
         """
-        set_skip_mysql_query(True)
+        import time
 
         logger.info(
             f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {position_id}, Date: {date}"
@@ -324,8 +324,10 @@ class BacktestTimeseries:
             for p in position_dict.values():
                 for s in p:
                     ticker = swap_ticker(s["ticker"])
-            self.market_timeseries.load_timeseries(sym=ticker)
+            start_time = time.time()
+            # self.market_timeseries.load_timeseries(sym=ticker)
             timeseries_data = self.market_timeseries.get_timeseries(sym=ticker)
+            logger.info(f"Timeseries loading for {ticker} took {time.time() - start_time:.2f} seconds")
 
             @timeit
             def get_timeseries(_id, direction):
@@ -350,10 +352,12 @@ class BacktestTimeseries:
             for _set in positon_meta:
                 thread_input_list[0].append(_set[1])  ## Append the option id to the thread input list
                 thread_input_list[1].append(_set[0])  ## Append the direction to the thread input list
-
+            
+            start_time = time.time()
             runThreads(
                 get_timeseries, thread_input_list, block=True
             )  ## Run the threads to get the timeseries data for the options
+            print(f"Threads execution took {time.time() - start_time:.2f} seconds")
             position_data = sum(long) - sum(short)
             position_data = position_data[~position_data.index.duplicated(keep="first")]
             position_data.columns = [x.capitalize() for x in position_data.columns]
