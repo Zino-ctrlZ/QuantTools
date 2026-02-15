@@ -2,14 +2,15 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict, Tuple
 import inspect
 import pandas as pd
-from trade.backtester_.backtester_ import PTDataset
+from trade.backtester_.data import PTDataset
 from typing import List
 from dataclasses import dataclass
 import numpy as np
 from plotly.subplots import make_subplots
+from EventDriven.types import SignalID
 import plotly.graph_objects as go
-from pandas.tseries.offsets import BDay # noqa
-from trade.helpers.helper import change_to_last_busday # noqa
+from pandas.tseries.offsets import BDay  # noqa
+from trade.helpers.helper import change_to_last_busday  # noqa
 from ._types import Side, SideInt  # noqa
 
 
@@ -25,20 +26,22 @@ class Indicator:
 class TradeDecision:
     ok: bool
     side: int
+    signal_id: Optional[SignalID] = None
 
     def __post_init__(self):
         if not isinstance(self.ok, (bool, np.bool_)):
             raise TypeError("TradeDecision.ok must be a boolean.")
         if not isinstance(self.side, int):
             raise TypeError("TradeDecision.side must be an integer.")
-
+        if self.signal_id is not None and not isinstance(self.signal_id, SignalID):
+            raise TypeError("TradeDecision.signal_id must be of type SignalID or None.")
         self.ok = bool(self.ok)
 
     def __bool__(self):
         return self.ok
 
     def __repr__(self):
-        return f"TradeDecision(ok={self.ok}, side={self.side})"
+        return f"TradeDecision(ok={self.ok}, side={self.side}, signal_id={self.signal_id})"
 
 
 @dataclass
@@ -169,12 +172,12 @@ class StrategyBase(ABC):
                 )
 
     def __init__(
-        self, 
-        data: PTDataset, 
-        start_trading_date: Optional[str] = None, 
-        ticker: Optional[str] = None, 
+        self,
+        data: PTDataset,
+        start_trading_date: Optional[str] = None,
+        ticker: Optional[str] = None,
         tplusn: Optional[int | float] = 1,
-        **kwargs
+        **kwargs,
     ):
         """
         Initializes the strategy with data and parameters.
@@ -676,7 +679,10 @@ class StrategyBase(ABC):
         """
         return self.position_open
 
-    def simulate(self, finalize: bool = True) -> Tuple[List[Dict[str, Any]], pd.Series]:
+    def simulate(self, 
+                 finalize: bool = True,
+                 enforce_open_on_signal: bool = True,
+                 enforce_close_on_signal: bool = False) -> Tuple[List[Dict[str, Any]], pd.Series]:
         """
         Run a backtest simulation of the strategy across all available data.
 
@@ -687,6 +693,9 @@ class StrategyBase(ABC):
         Args:
             finalize (bool, optional): If True, close any open position at the end
                 of the simulation. Defaults to True.
+
+            enforce_open_on_signal (bool, optional): If True, when executing a scheduled open trade (t+n), re-check that the open signal is still valid at execution time. Defaults to True.
+            enforce_close_on_signal (bool, optional): If True, when executing a scheduled close trade (t+n), re-check that the close signal is still valid at execution time. Defaults to False.
 
         Returns:
             Tuple[List[Dict[str, Any]], pd.Series]:
@@ -708,14 +717,17 @@ class StrategyBase(ABC):
         n = self._n
         close = self._close
         dates = self._index  # pd.DatetimeIndex for consistent timestamps
-        tn = self.tplusn # noqa
+        tn_int = int(self.tplusn) if self.tplusn is not None else 0
 
-        trades = []
+        trades: List[Dict[str, Any]] = []
         equity = np.empty(n, dtype=float)
         equity[0] = 1.0
         entry_price: Optional[float] = None
 
         eq = 1.0
+
+        # pending executions: map execution_index -> list of ops ("open"/"close")
+        pending: Dict[int, List[Dict[str, Any]]] = {}
 
         # We start from i=0; interval returns apply from i-1 -> i if in position at i-1
         for i in range(n):
@@ -731,36 +743,79 @@ class StrategyBase(ABC):
                     ratio = current_price / prev_price
                     eq *= ratio**position_side  # adjust for short/long
 
-            # 2) Decide actions using today's bar
+            # 2) First, process any scheduled executions for this index
+            for op in pending.pop(i, []):
+                if op.get("action") == "open":
+
+                    ## Optionally enforce that the signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
+                    enforce_open = self.should_open(index=i).ok if enforce_open_on_signal else True
+                    
+                    # only open if not already in a position
+                    if not self.position_open and enforce_open:
+                        self.open_action(index=i)
+                        entry_price = current_price
+                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
+                
+                elif op.get("action") == "close":
+                    ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
+                    enforce_close = self.should_close(index=i).ok if enforce_close_on_signal else True
+                    if self.position_open and enforce_close:
+                        self.close_action(index=i)
+                        return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
+                        return_pct *= position_side
+                        trades.append(
+                            {
+                                "date": ts,
+                                "action": "close",
+                                "price": current_price,
+                                "equity": eq,
+                                "return_pct": return_pct,
+                                "entry_price": entry_price,
+                            }
+                        )
+
+            # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
             if self.should_open(index=i):
-                self.open_action(index=i)
-                entry_price = current_price
-                trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
+                exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
+                if tn_int == 0:
+                    # immediate execution
+                    if not self.position_open:
+                        self.open_action(index=exec_idx)
+                        entry_price = current_price
+                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
+                else:
+                    pending.setdefault(exec_idx, []).append({"action": "open", "signal_index": i})
 
             elif self.should_close(index=i):
-                self.close_action(index=i)
-                return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
-                return_pct *= position_side  # adjust for short/long
-                trades.append(
-                    {
-                        "date": ts,
-                        "action": "close",
-                        "price": current_price,
-                        "equity": eq,
-                        "return_pct": return_pct,
-                        "entry_price": entry_price,
-                    }
-                )
+                exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
+                if tn_int == 0:
+                    if self.position_open:
+                        self.close_action(index=exec_idx)
+                        return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
+                        return_pct *= position_side
+                        trades.append(
+                            {
+                                "date": ts,
+                                "action": "close",
+                                "price": current_price,
+                                "equity": eq,
+                                "return_pct": return_pct,
+                                "entry_price": entry_price,
+                            }
+                        )
+                else:
+                    pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
             equity[i] = eq
 
+        # After loop, optionally finalize: if position still open close at last bar
         if finalize:
+            # There may be pending executions scheduled for the last bar; they've already executed
             if self.position_open:
-                # Close any open position at the last price
                 current_price = float(close[-1])
                 self.close_action(index=n - 1)
                 return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
-                return_pct *= self.position_side  # adjust for short/long
+                return_pct *= self.position_side
                 trades.append(
                     {
                         "date": dates[-1],

@@ -1,12 +1,13 @@
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 import pandas as pd
-from ._strategy import StrategyBase
 from .data import PTDataset
+if TYPE_CHECKING:
+    from ._strategy import StrategyBase
 
 REQUIRED = object()
 
 def make_bt_wrapper(
-    brain_cls: type[StrategyBase],
+    brain_cls: type["StrategyBase"],
     *,
     name: Optional[str] = None,
     param_overrides: Optional[Dict[str, Any]] = None,
