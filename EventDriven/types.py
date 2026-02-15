@@ -13,51 +13,60 @@ class Metrics(TypedDict):
     spread_oi: float
 
 
-
 class SignalID(str):
-    """
-    Unique identifier for a trading signal.
-    
+    """Unique identifier for a trading signal.
+
     Format:
         {TICKER}{YYYYMMDD}{SIGNAL_TYPE}
     """
-    def __init__(self, signal_id: str):
-        self.signal_id = signal_id
+
+    __slots__ = ("ticker", "date", "direction")
+
+    def __new__(cls, signal_id: str) -> "SignalID":
+        return super().__new__(cls, signal_id)
+
+    def __init__(self, signal_id: str) -> None:
         parsed = parse_signal_id(signal_id)
-        self.ticker = parsed['ticker']
-        self.date = parsed['date']
-        self.direction = parsed['direction']
+        self.ticker = parsed["ticker"]
+        self.date = parsed["date"]
+        self.direction = parsed["direction"]
 
     def parse(self) -> Dict[str, Any]:
-        return parse_signal_id(self.signal_id)
-    
+        return parse_signal_id(self)
+
     @staticmethod
-    def generate(underlier: str, date: pd.Timestamp, signal_type: str) -> 'SignalID':
+    def generate(underlier: str, date: pd.Timestamp, signal_type: str) -> "SignalID":
         signal_id = generate_signal_id(underlier, date, signal_type)
         return SignalID(signal_id)
-    
+
+    def __repr__(self) -> str:
+        return f"SignalID({str(self)})"
     
     def __str__(self):
-        return self.signal_id
-    def __repr__(self):
-        return f"SignalID({self.signal_id})"
-    
+        return super().__str__()
+
+
 class TradeID(str):
-    """
-    Unique identifier for a trade execution.
-    
+    """Unique identifier for a trade execution.
+
     Format:
         &L:{LONG_LEG_1}&L:{LONG_LEG_2}...&S:{SHORT_LEG_1}&S:{SHORT_LEG_2}...
     """
-    def __init__(self, trade_id: str):
-        self.trade_id = trade_id
+
+    __slots__ = ("meta", "legs")
+
+    def __new__(cls, trade_id: str) -> "TradeID":
+        return super().__new__(cls, trade_id)
+
+    def __init__(self, trade_id: str) -> None:
         self.meta, self.legs = parse_position_id(trade_id)
 
-    def __str__(self):
-        return self.trade_id
+    def __repr__(self) -> str:
+        return f"TradeID({str(self)})"
     
-    def __repr__(self):
-        return f"TradeID({self.trade_id})"
+    def __str__(self):
+        return super().__str__()
+
 
 class OrderDataDict(TypedDict):
     trade_id: str
@@ -65,6 +74,7 @@ class OrderDataDict(TypedDict):
     short: List[str]
     close: float
     quantity: int
+
 
 class OrderDict(TypedDict):
     result: str
@@ -74,6 +84,7 @@ class OrderDict(TypedDict):
     data: OrderDataDict
     metrics: Metrics | None
 
+
 class PositionsDict(TypedDict):
     position: OrderDataDict
     quantity: int
@@ -81,75 +92,83 @@ class PositionsDict(TypedDict):
     market_value: float
     signal_id: str
 
+
 class ResultsEnum(Enum):
-    SUCCESSFUL = 'SUCCESSFUL'
-    MONEYNESS_TOO_TIGHT = 'MONEYNESS_TOO_TIGHT'
-    NO_ORDERS = 'NO_ORDERS'
-    UNSUCCESSFUL = 'UNSUCCESSFUL'
-    IS_HOLIDAY = 'IS_HOLIDAY'
-    UNAVAILABLE_CONTRACT = 'NO LISTED CONTRACTS'
-    MAX_PRICE_TOO_LOW = 'MAX_PRICE_TOO_LOW'
-    TOO_ILLIQUID = 'TOO_ILLIQUID'
-    NO_TRADED_CLOSE = 'NO_TRADED_CLOSE'
-    IS_WEEKEND = 'IS_WEEKEND'
-    NO_CONTRACTS_FOUND = 'NO_CONTRACTS_FOUND'
-    POSITION_SIZE_ZERO = 'POSITION_SIZE_ZERO'
-    
-class EventTypes(Enum): 
-  SIGNAL = 'SIGNAL'
-  ORDER = 'ORDER'
-  FILL = 'FILL'
-  MARKET = 'MARKET'
-  EXERCISE = 'EXERCISE'
-  ROLL = 'ROLL'
-  ADJUST = 'ADJUST'
-  CLOSE = 'CLOSE'
-  OPEN = 'OPEN'
-  HOLD = 'HOLD'
+    SUCCESSFUL = "SUCCESSFUL"
+    MONEYNESS_TOO_TIGHT = "MONEYNESS_TOO_TIGHT"
+    NO_ORDERS = "NO_ORDERS"
+    UNSUCCESSFUL = "UNSUCCESSFUL"
+    IS_HOLIDAY = "IS_HOLIDAY"
+    UNAVAILABLE_CONTRACT = "NO LISTED CONTRACTS"
+    MAX_PRICE_TOO_LOW = "MAX_PRICE_TOO_LOW"
+    TOO_ILLIQUID = "TOO_ILLIQUID"
+    NO_TRADED_CLOSE = "NO_TRADED_CLOSE"
+    IS_WEEKEND = "IS_WEEKEND"
+    NO_CONTRACTS_FOUND = "NO_CONTRACTS_FOUND"
+    POSITION_SIZE_ZERO = "POSITION_SIZE_ZERO"
+
+
+class EventTypes(Enum):
+    SIGNAL = "SIGNAL"
+    ORDER = "ORDER"
+    FILL = "FILL"
+    MARKET = "MARKET"
+    EXERCISE = "EXERCISE"
+    ROLL = "ROLL"
+    ADJUST = "ADJUST"
+    CLOSE = "CLOSE"
+    OPEN = "OPEN"
+    HOLD = "HOLD"
+
 
 class OrderStatus(Enum):
-    FILLED = 'FILLED'
-    CANCELLED = 'CANCELLED'
-    EXPIRED = 'EXPIRED'
-    FAILED = 'FAILED'
-    CONFIRMED = 'CONFIRMED'
+    FILLED = "FILLED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
+    FAILED = "FAILED"
+    CONFIRMED = "CONFIRMED"
+
+
 class PositionEffect(Enum):
-  OPEN = 'OPEN'
-  CLOSE = 'CLOSE'
-  
+    OPEN = "OPEN"
+    CLOSE = "CLOSE"
+
+
 class SignalTypes(Enum):
-    LONG = 'LONG'
-    SHORT = 'SHORT'
-    CLOSE = 'CLOSE'
+    LONG = "LONG"
+    SHORT = "SHORT"
+    CLOSE = "CLOSE"
+
 
 class FillDirection(Enum):
-    BUY = 'BUY'
-    SELL = 'SELL'
-    EXERCISE = 'EXERCISE'
+    BUY = "BUY"
+    SELL = "SELL"
+    EXERCISE = "EXERCISE"
+
 
 class PositionAdjustmentReason(Enum):
-   DTE_ROLL = 'DTE_ROLL'
-   MONEYNESS_ROLL = 'MONEYNESS_ROLL'
-   LIMIT_BREACH = 'LIMIT_BREACH'
+    DTE_ROLL = "DTE_ROLL"
+    MONEYNESS_ROLL = "MONEYNESS_ROLL"
+    LIMIT_BREACH = "LIMIT_BREACH"
 
 
 @dataclass
 class OrderData:
     """
         Represents detailed execution data for a trading order.
-    
+
     This class contains the specific trade execution details including
     position information, pricing, and quantities. It's used as a
     nested data structure within the Order class to organize trade-specific
     information.
-    
+
     Attributes:
         trade_id (str): Unique identifier for the trade execution
         long (List[str]): List of symbols/positions for long positions
         short (List[str]): List of symbols/positions for short positions
         close (float): Closing price or execution price for the trade
         quantity (int): Number of shares/contracts in the trade
-    
+
     Example:
         >>> order_data = OrderData(
         ...     trade_id='&L:BA20260515C285&S:BA20260515C290',
@@ -159,6 +178,7 @@ class OrderData:
         ...     quantity=1
         ... )
     """
+
     trade_id: str
     long: List[str]
     short: List[str]
@@ -168,21 +188,20 @@ class OrderData:
     def __getitem__(self, key):
         """Get item like a dict, dict[key]"""
         return getattr(self, key)
-    
+
     def __setitem__(self, key, value):
         """Set item like a dict, dict[key] = value"""
         setattr(self, key, value)
 
     def __repr__(self):
         """String representation of OrderData"""
-        return (f"OrderData(trade_id={self.trade_id}, quantity={self.quantity})")
-                
+        return f"OrderData(trade_id={self.trade_id}, quantity={self.quantity})"
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
         return getattr(self, key, default)
-    
-    def keys(self): 
+
+    def keys(self):
         """Return keys like a dict"""
         return self.__dict__.keys()
 
@@ -190,42 +209,35 @@ class OrderData:
         """Return items like a dict"""
         return [(key, getattr(self, key)) for key in self.keys()]
 
-    @staticmethod 
-    def from_dict(d: Dict[str, Any]) -> 'OrderData':
+    @staticmethod
+    def from_dict(d: Dict[str, Any]) -> "OrderData":
         """Convert dictionary to OrderData dataclass"""
         return OrderData(**d)
 
-    def to_dict(self) -> OrderDataDict: 
+    def to_dict(self) -> OrderDataDict:
         """Convert OrderData dataclass to dictionary"""
         return OrderDataDict(
-            trade_id=self.trade_id,
-            long=self.long,
-            short=self.short,
-            close=self.close,
-            quantity=self.quantity
+            trade_id=self.trade_id, long=self.long, short=self.short, close=self.close, quantity=self.quantity
         )
-
-
-
 
 
 @dataclass
 class Order:
     """
     Represents a trading order with signal information and execution data.
-    
+
     This class encapsulates all the information related to a trading order,
     including the signal that generated it, execution results, and detailed
     trade data. It provides dictionary-like access methods for compatibility
     with existing code that expects dictionary objects.
-    
+
     Attributes:
         result (str): The execution result of the order (e.g., 'SUCCESSFUL', 'FAILED')
         signal_id (str): Unique identifier for the signal that generated this order
         map_signal_id (str): Mapped signal identifier for tracking purposes
         date (date): The date when the signal was generated
         data (OrderData): Detailed trade execution data including positions and pricing
-    
+
     Methods:
         __getitem__(key): Get attribute value using dictionary-style access
         __setitem__(key, value): Set attribute value using dictionary-style access
@@ -234,7 +246,7 @@ class Order:
         items(): Return list of (key, value) pairs (dict-like)
         to_dict(): Convert Order object to dictionary representation
         from_dict(d): Create Order object from dictionary (static method)
-    
+
     Example:
         >>> order = Order(
         ...     result='SUCCESSFUL',
@@ -248,6 +260,7 @@ class Order:
         >>> order_dict = order.to_dict()  # Convert to dict
         >>> restored_order = Order.from_dict(order_dict)  # Convert back
     """
+
     result: str
     signal_id: str
     map_signal_id: str
@@ -258,20 +271,20 @@ class Order:
     def __getitem__(self, key):
         """Get item like a dict, dict[key]"""
         return getattr(self, key)
-    
+
     def __setitem__(self, key, value):
         """Set item like a dict, dict[key] = value"""
         setattr(self, key, value)
 
     def __repr__(self):
         """String representation of Order"""
-        return (f"Order(signal_id={self.signal_id}), data={self.data}, result={self.result}, metrics={self.metrics})")
+        return f"Order(signal_id={self.signal_id}), data={self.data}, result={self.result}, metrics={self.metrics})"
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
         return getattr(self, key, default)
-    
-    def keys(self): 
+
+    def keys(self):
         """Return keys like a dict"""
         return self.__dict__.keys()
 
@@ -283,11 +296,11 @@ class Order:
         """Convert Order dataclass to dictionary"""
         # Convert the nested OrderData object to dict
         data_dict = {
-            'trade_id': self.data.trade_id,
-            'long': self.data.long,
-            'short': self.data.short,
-            'close': self.data.close,
-            'quantity': self.data.quantity
+            "trade_id": self.data.trade_id,
+            "long": self.data.long,
+            "short": self.data.short,
+            "close": self.data.close,
+            "quantity": self.data.quantity,
         }
         data_dict = OrderDataDict(**data_dict)
         order_dict = OrderDict(
@@ -296,47 +309,38 @@ class Order:
             map_signal_id=self.map_signal_id,
             date=self.date,
             data=data_dict,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
-        
+
         # Return the main dictionary
         return order_dict
 
     @staticmethod
-    def from_dict(d: Dict[str, Any]) -> 'Order':
+    def from_dict(d: Dict[str, Any]) -> "Order":
         """Convert dictionary to Order dataclass"""
         # Extract the nested data dict
-        data_dict = d['data']
-        metrics = d.get('metrics', None)
-        
+        data_dict = d["data"]
+        metrics = d.get("metrics", None)
+
         # Convert nested data dict to OrderData object
         if data_dict is None:
-            data_dict = {
-                'trade_id': None,
-                'long': None,
-                'short': None,
-                'close': None,
-                'quantity': None}
-            
+            data_dict = {"trade_id": None, "long": None, "short": None, "close": None, "quantity": None}
+
         if metrics is not None:
-            d['metrics'] = Metrics(
-                spread_pct_ratio=metrics['spread_pct_ratio'],
-                spread_oi=metrics['spread_oi']
-            )
+            d["metrics"] = Metrics(spread_pct_ratio=metrics["spread_pct_ratio"], spread_oi=metrics["spread_oi"])
         else:
-            d['metrics'] = None
+            d["metrics"] = None
 
         order_data = OrderData(
-            trade_id=data_dict['trade_id'],
-            long=data_dict.get('long', []),
-            short=data_dict.get('short', []),
-            close=data_dict.get('close', np.nan),
-            quantity=data_dict.get('quantity', 0),
-            
+            trade_id=data_dict["trade_id"],
+            long=data_dict.get("long", []),
+            short=data_dict.get("short", []),
+            close=data_dict.get("close", np.nan),
+            quantity=data_dict.get("quantity", 0),
         )
-        
+
         # Create and return Order object
-        raw_date = d.get('date')
+        raw_date = d.get("date")
         date = pd.to_datetime(raw_date).date() if raw_date is not None else None
         return Order(
             result=d["result"],
