@@ -345,6 +345,8 @@ class OptionSignalBacktest:
         """
         Handles the t_plus_n logic for trades, adjusting entry and exit times based on the t_plus_n value.
         """
+        if self.config.t_plus_n > 1:
+            raise ValueError("t_plus_n must be either 0 or 1.")
         if self.config.t_plus_n > 0:
             self.logger.info(f"Adjusting EntryTime and ExitTime by {self.config.t_plus_n} business days")
             ## Adjust EntryTime and ExitTime by t_plus_n business days
@@ -358,8 +360,6 @@ class OptionSignalBacktest:
                 if pd.notna(x)
                 else x
             )  ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
-        elif self.config.t_plus_n > 1:
-            raise ValueError("t_plus_n must be either 0 or 1.")
         return trades
 
     def run(self):

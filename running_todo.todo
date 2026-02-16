@@ -54,7 +54,7 @@ Todo before going back to backtesting:
         - Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual.
         - New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)`
     ✔ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval) @done(26-02-15 19:45)
-    ☐ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup.
+    ✔ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup. @done(26-02-15 20:39)
     ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29)
     ✔ Close signals added to signals table @done(26-02-09 16:34)
     ☐ Ensure backtesting a live strategy works seamlessly

@@ -60,9 +60,11 @@ def make_bt_wrapper(
         ds = dataset_factory(self.data.df)
 
         # Pass start_date directly (Timestamp or None)
+        ticker_name = getattr(ds, "name", None) or getattr(ds, "ticker", None) or "NA"
         self.brain = brain_cls(
             data=ds,
             start_trading_date=self.start_date,
+            ticker=ticker_name,
             **brain_kwargs,
         )
 
@@ -79,7 +81,6 @@ def make_bt_wrapper(
 
     def _next(self):
         date = self.data.index[-1]
-
         open_decision = self.brain.should_open(date=date)
         if open_decision.ok:
             if verbose:
