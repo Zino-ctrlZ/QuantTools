@@ -7,7 +7,7 @@ from typing import List
 from dataclasses import dataclass
 import numpy as np
 from plotly.subplots import make_subplots
-from EventDriven.types import SignalID
+from EventDriven.types import PositionEffect, SignalID
 import plotly.graph_objects as go
 from pandas.tseries.offsets import BDay  # noqa
 from trade.helpers.helper import change_to_last_busday  # noqa
@@ -26,22 +26,56 @@ class Indicator:
 class TradeDecision:
     ok: bool
     side: int
+    pos_effect: Optional[PositionEffect] = None
     signal_id: Optional[SignalID] = None
+    sideint: Optional[int] = None
+    side_enum: Optional[Side] = None
 
     def __post_init__(self):
         if not isinstance(self.ok, (bool, np.bool_)):
             raise TypeError("TradeDecision.ok must be a boolean.")
         if not isinstance(self.side, int):
             raise TypeError("TradeDecision.side must be an integer.")
-        if self.signal_id is not None and not isinstance(self.signal_id, SignalID):
-            raise TypeError("TradeDecision.signal_id must be of type SignalID or None.")
+        if self.side not in (1, -1, 0):
+            raise ValueError("TradeDecision.side must be 1 (long), -1 (short), or 0 (no position).")
+        if (self.signal_id is not None and not isinstance(self.signal_id, SignalID)) and self.signal_id != "N/A":
+            raise TypeError("TradeDecision.signal_id must be of type SignalID, 'N/A', or None.")
+        if self.pos_effect is not None and not isinstance(self.pos_effect, PositionEffect):
+            raise TypeError("TradeDecision.pos_effect must be of type PositionEffect or None.")
+        
+        ## Enforcing needed information:
+        if self.ok:
+            if self.side == 0:
+                raise ValueError("If ok is True, side cannot be 0 (no position).")
+            if self.pos_effect is None:
+                raise ValueError("If ok is True, pos_effect must be provided.")
+            if self.signal_id is None:
+                raise ValueError("If ok is True, signal_id must be provided. If this is a close with no prior signal, set signal_id to N/A")
+            
+            ## If Open signal_id must be parseable, if Close signal_id must be parseable or N/A
+            if self.pos_effect == PositionEffect.OPEN:
+                if self.signal_id == "N/A":
+                    raise ValueError("If pos_effect is OPEN, signal_id cannot be 'N/A'. It must be a valid SignalID.")
+                try:
+                    SignalID.parse(self.signal_id)
+                except Exception as e:
+                    raise ValueError(f"Invalid signal_id: {self.signal_id}") from e
+            elif self.pos_effect == PositionEffect.CLOSE:
+                if self.signal_id != "N/A":
+                    try:
+                        SignalID.parse(self.signal_id)
+                    except Exception as e:
+                        raise ValueError(f"Invalid signal_id: {self.signal_id}") from e
+            
         self.ok = bool(self.ok)
+        self.sideint = int(self.side)
+        self.side_enum = Side.LONG if self.sideint == 1 else Side.SHORT if self.sideint == -1 else None
 
     def __bool__(self):
         return self.ok
 
     def __repr__(self):
-        return f"TradeDecision(ok={self.ok}, side={self.side}, signal_id={self.signal_id})"
+        return f"TradeDecision(ok={self.ok}, side={self.side}, signal_id={self.signal_id}, pos_effect={self.pos_effect})"
 
 
 @dataclass
@@ -49,9 +83,16 @@ class PositionInfo:
     entry_date: Optional[pd.Timestamp] = None
     entry_price: Optional[float] = None
     side: Optional[SideInt] = None
+    signal_id: Optional[SignalID] = None
+
+    def __post_init__(self):
+        ## If any of the fields are set, they must all be set (for simplicity of logic elsewhere)
+        fields = [self.entry_date, self.entry_price, self.side, self.signal_id]
+        if any(f is not None for f in fields) and not all(f is not None for f in fields):
+            raise ValueError("If any of entry_date, entry_price, side, or signal_id is set, they must all be set.")
 
     def __bool__(self):
-        return self.entry_date is not None and self.entry_price is not None and self.side is not None
+        return self.entry_date is not None and self.entry_price is not None and self.side is not None and self.signal_id is not None
 
 
 class StrategyBase(ABC):
@@ -196,9 +237,7 @@ class StrategyBase(ABC):
         self.ticker = ticker
         self.tplusn = tplusn
 
-        self.position_open: bool = False
-        self.position_side: Optional[SideInt] = SideInt.BUY
-        self.position_info: PositionInfo = PositionInfo()
+        self.position_info: Optional[PositionInfo] = PositionInfo()
         self.stop: Optional[float] = None
         self.indicators: Dict[str, Any] = {}
 
@@ -222,6 +261,24 @@ class StrategyBase(ABC):
 
         # Let subclass set up indicators, etc.
         self.setup()
+
+    @property
+    def position_open(self) -> bool:
+        """Returns True if a position is currently open."""
+        return self.position_info is not None and bool(self.position_info)
+    
+    @property
+    def position_side(self) -> Optional[SideInt]:
+        """Returns the side of the current position (BUY=1, SELL=-1) or None if no position."""
+        return self.position_info.side if self.position_info and self.position_info.side is not None else None
+    
+    @position_side.setter
+    def position_side(self, value: SideInt):
+        raise AttributeError("position_side is a read-only property. To change position side, use open_action() and close_action() methods which handle state updates and validations.")
+    
+    @position_open.setter
+    def position_open(self, value: bool):
+        raise AttributeError("position_open is a read-only property. To change position status, use open_action() and close_action() methods which handle state updates and validations.")
 
     def _resolve(self, *, date: pd.Timestamp = None, index: int = None) -> Tuple[int, pd.Timestamp]:
         """
@@ -376,7 +433,15 @@ class StrategyBase(ABC):
         raise NotImplementedError("Subclasses must implement is_close_signal() method.")
 
     @abstractmethod
-    def open_action(self, *, date: pd.Timestamp = None, index: int = None) -> None:
+    def open_action(
+        self,
+        *,
+        signal_id: Optional[str] = None,
+        entry_price: Optional[float] = None,
+        side: Optional[int] = None,
+        date: pd.Timestamp = None,
+        index: int = None,
+    ) -> None:
         """
         Execute actions when opening a new position.
 
@@ -401,7 +466,21 @@ class StrategyBase(ABC):
                 self.position_open = True
                 self.stop = self.close[idx] * 0.95  # 5% stop-loss
         """
-        raise NotImplementedError("Subclasses must implement open_action() method.")
+        assert signal_id is not None, "signal_id must be provided for open_action"
+        assert side is not None, "side must be provided for open_action"
+
+
+        ## Skip setting position info if any of the required components are missing
+        ## This is primarily to handle the case where open_action is called without all necessary information, such as during certain backtesting scenarios or when signals are generated without complete data.
+        if any(v is None for v in [signal_id, entry_price, side]):
+            return 
+        
+        self.position_info = PositionInfo(
+            entry_date=date,
+            entry_price=entry_price,
+            side=side,
+            signal_id=signal_id
+        )
 
     @abstractmethod
     def close_action(self, *, date: pd.Timestamp = None, index: int = None) -> None:
@@ -428,7 +507,7 @@ class StrategyBase(ABC):
                 self.position_open = False
                 self.stop = None
         """
-        pass
+        self.remove_position_info()
 
     # --- NumPy-first data access ---
     @property
@@ -490,6 +569,16 @@ class StrategyBase(ABC):
             np.ndarray: Array of pandas Timestamps indexed by bar position
         """
         return self._dates
+    
+    def reset(self):
+        """
+        Reset the strategy to its initial state.
+
+        This method can be called to clear any open positions and reset indicators
+        before running a new simulation. It sets position_info to a new instance and stop to None.
+        """
+        self.stop = None
+        self.position_info = PositionInfo()
 
     def reset_strategy_state(self):
         """
@@ -499,11 +588,11 @@ class StrategyBase(ABC):
         Can also be called manually if needed to reset the strategy between simulations.
 
         Resets:
-        - position_open: Set to False
+        - position_info: Set to a new instance of PositionInfo
         - stop: Set to None
         """
-        self.position_open = False
         self.stop = None
+        self.position_info = PositionInfo()
 
     def info_on_date(self, *, date: pd.Timestamp = None, index: int = None) -> Dict[str, Any]:
         """
@@ -544,6 +633,8 @@ class StrategyBase(ABC):
             "is_open_signal": self.is_open_signal(date=ts),
             "is_close_signal": self.is_close_signal(date=ts),
             "position_open": self.position_open,
+            "position_side": self.position_side,
+            "position_info": self.position_info,
             "stop": self.stop,
         }
         info["indicators"] = ind_snapshot
@@ -595,15 +686,7 @@ class StrategyBase(ABC):
         Note:
             Provide exactly one of date or index.
         """
-
-        return TradeDecision(
-            ok=(
-                self.should_trade(date=date, index=index)
-                and (not self.position_open)
-                and self.is_open_signal(date=date, index=index)
-            ),
-            side=1,
-        )
+        raise NotImplementedError("Subclasses must implement should_open() method to return a TradeDecision object.")
 
     def should_close(self, *, date: pd.Timestamp = None, index: int = None) -> TradeDecision:
         """
@@ -626,7 +709,7 @@ class StrategyBase(ABC):
         Note:
             Provide exactly one of date or index.
         """
-        return TradeDecision(ok=(self.position_open and self.is_close_signal(date=date, index=index)), side=-1)
+        raise NotImplementedError("Subclasses must implement should_close() method to return a TradeDecision object.")
 
     def add_indicator(self, name: str, series: pd.Series, overlay: bool = False, color: Optional[str] = "red") -> None:
         """
@@ -677,11 +760,48 @@ class StrategyBase(ABC):
         Returns:
             bool: True if position is open, False otherwise
         """
-        return self.position_open
+        return bool(self.position_info)
+    
+    def set_position_info(
+        self,
+        *,
+        entry_date: Optional[pd.Timestamp] = None,
+        entry_price: Optional[float] = None,
+        side: Optional[SideInt] = None,
+        signal_id: Optional[SignalID] = None,
+    ) -> None:
+        """
+        Set the current position information.
+
+        Args:
+            entry_date (pd.Timestamp, optional): Date when the position was opened
+            entry_price (float, optional): Price at which the position was opened
+            side (SideInt, optional): Position side (SideInt.BUY or SideInt.SELL)
+            signal_id (SignalID, optional): Identifier for the signal that triggered the position
+
+        Note:
+            This method is a convenient way to update all position info attributes at once.
+            You can also set these attributes individually if needed.
+        """
+        signal_id = SignalID(signal_id) if signal_id is not None else None
+        self.position_info = PositionInfo(
+            entry_date=entry_date,
+            entry_price=entry_price,
+            side=side,
+            signal_id=signal_id,
+        )
+
+    def remove_position_info(self) -> None:
+        """
+        Clear the current position information.
+
+        This is typically called when closing a position to reset the state.
+        """
+        self.position_info = PositionInfo()
 
     def simulate(self, 
                  finalize: bool = True,
-                 enforce_open_on_signal: bool = True,
+                 enforce_open_on_signal: bool = False,
                  enforce_close_on_signal: bool = False) -> Tuple[List[Dict[str, Any]], pd.Series]:
         """
         Run a backtest simulation of the strategy across all available data.
@@ -752,7 +872,7 @@ class StrategyBase(ABC):
                     
                     # only open if not already in a position
                     if not self.position_open and enforce_open:
-                        self.open_action(index=i)
+                        self.open_action(index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price)
                         entry_price = current_price
                         trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
                 
@@ -775,16 +895,17 @@ class StrategyBase(ABC):
                         )
 
             # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
-            if self.should_open(index=i):
+            open_decision = self.should_open(index=i)
+            if open_decision.ok:
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
                 if tn_int == 0:
                     # immediate execution
                     if not self.position_open:
-                        self.open_action(index=exec_idx)
+                        self.open_action(index=exec_idx, side=open_decision.side, signal_id=open_decision.signal_id, entry_price=current_price)
                         entry_price = current_price
                         trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
                 else:
-                    pending.setdefault(exec_idx, []).append({"action": "open", "signal_index": i})
+                    pending.setdefault(exec_idx, []).append({"action": "open", "signal_index": i, "side": open_decision.side, "signal_id": open_decision.signal_id})
 
             elif self.should_close(index=i):
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)

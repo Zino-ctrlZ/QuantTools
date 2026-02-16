@@ -257,7 +257,8 @@ class HistoricTradeDataHandler(DataHandler):
                  trades_df: pd.DataFrame, 
                  symbol_list: Optional[list] = None,
                  finalize_trades: bool = True,
-                 end_date: pd.Timestamp = None): 
+                 end_date: pd.Timestamp = None,
+                 start_date: pd.Timestamp = None): 
         """
             trades: pd.DataFrame
                 Dataframe of trades to be used for backtesting, necessary columns are EntryTime, ExitTime, EntryPrice, ExitPrice, EntryType, ExitType, Symbol
@@ -265,18 +266,30 @@ class HistoricTradeDataHandler(DataHandler):
                 Event scheduler to push events to the event queue
         """
         self.finalize_trades = finalize_trades
-        trades_df = trades_df.copy()
-        if 'signal_id' not in trades_df.columns:
-            trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
-        else:
-            logger.info("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
-        self.trades_df = trades_df
-        self.continue_backtest = True 
-        self.events = events
+        self.start_date = start_date
         self.end_date = end_date
-        self._open_trade_data()
-        self.options_data = {}
-        self.symbol_list = symbol_list if symbol_list is not None else self.trades_df['Ticker'].unique().tolist()
+        trades_df = trades_df.copy()
+
+        if not trades_df.empty:
+            if 'signal_id' not in trades_df.columns:
+                    trades_df['signal_id'] = trades_df.apply(lambda row: generate_signal_id(row['Ticker'], row['EntryTime'], SignalTypes.LONG.value if row['Size'] > 0 else SignalTypes.SHORT.value), axis=1)
+            else:
+                logger.info("Trades DataFrame already contains 'signal_id' column. If this is unintended, please remove it to allow automatic generation.")
+            self.trades_df = trades_df
+            self.events = events
+            self._open_trade_data()
+            self.options_data = {}
+            self.symbol_list = symbol_list if symbol_list is not None else trades_df['Ticker'].unique().tolist()
+        else:
+            logger.warning("Trades DataFrame is empty. No trade data to process.")
+            self.signal_df = pd.DataFrame()  # Initialize an empty DataFrame to avoid attribute errors later
+            assert symbol_list is not None, "Symbol list must be provided if trades DataFrame is empty."
+            self.symbol_list = symbol_list
+
+        self.trades_df = trades_df
+        self.continue_backtest = True
+        self.events = events
+        
         
         
         

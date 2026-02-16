@@ -1,5 +1,5 @@
 from queue import Empty as emptyEventQueue
-from typing import Optional, cast, Union
+from typing import Optional, cast
 import pandas as pd
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.event import Event
@@ -8,7 +8,6 @@ from EventDriven.new_portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
 from EventDriven.riskmanager.new_base import RiskManager
 from EventDriven.eventScheduler import EventScheduler
-from trade.backtester_._helper import StrategyBase
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday
@@ -19,7 +18,7 @@ from pandas.tseries.offsets import BDay
 from EventDriven.types import EventTypes, SignalTypes
 from EventDriven.configs.core import BacktesterConfig
 
-LOGGER = setup_logger("OptionSignalBacktest")
+LOGGER = setup_logger("OptionSignalBacktest", stream_log_level="WARNING")
 
 
 class OptionSignalBacktest:
@@ -95,11 +94,11 @@ class OptionSignalBacktest:
 
     def __init__(
         self,
-        trades: pd.DataFrame,
+        trades: pd.DataFrame = None,
         initial_capital: int | float = 100000,
         symbol_list=None,
         *,
-        strategy: Optional[Union[StrategyBase, MultiAssetStrategy]] = None,
+        eq_strategy: Optional[MultiAssetStrategy] = None,
         config: Optional[BacktesterConfig] = None,
         end_date: Optional[pd.Timestamp] = None,
     ) -> None:
@@ -133,6 +132,10 @@ class OptionSignalBacktest:
                 List of symbols to track. If None, extracted from trades DataFrame.
                 Useful for including symbols that may appear later in the backtest.
 
+            eq_strategy (MultiAssetStrategy, optional):
+                Equity strategy instance. When provided, trades DataFrame is ignored and
+                signals are generated from the strategy.
+
             config (BacktesterConfig, optional):
                 Configuration object controlling backtest behavior. If None, uses defaults.
                 Key configuration options:
@@ -147,10 +150,10 @@ class OptionSignalBacktest:
                 Useful for extending backtests beyond the last trade exit.
 
         Raises:
-            config: BacktesterConfig
             TypeError: If config is not a BacktesterConfig instance or None
             ValueError: If trades DataFrame is empty
             ValueError: If t_plus_n is not 0 or 1
+            ValueError: If both trades and eq_strategy are provided
 
         Notes:
             - Trades are automatically adjusted for T+N settlement if configured
@@ -165,8 +168,7 @@ class OptionSignalBacktest:
             ...     t_plus_n=1,  # Next-day settlement
             ...     max_slippage_pct=0.002,  # 0.2% max slippage
             ...     finalize_trades=True
-                self.config: BacktesterConfig = cast(
-            >>>
+            ... )
             >>> backtest = OptionSignalBacktest(
             ...     trades=my_trades_df,
             ...     initial_capital=500000,
@@ -174,23 +176,24 @@ class OptionSignalBacktest:
             ...     config=config,
             ...     end_date=pd.Timestamp('2024-12-31')
             ... )
+            >>>
+            >>> # Equity strategy mode
+            >>> backtest_eq = OptionSignalBacktest(
+            ...     eq_strategy=my_multi_asset_strategy,
+            ...     initial_capital=500000,
+            ...     end_date=pd.Timestamp('2024-12-31')
+            ... )
 
         See Also:
             BacktesterConfig: For detailed configuration options
             clean_run(): To re-run backtest with different parameters
         """
-        self.__init__with_trades(trades, initial_capital, symbol_list, config=config, end_date=end_date)
-    
-    
-    def __init__with_trades(
-        self,
-        trades: pd.DataFrame,
-        initial_capital: int | float = 100000,
-        symbol_list=None,
-        *,
-        config: Optional[BacktesterConfig] = None,
-        end_date: Optional[pd.Timestamp] = None,
-    ) -> None:
+
+        if eq_strategy is not None and trades is not None:
+            raise ValueError("Cannot provide both trades DataFrame and eq_strategy. Please choose one.")
+        self.is_eq_strategy = eq_strategy is not None
+        self.eq_strategy: Optional[MultiAssetStrategy] = eq_strategy
+        self.strategy: Optional[OptionSignalStrategy] = None
         if config is not None and not isinstance(config, BacktesterConfig):
             raise TypeError("config must be an instance of BacktesterConfig or None")
 
@@ -198,7 +201,74 @@ class OptionSignalBacktest:
             BacktesterConfig,
             config if config is not None else BacktesterConfig(),
         )
+        self.end_date = end_date
+        if self.is_eq_strategy:
+            self.logger.info("Initializing backtest with equity strategy. Trades DataFrame will be ignored.")
+            self.__init__with_equity_strategy(eq_strategy, cash=initial_capital)
+        else:
+            self.logger.info("Initializing backtest with trades DataFrame. Equity strategy will not be used.")
+            if trades is None or trades.empty:
+                raise ValueError("Trades DataFrame cannot be None or empty when not using an equity strategy.")
+            self.__init__with_trades(trades, initial_capital, symbol_list, end_date=end_date)
 
+    def __init__with_equity_strategy(
+        self,
+        eq_strategy: MultiAssetStrategy,
+        cash: int | float = 100000,
+    ) -> None:
+        """
+        Initializes the backtest using an equity strategy. This method sets up the backtest components based on the provided MultiAssetStrategy instance.
+        Args:
+            eq_strategy (MultiAssetStrategy): An instance of MultiAssetStrategy containing the strategy logic and data.
+            cash (int | float, optional): Initial capital for the backtest. Defaults to 100000.
+        Raises:
+            AssertionError: If eq_strategy is not provided, not an instance of MultiAssetStrategy, or if end_date is not provided.
+        """
+        assert eq_strategy is not None, "Equity strategy must be provided for this initialization method"
+        assert isinstance(
+            eq_strategy, MultiAssetStrategy
+        ), f"eq_strategy must be an instance of MultiAssetStrategy, got {type(eq_strategy)}"
+        assert self.end_date is not None, "end_date must be provided for this initialization method"
+
+        ## We will not use trades dataframe in this process.
+        self.start_date = pd.to_datetime(eq_strategy.start_date).date()
+        start_date, end_date = self.start_date, self.end_date
+        self.eq_strategy.reset_strategies()
+
+        ## Initialize critical components
+        self.eventScheduler = EventScheduler(start_date, end_date)
+        self.bars = HistoricTradeDataHandler(
+            self.eventScheduler,
+            trades_df=pd.DataFrame(),  # No initial trades, will be generated by strategy
+            symbol_list=list(eq_strategy.data.keys()),
+            finalize_trades=self.config.finalize_trades,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        self.executor = SimulatedExecutionHandler(self.eventScheduler)
+        self.risk_manager = RiskManager(
+            symbol_list=self.bars.symbol_list,
+            bkt_start=start_date,
+            bkt_end=end_date,
+            initial_capital=cash,
+        )
+        self.portfolio = OptionSignalPortfolio(
+            self.bars,
+            self.eventScheduler,
+            risk_manager=self.risk_manager,
+            initial_capital=float(cash),
+            eq_strategy=eq_strategy,
+        )
+        self.events = []
+
+    def __init__with_trades(
+        self,
+        trades: pd.DataFrame,
+        initial_capital: int | float = 100000,
+        symbol_list=None,
+        *,
+        end_date: Optional[pd.Timestamp] = None,
+    ) -> None:
         ## Initialize trades dataframe. Trades to be preprocessed to handle t_plus_n logic and unadjusted trades
         ## to be stored for reference
         trades = trades.copy()
@@ -269,10 +339,7 @@ class OptionSignalBacktest:
         self.portfolio = OptionSignalPortfolio(
             self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital=float(initial_capital)
         )
-        self.final_date = pd.to_datetime(list(self.eventScheduler.events_map)[-1]).strftime("%Y%m%d")
-        self.risk_free_rate = 0.055
         self.events = []
-        self.order_cache = {}
 
     def __handle_t_plus_n(self, trades: pd.DataFrame) -> pd.DataFrame:
         """
@@ -321,8 +388,8 @@ class OptionSignalBacktest:
                 try:
                     ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
                     if len(list(deepcopy(current_event_queue.queue))) == 0:
-                        meta = self.portfolio.analyze_positions()
-                        print(f"Position Analysis Meta: {meta}")
+                        meta = self.portfolio.analyze_positions()  # noqa
+                        # print(f"Position Analysis Meta: {meta}")
 
                     event = current_event_queue.get_nowait()
 
@@ -331,6 +398,10 @@ class OptionSignalBacktest:
 
                     # Update portfolio time index after processing all events
                     self.portfolio.update_timeindex()
+
+                    # Analyze eq_strategy if applicable
+                    if self.is_eq_strategy:
+                        self.portfolio.analyze_multiasset_strategy()
 
                     # advance scheduler queue to next date
                     self.eventScheduler.advance_date()
@@ -346,7 +417,6 @@ class OptionSignalBacktest:
                     event_count += 1
                     try:
                         self.logger.info(f"Processing event: {event}")
-                        print(f"Processing event: {event.type} {event.datetime}")
 
                         if event.type == EventTypes.SIGNAL.value:
                             self.portfolio.analyze_signal(event)
@@ -358,7 +428,7 @@ class OptionSignalBacktest:
                         elif event.type == EventTypes.EXERCISE.value:
                             self.executor.execute_exercise(event)
                         elif event.type == EventTypes.ROLL.value:
-                            print("\nPerforming Roll Operation\n")
+                            self.logger.info("\nPerforming Roll Operation\n")
                             self.portfolio.execute_roll(event)
 
                         else:
@@ -368,7 +438,7 @@ class OptionSignalBacktest:
                             raise e
 
                         self.logger.error(f"Error processing event: {e}\n{traceback.format_exc()}")
-                        print(f"Error processing event: {e}")
+                        self.logger.error(f"Error processing event: {e}")
 
     def clean_run(self, trades: pd.DataFrame = None, initial_capital: int = None):
         """
@@ -380,39 +450,6 @@ class OptionSignalBacktest:
         clean_capital = self.initial_capital if initial_capital is None else initial_capital
         self.__construct_data(clean_trades, clean_capital)
         self.run()
-
-    def __roll(self, roll_event, current_event_queue) -> None:
-        """
-        Performs a roll in the same day by closing the current position and opening a new one.
-        Closing Operation first executes a close order and fills, then opening operation executes an open order and fills
-        """
-        print("Using roll function")
-        roll_action = ["CLOSE", "OPEN"]
-        event_count = 0
-        for action in roll_action:  ## For each action, we want to carry out all processes
-            # print(f"Processing {action} action")
-            self.portfolio.execute_roll(roll_event, action)  ## Execute the roll event
-            event_count += 1
-
-            while True:  ##Starts event queue processing
-                try:  ## Gets current event from the queue for that date
-                    event = current_event_queue.get_nowait()
-
-                except emptyEventQueue:
-                    ## If the queue is empty, we break out of the loop, and return to outer loop
-                    ## If there is no actions in outta loop, we return control to the main loop
-                    break
-                ## Processes the event
-                if event.type == EventTypes.MARKET.value:
-                    self.portfolio.analyze_positions(event)
-                elif event.type == EventTypes.SIGNAL.value:
-                    self.portfolio.analyze_signal(event)
-                elif event.type == EventTypes.ORDER.value:
-                    self.executor.execute_order_randomized_slippage(event)
-                elif event.type == EventTypes.FILL.value:
-                    self.portfolio.update_fill(event)
-        print(f"Roll processed {event_count} event(s)")
-        self.logger.info(f"Roll Function processed {event_count} roll event(s)")
 
     def get_all_holdings(self) -> pd.DataFrame:
         """

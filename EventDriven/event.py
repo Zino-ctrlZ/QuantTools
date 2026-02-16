@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from EventDriven.types import EventTypes, SignalTypes
-from trade.helpers.helper import parse_option_tick
+from trade.helpers.helper import parse_option_tick # noqa
 class Event(object):
     """
     Event is base class providing an interface for all subsequent 

@@ -16,7 +16,8 @@ from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalType
 from EventDriven.riskmanager.new_base import RiskManager, order_failed
 from EventDriven.riskmanager.utils import parse_position_id
 from trade.helpers.Logging import setup_logger
-from trade.assets.Stock import Stock
+from trade.helpers.helper import to_datetime
+from trade.assets import Stock
 from EventDriven.event import  (
     ExerciseEvent, #noqa
     FillEvent, 
@@ -28,7 +29,7 @@ from EventDriven.event import  (
     Event
 )
 from EventDriven.data import HistoricTradeDataHandler
-from trade.helpers.helper import is_USholiday
+from trade.helpers.helper import change_to_last_busday, is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
 from typing import Optional
@@ -43,7 +44,8 @@ from EventDriven.dataclasses.states import StrategyChangeMeta
 from EventDriven.configs.core import PortfolioManagerConfig, CashAllocatorConfig
 from EventDriven.portfolio_utils import extract_events
 from EventDriven.exceptions import BacktestNotImplementedError
-LOGGER = setup_logger("OptionSignalPortfolio")
+from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
+LOGGER = setup_logger("OptionSignalPortfolio", stream_log_level=logging.INFO)
 
 class Portfolio(AggregatorParent):
     """
@@ -90,6 +92,7 @@ class OptionSignalPortfolio(Portfolio):
                  weight_map = None, 
                  initial_capital = 10000,
                  *,
+                 eq_strategy: Optional[MultiAssetStrategy] = None,
                  cash_allocator_config: CashAllocatorConfig | None = None,
                  t_plus_n: int = 1): 
         """
@@ -164,6 +167,8 @@ class OptionSignalPortfolio(Portfolio):
         self.config = PortfolioManagerConfig()
         self._holiday_cache = {}
         self.is_backtest = True ## Move to config?
+        self.eq_strategy = eq_strategy
+        self.using_eq_strategy = eq_strategy is not None
 
     def _is_holiday(self, dt):
         """
@@ -429,7 +434,7 @@ class OptionSignalPortfolio(Portfolio):
         max_contract_price = self.__max_contract_price[signal_event.symbol] if signal_event.max_contract_price is None else signal_event.max_contract_price
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand  
         if self.logger.isEnabledFor(logging.DEBUG):
-            print(f"Cash at Hand: {cash_at_hand}, Max Contract Price: {max_contract_price} for Signal: {signal_event.signal_id}")
+            self.logger.info(f"Cash at Hand: {cash_at_hand}, Max Contract Price: {max_contract_price} for Signal: {signal_event.signal_id}")
         cache_key = (signal_event.symbol, signal_event.signal_id, signal_event.datetime)
         position_state = self.position_cache.get(cache_key)
         if position_state is None:
@@ -445,12 +450,6 @@ class OptionSignalPortfolio(Portfolio):
             self._process_failed_order(signal_event)
             return None
 
-        # print("===========================")
-        # print("Buy Details")
-        # print(f"Position: {position}, Date: {date_str}, Signal: {signal_event}")
-        # print(f"Max Contract Price: {max_contract_price}, Cash at Hand: {cash_at_hand}")
-        # print("Cash at Hand", cash_at_hand, "Close", position['close'])
-        # print("===========================")
         return OrderEvent(signal_event.symbol, signal_event.datetime, order_type, cash=cash_at_hand, direction= 'BUY', position = position, signal_id = signal_event.signal_id, quantity=position['quantity'], parent_event=signal_event)
     
     def _process_failed_order(self, signal_event: SignalEvent):
@@ -539,6 +538,50 @@ class OptionSignalPortfolio(Portfolio):
         for event in events:
             self.eventScheduler.schedule_event(event.datetime, event)
         return meta_changes
+    
+    def analyze_multiasset_strategy(self, dt: Optional[pd.Timestamp] = None):
+        """
+        Analyze the multi-asset strategy and generate signals if necessary
+        """
+        if self.eq_strategy is None:
+            return
+        dt =  to_datetime(dt or self.eventScheduler.current_date)
+        self.logger.info(f"Analyzing multi-asset strategy for {dt}")
+        if self._is_holiday(dt):
+            self.logger.warning(f"Market is closed on {dt}, skipping multi-asset strategy analysis")
+            return
+        
+        signals = self.eq_strategy.generate_signals_on_date(dt, filter_actionable=True)
+        exec_date = change_to_last_busday(dt + pd.tseries.offsets.BDay(self.t_plus_n), offset=-1, time_of_day_aware=False)
+        opens = signals.open_signals
+        closes = signals.close_signals
+        for ticker, signal in opens.items():
+            if signal.signal_id is None:
+                raise ValueError(f"Signal {signal} does not have signal_id, cannot process signal for multi-asset strategy")
+            self.logger.info(f"Scheduling open signal for {ticker} on {exec_date} with signal_id {signal.signal_id}")
+            singal_type = SignalTypes.LONG.value if signal.side == 1 else SignalTypes.SHORT.value
+            signal_event = SignalEvent(
+                symbol=ticker,
+                datetime=exec_date,
+                signal_type=singal_type,
+                signal_id=signal.signal_id,
+                parent_event=None,
+            )
+            self.eventScheduler.schedule_event(exec_date, signal_event)
+        for ticker, signal in closes.items():
+            if signal.signal_id is None:
+                raise ValueError(f"Signal {signal} does not have signal_id, cannot process signal for multi-asset strategy")
+            self.logger.info(f"Scheduling close signal for {ticker} on {exec_date} with signal_id {signal.signal_id}")
+            singal_type = SignalTypes.CLOSE.value
+            signal_event = SignalEvent(
+                symbol=ticker,
+                datetime=exec_date,
+                signal_type=singal_type,
+                signal_id=signal.signal_id,
+                parent_event=None,
+            )
+            self.eventScheduler.schedule_event(exec_date, signal_event)
+
     
     @staticmethod
     def _construct_position(
@@ -654,7 +697,7 @@ class OptionSignalPortfolio(Portfolio):
         rollEvent: RollEvent
         """
         self.logger.info(f'Rolling contract for {roll_event}')
-        print(f'Rolling contract (sell side) for {roll_event.symbol} at {roll_event.datetime}')
+        self.logger.info(f'Rolling contract (sell side) for {roll_event.symbol} at {roll_event.datetime}')
         sell_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, SignalTypes.CLOSE.value, signal_id=roll_event.signal_id, parent_event=roll_event)
         self.eventScheduler.put(sell_signal_event)
         
@@ -664,7 +707,7 @@ class OptionSignalPortfolio(Portfolio):
         rollEvent: RollEvent
         """
         self.logger.info(f'Rolling contract for {roll_event}')
-        print(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
+        self.logger.info(f'Rolling contract (buy side) for {roll_event.symbol} at {roll_event.datetime}')
         buy_signal_event = SignalEvent( roll_event.symbol, roll_event.datetime, roll_event.signal_type , signal_id=roll_event.signal_id)
         self.eventScheduler.put(buy_signal_event)    
         
@@ -708,18 +751,38 @@ class OptionSignalPortfolio(Portfolio):
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 new_position_data['signal_id'] = fill_event.signal_id
                 
+                ## Update eq_strategy if using
+                if self.eq_strategy is not None:
+                    self.eq_strategy.set_position(
+                        ticker=fill_event.symbol, 
+                        signal_id=fill_event.signal_id, 
+                        current_date=fill_event.datetime,
+                        side=1 if fill_event.direction == 'BUY' else -1,
+                        entry_price=0.0
+                    )
+                    # strategy_position = self.eq_strategy.get_strategy(ticker=fill_event.symbol)
+                    self.eq_strategy.open_action(ticker=fill_event.symbol, current_date=fill_event.datetime, signal_id=fill_event.signal_id, side=1 if fill_event.direction == 'BUY' else -1)
+                
                     
         if fill_event.direction == 'SELL':
             if fill_event.position is not None: 
+
                 new_position_data['position'] = fill_event.position
                 new_position_data['entry_price'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['entry_price']
                 if self.current_positions[fill_event.symbol] is not None and fill_event.signal_id in self.current_positions[fill_event.symbol]:
+    
                     new_position_data['quantity'] = self.current_positions[fill_event.symbol][fill_event.signal_id]['quantity'] - fill_event.quantity
                 else:
                     return ValueError(f'No position found for {fill_event.symbol} with signal_id {fill_event.signal_id}')
                 new_position_data['market_value'] = self.__normalize_dollar_amount(fill_event.market_value)
                 if (new_position_data['quantity']) == 0: 
+
+    
                    new_position_data['exit_price'] = self.__normalize_dollar_amount(fill_event.fill_cost) 
+                   if self.eq_strategy is not None:
+                       self.eq_strategy.unset_position(ticker=fill_event.symbol)
+                       # strategy_position = self.eq_strategy.get_strategy(ticker=fill_event.symbol)
+                       self.eq_strategy.close_action(ticker=fill_event.symbol, current_date=fill_event.datetime)
 
         if fill_event.direction == 'EXERCISE':
             raise BacktestNotImplementedError('Exercise fill handling not implemented yet')
@@ -813,7 +876,8 @@ class OptionSignalPortfolio(Portfolio):
         self.all_positions.append(new_positions_entry)
         self.weighted_holdings.append(new_weighted_holdings_entry)
         self.current_cash[current_date] = current_cash
-        
+
+
     def update_fill(self, fill_event: FillEvent):
         """
         Updates the portfolio current positions and holdings 

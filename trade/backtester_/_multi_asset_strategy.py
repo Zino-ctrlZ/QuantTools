@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Dict, Any, Type, List
+from typing import Dict, Any, Optional, Type, List
 import pandas as pd
+from trade.assets.Stock import DATE_HINT
 from trade.backtester_._strategy import StrategyBase, TradeDecision
 from trade.backtester_.backtester_ import PTDataset
 
@@ -23,6 +24,29 @@ class SimulationResults:
         tickers = list(self.trades.keys())
         total_trades = sum(len(t) for t in self.trades.values())
         return f"SimulationResults(" f"tickers={tickers}, " f"total_trades={total_trades})"
+    
+@dataclass
+class MultiAssetSignals:
+    """
+    Container for multi-asset strategy signals on a given date.
+
+    Attributes:
+        date (str): Current date in 'YYYY-MM-DD' format
+        open_signals (Dict[str, TradeDecision]): Dictionary mapping tickers to their open trade decisions
+        close_signals (Dict[str, TradeDecision]): Dictionary mapping tickers to their close trade decisions
+    """
+    
+    date: str
+    open_signals: Dict[str, TradeDecision]
+    close_signals: Dict[str, TradeDecision]
+
+    def __repr__(self) -> str:
+        """String representation showing summary of signals."""
+        return (
+            f"MultiAssetSignals(date='{self.date}', "
+            f"open_signals={self.open_signals}, "
+            f"close_signals={self.close_signals})"
+        )
 
 
 ## Consider making this a subclass of StrategyBase
@@ -76,6 +100,7 @@ class MultiAssetStrategy:
     strategy_class: Type[StrategyBase]
     data: Dict[str, PTDataset]
     asset_strategies: Dict[str, StrategyBase] = field(default_factory=dict, init=False)
+    current_open_positions: Dict[str, bool] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
         """
@@ -95,6 +120,17 @@ class MultiAssetStrategy:
             self.asset_strategies[ticker] = self.strategy_class(
                 data=self.data[ticker], start_trading_date=self.start_date, ticker=ticker, **ticker_params
             )
+            self.current_open_positions[ticker] = False
+
+    def reset_strategies(self):
+        """
+        Reset all strategy instances to their initial state.
+
+        This can be useful if you want to re-run simulations without creating a new MultiAssetStrategy instance.
+        """
+        for ticker, strategy in self.asset_strategies.items():
+            strategy.reset()
+            self.current_open_positions[ticker] = False
 
     def simulate_all(self, finalize: bool = True) -> SimulationResults:
         """
@@ -212,17 +248,117 @@ class MultiAssetStrategy:
         """
         strategy = self.get_strategy(ticker)
         return strategy.should_close(date=current_date)
+    
+    def should_close_all(self, current_date: str) -> Dict[str, TradeDecision]:
+        """
+        Check if any of the strategies signal to close positions on the current date.
 
-    def open_action(self, ticker: str, current_date: str):
+        Args:
+            current_date (str): Current date in 'YYYY-MM-DD' format 
+        Returns:
+            Dict[str, TradeDecision]: Dictionary mapping tickers to their close decisions
+        """        
+        decisions = {}
+        for ticker, strategy in self.asset_strategies.items():
+            decisions[ticker] = strategy.should_close(date=current_date)
+        return decisions
+    
+    def should_open_all(self, current_date: str) -> Dict[str, TradeDecision]:
+        """
+        Check if any of the strategies signal to open positions on the current date.
+
+        Args:
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        Returns:
+            Dict[str, TradeDecision]: Dictionary mapping tickers to their open decisions
+        """
+        decisions = {}
+        for ticker, strategy in self.asset_strategies.items():
+            decisions[ticker] = strategy.should_open(date=current_date)
+        return decisions
+    
+    def generate_signals_on_date(self, current_date: str, filter_actionable: bool = False) -> MultiAssetSignals:
+        """
+        Generate a dictionary of signals for all tickers on the current date.
+
+        Args:
+            current_date (str): Current date in 'YYYY-MM-DD' format
+        Returns:
+            MultiAssetSignals: Object containing open and close signals for all tickers
+        """
+        opens = {}
+        closes = {}
+        for ticker, strategy in self.asset_strategies.items():
+            opens[ticker] = strategy.should_open(date=current_date)
+            closes[ticker] = strategy.should_close(date=current_date)
+        if filter_actionable:
+            opens = {ticker: decision for ticker, decision in opens.items() if decision.ok}
+            closes = {ticker: decision for ticker, decision in closes.items() if decision.ok}
+        return MultiAssetSignals(date=current_date, open_signals=opens, close_signals=closes)
+
+    
+    def set_position(self, 
+                     ticker: str, 
+                     signal_id: str,
+                     current_date: DATE_HINT,
+                     side: int,
+                     entry_price: Optional[float] = 0.0):
+        """
+        Set the position for a given ticker and signal ID.
+
+        Args:
+            ticker (str): Ticker symbol
+            signal_id (str): Signal ID for the position
+            have_position (bool): Whether the position is open or not
+        """
+        strategy = self.get_strategy(ticker)
+        strategy.set_position_info(
+            entry_date=current_date,
+            entry_price=entry_price,
+            side=side,
+            signal_id=signal_id
+        )
+        self.current_open_positions[ticker] = True
+
+    def open_action(self,
+                    ticker: str,
+                    signal_id: str,
+                    current_date: DATE_HINT,
+                    side: int,
+                    entry_price: Optional[float] = 0.0):
         """
         Get the open action for the strategy of a given ticker on the current date.
 
         Args:
             ticker (str): Ticker symbol
-            current_date (str): Current date in 'YYYY-MM-DD' format
+            signal_id (str): Signal ID for the position
+            current_date (DATE_HINT): Current date for the action
+            side (int): Trade side (1 for long, -1 for short)
+            entry_price (Optional[float]): Entry price for the position
+        """        
+        strategy = self.get_strategy(ticker)
+        strategy.open_action(
+            date=current_date,
+            signal_id=signal_id,
+            side=side,
+            entry_price=entry_price
+        )
+        self.current_open_positions[ticker] = True
+
+
+    
+    def unset_position(self, ticker: str):
+        """
+        Clear the position information for a given ticker.
+
+        This is typically called when closing a position to reset the state.
+
+        Args:
+            ticker (str): Ticker symbol
         """
         strategy = self.get_strategy(ticker)
-        return strategy.open_action(current_date)
+        strategy.remove_position_info()
+        self.current_open_positions[ticker] = False
 
     def close_action(self, ticker: str, current_date: str):
         """
@@ -233,6 +369,7 @@ class MultiAssetStrategy:
             current_date (str): Current date in 'YYYY-MM-DD' format
         """
         strategy = self.get_strategy(ticker)
+        self.current_open_positions[ticker] = False
         return strategy.close_action(current_date)
 
     def info_on_date(self, ticker: str, current_date: str) -> Dict[str, Any]:

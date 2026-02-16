@@ -31,6 +31,14 @@ Running Todo:
     ☐ Replace populate_chain_cache with ChainDataManager which caches none-today data and reloads today data on each call.
     ☐ Remind zino about table diffing
     ☐ Update info in config dictionary in order picker to reflect new changes (eg min_total_price)
+    ☐ streamline all evb stream logging level as done in trade.datamanager
+    ☐ Normalize everywhere to use the following for position:
+        - fyi: This includes: events, signals, positions, etc. Anywhere we need to represent a position, we should use this format to avoid confusion and ensure consistency across the codebase.
+        - Side int: 1 for long, -1 for short
+        - Side str: "long" or "short"
+        - Position effect: "open" or "close"
+        - It should all come from eventdriven.types.position
+    ☐ Clean up old todos in the codebase and move any relevant ones to this todo list.
     
 
 Todo before going back to backtesting:
@@ -45,7 +53,7 @@ Todo before going back to backtesting:
         - Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups
         - Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual.
         - New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)`
-    ☐ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval)
+    ✔ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval) @done(26-02-15 19:45)
     ☐ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup.
     ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29)
     ✔ Close signals added to signals table @done(26-02-09 16:34)
