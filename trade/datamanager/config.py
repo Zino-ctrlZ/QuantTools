@@ -16,7 +16,7 @@ from typing import get_type_hints
 
 @dataclass
 class OptionDataConfig(metaclass=SingletonMetaClass):
-    """Configuration for OptionDataManager."""
+    """Configuration for DataManager."""
 
     option_spot_endpoint_source: OptionSpotEndpointSource = OptionSpotEndpointSource.EOD
     default_lookback_years: int = DIVIDEND_LOOKBACK_YEARS

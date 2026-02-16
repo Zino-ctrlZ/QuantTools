@@ -19,6 +19,7 @@ from trade.helpers.helper import (
 from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_time
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, set_skip_mysql_query
+from trade.datamanager.timeseries import TimeseriesDataManager # noqa
 
 ##TODO: Take this out once DataManagers has been optimized
 set_skip_mysql_query(True)

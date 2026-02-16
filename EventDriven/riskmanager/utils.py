@@ -115,11 +115,7 @@ Position ID Format:
         - Type: C (call) or P (put)
         - Direction: long or short
 
-Data Manager Integration:
-    - OptionDataManager: Main interface for option pricing
-    - CachedOptionDataManager: Cached version for performance
-    - Automatic switch between implementations
-    - MySQL query optimization flags
+
 
 Signal Handling:
     - Registers cleanup on SIGTERM (15)
@@ -186,7 +182,6 @@ import os
 from .config import get_avoid_opticks
 import functools
 from trade.assets.helpers.utils import swap_ticker
-from module_test.raw_code.DataManagers.DataManagers import OptionDataManager  # noqa
 from trade.datamanager.loaders import load_full_option_data
 # from trade.datamanager.vars import get_times_series
 from trade.datamanager._enums import DivType
@@ -505,45 +500,6 @@ def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
 
 
 ##UTILS
-
-def load_position_data(opttick, processed_option_data, start, end, s, r, y, s0_close):
-    """
-    Load position data for a given option tick.
-
-    args:
-        opttick (str): The option tick to load data for.
-        processed_option_data (dict): A dictionary to store processed option data.
-        start (str|datetime): The start date for the data.
-        end (str|datetime): The end date for the data.
-        s (pd.Series): The spot price series. Must be split adjusted.
-        r (pd.Series): The risk-free rate series.
-        y (pd.Series): The dividend yield series.
-        s0_close (pd.Series): The close price of the underlying asset series.
-
-    This function ONLY retrives the data for the option tick, it does not apply any splits or adjustments.
-    This function will NOT check for splits or special dividends. It will only retrieve the data for the given option tick.
-    """
-    ## Check if the option tick is already processed
-    if opttick in processed_option_data:
-        return processed_option_data[opttick]
-
-    ## Get Meta
-    meta = parse_option_tick(opttick)
-
-    ## Generate data
-    data = old_generate_spot_greeks(opttick, start_date=start, end_date=end)
-    data = enrich_data(
-        data,
-        meta["ticker"],
-        s[s.index.isin(data.index)],
-        r[r.index.isin(data.index)],
-        y[y.index.isin(data.index)],
-        s0_close[s0_close.index.isin(data.index)],
-    )
-    processed_option_data[opttick] = data
-    return data
-
-
 def load_position_data_new(opttick, processed_option_data, start, end) -> pd.DataFrame:
     """
     Load position data for a given option tick using the new data loading method.
@@ -624,30 +580,6 @@ def enrich_data(data, ticker, s, r, y, s0_close):
     return data
 
 
-def old_generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:
-    """
-    Generate spot greeks for a given option tick.
-    """
-    ## PRICE_ON_TO_DO: NO NEED TO CHANGE. This is necessary retrievals
-    # meta = parse_option_tick(opttick)
-    data_manager = OptionDataManager(opttick=opttick)
-    greeks = data_manager.get_timeseries(
-        start=start_date,
-        end=end_date,
-        interval="1d",
-        type_="greeks",
-    ).post_processed_data  ## Multiply by the shift to account for splits
-    greeks_cols = [x for x in greeks.columns if "Midpoint" in x]
-    greeks = greeks[greeks_cols]
-    greeks[greeks_cols] = greeks[greeks_cols].replace(0, np.nan).fillna(method="ffill")
-    greeks.columns = [x.split("_")[1].capitalize() for x in greeks.columns]
-
-    spot = data_manager.get_timeseries(
-        start=start_date, end=end_date, interval="1d", type_="spot", extra_cols=["bid", "ask"]
-    ).post_processed_data  ## Using chain spot data to account for splits
-    spot = spot[["Midpoint", "Closeask", "Closebid"]]  ## This is raw calc place
-    data = greeks.join(spot)
-    return data
 
 def new_generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:
     """

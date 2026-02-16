@@ -17,7 +17,8 @@ Running Todo:
     ☐ Add slippage pnl to live attribution
     ☐ Aggregator should take trades & equity data only
     ☐ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it)
-    
+    ☐ Switch to TimeseriesDataManager for pnl attribution
+    ☐ 
     ☐ Discontinue all use of module_test.raw_code.DataManagers
     ☐ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed.
     ☐ Move all vol and pricing logic to use the new OptLib
@@ -49,14 +50,14 @@ Todo before going back to backtesting:
     ☐ Move emefiele reports to the reports channel
     ☐ Populate get_strategy_instance with has_position (Optional)
     ✔ Cache checker should use date range info, with missing dates info saved @done(26-02-14 18:47)
-        - All ts loaders should return the data
-        - Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups
-        - Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual.
-        - New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)`
+        ✔ All ts loaders should return the data @done(26-02-15 21:28)
+        ✔ Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups @done(26-02-15 21:28)
+        ✔ Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual. @done(26-02-15 21:28)
+        ✔ New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)` @done(26-02-15 21:28)
     ✔ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval) @done(26-02-15 19:45)
     ✔ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup. @done(26-02-15 20:39)
     ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29)
     ✔ Close signals added to signals table @done(26-02-09 16:34)
-    ☐ Ensure backtesting a live strategy works seamlessly
+    ✔ Ensure backtesting a live strategy works seamlessly @done(26-02-15 21:28)
     ✔ Decipher the diff btwn backtest and live strategy performance @done(26-02-10 19:57)
     ✔ I don't like how limit sizing is going. Look into it. @done(26-02-10 21:25)
