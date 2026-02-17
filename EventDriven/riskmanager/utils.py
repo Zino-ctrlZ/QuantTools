@@ -558,6 +558,20 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     processed_option_data[opttick] = data
     return data
 
+def load_position_data(opttick, processed_option_data, start, end) -> pd.DataFrame:
+    """
+    Load position data for a given position ID.
+
+    args:
+    opttick (str): The option tick to load data for.
+    processed_option_data (dict): A dictionary to store processed option data.
+    start (str|datetime): The start date for the data.
+    end (str|datetime): The end date for the data.
+
+    This function retrieves the data for the given position ID. It applies any necessary splits or adjustments.
+    It will retrieve the data for all option ticks in the position ID and concatenate them together.
+    """
+    return load_position_data_new(opttick, processed_option_data, start, end)
 
 def enrich_data(data, ticker, s, r, y, s0_close):
     """

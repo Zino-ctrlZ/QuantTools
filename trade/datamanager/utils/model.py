@@ -660,16 +660,17 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         check_fallback_option=is_rt or is_as_of,
     )
     
-    ## Log what was loaded
-    log_model_load_info(
-        log_info=load_info,
-        is_rt=is_rt,
-        is_timeseries=not is_as_of,
-        symbol=symbol,
-        expiration=expiration,
-        strike=load_request.strike,
-        right=load_request.right,
-        dividend_type=dividend_type,
-        market_model=load_request.market_model.name if load_request.market_model else "N/A",
-    )
+    ## Log what was loaded only if something was actually loaded
+    if load_info:
+        log_model_load_info(
+            log_info=load_info,
+            is_rt=is_rt,
+            is_timeseries=not is_as_of,
+            symbol=symbol,
+            expiration=expiration,
+            strike=load_request.strike,
+            right=load_request.right,
+            dividend_type=dividend_type,
+            market_model=load_request.market_model.name if load_request.market_model else "N/A",
+        )
     return model_data

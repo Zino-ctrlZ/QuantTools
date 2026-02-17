@@ -151,7 +151,6 @@ from EventDriven._vars import load_riskmanager_cache, ADD_COLUMNS_FACTORY
 from EventDriven.riskmanager.utils import (
     parse_position_id,
     swap_ticker,
-    load_position_data, # noqa
     add_skip_columns,
     load_position_data_new
 )
@@ -459,17 +458,7 @@ class BacktestTimeseries:
         ## Get Meta
         meta = parse_option_tick(opttick)
         self.market_timeseries.load_timeseries(sym=meta["ticker"])
-        # timeseries_data = self.market_timeseries.get_timeseries(sym=meta["ticker"])
-        # return load_position_data(
-        #     opttick,
-        #     self.options_cache,
-        #     self.start_date,
-        #     self.end_date,
-        #     s=timeseries_data.chain_spot["close"],
-        #     r=self.rf_timeseries,
-        #     y=timeseries_data.dividends,
-        #     s0_close=timeseries_data.spot["close"],
-        # )
+        
         return load_position_data_new(
             opttick=opttick,
             processed_option_data=self.options_cache,

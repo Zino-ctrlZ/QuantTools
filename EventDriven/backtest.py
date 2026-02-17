@@ -17,6 +17,7 @@ import traceback
 from pandas.tseries.offsets import BDay
 from EventDriven.types import EventTypes, SignalTypes
 from EventDriven.configs.core import BacktesterConfig
+from .exceptions import EVBacktestError
 
 LOGGER = setup_logger("OptionSignalBacktest", stream_log_level="WARNING")
 
@@ -223,17 +224,22 @@ class OptionSignalBacktest:
             cash (int | float, optional): Initial capital for the backtest. Defaults to 100000.
         Raises:
             AssertionError: If eq_strategy is not provided, not an instance of MultiAssetStrategy, or if end_date is not provided.
+            EVBacktestError: If tplusn value of the equity strategy does not match the backtest configuration.
         """
         assert eq_strategy is not None, "Equity strategy must be provided for this initialization method"
         assert isinstance(
             eq_strategy, MultiAssetStrategy
         ), f"eq_strategy must be an instance of MultiAssetStrategy, got {type(eq_strategy)}"
         assert self.end_date is not None, "end_date must be provided for this initialization method"
+        if eq_strategy.tplusn != self.config.t_plus_n:
+            raise EVBacktestError(f"tplusn value of the equity strategy does not match the backtest configuration. eq_strategy.tplusn: {eq_strategy.tplusn}, config.t_plus_n: {self.config.t_plus_n}")
 
         ## We will not use trades dataframe in this process.
         self.start_date = pd.to_datetime(eq_strategy.start_date).date()
         start_date, end_date = self.start_date, self.end_date
         self.eq_strategy.reset_strategies()
+
+
 
         ## Initialize critical components
         self.eventScheduler = EventScheduler(start_date, end_date)

@@ -1,5 +1,7 @@
 ## This is repo specific todo.
 
+
+## Reviewing todo. We will tag as either Ignore or Move.
 Todo Todo:
     ☐ Review this file and cut down useless tasks
 
@@ -14,41 +16,31 @@ Long Term Design for Data:
     Each model of a factor will have it's own caching mechanism to avoid mixups.
 
 Setup File ToDo:
-    ☐ Add symbolic links creation for .vscode, .pylintrc, .gitignore, ruff.toml
+    ☐ Add symbolic links creation for .vscode, .pylintrc, .gitignore, ruff.toml #MOVE
 
 Whole Codebase Routine:
-    ☐ Add a Step by step guide to build env
-    ☐ Build file/setup_env.py to set up the environment
-    ☐ Constant readme for each folders
-    ☐ Decouple the riskmanager, portfolio manager, sizer
-    ☐ Create a schedule script to automatically run on cron and writeable from vscode:
+    ☐ Add a Step by step guide to build env #MOVE
+    ☐ Build file/setup_env.py to set up the environment #MOVE
+    ☐ Constant readme for each folders #MOVE
+    ☐ Decouple the riskmanager, portfolio manager, sizer #IGNORE
+    ☐ Create a schedule script to automatically run on cron and writeable from vscode: #MOVE
         - Suggestion: One script that registers a py file?: Issue is this script will be alive through out the day
         - Another suggestion: Create a bash script that runs every hour and checks a folder for new py files to run
         - Another Suggestion: Find a way to run a python script that directly appends to cron
-    ☐ Every model/algo with logic should have a model.md file explaining the logic
+    ☐ Every model/algo with logic should have a model.md file explaining the logic #IGNORE
 
 EventDriven:
-    ☐ There should be global configs to be used across all modules/clsses. This should print out the values set and the values that are defaulted.
+    ☐ There should be global configs to be used across all modules/clsses. This should print out the values set and the values that are defaulted. #DONE
     Portfolio File:
 
         Long Term:
-            ☐ Implement buy on Open, Bid, Ask.
-            ☐ Getting divYield to have a max retries to factor in sporadic errors 
+            ☐ Implement buy on Open, Bid, Ask. #DONE
+            ☐ Getting divYield to have a max retries to factor in sporadic errors #IGNORE
             ☐ Add rebalancing
-            ☐ move __enforce_order_settings into types.py, and use in signal class @not-priority 
-            ☐ For orders we can try randomizing price based on Bid/Ask Spread. Or we can buy on Ask and sell on Bid @not-priority
-            ☐ For slippage, we can try determining slippage based on bid/ask spread @not-priority
-            ☐ Stop Loss, Scaling in & Out, Trailing Stop
-            ☐ Rolling ((Consider)  A monitor class to monitor delta, vega, slides, pnl level and roll)
-            ☐ Handle the Exercise Properly
-            ☐ Hedging 
+            ☐ Handle the Exercise Properly #MOVE
             ☐ Retrieve option data from SQL if its faster and store data in sql as well if its not found in sql first @chidi
-            ☐ Seperate whole get_order process to allow easy injection into backtest
-            ☐ For missing value, use intrinsic value are price
-            ☐ add a setter for roll_map & min_acceptable_dte_threshold:
-                - min_acceptable_dte_threshold cannot be less than roll_map
-                - Error message `min_acceptable_dte_threshold cannot be less than roll_map, this avoids placing a roll the same day as opening a trade`
-            ☐ Make trades dataframe multiindex, use the trade_id as the first index and sell quantity as the second index
+            ☐ Seperate whole get_order process to allow easy injection into backtest #DONE
+            ☐ For missing value, use intrinsic value are price #IGNORE
             ☐ Perform Reduced sell. 
             ☐ Allow multiple positions for a single ticker and factor in resizing.
             ☐ Execute order proxy: This produces the exact data of executing and ordeer and returns it. if less than 0, we reduce the quantity and try again.

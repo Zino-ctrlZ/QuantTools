@@ -101,6 +101,7 @@ class MultiAssetStrategy:
     data: Dict[str, PTDataset]
     asset_strategies: Dict[str, StrategyBase] = field(default_factory=dict, init=False)
     current_open_positions: Dict[str, bool] = field(default_factory=dict, init=False)
+    tplusn: Optional[int] = 1
 
     def __post_init__(self):
         """
