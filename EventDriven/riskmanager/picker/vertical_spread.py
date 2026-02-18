@@ -66,6 +66,13 @@ def vertical_spread_pairer_by_exp(
         "spread_pct_ratio",
         "spread_oi",
     ]
+    ## Ensure bid, ask > 0
+    ## Ensure spread_pct <= 1.0 (we want tight spreads relative to the mid price)
+    paired_opttick = paired_opttick[
+        (paired_opttick["spread_bid"] > 0)
+        & (paired_opttick["spread_ask"] > 0)
+        & (paired_opttick["spread_pct_ratio"] <= 1.0)
+    ].reset_index(drop=True)
     return paired_opttick[paired_opttick["spread_mid"].between(min_total_price, max_total_price)].reset_index(drop=True)
 
 
@@ -114,7 +121,6 @@ def _vertical_spread_pairer(
     ## Finally, pick the top row as our chosen spread.
     vertical_chain.sort_values(by=["spread_pct_ratio", "spread_oi"], ascending=[True, False], inplace=True)
     picked_spread = vertical_chain.iloc[0] if not vertical_chain.empty else pd.Series()
-
     return picked_spread
 
 
