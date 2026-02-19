@@ -394,6 +394,7 @@ class OrderPicker:
             order_resolution_config = self._order_resolution_config
 
         if request.max_close > request.tick_cash/100: ## Tick cash is scaled
+
             logger.warning(
                 f"Request max_close {request.max_close} is greater than tick_cash {request.tick_cash}. Adjusting max_close to tick_cash."
             )
@@ -464,6 +465,7 @@ def _get_open_order_backtest(
                 signalID=inputs.signal_id,
                 schema_cache={},
                 picker=picker,
+                tick_cash=request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash/100
             )
     else:
         logger.info(f"Preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Using preset order.")

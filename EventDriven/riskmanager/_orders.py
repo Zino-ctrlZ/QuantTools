@@ -104,6 +104,7 @@ def resolve_schema(
     itm_moneyness_width: float,
     max_close: float,
     max_tries: int = 6,
+    tick_cash: int = 10
 ) -> Tuple[OrderSchema, int]:
     """
     Resolving schema by order of importance
@@ -126,7 +127,6 @@ def resolve_schema(
         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
     """
     tick = schema["tick"]
-
     ##0). Max schema tries
     if tries >= max_tries:
         return False, tries
@@ -161,7 +161,8 @@ def resolve_schema(
         logger.info(
             f"Resolving Schema ({tick}): {schema['max_total_price']} <= {max_close}, increasing Max Close by 0.5 from {schema['max_total_price']} to {schema['max_total_price'] + 1}"
         )
-        schema["max_total_price"] += 1
+        new_max = schema["max_total_price"] + 1
+        schema["max_total_price"] = min(new_max, tick_cash)
         return schema, tries
 
     return False, tries
@@ -182,6 +183,7 @@ def order_resolve_loop(
     schema_cache: dict,
     picker: "OrderPicker",
     request: OrderRequest = None,
+    tick_cash: int = 10,
 ):
     """
     Attempt to resolve an order schema until a successful order is produced or maximum tries are exceeded.
@@ -231,6 +233,7 @@ def order_resolve_loop(
             max_tries=max_tries,
             otm_moneyness_width=otm_moneyness_width,
             itm_moneyness_width=itm_moneyness_width,
+            tick_cash=tick_cash
         )
         schema, tries = pack
 

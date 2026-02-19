@@ -71,7 +71,7 @@ def vertical_spread_pairer_by_exp(
     paired_opttick = paired_opttick[
         (paired_opttick["spread_bid"] > 0)
         & (paired_opttick["spread_ask"] > 0)
-        & (paired_opttick["spread_pct_ratio"] <= 1.0)
+        & (paired_opttick["spread_pct_ratio"] <= 1.25)
     ].reset_index(drop=True)
     return paired_opttick[paired_opttick["spread_mid"].between(min_total_price, max_total_price)].reset_index(drop=True)
 
