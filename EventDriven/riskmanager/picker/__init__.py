@@ -164,7 +164,6 @@ def filter_contracts(
     max_moneyness: float = 1.5,
     increment=0.25,
 ) -> pd.DataFrame:
-    
     df = df.copy()
     df = df[df["right"].str.lower() == schema["option_type"].lower()]
 
@@ -224,13 +223,14 @@ def filter_contracts(
 def create_trade_id(legs: Dict[str, Any]) -> str:
     """
     Creates a unique trade identifier based on the legs of the option structure.
-    
+
     Expected input format for legs:
     legs = {
         "long": [ { "opttick": "AAPL230616C00150000", ... }, ... ],
         "short": [ { "opttick": "AAPL230616P00150000", ... }, ... ]
     }
     """
+
     def _iter_side(side):
         if side is None:
             return []
@@ -245,11 +245,11 @@ def create_trade_id(legs: Dict[str, Any]) -> str:
     parts = []
     long = legs.get("long")
     short = legs.get("short")
-    long = sorted(long, key=lambda x: x["opttick"]) if long else []
-    short = sorted(short, key=lambda x: x["opttick"]) if short else []
-    for leg in _iter_side(long):
+    long = sorted(_iter_side(long), key=lambda x: x["opttick"])
+    short = sorted(_iter_side(short), key=lambda x: x["opttick"])
+    for leg in long:
         parts.append(f"&L:{leg['opttick']}")
-    for leg in _iter_side(short):
+    for leg in short:
         parts.append(f"&S:{leg['opttick']}")
     return "".join(parts)
 
@@ -282,15 +282,16 @@ def extract_order(obj):
     order["data"]["trade_id"] = create_trade_id(pack)
     return order
 
+
 def _order_formatting(
-        trade_id: str,
-        legs: List[Tuple[str, str]],
-        close: float,
-        dir: str,
+    trade_id: str,
+    legs: List[Tuple[str, str]],
+    close: float,
+    dir: str,
 ) -> Dict[str, Any]:
     """
     Formats the order details into a structured dictionary.
-    
+
     Args:
         trade_id (str): Unique identifier for the trade.
         legs (List[Tuple[str, str]]): A list of tuples containing the long and short leg option ticks. Eg: [('L', "AAPL230616C00150000"), ('S', "AAPL230616P00150000")]
