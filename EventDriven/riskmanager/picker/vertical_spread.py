@@ -11,6 +11,7 @@ def vertical_spread_pairer_by_exp(
     spread_tick: int = 1,
     min_total_price: float = 0.5,
     max_total_price: float = 1.0,
+    add_spread_filters: bool = True,
 ) -> pd.DataFrame:
     """
     For a given row (option contract), find the corresponding leg of the vertical spread based on the spread_tick.
@@ -26,6 +27,8 @@ def vertical_spread_pairer_by_exp(
         pd.DataFrame: A DataFrame containing the paired legs of the vertical spread and their calculated metrics, filtered by the total spread mid price.
     """
     tgt_details = ["opttick", "midpoint", "closebid", "closeask", "open_interest"]
+    if "volume" in row.columns:
+        tgt_details.append("volume")
     long_leg_details = row[tgt_details].reset_index(drop=True)
     short_leg_details = row[tgt_details].shift(-spread_tick).reset_index(drop=True)
 
@@ -42,6 +45,11 @@ def vertical_spread_pairer_by_exp(
     spread_pct_ratio = abs(spread_bid - spread_ask) / spread_mid.replace(0, np.nan)  # Avoid division by zero.
     spread_oi = abs(long_leg_details["open_interest"] + short_leg_details["open_interest"])
 
+    if "volume" in long_leg_details.columns and "volume" in short_leg_details.columns:
+        spread_volume = abs(long_leg_details["volume"] + short_leg_details["volume"])
+    else:
+        spread_volume = pd.Series([np.nan] * len(spread_mid))  # If volume data is not available, fill with NaN.
+
     ## Combine into a DataFrame for analysis.
     paired_opttick = pd.concat(
         (
@@ -53,6 +61,7 @@ def vertical_spread_pairer_by_exp(
             bid_ask_spread,
             spread_pct_ratio,
             spread_oi,
+            spread_volume,
         ),
         axis=1,
     )
@@ -65,14 +74,16 @@ def vertical_spread_pairer_by_exp(
         "bid_ask_spread",
         "spread_pct_ratio",
         "spread_oi",
+        "spread_volume",
     ]
     ## Ensure bid, ask > 0
     ## Ensure spread_pct <= 1.0 (we want tight spreads relative to the mid price)
-    paired_opttick = paired_opttick[
-        (paired_opttick["spread_bid"] > 0)
-        & (paired_opttick["spread_ask"] > 0)
-        & (paired_opttick["spread_pct_ratio"] <= 1.25)
-    ].reset_index(drop=True)
+    if add_spread_filters:
+        paired_opttick = paired_opttick[
+            (paired_opttick["spread_bid"] > 0)
+            & (paired_opttick["spread_ask"] > 0)
+            & (paired_opttick["spread_pct_ratio"] <= 1.25)
+        ].reset_index(drop=True)
     return paired_opttick[paired_opttick["spread_mid"].between(min_total_price, max_total_price)].reset_index(drop=True)
 
 

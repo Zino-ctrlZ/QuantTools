@@ -491,7 +491,7 @@ class StrategyBase(ABC):
         assert signal_id is not None, "signal_id must be provided for open_action"
         assert side is not None, "side must be provided for open_action"
         assert entry_price is not None, "entry_price must be provided for open_action"
-
+        _, date = self._resolve(date=date, index=index)
         self.position_info = PositionInfo(entry_date=date, entry_price=entry_price, side=side, signal_id=signal_id)
 
     @abstractmethod
@@ -892,7 +892,7 @@ class StrategyBase(ABC):
                     ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
                     enforce_close = self.should_close(index=i).ok if enforce_close_on_signal else True
                     if self.position_open and enforce_close:
-                        self.close_action(index=i)
+                        position_info = self.position_info
                         return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
                         return_pct *= position_side
                         trades.append(
@@ -903,8 +903,11 @@ class StrategyBase(ABC):
                                 "equity": eq,
                                 "return_pct": return_pct,
                                 "entry_price": entry_price,
+                                "side": position_side,
+                                "position_info": position_info,
                             }
                         )
+                        self.close_action(index=i)
 
             # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
             open_decision = self.should_open(index=i)
@@ -935,7 +938,7 @@ class StrategyBase(ABC):
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
                 if tn_int == 0:
                     if self.position_open:
-                        self.close_action(index=exec_idx)
+                        position_info = self.position_info
                         return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
                         return_pct *= position_side
                         trades.append(
@@ -946,8 +949,11 @@ class StrategyBase(ABC):
                                 "equity": eq,
                                 "return_pct": return_pct,
                                 "entry_price": entry_price,
+                                "side": position_side,
+                                "position_info": position_info,
                             }
                         )
+                        self.close_action(index=exec_idx)
                 else:
                     pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
@@ -958,7 +964,7 @@ class StrategyBase(ABC):
             # There may be pending executions scheduled for the last bar; they've already executed
             if self.position_open:
                 current_price = float(close[-1])
-                self.close_action(index=n - 1)
+                position_info = self.position_info
                 return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
                 return_pct *= self.position_side
                 trades.append(
@@ -969,8 +975,11 @@ class StrategyBase(ABC):
                         "equity": eq,
                         "return_pct": return_pct,
                         "entry_price": entry_price,
+                        "side": self.position_side,
+                        "position_info": position_info,
                     }
                 )
+                self.close_action(index=n - 1)
 
         self.reset_strategy_state()
         equity_series = pd.Series(equity, index=dates, name="equity")
@@ -1045,7 +1054,7 @@ class StrategyBase(ABC):
                     fig.add_trace(
                         go.Scatter(
                             x=[trade["date"]],
-                            y=[trade["price"] * 1.2],
+                            y=[trade["price"] * 1.05],
                             mode="markers",
                             marker=dict(symbol="triangle-down", color="black", size=10),
                             name="Buy Signal",
@@ -1061,7 +1070,7 @@ class StrategyBase(ABC):
                     fig.add_trace(
                         go.Scatter(
                             x=[trade["date"]],
-                            y=[trade["price"] * 0.8],
+                            y=[trade["price"] * 0.95],
                             mode="markers",
                             marker=dict(symbol="triangle-up", color="black", size=10),
                             name="Sell Signal",

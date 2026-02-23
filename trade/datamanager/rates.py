@@ -20,6 +20,8 @@ import yfinance as yf
 import numpy as np
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday
+from curl_cffi.requests.exceptions import SSLError
+import backoff
 from .utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from .utils.date import is_available_on_date, to_datetime
 from .utils.data_structure import _data_structure_sanitize
@@ -449,6 +451,12 @@ class RatesDataManager(BaseDataManager):
         ## Since it is a timeseries, we will append to existing if exists
         _data_structure_cache_it(self, key, value, expire=expire)
 
+    @backoff.on_exception(
+        backoff.expo,
+        (SSLError, Exception),  # Catching general Exception as yfinance can raise various exceptions
+        max_tries=5,
+        logger=logger,
+    )
     def _query_yfinance(
         self,
         start_date: Union[datetime, str],

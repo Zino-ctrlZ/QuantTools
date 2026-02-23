@@ -101,6 +101,7 @@ class MultiAssetStrategy:
     data: Dict[str, PTDataset]
     asset_strategies: Dict[str, StrategyBase] = field(default_factory=dict, init=False)
     current_open_positions: Dict[str, bool] = field(default_factory=dict, init=False)
+    strategy_settings: Dict[str, Dict[str, Any]] = field(default_factory=dict, init=False)
     tplusn: Optional[int] = 1
 
     def __post_init__(self):
@@ -122,6 +123,7 @@ class MultiAssetStrategy:
                 data=self.data[ticker], start_trading_date=self.start_date, ticker=ticker, **ticker_params
             )
             self.current_open_positions[ticker] = False
+            self.strategy_settings[ticker] = ticker_params
 
     def reset_strategies(self):
         """

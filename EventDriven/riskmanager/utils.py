@@ -558,7 +558,7 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     processed_option_data[opttick] = data
     return data
 
-def load_position_data(opttick, processed_option_data, start, end) -> pd.DataFrame:
+def load_position_data(opttick, processed_option_data, start, end, *args, **kwargs) -> pd.DataFrame:
     """
     Load position data for a given position ID.
 

@@ -199,6 +199,8 @@ class CustomCache(Cache):
         log_path: str | Path = None,
         clear_on_exit: bool = False,
         expire_days: int = 7,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
         data: dict = None,
         **kwargs,
     ):
@@ -212,6 +214,8 @@ class CustomCache(Cache):
         :params fname: str: Name of the cache file. Defaults to 'cache'.
         :params log_path: str | Path: Path to the log file. If None, it will use the WORK_DIR environment variable.
         :params clear_on_exit: bool: Whether to clear the cache on exit. Defaults to False.
+        :params size_limit: Optional[int]: Maximum on-disk cache size in bytes. Uses diskcache default when None.
+        :params cull_limit: Optional[int]: Number of entries considered per cull cycle. Uses diskcache default when None.
         :params kwargs: Additional arguments to pass to the Cache constructor.
 
         Example usage:
@@ -240,6 +244,10 @@ class CustomCache(Cache):
         os.makedirs(dir, exist_ok=True)
 
         # 2. Create cache
+        if size_limit is not None:
+            kwargs.setdefault("size_limit", size_limit)
+        if cull_limit is not None:
+            kwargs.setdefault("cull_limit", cull_limit)
         super().__init__(dir, **kwargs)
 
         # 3. Check if the cache is empty
@@ -270,6 +278,8 @@ class CustomCache(Cache):
             log_path=str(self.log_path),
             clear_on_exit=self.clear_on_exit,
             expire_days=(pd.to_datetime(self.expiry_date).date() - datetime.today().date()).days,
+            size_limit=self.size_limit,
+            cull_limit=self.cull_limit,
             data=dict(self.items()),
         )
 
@@ -283,6 +293,8 @@ class CustomCache(Cache):
             log_path=state["log_path"],
             clear_on_exit=state["clear_on_exit"],
             expire_days=state["expire_days"],
+            size_limit=state.get("size_limit"),
+            cull_limit=state.get("cull_limit"),
             data=state["data"],
         )
 
