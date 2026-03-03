@@ -1,4 +1,6 @@
 import pandas as pd
+from typing import Tuple
+from trade.helpers.helper import parse_option_tick
 
 def generate_signal_id(underlier, 
                        date, 
@@ -28,3 +30,13 @@ def parse_signal_id(id):
     else:
         raise ValueError(f'Invalid signal id `{id}`, neither LONG nor SHORT was found in the id')
     
+
+def parse_position_id(positionID: str) -> Tuple[dict, list]:
+    position_str = positionID
+    position_list = position_str.split("&")
+    position_list = [x.split(":") for x in position_list if x]
+    position_list_parsed = [(x[0], parse_option_tick(x[1])) for x in position_list]
+    position_dict = dict(L=[], S=[])
+    for x in position_list_parsed:
+        position_dict[x[0]].append(x[1])
+    return position_dict, position_list

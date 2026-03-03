@@ -244,7 +244,7 @@ from .analyze_utils import (
 )
 from .vars import MEASURES_SET
 
-logger = setup_logger("EventDriven.riskmanager.position.cogs.limits", stream_log_level="WARNING")
+logger = setup_logger("EventDriven.riskmanager.position.cogs.limits", stream_log_level="INFO")
 
 
 @dataclass
@@ -255,9 +255,11 @@ class _LimitsMetaData:
     scalar: float
     sizing_lev: float
     delta_lmt: float
-    delta: Optional[float] = None
+    delta_per_contract: Optional[float] = None
     option_price: Optional[float] = None
     undl_price: Optional[float] = None
+    prev_quantity: Optional[int] = None
+    new_quantity: Optional[int] = None
 
 
 class LimitsAndSizingCog(BaseCog):
@@ -369,10 +371,11 @@ class LimitsAndSizingCog(BaseCog):
             signal_id=order["signal_id"],
             scalar=scalar,
             sizing_lev=self.sizer_configs.sizing_lev,
-            delta=delta,
+            delta_per_contract=delta,
             option_price=option_price,
             undl_price=undl_data.chain_spot["close"],
             delta_lmt=new_pos_state.limits.delta,
+            new_quantity=order["data"]["quantity"],
         )
         logger.info(f"Storing position metadata: {metadata}")
         self.position_metadata[order["data"]["trade_id"]] = metadata
@@ -433,6 +436,7 @@ class LimitsAndSizingCog(BaseCog):
             logger.warning(
                 f"Calculated position size is 0 for order {order['data']['trade_id']}. Delta per contract ({delta}) exceeds limit {delta_lmt}."
             )
+        logger.info(f"Updated position quantity to {q} for order {order['data']['trade_id']}.")
         new_position_state.order = Order.from_dict(order_dict)
 
     def _analyze_impl(self, portfolio_context: PositionAnalysisContext) -> CogActions:

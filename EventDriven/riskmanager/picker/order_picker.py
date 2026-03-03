@@ -184,21 +184,24 @@ import pandas as pd
 from EventDriven.riskmanager._order_validator import OrderInputs
 from ..utils import (
     LOOKBACKS,
-    get_cache,
     populate_cache_with_chain,
     precompute_lookbacks,
 )
 from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPickerConfig, OrderResolutionConfig
+from EventDriven.types import ResultsEnum
 
 from ..utils import (
-    dynamic_memoize,
+    dynamic_memoize, # noqa
+    parse_position_id
 )
+from .builder import order_builder
 from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import timeit
-from EventDriven.riskmanager.picker import OrderSchema, build_strategy, extract_order
+from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop, order_failed
 from EventDriven.types import Order
+import numpy as np
 
 logger = setup_logger("EventDriven.riskmanager.picker.order_picker")
 
@@ -224,12 +227,59 @@ class OrderPicker:
         self._order_schema_config = OrderSchemaConfigs()
         self._order_resolution_config = OrderResolutionConfig()
 
+        ## Others
+        self.preset_orders = {}
+
     def __repr__(self):
         return f"OrderPicker(start_date={self.start_date}, end_date={self.end_date})"
 
     @property
     def lookback(self):
         return self.__lookback
+    
+    def register_preset_order(self, 
+                              signal_id: str, 
+                              trade_id: str,
+                              date: str | datetime,
+                              close_price: float = np.nan):
+        
+        """
+        Register a preset order to be used instead of generating a new one.
+        This is useful for backtesting scenarios where specific orders need to be enforced.
+        """
+        self.preset_orders[signal_id] = {
+            "trade_id": trade_id,
+            "date": pd.to_datetime(date, format="%Y-%m-%d").date(),
+            "close_price": close_price
+        }
+
+    def clear_preset_orders(self):
+        """
+        Clear all registered preset orders.
+        """
+        self.preset_orders = {}
+
+    def get_preset_order(self, signal_id: str, date: str | datetime) -> dict:
+        """
+        Check if a preset order exists for the given signal_id and date
+        If it exists, return the preset order details; otherwise, return an empty dictionary.
+        It we will format the order as expected by the rest of the system.
+        """
+        preset_order = self.preset_orders.get(signal_id, None)
+        if preset_order and preset_order["date"] == pd.to_datetime(date, format="%Y-%m-%d").date():
+            _, legs = parse_position_id(preset_order["trade_id"])
+            data = _order_formatting(
+                trade_id=preset_order["trade_id"],
+                legs=legs,
+                close=preset_order["close_price"]
+            )
+            return {
+                "result": ResultsEnum.SUCCESSFUL.value,
+                "data": data,
+                "map_signal_id": signal_id,
+                "signal_id": signal_id,
+            }
+        return {}
 
     def get_order_schema(self, ticker: str, option_type: str = "P", max_total_price: float = None) -> OrderSchema:
         """
@@ -273,7 +323,7 @@ class OrderPicker:
         chain_spot = spot
         return self._get_order(schema, date, spot, chain_spot, print_url=print_url)
 
-    @dynamic_memoize
+    # @dynamic_memoize
     def _get_order(
         self,
         schema: tuple,
@@ -285,34 +335,36 @@ class OrderPicker:
         """
         Get the order for the given schema, date, and spot price.
         """
+        
         assert isinstance(schema, tuple), "Schema must be a tuple of items."
         schema = OrderSchema(dict(schema))
-        if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(
-                f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-            min_m, max_m = 2 - schema["min_moneyness"], 2 - schema["max_moneyness"]
-            schema["min_moneyness"] = min(min_m, max_m)  ## For Calls, we want the min moneyness to be 2 - min_moneyness
-            schema["max_moneyness"] = max(min_m, max_m)
-            logger.info(
-                f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-        elif (
-            schema["option_type"].lower() == "p"
-        ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-            logger.info(
-                f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-            )
-        else:
-            raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
+        # if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        #     logger.info(
+        #         f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        #     min_m, max_m = 2 - schema["min_moneyness"], 2 - schema["max_moneyness"]
+        #     schema["min_moneyness"] = min(min_m, max_m)  ## For Calls, we want the min moneyness to be 2 - min_moneyness
+        #     schema["max_moneyness"] = max(min_m, max_m)
+        #     logger.info(
+        #         f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        # elif (
+        #     schema["option_type"].lower() == "p"
+        # ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
+        #     logger.info(
+        #         f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
+        #     )
+        # else:
+        #     raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
 
         chain = populate_cache_with_chain(schema["tick"], date, chain_spot, print_url=print_url)
 
-        cache = get_cache("spot")
-        cache = {k: v for k, v in cache.items()}
+        # cache = get_cache("spot")
+        # cache = {k: v for k, v in cache.items()}
 
-        raw_order = build_strategy(chain, schema, chain_spot, cache)
-        return extract_order(raw_order)
+        # raw_order = build_strategy(chain, schema, chain_spot, cache)
+        # return extract_order(raw_order)
+        return order_builder(unfiltered_chain=chain, schema=schema, spot=chain_spot)
 
     @timeit
     def get_order(self, request: OrderRequest) -> Order:
@@ -342,6 +394,7 @@ class OrderPicker:
             order_resolution_config = self._order_resolution_config
 
         if request.max_close > request.tick_cash/100: ## Tick cash is scaled
+
             logger.warning(
                 f"Request max_close {request.max_close} is greater than tick_cash {request.tick_cash}. Adjusting max_close to tick_cash."
             )
@@ -385,31 +438,37 @@ def _get_open_order_backtest(
     returns:
     Order: The resolved order object.
     """
-    schema = picker.get_order_schema(
-        ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
-    )
-    schema_as_tuple = tuple(schema.data.items())
-    order = picker._get_order(
-        schema=schema_as_tuple, date=request.date, spot=request.spot, chain_spot=request.chain_spot, print_url=False
-    )
-
-    ## Resolve order if failed and resolution is enabled
-    if picker._order_resolution_config.resolve_enabled:
-        order = order_resolve_loop(
-            order=order,
-            schema=schema,
-            date=inputs.date,
-            spot=inputs.spot,
-            max_close=inputs.tick_cash / 100,  ## Use tick cash to determine max close. Normalize to 100 contracts
-            max_dte_tolerance=inputs.max_dte_tolerance,
-            max_tries=inputs.max_tries,
-            otm_moneyness_width=inputs.otm_moneyness_width,
-            itm_moneyness_width=inputs.itm_moneyness_width,
-            logger=logger,
-            signalID=inputs.signal_id,
-            schema_cache={},
-            picker=picker,
+    order = picker.get_preset_order(signal_id=inputs.signal_id, date=inputs.date)
+    if not order:
+        logger.info(f"No preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Generating new order.")
+        schema = picker.get_order_schema(
+            ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
         )
+        schema_as_tuple = tuple(schema.data.items())
+        order = picker._get_order(
+            schema=schema_as_tuple, date=request.date, spot=request.spot, chain_spot=request.chain_spot, print_url=False
+        )
+
+        ## Resolve order if failed and resolution is enabled
+        if picker._order_resolution_config.resolve_enabled:
+            order = order_resolve_loop(
+                order=order,
+                schema=schema,
+                date=inputs.date,
+                spot=inputs.spot,
+                max_close=inputs.tick_cash / 100,  ## Use tick cash to determine max close. Normalize to 100 contracts
+                max_dte_tolerance=inputs.max_dte_tolerance,
+                max_tries=inputs.max_tries,
+                otm_moneyness_width=inputs.otm_moneyness_width,
+                itm_moneyness_width=inputs.itm_moneyness_width,
+                logger=logger,
+                signalID=inputs.signal_id,
+                schema_cache={},
+                picker=picker,
+                tick_cash=request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash/100
+            )
+    else:
+        logger.info(f"Preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Using preset order.")
 
     ## Add necessary tags for identification
     order["signal_id"] = inputs.signal_id

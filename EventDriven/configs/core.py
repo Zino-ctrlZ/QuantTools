@@ -1,4 +1,4 @@
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from EventDriven.configs.base import pydantic_dataclass
 from pydantic import ConfigDict
 import numbers
 from typing import Union, Tuple, List, Literal, Dict
@@ -9,7 +9,7 @@ from pydantic import Field
 from EventDriven.configs.base import (
     BaseConfigs,
     _CustomFrozenBaseConfigs,
-    )
+)
 from EventDriven._vars import OPTION_TIMESERIES_START_DATE
 
 
@@ -64,7 +64,7 @@ class BaseSizerConfigs(_CustomFrozenBaseConfigs, ABC):
     Base configuration class for Sizer modules.
     """
 
-    delta_lmt_type: Literal["default", "zscore"] = "default"    
+    delta_lmt_type: Literal["default", "zscore"] = "default"
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
@@ -90,11 +90,13 @@ class ZscoreSizerConfigs(BaseSizerConfigs):
     norm_const: numbers.Number = 1.0
     delta_lmt_type: Literal["default", "zscore"] = "zscore"
 
+
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class OrderResolutionConfig(BaseConfigs):
     """
     Configuration class for Order Resolution settings.
     """
+
     resolve_enabled: bool = True
     otm_moneyness_width: float = 0.45
     itm_moneyness_width: float = 0.45
@@ -102,18 +104,22 @@ class OrderResolutionConfig(BaseConfigs):
     max_tries: int = 20
     max_dte_tolerance: int = 90
 
+
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class UndlTimeseriesConfig(BaseConfigs):
     """
     Configuration class for underlying timeseries data.
     """
-    interval: str = '1d'
+
+    interval: str = "1d"
+
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class OptionPriceConfig(BaseConfigs):
     """
     Configuration class for option price data retrieval.
     """
+
     use_price: str = "midpoint"  # Options: "close", "bid", "ask", "midpoint"
 
 
@@ -132,8 +138,12 @@ class SkipCalcConfig(BaseConfigs):
     spike_flag: bool = False
     std_window_bool: bool = False
     zero_filter: bool = True
-    add_columns: List[Tuple[str, str]] = Field(default_factory=list, description="List of tuples where each tuple contains (column_name, function_name) to add additional calculated columns. Function will be fetched from ADD_COLUMNS_FACTORY.")
+    add_columns: List[Tuple[str, str]] = Field(
+        default_factory=list,
+        description="List of tuples where each tuple contains (column_name, function_name) to add additional calculated columns. Function will be fetched from ADD_COLUMNS_FACTORY.",
+    )
     skip_columns: List[str] = Field(default_factory=lambda: ["Delta", "Gamma", "Vega", "Theta", "Midpoint"])
+
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class BaseCogConfig(BaseConfigs):
@@ -161,6 +171,7 @@ class StrategyLimitsEnabled(BaseConfigs):
     moneyness: bool = True
     exercise: bool = False
 
+
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
 class LimitsEnabledConfig(BaseCogConfig):
     """
@@ -174,7 +185,6 @@ class LimitsEnabledConfig(BaseCogConfig):
     default_dte: int = 120
     default_moneyness: float = 1.15
     enabled_limits: StrategyLimitsEnabled = Field(default_factory=StrategyLimitsEnabled)
-
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -192,6 +202,7 @@ class PortfolioManagerConfig(BaseConfigs):
     """
     Configuration class for Backtest related settings.
     """
+
     weights_haircut: float = 0.0  # Haircut applied to weights
     roll_failed_orders: bool = True  # Whether signals that fail to be processed should be rolled forward
 
@@ -207,7 +218,6 @@ class BacktesterConfig(BaseConfigs):
     raise_errors: bool = False
     min_slippage_pct: float = 0.075
     max_slippage_pct: float = 0.15
-    
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -236,6 +246,7 @@ class CashAllocatorConfig(BaseConfigs):
 
     def build_max_cash_map(self, weights: Dict[str, float], cash: float) -> Dict[str, float]:
         return {sym: self.alloc_for_weight(w, cash) for sym, w in weights.items()}
+
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class RiskManagerConfig(BaseConfigs):

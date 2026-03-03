@@ -1,4 +1,4 @@
-from typing import Union, Optional, List, Callable
+from typing import Union, Optional, List, Callable, Dict
 from copy import deepcopy
 from backtesting import Backtest, Strategy
 import pandas as pd
@@ -73,10 +73,10 @@ class PTBacktester(AggregatorParent):
     """
 
     def __init__(self, 
-                datalist: list , 
-                strategy,
-                cash,
-                strategy_settings: dict = None,
+                datalist: List[PTDataset], 
+                strategy: StrategyBase,
+                cash: Union[float, Dict[str, float]],
+                strategy_settings: Dict[str, float] = None,
                 start_overwrite: Optional[str] = None, 
                 **kwargs) -> None:
         """
@@ -197,6 +197,10 @@ class PTBacktester(AggregatorParent):
                 for setting, value in d.param_settings.items(): ## Set the settings for the strategy, per dataset                
                     setattr(self.strategy, setting, value)
             stats = d.backtest.run()
+            if self.start_overwrite:
+                stats["Start"] = pd.to_datetime(self.start_overwrite)
+            stats["End"] = pd.to_datetime(stats["End"])
+            stats["Duration"] = stats["End"] - stats["Start"]
             ## Since the strategy is uninitialized, we reset the settings to default, to avoid any carry over in the next run
             self.reset_settings() if d.param_settings else None
             try:

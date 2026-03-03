@@ -1,10 +1,7 @@
 from datetime import datetime
 import numpy as np
 from typing import List, Union
-from scipy.stats import norm
-from ...config.defaults import DAILY_BASIS
 from ...core.black_scholes_math import (
-    black_scholes_analytic_greeks_vectorized,
     black_scholes_vectorized_base
 )
 from ...assets.forward import (
@@ -118,7 +115,7 @@ def vectorized_black_scholes_greeks(
         r: List[float],
         sigma: List[float],
         option_type: str|List[str] = "c",
-        div_type='discrete',
+        dividend_type='discrete',
         div_amount=None) -> dict:
     """
     Vectorized Black-Scholes Greeks calculation.
@@ -130,29 +127,31 @@ def vectorized_black_scholes_greeks(
     r: Risk-free rates (annualized, array)
     sigma: Volatilities (annualized, array)
     option_type: "c" for call, "p" for put (single string or list of strings)
-    div_type: Type of dividend ('discrete' or 'continuous')
+    dividend_type: Type of dividend ('discrete' or 'continuous')
     div_amount: Dividend amount (single float or list of floats, ignored for continuous dividends)
-        if discrete expecting present value of discrete dividends, else if continuous expecting continuous yield rate.
+        if discrete expecting present value of discrete dividends, else if continuous expecting discounted continuous yield rate.
     Returns: Greeks (dictionary)
     """
 
-    T = [time_distance_helper(end_dates[i], valuation_dates[i]) for i in range(len(end_dates))]
+    T = time_distance_helper(start=valuation_dates, end=end_dates)
     finite_estimator = FiniteGreeksEstimator(
         price_func=_ptched_bsm_for_numerical,
         base_params={
-            'F': np.asarray(F),
-            'K': np.asarray(K),
-            'T': np.asarray(T),
-            'r': np.asarray(r),
-            'sigma': np.asarray(sigma),
-            'q': 0.0,  # Assuming no continuous dividend yield for simplicity
-            'S': np.asarray(S),  # Including spot price for delta calculation
-            'option_type': option_type,
-            'div_type': div_type,
-            'div_amount': div_amount  # Placeholder, will be ignored in the patched function
+            "F": np.asarray(F),
+            "K": np.asarray(K),
+            "T": np.asarray(T),
+            "r": np.asarray(r),
+            "sigma": np.asarray(sigma),
+            # Assuming no continuous dividend yield for simplicity
+            # We pass continuous yield in div_amount if div_type is 'continuous'
+            "q": 0.0,
+            "S": np.asarray(S),  # Including spot price for delta calculation
+            "option_type": option_type,
+            "dividend_type": dividend_type,
+            "div_amount": div_amount,  # Placeholder, will be ignored in the patched function
         },
         dx_thresh=0.00001,
-        method='central'  # Use backward method for finite differences
+        method="central",  # Use backward method for finite differences
     )
     greeks = finite_estimator.all_first_order()
     greeks.update(finite_estimator.all_second_order())

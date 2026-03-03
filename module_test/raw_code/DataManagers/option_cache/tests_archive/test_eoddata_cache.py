@@ -43,7 +43,7 @@ if market_ts is None:
     
     # Try to import and create MarketTimeseries
     try:
-        from EventDriven.riskmanager.market_data import get_timeseries_obj
+        from trade.datamanager.market_data import get_timeseries_obj
         market_ts = get_timeseries_obj()
         set_global_market_timeseries(market_ts)
         print(f"    ✓ Created and set MarketTimeseries: {market_ts}\n")

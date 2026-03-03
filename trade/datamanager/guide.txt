@@ -1,212 +1,720 @@
-========================================
-OPTION DATA MANAGER – TOP LEVEL DESIGN
-========================================
+ ================================================================================
+QUANTTOOLS DATAMANAGER MODULE – COMPREHENSIVE GUIDE
+================================================================================
 
-----------------------------------------
-AS-OF POLICY (SIMPLIFIED)
-----------------------------------------
+================================================================================
+1. MODULE OVERVIEW
+================================================================================
 
-As-of represents the assumed market state time for a calculation.
+The datamanager module provides a complete data infrastructure for quantitative
+options trading and backtesting. It handles market data retrieval, caching,
+processing, and calculation of derived metrics (forwards, volatilities, greeks,
+theoretical prices).
 
-We use ONLY three modes:
+DESIGN PRINCIPLES:
+- Singleton pattern per symbol for efficient resource management
+- Intelligent multi-tier caching (memory + disk with expiration)
+- Automatic data loading from multiple sources (ThetaData, OpenBB, YFinance)
+- Type-safe result containers with full metadata
+- Consistent API across all managers
 
-1) intraday
-   - Historical intraday timestamp
-   - Used for backtests and intraday analytics
-   - Example: 2025-01-04 10:32:15
+KEY CAPABILITIES:
+- Historical and real-time market data access
+- Split adjustment handling for backtesting
+- Dividend schedule construction (discrete/continuous)
+- Forward price computation with carry models
+- Implied volatility calculation (BSM, Binomial)
+- Greek calculation with multiple models
+- Theoretical pricing and scenario analysis
 
-2) eod
-   - End-of-day snapshot
-   - Used for daily data, surfaces, storage
-   - Example: 2025-01-04 EOD
 
-3) snap
-   - Real-time / near-real-time snapshot
-   - Used for live trading
-   - Example: now() with short TTL
+================================================================================
+2. ARCHITECTURE OVERVIEW
+================================================================================
 
-As-of is NOT an interval or bar size.
-As-of is part of every cache key.
+COMPONENT HIERARCHY:
 
-----------------------------------------
-CORE ARCHITECTURE OVERVIEW
-----------------------------------------
+┌─────────────────────────────────────────────────────────────────────┐
+│                     BaseDataManager (ABC)                           │
+│  - Cache management (CustomCache)                                   │
+│  - Key construction (namespaced, artifact-based)                    │
+│  - Configuration (OptionDataConfig singleton)                       │
+│  - Logger setup                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                ┌───────────────────┴───────────────────┐
+                │                                       │
+    ┌───────────▼─────────────┐         ┌─────────────▼──────────────┐
+    │   Market Data Layer     │         │  Derived Metrics Layer     │
+    │                         │         │                            │
+    │ - SpotDataManager       │         │ - ForwardDataManager       │
+    │ - RatesDataManager      │         │ - VolDataManager           │
+    │ - DividendDataManager   │         │ - GreekDataManager         │
+    │ - OptionSpotDataManager │         │ - TheoDataFunctions        │
+    │ - MarketTimeseries      │         │   (get_option_theo_price)  │
+    └─────────────────────────┘         └────────────────────────────┘
 
-DESIGN PHILOSOPHY:
-Facade + domain managers + pluggable engines
-Read-through caching + materialization
 
-----------------------------------------
-HEAD / ORCHESTRATION
-----------------------------------------
+================================================================================
+3. CORE DATA MANAGERS
+================================================================================
 
-DataManager
-- Single entrypoint
-- Coordinates all domain managers
-- No heavy computation
-- Enforces lifecycle + consistency
+--------------------------------------------------------------------------------
+3.1 SpotDataManager
+--------------------------------------------------------------------------------
+Manages underlying equity spot prices with split adjustment support.
 
-----------------------------------------
-DOMAIN MANAGERS (CORE PRODUCTS)
-----------------------------------------
+SINGLETON: Yes (per symbol)
+CACHE: 45-day expiration
+DATA SOURCE: MarketTimeseries (OpenBB/YFinance)
 
-MarketSnapshotManager
-- Owns as-of normalization
-- Produces snapshot identity (hash or id)
+KEY METHODS:
+  get_spot_timeseries(start, end, undo_adjust=True) -> SpotResult
+    - Returns daily closing prices
+    - undo_adjust=True: split-adjusted chain_spot
+    - undo_adjust=False: unadjusted spot
 
-SpotManager
-- Spot prices
-- Cached by (underlying, as_of)
+  get_spot(date, undo_adjust=True) -> SpotResult
+    - Single date spot price
 
-RatesManager
-- Discount factors / rate curves
+  rt(undo_adjust=True) -> float
+    - Real-time spot price
 
-DividendManager
-- Dividend schedules / borrow
+TYPICAL USAGE:
+  spot_mgr = SpotDataManager("AAPL")
+  result = spot_mgr.get_spot_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      undo_adjust=True
+  )
+  prices = result.daily_spot  # pd.Series with DatetimeIndex
 
-ForwardManager
-- Produces forward from spot + carry
-- Cached by (underlying, expiry, as_of)
+--------------------------------------------------------------------------------
+3.2 RatesDataManager
+--------------------------------------------------------------------------------
+Manages risk-free interest rates from US Treasury bills (^IRX).
 
-ChainManager
-- Option metadata + quotes
-- Cached by (underlying, as_of)
+SINGLETON: Yes (global - no symbol)
+CACHE: 30-day expiration
+DATA SOURCE: YFinance (13-week T-Bill)
 
-VolManager
-- Entry point for volatility
-- Routes to engines
-- Owns vol caching + provenance
+KEY METHODS:
+  get_risk_free_rate_timeseries(start, end) -> RatesResult
+    - Returns daily risk-free rates (annualized)
+    - Automatically handles missing dates (forward fill)
 
-GreeksManager
-- Entry point for greeks
-- Requests vols explicitly from VolManager
+  get_rate(date) -> RatesResult
+    - Single date rate
 
-----------------------------------------
-ENGINE LAYER (INTERNAL ONLY)
-----------------------------------------
+  rt() -> float
+    - Real-time rate
 
-Volatility Engines:
-- BSVolEngine
-- CRRVolEngine
-- SurfaceVolEngine
-- FitEngine
+TYPICAL USAGE:
+  rates_mgr = RatesDataManager()
+  result = rates_mgr.get_risk_free_rate_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31"
+  )
+  rates = result.daily_risk_free_rates  # pd.Series
 
-Greeks Engines:
-- BSGreeksEngine
-- NumericalGreeksEngine
-- BinomialGreeksEngine
+--------------------------------------------------------------------------------
+3.3 DividendDataManager
+--------------------------------------------------------------------------------
+Manages dividend data with schedule construction for option pricing.
 
-Engines are NEVER called directly by strategies.
+SINGLETON: Yes (per symbol)
+CACHE: 60-day expiration (+ temp cache for short-lived data)
+DATA SOURCE: MarketTimeseries + forecasting
 
-----------------------------------------
-REQUEST / RESULT CONTRACTS
-----------------------------------------
+KEY METHODS:
+  get_schedule_timeseries(start, end, maturity, div_type, undo_adjust) -> DividendsResult
+    - Returns daily Schedule objects (discrete) or yields (continuous)
+    - Builds forward-looking schedules for each valuation date
+    - Handles split adjustments
+    - Supports partial caching with smart merging
 
-Requests:
-- SpotRequest
-- ChainRequest
-- VolRequest
-- GreeksRequest
+  get_discrete_dividend_schedule(start, end) -> Tuple[Schedule, str]
+    - Raw dividend schedule for date range
+    - Used internally by other managers
 
-Results:
-- SpotResult
-- VolResult
-- GreeksResult
+TYPICAL USAGE:
+  div_mgr = DividendDataManager("AAPL")
+  result = div_mgr.get_schedule_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      maturity_date="2025-06-20",
+      dividend_type=DivType.DISCRETE,
+      undo_adjust=True
+  )
+  schedules = result.daily_discrete_dividends  # pd.Series of Schedule objects
 
-Each result contains:
-- values (Series / DataFrame)
-- provenance (engine, config hash, snapshot id, as_of)
-- diagnostics (optional)
+--------------------------------------------------------------------------------
+3.4 ForwardDataManager
+--------------------------------------------------------------------------------
+Computes forward prices using cost-of-carry models.
 
-----------------------------------------
-CACHING LAYER
-----------------------------------------
+SINGLETON: Yes (per symbol)
+CACHE: 30-day expiration
+DEPENDENCIES: SpotDataManager, RatesDataManager, DividendDataManager
 
-CustomCache
-- Disk-backed
-- Used by all managers
+KEY METHODS:
+  get_forward_timeseries(start, end, maturity, div_type, use_chain_spot) -> ForwardResult
+    - Computes daily forward prices to fixed maturity
+    - Discrete model: F = S * exp(r*T) - PV(dividends)
+    - Continuous model: F = S * exp((r-q)*T)
 
-CacheKey
-- Standardized key builder
-- Includes:
-  - identity (option / underlying)
-  - artifact type
-  - as_of
-  - engine / version info
+  get_forward(date, maturity, div_type, use_chain_spot) -> ForwardResult
+    - Single date forward
 
-----------------------------------------
-PERSISTENCE / OFFLOAD
-----------------------------------------
+TYPICAL USAGE:
+  fwd_mgr = ForwardDataManager("AAPL")
+  result = fwd_mgr.get_forward_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      maturity_date="2025-06-20",
+      dividend_type=DivType.DISCRETE,
+      use_chain_spot=True
+  )
+  forwards = result.daily_discrete_forward  # pd.Series
 
-offload()
-- Base capability on managers
-- Cron-driven
+--------------------------------------------------------------------------------
+3.5 OptionSpotDataManager
+--------------------------------------------------------------------------------
+Retrieves option contract market prices from ThetaData API.
 
-Materializer (optional)
-- Shared SQL writer
-- Batching, retries, idempotency
+SINGLETON: No (per symbol)
+CACHE: 7-day expiration
+DATA SOURCE: ThetaData (EOD or Quote endpoint)
 
-----------------------------------------
-POLICIES & DIAGNOSTICS
-----------------------------------------
+KEY METHODS:
+  get_option_spot_timeseries(start, end, strike, expiration, right, endpoint_source) -> OptionSpotResult
+    - Returns OHLC data for option contract
+    - endpoint_source=EOD: end-of-day report
+    - endpoint_source=QUOTE: intraday quotes
 
-AsOfPolicy
-- intraday / eod / snap
+  get_option_spot(date, strike, expiration, right) -> OptionSpotResult
+    - Single date option price
 
-PricePolicy
-- mid / bid / ask
+TYPICAL USAGE:
+  opt_mgr = OptionSpotDataManager("AAPL")
+  result = opt_mgr.get_option_spot_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      strike=150.0,
+      expiration="2025-06-20",
+      right="C",
+      endpoint_source=OptionSpotEndpointSource.EOD
+  )
+  ohlc = result.daily_option_spot  # pd.DataFrame with [open, high, low, close]
 
-CachePolicy
-- TTL / refresh rules
+--------------------------------------------------------------------------------
+3.6 MarketTimeseries
+--------------------------------------------------------------------------------
+Central market data repository with lazy loading and caching.
 
-Metrics / Logging
-- cache hit/miss
-- compute time
-- engine selection
+SINGLETON: Yes (global instance)
+CACHE: Multi-tier (memory + disk)
+DATA SOURCE: OpenBB, ThetaData, YFinance
 
-----------------------------------------
-BUILD ORDER (DO THIS IN ORDER)
-----------------------------------------
+KEY FEATURES:
+- Loads all market data for a symbol on first request
+- Maintains timeseries for: spot, chain_spot, dividends, rates
+- Provides point-in-time snapshots (AtIndexResult)
+- Handles corporate actions (splits, dividends)
+- Thread-safe access
 
-PHASE 1 – FOUNDATION
-- CustomCache
-- CacheKey
-- AsOfPolicy
+TYPICAL USAGE:
+  from trade.datamanager.vars import TS  # Global instance
+  TS.load("AAPL")  # Lazy load on first access
+  data = TS.at_index("AAPL", "2025-01-15")
+  spot = data.spot  # pd.Series with OHLCV
 
-PHASE 2 – MARKET DATA
-- ChainManager
-- SpotManager
 
-PHASE 3 – CARRY
-- RatesManager
-- DividendManager
-- ForwardManager
+================================================================================
+4. DERIVED METRICS MANAGERS
+================================================================================
 
-PHASE 4 – VOLATILITY
-- VolManager
-- BSVolEngine
-- VolRequest / VolResult
+--------------------------------------------------------------------------------
+4.1 VolDataManager
+--------------------------------------------------------------------------------
+Computes implied volatilities from option market prices.
 
-PHASE 5 – GREEKS
-- GreeksManager
-- BSGreeksEngine
-- GreeksRequest / GreeksResult
+SINGLETON: Yes (per symbol)
+CACHE: 7-day expiration
+MODELS: Black-Scholes-Merton (BSM), Cox-Ross-Rubinstein (CRR)
 
-PHASE 6 – PERSISTENCE
-- offload()
-- Materializer
+KEY METHODS:
+  get_implied_volatility_timeseries(start, end, strike, expiration, right, 
+      model, american, dividend_type, n_steps, ...) -> VolatilityResult
+    - Computes IV for each date in range
+    - BSM: Fast, European-style only
+    - BINOMIAL: CRR tree, supports American exercise
+    - EURO_EQIV: Converts American IV to European equivalent
 
-PHASE 7 – EXTENSIONS
-- CRRVolEngine
-- SurfaceVolEngine
-- FitEngine
-- Batch / chain analytics
+  rt(strike, expiration, right, ...) -> float
+    - Real-time implied volatility
 
-----------------------------------------
-GOLDEN RULES
-----------------------------------------
+TYPICAL USAGE:
+  vol_mgr = VolDataManager("AAPL")
+  result = vol_mgr.get_implied_volatility_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      strike=150.0,
+      expiration="2025-06-20",
+      right="c",
+      model=OptionPricingModel.BSM,
+      dividend_type=DivType.DISCRETE
+  )
+  ivs = result.timeseries  # pd.Series of implied vols
 
-1) Strategies never choose engines
-2) Managers choose engines
-3) Cache keys always include as_of
-4) Provenance travels with data
+--------------------------------------------------------------------------------
+4.2 GreekDataManager
+--------------------------------------------------------------------------------
+Computes option sensitivities (delta, gamma, vega, theta, rho).
+
+SINGLETON: Yes (per symbol)
+CACHE: 7-day expiration
+MODELS: Black-Scholes (analytical), Binomial (numerical)
+
+KEY METHODS:
+  get_greeks_timeseries(start, end, strike, expiration, right,
+      greeks_to_compute, model, american, ...) -> GreekResultSet
+    - Computes specified greeks for each date
+    - greeks_to_compute: list of GreekType (optional, defaults to all)
+    - Returns DataFrame with columns for each greek
+
+  rt(strike, expiration, right, ...) -> GreekResultSet
+    - Real-time greeks
+
+TYPICAL USAGE:
+  greek_mgr = GreekDataManager("AAPL")
+  result = greek_mgr.get_greeks_timeseries(
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      strike=150.0,
+      expiration="2025-06-20",
+      right="c",
+      greeks_to_compute=[GreekType.DELTA, GreekType.GAMMA]
+  )
+  greeks = result.timeseries  # pd.DataFrame with [delta, gamma, ...]
+
+--------------------------------------------------------------------------------
+4.3 Theoretical Pricing Functions
+--------------------------------------------------------------------------------
+Module-level functions for option theoretical pricing and scenario analysis.
+
+KEY FUNCTIONS:
+  get_option_theoretical_price(symbol, start, end, strike, expiration, right,
+      market_model, dividend_type, american, ...) -> TheoreticalPriceResult
+    - Computes theoretical option prices using specified model
+    - Loads all required market data automatically
+    - Returns timeseries of prices
+
+  calculate_scenarios(symbol, as_of, strike, expiration, right,
+      spot_scenarios, vol_scenarios, return_pnl, ...) -> ScenariosResult
+    - Runs scenario analysis (stress testing)
+    - spot_scenarios: list of spot multipliers (e.g., [0.9, 1.0, 1.1])
+    - vol_scenarios: list of vol adjustments (e.g., [-0.05, 0.0, 0.05])
+    - Returns grid of prices/PnL across scenarios
+
+TYPICAL USAGE:
+  from trade.datamanager.theo import get_option_theoretical_price, calculate_scenarios
+  
+  # Theoretical pricing
+  theo_result = get_option_theoretical_price(
+      symbol="AAPL",
+      start_date="2025-01-01",
+      end_date="2025-01-31",
+      strike=150.0,
+      expiration="2025-06-20",
+      right="c",
+      market_model=OptionPricingModel.BSM,
+      dividend_type=DivType.DISCRETE
+  )
+  prices = theo_result.timeseries
+  
+  # Scenario analysis
+  scenarios = calculate_scenarios(
+      symbol="AAPL",
+      as_of="2025-01-15",
+      strike=150.0,
+      expiration="2025-06-20",
+      right="c",
+      spot_scenarios=[0.95, 1.0, 1.05],
+      vol_scenarios=[-0.05, 0.0, 0.05],
+      return_pnl=True
+  )
+  grid = scenarios.grid  # pd.DataFrame with spot x vol grid
+
+
+================================================================================
+5. RESULT CONTAINERS
+================================================================================
+
+All managers return strongly-typed Result objects (dataclasses):
+
+Result (Base)
+  - model_input_keys: Dict of inputs used
+  - rt: bool flag for real-time data
+  - fallback_option: How to handle missing real-time data
+
+SpotResult
+  - timeseries: pd.Series (renamed to daily_spot via property)
+  - symbol: str
+  - undo_adjust: bool
+
+RatesResult
+  - timeseries: pd.Series (renamed to daily_risk_free_rates)
+  - key: cache key
+
+DividendsResult
+  - timeseries: pd.Series of Schedule objects or yields
+  - dividend_type: DivType (DISCRETE or CONTINUOUS)
+  - undo_adjust: bool
+  - Properties: daily_discrete_dividends, daily_continuous_dividends
+
+ForwardResult
+  - timeseries: pd.Series (renamed based on div_type)
+  - dividend_type: DivType
+  - dividend_result: DividendsResult used
+  - Properties: daily_discrete_forward, daily_continuous_forward
+
+OptionSpotResult
+  - timeseries: pd.DataFrame (renamed to daily_option_spot)
+  - strike, expiration, right, symbol
+  - endpoint_source: OptionSpotEndpointSource
+
+VolatilityResult
+  - timeseries: pd.Series of implied vols
+  - model: OptionPricingModel
+  - volatility_model: VolatilityModel
+  - strike, expiration, right, symbol
+
+GreekResultSet
+  - timeseries: pd.DataFrame with columns for each greek
+  - greeks_computed: List[GreekType]
+  - strike, expiration, right, symbol
+
+
+================================================================================
+6. CONFIGURATION & ENUMS
+================================================================================
+
+--------------------------------------------------------------------------------
+OptionDataConfig (Singleton)
+--------------------------------------------------------------------------------
+Global configuration for all datamanagers.
+
+KEY SETTINGS:
+  - option_spot_endpoint_source: EOD or QUOTE
+  - dividend_type: DISCRETE or CONTINUOUS
+  - option_model: BSM, BINOMIAL, EURO_EQIV
+  - volatility_model: MARKET or MODEL_DYNAMIC
+  - n_steps: int (binomial tree steps)
+  - undo_adjust: bool (use split-adjusted prices)
+  - model_price: MIDPOINT, BID, ASK, OPEN, CLOSE
+  - real_time_fallback_option: USE_LAST_AVAILABLE, RAISE_ERROR, ZEROED, NAN
+
+ACCESS:
+  from trade.datamanager.config import OptionDataConfig
+  config = OptionDataConfig()
+  config.n_steps = 200  # Modify globally
+
+--------------------------------------------------------------------------------
+Key Enumerations
+--------------------------------------------------------------------------------
+
+Interval:
+  - INTRADAY: historical intraday timestamp
+  - EOD: end-of-day daily snapshot
+  - NA: not applicable
+
+SeriesId:
+  - HIST: historical timeseries
+  - AT_TIME: single point-in-time
+  - SNAPSHOT: real-time snapshot
+
+ArtifactType:
+  - SPOT, CHAIN, RATES, DIVS, FWD, OPTION_SPOT
+  - IV, TVAR
+  - GREEKS, DELTA, GAMMA, VEGA, THETA, RHO, VOLGA, VANNA
+
+GreekType:
+  - DELTA, GAMMA, VEGA, THETA, RHO, VOLGA, VANNA
+
+OptionPricingModel:
+  - BSM: Black-Scholes-Merton (fast, European)
+  - BINOMIAL: CRR tree (slower, American)
+  - EURO_EQIV: European equivalent
+
+VolatilityModel:
+  - MARKET: implied from market prices
+  - MODEL_DYNAMIC: computed from model
+
+DivType (from optionlib):
+  - DISCRETE: schedule-based dividends
+  - CONTINUOUS: yield-based dividends
+
+ModelPrice:
+  - MIDPOINT, BID, ASK, OPEN, CLOSE
+
+OptionSpotEndpointSource:
+  - EOD: end-of-day report (available after 6pm ET)
+  - QUOTE: intraday quote endpoint
+
+
+================================================================================
+7. CACHING SYSTEM
+================================================================================
+
+--------------------------------------------------------------------------------
+Cache Architecture
+--------------------------------------------------------------------------------
+
+THREE-TIER CACHING:
+1. Memory Cache (CustomCache in-memory dict)
+   - Fastest access
+   - Per-manager instance
+   - Cleared on process exit
+
+2. Disk Cache (CustomCache pickle files)
+   - Persistent across sessions
+   - Configurable expiration (7-60 days typical)
+   - Per-manager, per-symbol
+
+3. Partial Cache Merging
+   - Detects missing dates in cache
+   - Fetches only missing data
+   - Merges with existing cache
+   - Reduces API calls
+
+--------------------------------------------------------------------------------
+CacheSpec Configuration
+--------------------------------------------------------------------------------
+Controls cache behavior per manager:
+
+@dataclass(frozen=True, slots=True)
+class CacheSpec:
+    base_dir: Optional[Path] = DM_GEN_PATH  # Cache directory
+    default_expire_days: Optional[int] = 500  # Full cache expiration
+    default_expire_seconds: Optional[int] = None  # Entry expiration
+    cache_fname: Optional[str] = None  # Cache filename
+    clear_on_exit: bool = False  # Auto-clear on exit
+
+USAGE:
+  Each manager defines class-level CACHE_SPEC:
+  CACHE_SPEC: CacheSpec = CacheSpec(
+      cache_fname="spot_data_manager",
+      default_expire_days=45
+  )
+
+--------------------------------------------------------------------------------
+Cache Keys
+--------------------------------------------------------------------------------
+Constructed using construct_cache_key() utility:
+
+KEY COMPONENTS:
+  - symbol: underlying ticker
+  - artifact_type: ArtifactType enum
+  - series_id: SeriesId enum
+  - interval: Interval enum
+  - namespace: optional isolation
+  - Additional metadata (strike, expiration, model, etc.)
+
+EXAMPLE KEY:
+  "AAPL__hist__eod__spot__undo_True"
+  "AAPL__hist__eod__iv__K150.0_exp20250620_rc_model_bsm"
+
+
+================================================================================
+8. DATE HANDLING
+================================================================================
+
+--------------------------------------------------------------------------------
+Date Conversion (CRITICAL)
+--------------------------------------------------------------------------------
+ALWAYS use to_datetime from trade.helpers.helper:
+
+from trade.helpers.helper import to_datetime
+
+# Handles strings, datetime objects, and iterables
+date_obj = to_datetime("2025-01-15")
+dates = to_datetime(["2025-01-15", "2025-01-16"])
+
+NEVER use:
+  - datetime.strptime()
+  - pd.to_datetime() directly
+
+--------------------------------------------------------------------------------
+Date Synchronization
+--------------------------------------------------------------------------------
+Managers automatically synchronize dates with available data:
+
+- is_available_on_date(): Checks if data exists for date
+- _sync_date(): Adjusts requested range to available range
+- change_to_last_busday(): Converts to last business day
+- get_missing_dates(): Identifies gaps in cache
+
+================================================================================
+9. TYPICAL WORKFLOWS
+================================================================================
+
+--------------------------------------------------------------------------------
+9.1 Backtesting Options Strategy
+--------------------------------------------------------------------------------
+from trade.datamanager import (
+    SpotDataManager, DividendDataManager, ForwardDataManager,
+    VolDataManager, GreekDataManager
+)
+from trade.optionlib.config.types import DivType
+from trade.datamanager._enums import OptionPricingModel, GreekType
+
+symbol = "AAPL"
+start, end = "2025-01-01", "2025-01-31"
+strike, expiration, right = 150.0, "2025-06-20", "c"
+
+# 1. Load spot prices
+spot_mgr = SpotDataManager(symbol)
+spot_result = spot_mgr.get_spot_timeseries(start, end, undo_adjust=True)
+spots = spot_result.daily_spot
+
+# 2. Get implied volatilities
+vol_mgr = VolDataManager(symbol)
+vol_result = vol_mgr.get_implied_volatility_timeseries(
+    start, end, strike, expiration, right,
+    model=OptionPricingModel.BSM,
+    dividend_type=DivType.DISCRETE
+)
+ivs = vol_result.timeseries
+
+# 3. Compute greeks
+greek_mgr = GreekDataManager(symbol)
+greek_result = greek_mgr.get_greeks_timeseries(
+    start, end, strike, expiration, right,
+    greeks_to_compute=[GreekType.DELTA, GreekType.GAMMA, GreekType.VEGA]
+)
+greeks = greek_result.timeseries  # DataFrame with delta, gamma, vega
+
+# 4. Run scenarios for risk management
+from trade.datamanager.theo import calculate_scenarios
+scenarios = calculate_scenarios(
+    symbol=symbol,
+    as_of="2025-01-15",
+    strike=strike,
+    expiration=expiration,
+    right=right,
+    spot_scenarios=[0.95, 1.0, 1.05],
+    vol_scenarios=[-0.05, 0.0, 0.05]
+)
+print(scenarios.grid)
+
+--------------------------------------------------------------------------------
+9.2 Real-Time Option Monitoring
+--------------------------------------------------------------------------------
+from trade.datamanager import VolDataManager, GreekDataManager
+
+symbol = "AAPL"
+strike, expiration, right = 150.0, "2025-06-20", "c"
+
+# Get real-time IV
+vol_mgr = VolDataManager(symbol)
+current_iv = vol_mgr.rt(strike, expiration, right)
+
+# Get real-time greeks
+greek_mgr = GreekDataManager(symbol)
+greek_result = greek_mgr.rt(strike, expiration, right)
+delta = greek_result.timeseries["delta"].iloc[0]
+gamma = greek_result.timeseries["gamma"].iloc[0]
+
+print(f"IV: {current_iv:.4f}, Delta: {delta:.4f}, Gamma: {gamma:.6f}")
+
+
+================================================================================
+10. BEST PRACTICES & GOTCHAS
+================================================================================
+
+DO:
+✓ Use singleton managers - they cache internally
+✓ Use to_datetime() for all date conversions
+✓ Provide DividendsResult to ForwardDataManager to avoid re-fetching
+✓ Use undo_adjust=True for backtesting (split-adjusted prices)
+✓ Specify greeks_to_compute to reduce computation time
+✓ Use model_price=MIDPOINT for fair value calculations
+✓ Check result.is_empty() before using data
+✓ Use rt() methods for real-time data
+✓ Let managers handle data loading automatically
+
+DON'T:
+✗ Create multiple instances of same symbol manager
+✗ Use datetime.strptime() or pd.to_datetime() directly
+✗ Mix undo_adjust=True/False in same calculation
+✗ Ignore dividend_type when comparing prices
+✗ Call _private_methods() directly
+✗ Modify OptionDataConfig after initialization
+✗ Assume cache is always warm - check for empty results
+✗ Use BSM model for American options pricing
+
+COMMON ISSUES:
+- "Data not available": Check date range with is_available_on_date()
+- "Cache miss": Normal on first run, subsequent runs will hit cache
+- "IV solver failed": Option may be deep ITM/OTM or have bad data
+- "Mismatched undo_adjust": Ensure consistent split adjustment across managers
+
+
+================================================================================
+11. UTILITY MODULES
+================================================================================
+
+utils/
+  - model.py: Model data loading (_load_model_data_timeseries, LoadRequest)
+  - vol_helpers.py: Volatility calculation helpers
+  - greeks_helpers.py: Greek calculation helpers  
+  - date.py: Date utilities (sync_date_index, is_available_on_date)
+  - cache.py: Cache utilities (_data_structure_cache_it)
+  - data_structure.py: Data structure validation
+  - logging.py: Logging configuration
+  - enums_utils.py: Cache key construction (construct_cache_key)
+
+market_data_helpers/
+  - spot.py: Spot price loading from OpenBB
+  - Additional helper functions for data retrieval
+
+
+================================================================================
+12. EXTENSION POINTS
+================================================================================
+
+To add a new manager:
+1. Inherit from BaseDataManager
+2. Define CACHE_NAME (unique string)
+3. Define CACHE_SPEC (CacheSpec instance)
+4. Define DEFAULT_SERIES_ID (SeriesId enum)
+5. Implement __init__ with singleton pattern if needed
+6. Add methods returning Result subclass
+7. Use self.cache.get() / self.cache.set() for caching
+8. Use construct_cache_key() for key generation
+
+Example skeleton:
+  class MyDataManager(BaseDataManager):
+      CACHE_NAME: str = "my_data_manager"
+      CACHE_SPEC: CacheSpec = CacheSpec(cache_fname=CACHE_NAME)
+      DEFAULT_SERIES_ID: SeriesId = SeriesId.HIST
+      
+      def __init__(self, symbol: str):
+          super().__init__(symbol=symbol)
+          self.symbol = symbol
+      
+      def get_my_data(self, start, end) -> MyResult:
+          key = construct_cache_key(...)
+          cached = self.cache.get(key)
+          if cached:
+              return cached
+          # Fetch data
+          result = MyResult(...)
+          self.cache.set(key, result)
+          return result
+
+
+================================================================================
+END OF GUIDE
+================================================================================

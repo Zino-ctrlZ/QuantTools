@@ -608,7 +608,7 @@ class Calculate:
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
             
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
                 d = delta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
@@ -625,7 +625,7 @@ class Calculate:
             
             if sigma == 0:
                 raise ValueError("Sigma cannot be 0")
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 d = delta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             elif model == 'binomial':
@@ -660,7 +660,7 @@ class Calculate:
                     args[i] = getattr(asset, args_str[i])
             
 
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
                 d = vega(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
@@ -670,7 +670,7 @@ class Calculate:
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 d = vega(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             elif model == 'binomial':
@@ -706,7 +706,7 @@ class Calculate:
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
  
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
                 # d = vanna(flag = flag.lower(),S = args[0], K = args[1], T = t, r = args[2], sigma = args[3], q = args[4] )
@@ -725,7 +725,7 @@ class Calculate:
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 
                 # d = vanna(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
@@ -762,7 +762,7 @@ class Calculate:
                     args[i] = getattr(asset, args_str[i])
             
     
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             flag = getattr(asset, OptionModelAttributes.put_call.value)
             if model == 'bs':
                 d = volga_from_vega(s= args[0], k = args[1], t = t, r = args[2], sigma = args[3], q = args[4], flag= flag.lower())
@@ -772,7 +772,7 @@ class Calculate:
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 # d = volga(flag = flag.lower(), S = S, K = K, T = t, r = r, sigma = sigma, q = y )
                 d = volga_from_vega(s= S, k = K, t = t, r = r, sigma = sigma, q = y, flag= flag.lower())
@@ -807,7 +807,7 @@ class Calculate:
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
             
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             if model == 'bs':
                 d = gamma(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             elif model == 'binomial':
@@ -821,7 +821,7 @@ class Calculate:
                 logger.error(f"Kwargs: {locals()}")
                 return 0.0
             
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 d = gamma(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             elif model == 'binomial':
@@ -859,7 +859,7 @@ class Calculate:
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             if model == 'bs':
                 d = theta(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             elif model == 'binomial':
@@ -868,7 +868,7 @@ class Calculate:
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 d = theta(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             elif model == 'binomial':
@@ -902,7 +902,7 @@ class Calculate:
             for i in range(len(args)):
                 if args[i] is None:
                     args[i] = getattr(asset, args_str[i])
-            t = time_distance_helper(asset.exp, asset.end_date)
+            t = time_distance_helper(end=asset.exp, start=asset.end_date)
             if model == 'bs':
                 d = rho(flag = flag.lower(),S = args[0], K = args[1], t = t, r = args[2], sigma = args[3], q = args[4] )
             elif model == 'binomial':
@@ -911,7 +911,7 @@ class Calculate:
 
         elif asset == None:
             assert all(v is not None for v in [S, K, r, sigma, start, flag, exp, y]), f"None of y, S, K, r, sigma, start, flag, exp, can be None"
-            t = time_distance_helper(exp, start)
+            t = time_distance_helper(end=exp, start=start)
             if model == 'bs':
                 d = rho(flag = flag.lower(), S = S, K = K, t = t, r = r, sigma = sigma, q = y )
             elif model == 'binomial':

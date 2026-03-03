@@ -221,7 +221,7 @@ def adjust_for_events(
         if is_backtest:
             raise ValueError(f"No adjusted strike data found for option: {meta}")
         else:
-            logger.warning(f"No adjusted strike data found for option: {meta}. Returning original meta.")
+            logger.info(f"No adjusted strike data found for option: {meta}. Returning original meta.")
             meta_dict = parse_option_tick(meta)
             return meta_dict
 
@@ -297,8 +297,12 @@ def greek_check(greek_value: float, greek_threshold: float, qty: int = 1, greate
         per_greek = greek_value / qty
         _bool = abs(greek_value) > abs(greek_threshold)
         logger.info(
-            f"Greek Check: greek_value={greek_value}, greek_threshold={greek_threshold}, per_greek={per_greek}, _bool={_bool}"
+            (f"Greek Check: greek_value={greek_value}, greek_threshold={greek_threshold}, per_greek={per_greek}, _bool={_bool}"
+             f", qty={qty}")
         )
+        if greek_value == 0:
+            logger.critical("Greek value is zero, cannot compute required quantity. Returning False and 0.")
+            return False, 0
         required_qty = max(int(abs(greek_threshold) // abs(per_greek)), 1)
         quantity_diff = abs(qty) - abs(required_qty)
         return _bool, quantity_diff
@@ -384,15 +388,44 @@ def analyze_position(
 
         if _greek_bool:
             abs_q_diff = abs(q_diff)
+
+            ## Will use this later when adding short/long direction info to log
+            direction = "L" if qty > 0 else "S" # noqa
+            logger.info(
+                (f"Greek limit breach for {trade_id}: greek={greek}, greek_v={greek_v}, "
+                 f"greek_limit_v={greek_limit_v}, qty={qty}, direction={direction}, "
+                 f"abs_q_diff={abs_q_diff}, q_diff={q_diff}")
+            )
+
             # Keep track of the largest adjustment needed
             if abs_q_diff > max_qty_diff:
                 max_qty_diff = abs_q_diff
                 # Adjust sign based on position direction
+                # Eg: when LONG=qty>0 we set negative qty_diff to reduce position size
+                # TODO: q_diff sign logic needs review for situations where we want to increase position size
                 q_diff = abs_q_diff if qty < 0 else -abs_q_diff
-                max_adjust_action = ADJUST(
-                    trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=qty + q_diff)
-                )
-                max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v})"
+                new_qty = qty + q_diff
+
+                ## IF new quantity is positive, create ADJUST action
+                if new_qty > 0:
+                    max_adjust_action = ADJUST(
+                        trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=qty + q_diff)
+                    )
+                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v})"
+                
+                ## IF new quantity is zero, create ROLL action instead. To avoid complete close.
+                elif new_qty == 0:
+                    max_adjust_action = ROLL(
+                        trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=0)
+                    )
+                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v}), New qty=0, rolling instead of closing."
+                
+                else:
+                    logger.warning(
+                        (f"Calculated new quantity for {trade_id} is negative ({new_qty}). "
+                         "Skipping ADJUST action creation.")
+                    )
+
                 logger.debug(f"ADJUST action candidate for {trade_id}: {greek} limit breach.")
         else:
             logger.debug(f"No {greek} limit breach for {trade_id}: {greek_v} within {greek_limit_v}.")

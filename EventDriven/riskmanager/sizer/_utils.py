@@ -169,7 +169,7 @@ from typing import Literal, ClassVar
 import pandas as pd
 from EventDriven.riskmanager.utils import logger
 from ..._vars import Y2_LAGGED_START_DATE
-from ..market_data import get_timeseries_obj
+from trade.datamanager.market_data import get_timeseries_obj
 
 
 def default_delta_limit(
@@ -238,9 +238,9 @@ def delta_position_sizing(
         int: The calculated position size."""
     ## TODO: Add docstring
     ## TODO: Raise error if delta is 0 or cash_available is <= 0
-    if delta == 0 or cash_available <= 0 or option_price_at_time <= 0:
+    if delta == 0 or math.isnan(delta) or cash_available <= 0 or option_price_at_time <= 0:
         logger.critical(
-            f"Delta is 0 or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0."
+            f"Delta is 0/NaN or cash_available is <= 0 or option_price_at_time <= 0. delta: {delta}, cash_available: {cash_available}, option_price_at_time: {option_price_at_time}. This is intended to be long only sizing. Returning 0."
         )
         return 0
     try:
@@ -368,7 +368,7 @@ class ZcoreScalar:
         """
 
         ## Get timeseries object
-        timeseries = get_timeseries_obj()
+        timeseries = get_timeseries_obj(live=True)
 
         ## If syms is None, use the existing syms
         ## This is to avoid reloading timeseries if already loaded
@@ -398,9 +398,9 @@ class ZcoreScalar:
         ## Load timeseries for each symbol and calculate the z-score scaler
         for sym in syms:
             timeseries.load_timeseries(
-                sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now(), interval=self.interval
+                sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now()
             )
-            ts = timeseries.get_timeseries(sym=sym, interval=self.interval).spot["close"]
+            ts = timeseries.get_timeseries(sym=sym).spot["close"]
 
             if self.vol_type == "window":
                 func = lambda x: realized_vol(x, self.rvol_window)

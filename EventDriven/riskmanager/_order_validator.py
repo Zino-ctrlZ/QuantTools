@@ -72,8 +72,8 @@ import numbers
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from trade.helpers.Logging import setup_logger
-from EventDriven.riskmanager.picker import STRATEGY_MAP
-from EventDriven.riskmanager.market_data import get_timeseries_obj, OPTION_TIMESERIES_START_DATE
+from EventDriven.riskmanager.picker.builder import BUILDER_FACTORY
+from trade.datamanager.vars import get_times_series
 from EventDriven.riskmanager.picker import OrderSchema
 
 logger = setup_logger("EventDriven.riskmanager._order_validator", stream_log_level="WARNING")
@@ -113,7 +113,7 @@ INPUTS = {
     "max_close": (numbers.Number, "Max price for the order search engine."),
     "option_strategy": (
         str,
-        f"This should be a string representing the option strategy. Available: {STRATEGY_MAP.keys()}",
+        f"This should be a string representing the option strategy. Available: {BUILDER_FACTORY.keys()}",
     ),
     "initial_cash": (numbers.Number, "This should be a float representing the initial cash for the strategy."),
     "option_type": (str, "This should be a string representing the option type, e.g., 'standard'.", ["C", "P"]),
@@ -258,8 +258,8 @@ def build_inputs_with_config(
     else:
         raise ValueError("Invalid option type. Must be 'C' or 'P'.")
 
-    timeseries = get_timeseries_obj()
-    timeseries.load_timeseries(tick, OPTION_TIMESERIES_START_DATE, datetime.now())
+    timeseries = get_times_series()
+    timeseries.load_timeseries(tick, end_date= datetime.now())
 
     ## Get spot price for the tick at the date. chain_spot is used for option pricing
     spot = timeseries.get_at_index(tick, date).chain_spot.close

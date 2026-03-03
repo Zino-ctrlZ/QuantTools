@@ -1,12 +1,15 @@
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 import pandas as pd
-from ._strategy import StrategyBase
 from .data import PTDataset
+
+if TYPE_CHECKING:
+    from ._strategy import StrategyBase
 
 REQUIRED = object()
 
+
 def make_bt_wrapper(
-    brain_cls: type[StrategyBase],
+    brain_cls: type["StrategyBase"],
     *,
     name: Optional[str] = None,
     param_overrides: Optional[Dict[str, Any]] = None,
@@ -57,9 +60,11 @@ def make_bt_wrapper(
         ds = dataset_factory(self.data.df)
 
         # Pass start_date directly (Timestamp or None)
+        ticker_name = getattr(ds, "name", None) or getattr(ds, "ticker", None) or "NA"
         self.brain = brain_cls(
             data=ds,
             start_trading_date=self.start_date,
+            ticker=ticker_name,
             **brain_kwargs,
         )
 
@@ -76,15 +81,23 @@ def make_bt_wrapper(
 
     def _next(self):
         date = self.data.index[-1]
-
-        if self.brain.should_open(date=date):
+        open_decision = self.brain.should_open(date=date)
+        if open_decision.ok:
             if verbose:
                 print(f"Opening position on {date} at price {self.data.Close[-1]}")
                 print(f"Info: {self.brain.info_on_date(date=date)}")
             self.buy()
-            self.brain.open_action(date=date)
+            self.brain.open_action(
+                date=date,
+                signal_id=open_decision.signal_id,
+                side=open_decision.side,
+                entry_price=self.data.Close[-1],
+            )
 
-        elif self.brain.should_close(date=date):
+        else:
+            close_decision = self.brain.should_close(date=date)
+            if not close_decision.ok:
+                return
             if verbose:
                 print(f"Closing position on {date} at price {self.data.Close[-1]}")
                 print(f"Info: {self.brain.info_on_date(date=date)}")

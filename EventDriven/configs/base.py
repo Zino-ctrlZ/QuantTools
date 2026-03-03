@@ -1,96 +1,23 @@
 from trade.helpers.Logging import setup_logger
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing import Any, Callable, ClassVar
+
 from pydantic import ConfigDict, Field
-from typing import ClassVar, Literal
+from pydantic.dataclasses import dataclass as _pydantic_dataclass
+from typing_extensions import dataclass_transform
+from trade.helpers.helper_types import validate_inputs
 from weakref import WeakSet
-from typing import get_origin, get_args, Union, get_type_hints
-from EventDriven.exceptions import (
-    BacktesterIncorrectTypeError, 
-    BacktestConfigAttributeError
-)
-import types
-from dataclasses import fields
+from EventDriven.exceptions import BacktestConfigAttributeError
+
 from EventDriven.configs.vars import get_class_config_descriptions, get_config_class_description
 
 
 logger = setup_logger(__name__, stream_log_level="WARNING")
 
-def validate_inputs(self):
-    type_hints = get_type_hints(type(self))
 
-    for f in fields(self):
-        try:
-            field_name = f.name
-            field_value = getattr(self, field_name)
-
-            type_hint = type_hints.get(field_name)
-            if type_hint is None:
-                continue  # no annotation, skip
-
-            origin = get_origin(type_hint)
-            args = get_args(type_hint)
-
-            # --- Handle Literal[...] ---
-            if origin is Literal:
-                # e.g. name: Literal["LimitsCog", "OtherCog"]
-                allowed_values = args  # tuple of literals
-
-                if field_value is None:
-                    # If you want to allow None here, add it to the Literal.
-                    logger.warning(f"Configuration '{field_name}' is None but expected one of {allowed_values}.")
-                elif field_value not in allowed_values:
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected one of {allowed_values}, " f"but got {field_value!r}."
-                    )
-                continue
-
-            # --- Handle Optional / Union[...] ---
-            if origin in (Union, types.UnionType):
-                allows_none = any(arg is type(None) for arg in args)
-                if field_value is None:
-                    if not allows_none:
-                        logger.warning(
-                            f"Configuration '{field_name}' is not set (None) and is not Optional. Please review."
-                        )
-                    continue
-
-                valid_types = tuple(arg for arg in args if arg is not type(None))
-                if not isinstance(field_value, valid_types):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected types {valid_types}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Simple (non-generic) types ---
-            if origin is None:
-                if field_value is None:
-                    logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                    continue
-
-                if not isinstance(field_value, type_hint):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {type_hint}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Other generics (List, Dict, etc.) – shallow check ---
-            if field_value is None:
-                logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                continue
-
-            try:
-                if not isinstance(field_value, origin):
-                    raise BacktesterIncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {origin}, " f"but got {type(field_value)}."
-                    )
-            except TypeError:
-                logger.warning(
-                    f"Could not validate field '{field_name}' with value '{field_value}' against type '{type_hint}' due to TypeError."
-                )
-                pass
-
-        except Exception as e:
-            logger.critical(f"Failed to validate field '{f.name}' in {self.__class__.__name__}. Error: {e}")
+@dataclass_transform()
+def pydantic_dataclass(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    """Typed wrapper for Pydantic dataclasses to improve static analysis."""
+    return _pydantic_dataclass(*args, **kwargs)
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
@@ -99,7 +26,7 @@ class BaseConfigs:
 
     _registry: ClassVar[WeakSet[type]] = WeakSet()
     run_name: str = Field(default="", description="A name identifier for this run/session.")
-    
+
     def set(self, **kwargs):
         """Set multiple configuration attributes at once."""
         for key, value in kwargs.items():
@@ -112,14 +39,13 @@ class BaseConfigs:
         if not hasattr(self, key):
             raise BacktestConfigAttributeError(f"Configuration has no attribute named '{key}'.")
         return getattr(self, key)
-    
+
     def __post_init__(self, ctx=None):
         pass
 
     def validate_inputs(self):
         """Validate configuration inputs based on type hints."""
         validate_inputs(self)
-
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -161,7 +87,7 @@ Configuration Descriptions for {self.__class__.__name__}:
             else:
                 logger.warning(f"No description found for config '{key}' in {self.__class__.__name__}.")
         return header + msg
-    
+
     def display_and_describe_configs(self):
         """Display and describe the configuration settings."""
         class_desc = get_config_class_description(self.__class__.__name__)
@@ -179,7 +105,7 @@ Configuration Descriptions for {self.__class__.__name__}:
         for config_cls in cls._registry:
             configs[config_cls.__name__] = config_cls()
         return configs
-    
+
     @classmethod
     def get_config_instance(cls, class_name: str):
         """Get a specific configuration class instance by name."""
@@ -188,17 +114,17 @@ Configuration Descriptions for {self.__class__.__name__}:
                 return config_cls()
         logger.warning(f"Configuration class '{class_name}' not found.")
         return None
-    
+
     @classmethod
     def list_config_classes(cls):
         """List all registered configuration class names."""
         return [config_cls.__name__ for config_cls in cls._registry]
-    
+
     @classmethod
     def is_config_registered(cls, class_name: str) -> bool:
         """Check if a configuration class is registered."""
         return any(config_cls.__name__ == class_name for config_cls in cls._registry)
-    
+
     @classmethod
     def display_and_describe_all_configs(cls):
         """Display and describe all registered configuration classes."""
@@ -213,7 +139,7 @@ Configuration Descriptions for {self.__class__.__name__}:
                 print(f"Description: {class_desc}")
             else:
                 logger.warning(f"No class description found for {config_cls.__name__}")
-            print('='*80)
+            print("=" * 80)
             instance = config_cls()
             instance.display_and_describe_configs()
 
@@ -228,5 +154,7 @@ class _CustomFrozenBaseConfigs(BaseConfigs):
             super().__setattr__(name, value)
             return
         if name in self.__dict__:
-            raise AttributeError(f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}. If you need to change it within a class, create a new instance.")
+            raise AttributeError(
+                f"Cannot modify frozen attribute '{name}' in {self.__class__.__name__}. If you need to change it within a class, create a new instance."
+            )
         super().__setattr__(name, value)

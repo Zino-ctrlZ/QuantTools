@@ -66,13 +66,14 @@ def black_scholes_vectorized_base(F: np.ndarray|List[float],
 
     Returns: Option prices (array)
     """
-    # Ensure all inputs are numpy arrays for vectorized operations
-    F = np.asarray(F)
-    K = np.asarray(K)
-    T = np.asarray(T)
-    r = np.asarray(r)
-    sigma = np.asarray(sigma)
 
+    # Ensure all inputs are numpy arrays for vectorized operations
+    F = np.asarray(F, dtype=np.float64)
+    K = np.asarray(K, dtype=np.float64)
+    T = np.asarray(T, dtype=np.float64)
+    r = np.asarray(r, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    
     d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     df = np.exp(-r * T)

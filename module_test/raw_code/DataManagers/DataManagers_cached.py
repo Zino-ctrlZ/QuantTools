@@ -49,7 +49,7 @@ from trade.helpers.decorators import timeit
 
 # Import MarketTimeseries for underlier data caching
 try:
-    from EventDriven.riskmanager.market_data import get_timeseries_obj
+    from trade.datamanager.market_data import get_timeseries_obj
     MARKET_TIMESERIES_AVAILABLE = True
 except ImportError:
     import traceback

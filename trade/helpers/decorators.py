@@ -1,5 +1,5 @@
 # pylint: disable=broad-exception-caught
-from trade import register_signal
+from trade import register_signal, TIMING_ANALYSIS_CACHE_PATH
 import time
 import numbers
 import asyncio
@@ -10,8 +10,6 @@ import cProfile
 import pstats
 import io
 import traceback
-import os
-from pathlib import Path
 from datetime import datetime
 import signal
 import pandas as pd
@@ -38,7 +36,7 @@ def _save_timeit_metadata():
         return
 
     try:
-        cache_path = Path(os.environ.get("GEN_CACHE_PATH", ".cache"))
+        cache_path = TIMING_ANALYSIS_CACHE_PATH
         cache_path.mkdir(parents=True, exist_ok=True)
 
         # Single CSV file for all timeit logs
@@ -412,7 +410,7 @@ def cProfiler(func):
         stream = io.StringIO()
         stats = pstats.Stats(profiler, stream=stream).sort_stats("cumulative")
         stats.print_stats()
-        return results, stream.getvalue()
+        return results, stats
 
     return wrapper
 
@@ -426,7 +424,7 @@ def cprofiler_func(func, *args, **kwargs):
     stream = io.StringIO()
     stats = pstats.Stats(profiler, stream=stream).sort_stats("cumulative")
     stats.print_stats()
-    return results, stream.getvalue()
+    return results, stats
 
 
 def copy_doc(from_func):

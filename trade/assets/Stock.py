@@ -364,9 +364,9 @@ class Stock:
                 self.__rf_rate = ts.loc[last_available_date, "annualized"]
 
             else:
-                self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime("%Y-%m-%d")]["annualized"].values[0]
+                self.__rf_rate = ts[ts.index.date == pd.to_datetime(last_bus).date()]["annualized"].values[0]
         else:
-            self.__rf_rate = ts[ts.index == pd.to_datetime(last_bus).strftime("%Y-%m-%d")]["annualized"].values[0]
+            self.__rf_rate = ts[ts.index.date == pd.to_datetime(last_bus).date()]["annualized"].values[0]
 
     def rebuild_chain(self):
         """

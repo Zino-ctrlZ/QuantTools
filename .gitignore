@@ -199,3 +199,11 @@ trade/helpers/*vol_resolve*.json
 EventDriven/notebooks/riskmanager_streamline/
 EventDriven/tests.py
 trade/assets/notebooks
+
+
+# ignore all notebooks
+**/*.ipynb
+
+# allow notebooks in any demo folder (demo or demos)
+!**/demo/**/*.ipynb
+!**/demos/**/*.ipynb

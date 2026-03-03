@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+from typing import List
 from logging.handlers import TimedRotatingFileHandler
 
 load_dotenv()
@@ -23,6 +24,23 @@ class TimezoneFormatter(logging.Formatter):
         if self.tz:
             dt = dt.astimezone(self.tz)
         return dt.timetuple()
+    
+
+def find_logger_names_by_pattern(pattern: str) -> List[str]:
+    """Find all logger names that start with the given pattern."""
+    return [
+        name 
+        for name in logging.Logger.manager.loggerDict.keys() 
+        if name.startswith(pattern)
+    ]
+
+def find_loggers_by_pattern(pattern: str) -> List[logging.Logger]:
+    """Find all loggers whose names start with the given pattern."""
+    return [
+        logging.getLogger(name)
+        for name in logging.Logger.manager.loggerDict.keys()
+        if name.startswith(pattern)
+    ]
 
 
 def find_project_root(current_path: Path, marker=".git"):
