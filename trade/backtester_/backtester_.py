@@ -1,4 +1,4 @@
-from typing import Union, Optional, List, Callable
+from typing import Union, Optional, List, Callable, Dict
 from copy import deepcopy
 from backtesting import Backtest, Strategy
 import pandas as pd
@@ -73,10 +73,10 @@ class PTBacktester(AggregatorParent):
     """
 
     def __init__(self, 
-                datalist: list , 
-                strategy,
-                cash,
-                strategy_settings: dict = None,
+                datalist: List[PTDataset], 
+                strategy: StrategyBase,
+                cash: Union[float, Dict[str, float]],
+                strategy_settings: Dict[str, float] = None,
                 start_overwrite: Optional[str] = None, 
                 **kwargs) -> None:
         """

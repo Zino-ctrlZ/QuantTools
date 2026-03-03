@@ -12,14 +12,34 @@ import plotly.graph_objects as go
 from pandas.tseries.offsets import BDay  # noqa
 from trade.helpers.helper import change_to_last_busday  # noqa
 from ._types import Side, SideInt  # noqa
+from trade.backtester_.indicators import (
+    compute_atr_loss,
+)
 
 
 @dataclass
 class Indicator:
     name: str
-    values: pd.Series
+    series: pd.Series
     overlay: bool = False
     color: Optional[str] = "red"
+    values: Optional[np.ndarray] = None
+
+    def __post_init__(self):
+        if not isinstance(self.name, str):
+            raise TypeError("Indicator name must be a string.")
+        if not isinstance(self.series, pd.Series):
+            raise TypeError("Indicator series must be a pandas Series.")
+        if not isinstance(self.overlay, bool):
+            raise TypeError("Indicator overlay must be a boolean.")
+        if self.color is not None and not isinstance(self.color, str):
+            raise TypeError("Indicator color must be a string or None.")
+        if self.values is not None and not isinstance(self.values, np.ndarray):
+            raise TypeError("Indicator values must be a numpy array or None.")
+        if self.values is None:
+            self.values = self.series.to_numpy(copy=False)
+
+
 
 
 @dataclass
@@ -169,8 +189,6 @@ class StrategyBase(ABC):
     - close, open, high, low, volume, dates: Numpy array properties for efficient data access
     """
 
-    bt_params: Dict[str, Any] = {}
-
     def __init_subclass__(cls, **kwargs):
         """
         Validates that subclasses properly define bt_params and __init__ signature.
@@ -191,9 +209,10 @@ class StrategyBase(ABC):
             "start_trading_date",
             "ticker",
         ]
+        is_abstract = inspect.isabstract(cls)
 
         # Don't enforce on the abstract base itself
-        if cls is StrategyBase:
+        if cls is StrategyBase or is_abstract:
             return
 
         # 1) bt_params must exist and be a dict
@@ -295,6 +314,28 @@ class StrategyBase(ABC):
         raise AttributeError(
             "position_open is a read-only property. To change position status, use open_action() and close_action() methods which handle state updates and validations."
         )
+    
+    def additional_on_entry_info(self, *, date: pd.Timestamp = None, index: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Override this method in your strategy subclass to provide additional information to be stored in PositionInfo when a position is opened.
+
+        This can be useful for tracking custom state or metrics related to the position that are not covered by the default entry_date, entry_price, side, and signal_id fields.
+
+        Returns:
+            Dict[str, Any]: A dictionary of additional information to include in PositionInfo. This will be merged with the default fields when a position is opened.
+        """
+        return {}
+    
+    def additional_on_exit_info(self, *, date: pd.Timestamp = None, index: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Override this method in your strategy subclass to provide additional information to be stored or logged when a position is closed.
+
+        This can be useful for tracking custom state or metrics related to the position exit that are not covered by the default fields.
+
+        Returns:
+            Dict[str, Any]: A dictionary of additional information to include in logs or records when a position is closed.
+        """
+        return {}
 
     def _resolve(self, *, date: pd.Timestamp = None, index: int = None) -> Tuple[int, pd.Timestamp]:
         """
@@ -741,7 +782,7 @@ class StrategyBase(ABC):
             self.add_indicator('SMA_20', sma_20, overlay=True, color='blue')
         """
         # assumes you have an Indicator class somewhere
-        self.indicators[name] = Indicator(name=name, values=series, overlay=overlay, color=color)
+        self.indicators[name] = Indicator(name=name, series=series, overlay=overlay, color=color, values=series.to_numpy(copy=False))
 
     def get_indicator(self, name: str) -> Any:
         """
@@ -886,7 +927,7 @@ class StrategyBase(ABC):
                             index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price
                         )
                         entry_price = current_price
-                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
+                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq, **self.additional_on_entry_info(index=i)})
 
                 elif op.get("action") == "close":
                     ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
@@ -905,6 +946,7 @@ class StrategyBase(ABC):
                                 "entry_price": entry_price,
                                 "side": position_side,
                                 "position_info": position_info,
+                                **self.additional_on_exit_info(index=i),
                             }
                         )
                         self.close_action(index=i)
@@ -923,7 +965,7 @@ class StrategyBase(ABC):
                             entry_price=current_price,
                         )
                         entry_price = current_price
-                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq})
+                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq, **self.additional_on_entry_info(index=i)})
                 else:
                     pending.setdefault(exec_idx, []).append(
                         {
@@ -951,6 +993,7 @@ class StrategyBase(ABC):
                                 "entry_price": entry_price,
                                 "side": position_side,
                                 "position_info": position_info,
+                                **self.additional_on_exit_info(index=i),
                             }
                         )
                         self.close_action(index=exec_idx)
@@ -977,13 +1020,63 @@ class StrategyBase(ABC):
                         "entry_price": entry_price,
                         "side": self.position_side,
                         "position_info": position_info,
+                        **self.additional_on_exit_info(index=n - 1),
                     }
                 )
                 self.close_action(index=n - 1)
 
         self.reset_strategy_state()
         equity_series = pd.Series(equity, index=dates, name="equity")
+
+        ## Build trades into a DataFrame for easier analysis (optional)
+
         return trades, equity_series
+    
+    def _convert_trades_to_df(self, trades: List[Dict[str, Any]]) -> pd.DataFrame:
+        """
+        Convert the list of trade dictionaries into a pandas DataFrame for easier analysis.
+
+        Args:
+            trades (List[Dict[str, Any]]): List of trade dictionaries as returned by simulate()
+        Returns:
+            pd.DataFrame: DataFrame with columns corresponding to trade dictionary keys, indexed by trade date
+        """
+        if not trades:
+            return pd.DataFrame()  # return empty DataFrame if no trades
+        
+        ## convert list of dicts into list of two sequential dicts for open/close pairs, then build DataFrame
+        trade_records = []
+        random_date = trades[0]["date"] if trades else None
+        entry_info_keys = self.additional_on_entry_info(date=random_date).keys()
+        exit_info_keys = self.additional_on_exit_info(date=random_date).keys()
+        for i in range(0, len(trades), 2):
+            open_trade = trades[i]
+            close_trade = trades[i + 1] if i + 1 < len(trades) else None
+            record = {
+                "entry_date": open_trade["date"],
+                "entry_price": open_trade["price"],
+                "entry_equity": open_trade["equity"],
+                "return_pct": None,
+                "side": open_trade.get("side"),
+            }
+            if close_trade and close_trade["action"] == "close":
+                record.update(
+                    {
+                        "exit_date": close_trade["date"],
+                        "exit_price": close_trade["price"],
+                        "exit_equity": close_trade["equity"],
+                        "return_pct": close_trade["return_pct"],
+                        "side": close_trade.get("side"),
+                        "position_info": close_trade.get("position_info"),
+                    }
+                )
+            if entry_info_keys:
+                record.update({f"entry_{k}": open_trade.get(k) for k in entry_info_keys})
+            if exit_info_keys and close_trade:
+                record.update({f"exit_{k}": close_trade.get(k) for k in exit_info_keys})
+            trade_records.append(record)
+        return pd.DataFrame(trade_records).set_index("entry_date")
+            
 
     def plot_strategy_indicators(self, log_scale: bool = True, add_signal_marker: bool = True) -> go.Figure:
         """
@@ -1169,3 +1262,40 @@ class StrategyBase(ABC):
         )
         fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])  # hide weekends
         return fig
+
+
+class ATRTrailingStrategyBase(StrategyBase, ABC):
+    """
+    StrategyBase class that implements ATR trailing stop logic. Inherit from this and implement your entry/exit signals.
+    You can use compute_atr_loss and update_atr_trail_long/short in your logic.
+    """
+
+    bt_params: Dict[str, Any] = {}
+
+    def __init__(
+        self,
+        data: PTDataset,
+        atr_period: int = 20,
+        atr_factor: float = 3.0,
+        trail_type: str = "m",
+        average_type: str = "w",
+        start_trading_date: Optional[str] = None,
+        ticker: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(data=data, **kwargs)
+        self.atr_period = atr_period
+        self.atr_factor = atr_factor
+        self.trail_type = trail_type
+        self.average_type = average_type
+        self.loss_series: Optional[pd.Series] = None
+
+    def setup(self) -> None:
+        # Compute the ATR-based loss series once during setup
+        self.loss_series = compute_atr_loss(
+            self.data.data,
+            atr_period=self.atr_period,
+            atr_factor=self.atr_factor,
+            trail_type=self.trail_type,
+            average_type=self.average_type,
+        )
