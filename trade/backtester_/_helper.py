@@ -1,3 +1,4 @@
+
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 import pandas as pd
 from .data import PTDataset
@@ -86,7 +87,16 @@ def make_bt_wrapper(
             if verbose:
                 print(f"Opening position on {date} at price {self.data.Close[-1]}")
                 print(f"Info: {self.brain.info_on_date(date=date)}")
-            self.buy()
+            if open_decision.side == 1:
+                if verbose:
+                    print("Going LONG")
+                self.buy()
+            elif open_decision.side == -1:
+                if verbose:
+                    print("Going SHORT")
+                self.sell()
+            else:
+                raise ValueError(f"Invalid side in open_decision: {open_decision.side}")
             self.brain.open_action(
                 date=date,
                 signal_id=open_decision.signal_id,

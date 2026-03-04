@@ -417,6 +417,21 @@ def bestTrade(trades_df: pd.DataFrame) -> float:
 def worstTrade(trades_df) -> float:
     return trades_df.ReturnPct.min()*100
 
+def trade_percentile(trades_df: pd.DataFrame, percentile: float) -> float:
+    """
+    Returns the PnL or ReturnPct value at a given percentile. Eg: 5th percentile would give the value at which 5% of the trades are worse than that value
+
+    Parameters:
+    trades_df (pd.DataFrame): DataFrame Contatining Trades & PnL or ReturnPct column
+    percentile (float): A value between 0 and 100 representing the desired percentile
+
+    Returns:
+    float: Corresponding PnL or ReturnPct value at the given percentile
+    """
+    assert 'PnL' in trades_df.columns or 'ReturnPct' in trades_df.columns, f"Please pass a dataframe holding trades and ensure it has either 'PnL' or 'ReturnPct' in the columns. Current Columns {trades_df.columns}"
+    assert 0 <= percentile <= 100, f"Percentile must be between 0 and 100. Current Value: {percentile}"
+    return np.percentile(trades_df.ReturnPct, percentile)*100 if 'ReturnPct' in trades_df.columns else np.percentile(trades_df.PnL, percentile)
+
 
 def profitFactor(trades_df: pd.DataFrame) -> float:
     """
@@ -755,6 +770,18 @@ class AggregatorParent(ABC):
     def lossRate(self) -> float:
         return round((100 - winRate(self._trades)), 2)
 
+    def trade_percentile(self, percentile: float) -> float:
+        """
+        Returns the PnL or ReturnPct value at a given percentile. Eg: 5th percentile would give the value at which 5% of the trades are worse than that value
+
+        Parameters:
+        percentile (float): A value between 0 and 100 representing the desired percentile
+
+        Returns:
+        float: Corresponding PnL or ReturnPct value at the given percentile
+        """
+        return trade_percentile(self._trades, percentile)
+    
     def avgPnL(self, Type_: str, value=True) -> float:
         """
         params:
@@ -910,49 +937,57 @@ class AggregatorParent(ABC):
             raise Exception('Either implement datasets attribute with PTDataset or self.symbol_list')
 
         rtrn_ = self.rtrn()
-        series1 = pd.Series({
-            'Start': start_overwrite if start_overwrite else self.dates_(True),
-            'End': self.dates_(False),
-            'Duration': self.dates_(False) - self.dates_(True),
-            'Exposure Time [%]': self.ExposureDays(),
-            'Equity Final [$]': self.final_value_func(),
-            'Equity Peak [$]': self.peak_value_func(),
-            'Return [%]': rtrn_,
-            'Buy & Hold Return [%]': self.buyNhold(),
-            'Median Daily Return [%]': f"{self.daily_rtrns().median(): .4%}",
-            'VaR 95% [%]': f"{self.daily_rtrns().quantile(0.05): .2%}",
-            'VaR 05% [%]': f"{self.daily_rtrns().quantile(0.95): .2%}",
-            'CAGR [%]':  self.cagr(),
-            'Volatility Ann. [%]': self.vol_annualized(),
-            'Sharpe Ratio': self.sharpe(risk_free_rate),
-            'Sortino Ratio': self.sortino(risk_free_rate, MAR),
-            'Skew': self._equity.Total.pct_change().skew(),
-            'Log Return Skew': np.log(self._equity.Total/self._equity.Total.shift(1)).skew(),
-            'Calmar Ratio': self.calmar(),
-            'Max. Drawdown [%]': self.mdd(),
-            'Max. Drawdown Value [$]': self.mdd_value(),
-            'Avg. Drawdown [%]': self.avg_dd_percent(),
-            'Max. Drawdown Duration': self.mdd_duration(),
-            'Avg Dradown Duration': self.avg_dd_duration(),
-            '# Trades': self.numOfTrades(),
-            'Win Rate [%]': self.winRate(),
-            'Lose Rate [%]': self.lossRate(),
-            'Avg. Trade [%]': self.avgPnL('A', False),
-            'Avg. Winning Trade [%]': self.avgPnL('W', False),
-            'Avg. Losing Trade [%]': self.avgPnL('L', False),
-            'Best Trade [%]': self.bestTrade(),
-            'Worst Trade [%]': self.worstTrade(),
-            'Avg Trade Duration': self.holding_period(np.mean, 'A'),
-            'Avg Win Trade Duration': self.holding_period(np.mean, 'W'),
-            'Avg Lose Duration': self.holding_period(np.mean, 'L'),
-            'Max Trade Duration': self.holding_period(np.max, 'A'),
-            'Max Win Trade Duration': self.holding_period(np.max, 'W'),
-            'Max Lose Duration': self.holding_period(np.max, 'L'),
-            'Profit Factor': self.profitFactor(),
-            'Expectancy [%]': self.Expectancy(),
-            'SQN': self.SQN()
-
-        })
+        series1 = pd.Series(
+            {
+                "Start": start_overwrite if start_overwrite else self.dates_(True),
+                "End": self.dates_(False),
+                "Duration": self.dates_(False) - self.dates_(True),
+                "Exposure Time [%]": self.ExposureDays(),
+                "Equity Final [$]": self.final_value_func(),
+                "Equity Peak [$]": self.peak_value_func(),
+                "Return [%]": rtrn_,
+                "Buy & Hold Return [%]": self.buyNhold(),
+                "Median Daily Return [%]": f"{self.daily_rtrns().median(): .4%}",
+                "VaR 95% [%]": f"{self.daily_rtrns().quantile(0.05): .2%}",
+                "VaR 05% [%]": f"{self.daily_rtrns().quantile(0.95): .2%}",
+                "CAGR [%]": self.cagr(),
+                "Volatility Ann. [%]": self.vol_annualized(),
+                "Sharpe Ratio": self.sharpe(risk_free_rate),
+                "Sortino Ratio": self.sortino(risk_free_rate, MAR),
+                "Skew": self._equity.Total.pct_change().skew(),
+                "Log Return Skew": np.log(
+                    self._equity.Total / self._equity.Total.shift(1)
+                ).skew(),
+                "Calmar Ratio": self.calmar(),
+                "Max. Drawdown [%]": self.mdd(),
+                "Max. Drawdown Value [$]": self.mdd_value(),
+                "Avg. Drawdown [%]": self.avg_dd_percent(),
+                "Max. Drawdown Duration": self.mdd_duration(),
+                "Avg Dradown Duration": self.avg_dd_duration(),
+                "# Trades": self.numOfTrades(),
+                "Win Rate [%]": self.winRate(),
+                "Lose Rate [%]": self.lossRate(),
+                "Avg. Trade [%]": self.avgPnL("A", False),
+                "Avg. Winning Trade [%]": self.avgPnL("W", False),
+                "Avg. Losing Trade [%]": self.avgPnL("L", False),
+                "Best Trade [%]": self.bestTrade(),
+                "Worst Trade [%]": self.worstTrade(),
+                "5th Percentile Trade [%]": self.trade_percentile(5),
+                "25th Percentile Trade [%]": self.trade_percentile(25),
+                "50th Percentile Trade [%]": self.trade_percentile(50),
+                "75th Percentile Trade [%]": self.trade_percentile(75),
+                "95th Percentile Trade [%]": self.trade_percentile(95),
+                "Avg Trade Duration": self.holding_period(np.mean, "A"),
+                "Avg Win Trade Duration": self.holding_period(np.mean, "W"),
+                "Avg Lose Duration": self.holding_period(np.mean, "L"),
+                "Max Trade Duration": self.holding_period(np.max, "A"),
+                "Max Win Trade Duration": self.holding_period(np.max, "W"),
+                "Max Lose Duration": self.holding_period(np.max, "L"),
+                "Profit Factor": self.profitFactor(),
+                "Expectancy [%]": self.Expectancy(),
+                "SQN": self.SQN(),
+            }
+        )
 
         rtrn_dict = self.yearly_retrns()
         rtrn_series = pd.Series(

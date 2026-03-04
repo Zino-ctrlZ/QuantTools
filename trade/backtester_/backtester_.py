@@ -104,11 +104,11 @@ class PTBacktester(AggregatorParent):
             raise ValueError("PTBacktester currently only supports trade_on_close=True. trade_on_close=False is not supported.")
         else:
             logger.info(f"PTBacktester initialized with trade_on_close={trade_on_close}, finalize_trades={finalize_trades}")
-        self.datasets = []
+        self.datasets: List[PTDataset] = []
         self.__strategy = deepcopy((_setup_strategy(strategy, 
                                                     start_date=start_overwrite, 
-                                                    verbose=kwargs.get('verbose', False), 
-                                                    plot_indicators=kwargs.get('plot_indicators', True))))
+                                                    verbose=kwargs.pop('verbose', False), 
+                                                    plot_indicators=kwargs.pop('plot_indicators', True))))
         self.__port_stats = None
         self._trades = None
         self._equity = None
@@ -190,7 +190,7 @@ class PTBacktester(AggregatorParent):
         """
         results = []
         for i, d in enumerate(self.datasets):
-            d.backtest._strategy._name = d.name
+            d.backtest._strategy._name = d.name            
             d.backtest._strategy._runIndex = i
             if d.param_settings:
                 # if d.param_settings:
@@ -228,6 +228,27 @@ class PTBacktester(AggregatorParent):
         """
         Returns Timeseries of periodic portfolio value
         """
+        
+        ## Initialize empty dataframe to hold equity curves for each ticker.
+        eq = pd.DataFrame()
+
+        ## If cash is a single value, we create a dictionary with the same cash for each ticker to fill in missing values in the equity curve
+        if isinstance(self.cash, (float, int)):
+            cash_per_asset = {tick: self.cash for tick in self.get_port_stats().keys()}
+
+        ## Loop through each ticker's stats, extract the equity curve, and fill in missing values with the initial cash
+        for tick, stats in self.get_port_stats().items():
+            eq[tick] = stats["_equity_curve"]["Equity"]
+
+            ## If cash is a dict, we use the specific cash for that ticker to fill in missing values. If not, we use the single cash value for all tickers.
+            if tick not in cash_per_asset:
+                raise ValueError(f"Cash value for ticker {tick} not found in cash_per_asset. Please provide a cash value for this ticker.")
+            eq[tick].fillna(cash_per_asset[tick], inplace=True)
+        eq["Total"] = eq.sum(axis=1)
+
+        return eq
+
+
         PortStats = self.__port_stats
         if self.start_overwrite:
             start = pd.to_datetime(self.start_overwrite).date()
@@ -399,12 +420,20 @@ class PTBacktester(AggregatorParent):
         default_params = {}
         for param in param_kwargs.keys():
             default_params[param] = getattr(self.strategy, param)
+
             
         ## Loop through each datasets backtest, optimize & append to optimized dataframe
         for dataset in self.datasets:
             name = dataset.name
+
+            # If the dataset has specific settings for the strategy, we set the strategy settings.
+            print(f"Optimizing for dataset: {name} with settings: {dataset.param_settings}")
+            for setting, value in dataset.param_settings.items():
+                setattr(self.strategy, setting, value)
             ## Make sure strategy name is set for each optimize run
             dataset.backtest._strategy._name = name
+
+
             
             if return_heatmap:
                 opt, hm = dataset.backtest.optimize(**param_kwargs, **kwargs)

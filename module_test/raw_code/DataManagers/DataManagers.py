@@ -347,10 +347,14 @@ class SpotDataManager(QuoteController):
                     data = pd.DataFrame(columns=THETA_DATA_COLUMNS)
                     return data
                 data = data[~data.index.duplicated(keep='first')]
-                open_interest = retrieve_openInterest(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url).set_index('Datetime')
-                open_interest.drop_duplicates(inplace = True)
-                data['Open_interest'] = open_interest['Open_interest']
-                data.index = default_timestamp(data.index)
+                try:
+                    open_interest = retrieve_openInterest(symbol=self.symbol, end_date=end, exp=exp, right=right, start_date=start, strike=strike, print_url=print_url).set_index('Datetime')
+                    open_interest.drop_duplicates(inplace = True)
+                    data['Open_interest'] = open_interest['Open_interest']
+                    data.index = default_timestamp(data.index)
+                except Exception as e:
+                    logger.error(f"Error retrieving open interest data for {self.symbol} from {start} to {end}: {e}. Filling Open_interest with NaN.")
+                    data['Open_interest'] = np.nan
                 return data
 
             else:
