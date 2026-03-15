@@ -1,4 +1,4 @@
-from dataclasses import fields
+
 from typing import Iterable, TypedDict, Any
 from enum import Enum
 from datetime import datetime
@@ -6,12 +6,54 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 from weakref import WeakSet
 from trade.helpers.exception import SymbolChangeError
-from typing import get_origin, get_args, Union, get_type_hints, Literal
+from typing import get_origin, get_args, Union, get_type_hints, Literal, Type, Dict
 import types
 from trade.helpers.Logging import setup_logger
+from dataclasses import dataclass, fields
+from functools import lru_cache
+from typeguard import check_type
+
 
 logger = setup_logger(__name__)
 DATE_HINT = Union[datetime, str]
+
+
+
+@lru_cache(maxsize=None)
+def _hints(cls: Type[Any]) -> Dict[str, Any]:
+    return get_type_hints(cls)
+
+
+class TypeValidatedMixin:
+    def _validate_field(self, name: str, value: Any) -> None:
+        hint = _hints(type(self)).get(name)
+        if hint is not None:
+            check_type(value, hint)
+
+    def _validate_all_fields(self) -> None:
+        for f in fields(self):
+            self._validate_field(f.name, getattr(self, f.name))
+
+    def __post_init__(self) -> None:
+        self._validate_all_fields()
+
+
+@dataclass
+class MutableValidated(TypeValidatedMixin):
+    def __setattr__(self, name: str, value: Any) -> None:
+        self._validate_field(name, value)
+        super().__setattr__(name, value)
+
+
+@dataclass(frozen=True)
+class FrozenValidated(TypeValidatedMixin):
+    pass
+
+
+# frozen update pattern:
+# new_obj = replace(old_obj, some_field=new_value)
+
+
 
 class IncorrectTypeError(Exception):
     """Custom exception for incorrect type errors in configuration validation."""

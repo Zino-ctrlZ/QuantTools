@@ -14,6 +14,8 @@ from trade.helpers.helper import change_to_last_busday  # noqa
 from ._types import Side, SideInt  # noqa
 from trade.backtester_.indicators import (
     compute_atr_loss,
+    update_atr_trail_long,
+    update_atr_trail_short,
 )
 
 
@@ -270,7 +272,7 @@ class StrategyBase(ABC):
 
         self.position_info: Optional[PositionInfo] = PositionInfo()
         self.stop: Optional[float] = None
-        self.indicators: Dict[str, Any] = {}
+        self.indicators: Dict[str, Indicator] = {}
 
         # Cache index + numpy views for speed and consistent date handling
         self._df = self.data.data.copy()  # expects a DataFrame-like
@@ -1179,7 +1181,7 @@ class StrategyBase(ABC):
                     )
         ## Indicators
         for ind_name, indicator in self.indicators.items():
-            ind_values = indicator.values.loc[df.index]
+            ind_values = indicator.series[df.index]
             if indicator.overlay:
                 fig.add_trace(
                     go.Scatter(
@@ -1281,6 +1283,8 @@ class ATRTrailingStrategyBase(StrategyBase, ABC):
         average_type: str = "w",
         start_trading_date: Optional[str] = None,
         ticker: Optional[str] = None,
+        is_long: bool = True,
+        is_short: bool = False,
         **kwargs,
     ):
         super().__init__(data=data, **kwargs)
@@ -1288,6 +1292,8 @@ class ATRTrailingStrategyBase(StrategyBase, ABC):
         self.atr_factor = atr_factor
         self.trail_type = trail_type
         self.average_type = average_type
+        self.is_long = is_long
+        self.is_short = is_short
         self.loss_series: Optional[pd.Series] = None
 
     def setup(self) -> None:
@@ -1299,3 +1305,21 @@ class ATRTrailingStrategyBase(StrategyBase, ABC):
             trail_type=self.trail_type,
             average_type=self.average_type,
         )
+
+    def open_action(self, *, signal_id = None, entry_price = None, side = None, date = None, index = None):
+        idx, _ = self._resolve(date=date, index=index)
+        
+        if self.is_long:
+            self.stop = update_atr_trail_long(
+                close=float(self.close[idx]),
+                loss=float(self.loss_series[idx]),
+                prev_trail=self.stop,
+                reset=False,
+            )
+        elif self.is_short:
+            self.stop = update_atr_trail_short(
+                close=float(self.close[idx]),
+                loss=float(self.loss_series[idx]),
+                prev_trail=self.stop,
+                reset=False,
+            )
