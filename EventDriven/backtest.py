@@ -1,5 +1,5 @@
 from queue import Empty as emptyEventQueue
-from typing import Optional, cast
+from typing import Dict, Optional, cast
 import pandas as pd
 from EventDriven.data import HistoricTradeDataHandler
 from EventDriven.event import Event
@@ -10,16 +10,15 @@ from EventDriven.riskmanager.new_base import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday
+from trade.helpers.helper import change_to_last_busday, is_USholiday
 from EventDriven.helpers import generate_signal_id
-from copy import deepcopy
+from copy import deepcopy # noqa
 import traceback
 from pandas.tseries.offsets import BDay
 from EventDriven.types import EventTypes, SignalTypes
 from EventDriven.configs.core import BacktesterConfig
-from .exceptions import EVBacktestError
 
-LOGGER = setup_logger("OptionSignalBacktest", stream_log_level="WARNING")
+LOGGER = setup_logger("EventDriven.backtest", stream_log_level="WARNING")
 
 
 class OptionSignalBacktest:
@@ -195,6 +194,12 @@ class OptionSignalBacktest:
         self.is_eq_strategy = eq_strategy is not None
         self.eq_strategy: Optional[MultiAssetStrategy] = eq_strategy
         self.strategy: Optional[OptionSignalStrategy] = None
+        self.initial_capital = initial_capital
+        self.trades = trades
+        self.symbol_list = symbol_list
+
+        ## Tracker for eq_strategy runs, to ensure we only run the strategy once per date
+        self.run_dates: Dict[pd.Timestamp, bool] = {}
         if config is not None and not isinstance(config, BacktesterConfig):
             raise TypeError("config must be an instance of BacktesterConfig or None")
 
@@ -227,19 +232,19 @@ class OptionSignalBacktest:
             EVBacktestError: If tplusn value of the equity strategy does not match the backtest configuration.
         """
         assert eq_strategy is not None, "Equity strategy must be provided for this initialization method"
-        assert isinstance(
-            eq_strategy, MultiAssetStrategy
-        ), f"eq_strategy must be an instance of MultiAssetStrategy, got {type(eq_strategy)}"
+        assert isinstance(eq_strategy, MultiAssetStrategy), (
+            f"eq_strategy must be an instance of MultiAssetStrategy, got {type(eq_strategy)}"
+        )
         assert self.end_date is not None, "end_date must be provided for this initialization method"
-        if eq_strategy.tplusn != self.config.t_plus_n:
-            raise EVBacktestError(f"tplusn value of the equity strategy does not match the backtest configuration. eq_strategy.tplusn: {eq_strategy.tplusn}, config.t_plus_n: {self.config.t_plus_n}")
 
         ## We will not use trades dataframe in this process.
         self.start_date = pd.to_datetime(eq_strategy.start_date).date()
+        if is_USholiday(self.start_date):
+            self.logger.warning(f"Start date {self.start_date} is a US holiday. Adjusting to previous business day.")
+            self.start_date = change_to_last_busday(self.start_date, -1).date()
+
         start_date, end_date = self.start_date, self.end_date
         self.eq_strategy.reset_strategies()
-
-
 
         ## Initialize critical components
         self.eventScheduler = EventScheduler(start_date, end_date)
@@ -362,19 +367,66 @@ class OptionSignalBacktest:
 
             ## Only adjust ExitTime if it is not NaT
             trades["ExitTime"] = trades["ExitTime"].apply(
-                lambda x: change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour=0)
-                if pd.notna(x)
-                else x
+                lambda x: (
+                    change_to_last_busday(pd.to_datetime(x) + BDay(self.config.t_plus_n), -1).replace(hour=0)
+                    if pd.notna(x)
+                    else x
+                )
             )  ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
         return trades
+    
+    def reset(self):
+        """
+        Resets the backtest to its initial state, allowing for a fresh run with the original trades and configuration.
+        This method reinitializes all components and clears any generated events or portfolio state.
+        """
+        self.logger.info("Resetting backtest to initial state.")
+        self.__init__(
+            trades=self.trades,
+            initial_capital=self.initial_capital,
+            eq_strategy=self.eq_strategy,
+            config=self.config,
+            end_date=self.end_date,
+            symbol_list=self.symbol_list,
+        )
+    def _pre_signal_analysis(self):
+        """
+        Placeholder for any analysis or operations that need to be performed before signal processing in each loop iteration.
+        This can include things like checking for roll conditions, updating market data, or any other pre-signal logic.
+        """
+
+        has_run_strategy = self.run_dates.get(self.eventScheduler.current_date, False)
+        if self.is_eq_strategy and self.eq_strategy.tplusn == 0 and not has_run_strategy:
+            ## For equity strategy, we want to run the strategy at the beginning of the loop before processing any events, 
+            ## to ensure that we capture signals generated for the current date in the same loop iteration. If we put it after get_nowait, 
+            ## we might miss signals generated for the current date until the next loop iteration, which could lead to delayed signal processing and execution
+            self.logger.info(f"Running equity strategy with T+0 settlement on {self.eventScheduler.current_date}")
+            self.portfolio.analyze_multiasset_strategy()
+            self.run_dates[self.eventScheduler.current_date] = True
+            self.logger.info(f"Completed running equity strategy for {self.eventScheduler.current_date}")
+    
+    def _post_signal_analysis(self):
+        """
+        Placeholder for any analysis or operations that need to be performed after signal processing in each loop iteration.
+        This can include things like analyzing positions, updating portfolio metrics, or any other post-signal logic.
+        """
+        meta = self.portfolio.analyze_positions()  # noqa
+        self.logger.info(f"Position Analysis Meta: {meta}")
+
+        ## For equity strategy with T+n (n>=1), we want to run the strategy after analyzing positions, 
+        ## to ensure that we are using the most up-to-date position information for the strategy analysis. 
+        ## This is especially important for T+1 strategies, where the signals generated on the current date will only be actionable on the next business day. 
+        ## By running the strategy after position analysis, we can ensure that any new signals generated based on the current positions and market data are captured and processed in a timely manner in the next loop iteration.
+        if self.is_eq_strategy and self.eq_strategy.tplusn >= 1:
+            self.logger.info(f"Running equity strategy with T+{self.eq_strategy.tplusn} settlement on {self.eventScheduler.current_date}")
+            self.portfolio.analyze_multiasset_strategy()
 
     def run(self):
         ## Runtime configurations changes
         self.portfolio.t_plus_n = self.config.t_plus_n
         self.executor.max_slippage_pct = self.config.max_slippage_pct
         self.executor.min_slippage_pct = self.config.min_slippage_pct
-        self.risk_manager.config.min_slippage_pct = self.config.min_slippage_pct
-        self.risk_manager.config.max_slippage_pct = self.config.max_slippage_pct
+        self.executor.commission_rate = self.config.commission_per_contract_in_units
 
         ## Begin backtest by looping through event scheduler dates
         while True:
@@ -387,15 +439,25 @@ class OptionSignalBacktest:
             self.logger.info(f"Processing events for {self.eventScheduler.current_date}")
             current_event_queue = self.eventScheduler.get_current_queue()
             event_count = 0
+            _post_signal_ran = False
 
             # Process events for the current bar
             # Avoid blocking. Loops through the event queue
             while True:
+                self._pre_signal_analysis()  # Placeholder for any pre-signal processing logic  
+
                 try:
+                    # ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
+                    # if len(list(deepcopy(current_event_queue.queue))) == 0:
+                    #     meta = self.portfolio.analyze_positions()  # noqa
+                    #     # print(f"Position Analysis Meta: {meta}")
+
                     ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                    if len(list(deepcopy(current_event_queue.queue))) == 0:
-                        meta = self.portfolio.analyze_positions()  # noqa
-                        # print(f"Position Analysis Meta: {meta}")
+                    if current_event_queue.empty() and not _post_signal_ran:
+                        self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
+
+                        self._post_signal_analysis() 
+                        _post_signal_ran = True
 
                     event = current_event_queue.get_nowait()
 
@@ -404,10 +466,6 @@ class OptionSignalBacktest:
 
                     # Update portfolio time index after processing all events
                     self.portfolio.update_timeindex()
-
-                    # Analyze eq_strategy if applicable
-                    if self.is_eq_strategy:
-                        self.portfolio.analyze_multiasset_strategy()
 
                     # advance scheduler queue to next date
                     self.eventScheduler.advance_date()

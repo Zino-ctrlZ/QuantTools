@@ -54,7 +54,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
     handler.
     """
     
-    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.00279):
+    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.0065):
         """
         Initialises the handler, setting the event queues
         up internally.
@@ -62,7 +62,9 @@ class SimulatedExecutionHandler(ExecutionHandler):
         Parameters:
         events - The Queue of Event objects.
         max_slippage_pct - The slippage range for the market default is 0.002
-        commission_rate - The commission rate for the market default is 0.00279 per contract: https://robinhood.com/us/en/support/articles/trading-fees-on-robinhood/#Tradingactivityfee
+        commission_rate - The commission rate for the market default is 35 cents per contract.
+            Option price is in contract units, so commission is also in contract units. For example, if commission_rate is 0.0035, then scaled commission for 1 contract is 0.0035 * 100 = $0.35, 
+
         """
         self.events = events
         self.max_slippage_pct = max_slippage_pct
@@ -102,6 +104,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         elif order_event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
             slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.min_slippage_pct) ## Ensure that slippage is always negative, and never 0 or less than -max_slippage_pct
+
         
         #slippage may increase or decrease intended price
         price = order_event.position['close'] * (1 + slippage_pct)          
@@ -153,7 +156,20 @@ class SimulatedExecutionHandler(ExecutionHandler):
         # - Market value != fill cost, as market value is based on the position's close price, not the slippage adjusted price.
 
         slippage_diff = (price - order_event.position['close'] ) * quantity
-        fill_event = FillEvent(order_event.datetime, order_event.symbol, 'ARCA', quantity, order_event.direction, fill_cost=fill_cost, market_value=market_value, commission=commission, position=order_event.position, slippage=slippage_diff, signal_id=order_event.signal_id, parent_event=order_event)
+        fill_event = FillEvent(
+            order_event.datetime, 
+            order_event.symbol, 
+            'ARCA', 
+            quantity, 
+            order_event.direction, 
+            fill_cost=fill_cost, 
+            market_value=market_value, 
+            commission=commission, 
+            position=order_event.position, 
+            slippage=slippage_diff, 
+            signal_id=order_event.signal_id, 
+            parent_event=order_event
+        )
         exec_cache['fill'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}_{order_event.direction}'] = deepcopy(fill_event)
         self.events.put(fill_event)
         
@@ -181,7 +197,18 @@ class SimulatedExecutionHandler(ExecutionHandler):
         total_pnl = long_pnl + short_pnl
         market_value = exercise_event.spot * exercise_event.quantity
         
-        fill_event = FillEvent(exercise_event.datetime, exercise_event.symbol, 'ARCA', exercise_event.quantity, 'EXERCISE', fill_cost=total_pnl, position=exercise_event.position,market_value=market_value, signal_id=exercise_event.signal_id, parent_event=exercise_event)
+        fill_event = FillEvent(
+            exercise_event.datetime, 
+            exercise_event.symbol, 
+            'ARCA', 
+            exercise_event.quantity, 
+            'EXERCISE', 
+            fill_cost=total_pnl, 
+            position=exercise_event.position,
+            market_value=market_value, 
+            signal_id=exercise_event.signal_id, 
+            parent_event=exercise_event
+        )
         self.events.put(fill_event)
         
     def __calculate_premium_pnl(self, option_meta, spot, premium):

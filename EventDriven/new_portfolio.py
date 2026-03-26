@@ -12,12 +12,12 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData
+from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData, Order
 from EventDriven.riskmanager.new_base import RiskManager, order_failed
 from EventDriven.riskmanager.utils import parse_position_id
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import to_datetime
-from trade.assets import Stock
+from trade.assets.Stock import Stock
 from EventDriven.event import (
     ExerciseEvent,  # noqa
     FillEvent,
@@ -38,10 +38,10 @@ from EventDriven.dataclasses.states import PositionState, PortfolioMetaInfo, Por
 from EventDriven.dataclasses.states import StrategyChangeMeta
 from EventDriven.configs.core import PortfolioManagerConfig, CashAllocatorConfig
 from EventDriven.portfolio_utils import extract_events
-from EventDriven.exceptions import BacktestNotImplementedError
+from EventDriven.exceptions import BacktestNotImplementedError, EVBacktestError
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 
-LOGGER = setup_logger("OptionSignalPortfolio", stream_log_level=logging.INFO)
+LOGGER = setup_logger("EventDriven.new_portfolio", stream_log_level=logging.WARNING)
 
 
 class Portfolio(AggregatorParent):
@@ -238,6 +238,7 @@ class OptionSignalPortfolio(Portfolio):
 
     def __construct_max_contract_price(self):
         # Try config-driven buckets first; fallback to legacy behavior
+        ## TODO: Decommision this method. Rely solely on cash allocator config for max contract price.
         if self.cash_allocator_config is not None:
             try:
                 max_cash_map = self.cash_allocator_config.build_max_cash_map(
@@ -294,6 +295,7 @@ class OptionSignalPortfolio(Portfolio):
         equity_curve["commission"] = -equity_curve["commission"]
         equity_curve["total"] = equity_curve.sum(axis=1)  ##NOTE: Temp fix till calcs work
         equity_curve.rename(columns={"total": "Total"}, inplace=True)
+        equity_curve.index = pd.to_datetime(equity_curve.index)
         self.__equity = equity_curve
         return self.__equity
 
@@ -333,12 +335,10 @@ class OptionSignalPortfolio(Portfolio):
     def buyNhold(self):
         stock_ts = pd.DataFrame()
         for stock in self.symbol_list:
-            stock_ts[stock] = (
-                self.underlier_list_data.get(stock, self.__get_underlier_data(stock)).spot(
-                    ts=True, ts_start=self.dates_(), ts_end=self.dates_(start=False)
-                )["close"]
-                * self.__weight_map[stock]
-            )
+            data = self.risk_manager.market_data.market_timeseries.get_timeseries(
+                sym=stock, factor="spot", start_date=self.start_date, end_date=self.eventScheduler.end_date
+            ).spot["close"].rename(stock)
+            stock_ts = pd.concat([stock_ts, data], axis=1)
 
         stock_ts["Total"] = stock_ts.sum(axis=1)
         self.stock_equity = stock_ts
@@ -452,11 +452,30 @@ class OptionSignalPortfolio(Portfolio):
         date_str = signal_event.datetime.strftime("%Y-%m-%d")
         position_type = "c" if signal_event.signal_type == "LONG" else "p"
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
+
+        ## TODO: Decommision self.__max_contract_price and rely solely on cash allocator config for max contract price.
+        # max_contract_price = (
+        #     self.__max_contract_price[signal_event.symbol]
+        #     if signal_event.max_contract_price is None
+        #     else signal_event.max_contract_price
+        # )
+
+        ## Determine max contract price based on cash allocator config or default to 50% of allocated cash
+        max_contract_dict = (
+            self.cash_allocator_config.build_max_cash_map(
+                weights=self.__weight_map, cash=self.initial_capital
+            )
+            if self.cash_allocator_config is not None
+            else {}
+        )
+
+        ## If max_contract_price is not set or is greater than cash at hand, use cash at hand as max contract price
         max_contract_price = (
-            self.__max_contract_price[signal_event.symbol]
+            max_contract_dict.get(signal_event.symbol)
             if signal_event.max_contract_price is None
             else signal_event.max_contract_price
         )
+
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.info(
@@ -486,8 +505,9 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f"Order failed to be created for signal: {signal_event}, Order: {order}")
             self.position_cache.pop(cache_key, None)
             self.position_cache.pop(signal_event.signal_id, None)
-            self._process_failed_order(signal_event)
+            self._process_failed_order(signal_event, order_result=order)
             return None
+
 
         return OrderEvent(
             signal_event.symbol,
@@ -501,21 +521,28 @@ class OptionSignalPortfolio(Portfolio):
             parent_event=signal_event,
         )
 
-    def _process_failed_order(self, signal_event: SignalEvent):
+    def _process_failed_order(self, signal_event: SignalEvent, order_result:Order=None):
         """
         Process a failed order by either rolling it forward or logging it.
         """
+        reason = "Order failed"
         if self.config.roll_failed_orders:
             next_trading_day = signal_event.datetime + pd.offsets.BusinessDay(1)
             self.logger.critical(f"Rolling failed signal {signal_event} to next trading day {next_trading_day}")
             self._roll_signal_to_next_day(signal_event)
+            reason += " and rolling forward as per config"
         else:
             self.logger.critical(
                 f"Failed to process signal for {signal_event.signal_id} on {signal_event.datetime}, not rolling forward as per config."
             )
-            unprocess_dict = signal_event.__dict__
-            unprocess_dict["reason"] = "Order failed and rolling is disabled"
-            self.unprocessed_signals.append(unprocess_dict)
+        
+        ## Log unprocessed signal for analysis
+        unprocess_dict = signal_event.__dict__
+        unprocess_dict["reason"] = reason
+        unprocess_dict["result_message"] = "Order failed"
+        if order_result is not None:
+            unprocess_dict["order_result"] = order_result
+        self.unprocessed_signals.append(unprocess_dict)
 
     def _roll_signal_to_next_day(self, signal_event: SignalEvent):
         """
@@ -607,6 +634,11 @@ class OptionSignalPortfolio(Portfolio):
         """
         Analyze the multi-asset strategy and generate signals if necessary
         """
+
+        if self.eq_strategy.tplusn != self.t_plus_n:
+            raise EVBacktestError(
+                f"tplusn value of the equity strategy does not match the backtest configuration. eq_strategy.tplusn: {self.eq_strategy.tplusn}, config.t_plus_n: {self.t_plus_n}"
+            )
         if self.eq_strategy is None:
             return
         dt = to_datetime(dt or self.eventScheduler.current_date)
@@ -621,6 +653,10 @@ class OptionSignalPortfolio(Portfolio):
         )
         opens = signals.open_signals
         closes = signals.close_signals
+        if not opens:
+            self.logger.info(f"No open signals generated for multi-asset strategy on {dt}")
+        if not closes:
+            self.logger.info(f"No close signals generated for multi-asset strategy on {dt}")
         for ticker, signal in opens.items():
             if signal.signal_id is None:
                 raise ValueError(
@@ -1111,3 +1147,9 @@ class OptionSignalPortfolio(Portfolio):
         tr["Size"] = tr["Quantity"]
 
         return plot_portfolio(tr, eq, dd, _bnch, plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
+    
+    def get_strategy_class(self) -> Optional[MultiAssetStrategy]:
+        """
+        Returns the multi-asset strategy class if it exists, else returns None
+        """
+        return self.eq_strategy.strategy_class if self.eq_strategy is not None else None
