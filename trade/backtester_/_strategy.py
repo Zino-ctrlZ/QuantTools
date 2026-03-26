@@ -61,7 +61,7 @@ class TradeDecision:
         if self.side not in (1, -1, 0):
             raise ValueError("TradeDecision.side must be 1 (long), -1 (short), or 0 (no position).")
         if (self.signal_id is not None and not isinstance(self.signal_id, SignalID)) and self.signal_id != "N/A":
-            raise TypeError("TradeDecision.signal_id must be of type SignalID, 'N/A', or None.")
+            raise TypeError("TradeDecision.signal_id must be of type SignalID, 'N/A', or None. Received type: {}".format(type(self.signal_id)))
         if self.pos_effect is not None and not isinstance(self.pos_effect, PositionEffect):
             raise TypeError("TradeDecision.pos_effect must be of type PositionEffect or None.")
 
@@ -210,6 +210,7 @@ class StrategyBase(ABC):
             "data",
             "start_trading_date",
             "ticker",
+            "tplusn",
         ]
         is_abstract = inspect.isabstract(cls)
 
@@ -234,12 +235,12 @@ class StrategyBase(ABC):
                 raise TypeError(f"{cls.__name__}.__init__ must accept parameter '{req}'.")
 
         # If __init__ has **kwargs, accept anything; still enforce bt_params existence/type.
-        has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-        if has_kwargs:
-            return
+        # has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        # if has_kwargs:
+        #     return
 
         for k in cls.bt_params.keys():
-            if k not in params:
+            if k not in params and k not in must_have_in_init:
                 raise TypeError(
                     f"{cls.__name__}.bt_params includes '{k}', but {cls.__name__}.__init__ "
                     f"does not accept '{k}' (and has no **kwargs)."

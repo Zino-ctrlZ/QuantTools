@@ -470,11 +470,12 @@ def trade_percentile(trades_df: pd.DataFrame, percentile: float) -> float:
     assert 0 <= percentile <= 100, (
         f"Percentile must be between 0 and 100. Current Value: {percentile}"
     )
-    return (
-        np.percentile(trades_df.ReturnPct, percentile) * 100
-        if "ReturnPct" in trades_df.columns
-        else np.percentile(trades_df.PnL, percentile)
-    )
+    return trades_df.ReturnPct.quantile(percentile / 100) * 100 if "ReturnPct" in trades_df.columns else np.nan
+    # return (
+    #     np.percentile(trades_df.ReturnPct, percentile) * 100
+    #     if "ReturnPct" in trades_df.columns
+    #     else np.percentile(trades_df.PnL, percentile)
+    # )
 
 
 def profitFactor(trades_df: pd.DataFrame) -> float:
@@ -556,7 +557,7 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
     ts = equity_timeseries.copy(deep=True)
     ts["Year"] = ts.index.year
     ## dropping duplicate years if there are multiple
-    # ts = ts[~ts.index.duplicated(keep="first")]
+    ts = ts[~ts.index.duplicated(keep="first")]
     unq_year = ts.Year.unique()
     rtrn_d = {}
     for year in unq_year:

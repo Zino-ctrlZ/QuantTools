@@ -258,39 +258,6 @@ class PTBacktester(AggregatorParent):
             eq = eq[eq.index.date >= pd.to_datetime(self.start_overwrite).date()]
 
         return eq
-
-
-        PortStats = self.__port_stats
-        if self.start_overwrite:
-            start = pd.to_datetime(self.start_overwrite).date()
-        date_range = pd.date_range(start= self.dates_(True), end = self.dates_(False), freq = 'B')
-        start = self.dates_(True)
-        _ = self.dates_(False)
-        port_equity_data = pd.DataFrame(index = date_range)
-        for tick, data in PortStats.items():
-            equity_curve = data['_equity_curve']['Equity']
-            if isinstance(self.cash, dict):
-                cash = self.cash[tick]
-            elif isinstance(self.cash, int) or isinstance(self.cash, float):
-                cash = self.cash
-            
-            equity_curve.name = tick
-            tick_start = min(equity_curve.index)
-            if tick_start > pd.Timestamp(start):
-                temp = pd.DataFrame(index = pd.date_range(start = start, end =equity_curve.index.min(), freq = 'B' ))
-                temp[tick] = cash
-                equity_curve = pd.concat([equity_curve, temp], axis = 0)
-        
-            port_equity_data = port_equity_data.join(equity_curve)
-
-        port_equity_data = port_equity_data.dropna(how = 'all')
-        port_equity_data = port_equity_data.fillna(method = 'ffill')
-        port_equity_data['Total'] = port_equity_data.sum(axis = 1)
-        port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
-        if self.start_overwrite:
-            port_equity_data = port_equity_data[port_equity_data.index.date >= pd.to_datetime(self.start_overwrite).date()]
-        port_equity_data = port_equity_data[~port_equity_data.index.duplicated(keep = 'first')]
-        return port_equity_data
     
     def __trades(self):
         return self.trades()

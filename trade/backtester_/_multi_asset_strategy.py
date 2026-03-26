@@ -5,6 +5,36 @@ from trade.assets.Stock import DATE_HINT
 from trade.backtester_._strategy import StrategyBase, TradeDecision
 from trade.backtester_.backtester_ import PTDataset
 
+def _setup_strategy(
+    strategy_class: Type[StrategyBase],
+    data: PTDataset,
+    start_date: str,
+    ticker: str,
+    params: Dict[str, Any]
+) -> StrategyBase:
+    """
+    Utility function to initialize a strategy instance with the given parameters.
+
+    Args:
+        strategy_class (Type[StrategyBase]): The StrategyBase subclass to instantiate
+        data (PTDataset): The dataset for the strategy
+        start_date (str): The starting date for the strategy in 'YYYY-MM-DD' format
+        ticker (str): The ticker symbol for the strategy
+        params (Dict[str, Any]): Additional parameters to pass to the strategy's __init__
+
+    Returns:
+        StrategyBase: An initialized instance of the specified strategy class
+    """
+    default_params = strategy_class.bt_params
+
+    ## Add default params to params if key is missing
+    for key, value in default_params.items():
+        if key not in params:
+            params[key] = value
+
+    return strategy_class(
+        data=data, start_trading_date=start_date, ticker=ticker, **params
+)
 
 @dataclass
 class SimulationResults:
@@ -117,13 +147,30 @@ class MultiAssetStrategy:
         for ticker, ticker_params in self.params.items():
             if ticker not in self.data:
                 raise ValueError(f"Data not provided for ticker: {ticker}")
-
-            # Initialize strategy with data, start_date, and ticker-specific params
-            self.asset_strategies[ticker] = self.strategy_class(
-                data=self.data[ticker], start_trading_date=self.start_date, ticker=ticker, **ticker_params
+            
+            self.asset_strategies[ticker] = _setup_strategy(
+                strategy_class=self.strategy_class,
+                data=self.data[ticker],
+                start_date=self.start_date,
+                ticker=ticker,
+                params=ticker_params
             )
             self.current_open_positions[ticker] = False
             self.strategy_settings[ticker] = ticker_params
+
+            # default_params = self.strategy_class.bt_params
+
+            # ## Add default params to ticker_params if key is missing
+            # for key, value in default_params.items():
+            #     if key not in ticker_params:
+            #         ticker_params[key] = value
+
+            # # Initialize strategy with data, start_date, and ticker-specific params
+            # self.asset_strategies[ticker] = self.strategy_class(
+            #     data=self.data[ticker], start_trading_date=self.start_date, ticker=ticker, **ticker_params
+            # )
+            # self.current_open_positions[ticker] = False
+            # self.strategy_settings[ticker] = ticker_params
 
     def reset_strategies(self):
         """
