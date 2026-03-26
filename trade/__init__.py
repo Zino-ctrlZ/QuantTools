@@ -6,7 +6,7 @@ import warnings
 import atexit
 from zoneinfo import ZoneInfo
 import pandas as pd
-import pandas_market_calendars as mcal
+import pandas_market_calendars as mcal # type: ignore
 from dotenv import load_dotenv
 from trade.helpers.clear_cache import cleanup_expired_caches
 from .helpers.Logging import setup_logger
@@ -40,6 +40,10 @@ schedule = nyse.schedule(start_date="2000-01-01", end_date="2040-01-01", tz=NY)
 all_trading_days = mcal.date_range(schedule, frequency="1D").date  ## type: ignore
 all_days = pd.date_range(start="2000-01-01", end="2040-01-01", freq="B")
 holidays = set(all_days.difference(all_trading_days).strftime("%Y-%m-%d").to_list())
+all_new_years = pd.date_range(start="2000-01-01", end="2040-01-01", freq="AS").strftime("%Y-%m-%d").to_list()
+all_christmas = pd.date_range(start="2000-01-01", end="2040-01-01", freq="A-DEC").strftime("%Y-%m-%d").to_list()
+holidays.update(all_new_years)
+holidays.update(all_christmas)
 HOLIDAY_SET = set(holidays)
 DATETIME_HOLIDAY_SET = set(pd.to_datetime(list(HOLIDAY_SET), format="%Y-%m-%d"))
 
@@ -253,6 +257,8 @@ def get_pricing_config() -> dict:
             logger.warning(f"Missing key {key} in pricing config. Setting default value {value}.")
     return PRICING_CONFIG
 
+MARKET_CLOSE = pd.Timestamp(get_pricing_config()["MARKET_CLOSE_TIME"])  # noqa
+MARKET_OPEN = pd.Timestamp(get_pricing_config()["MARKET_OPEN_TIME"])  # noqa
 
 def reload_pricing_config():
     """

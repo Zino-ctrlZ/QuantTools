@@ -66,6 +66,13 @@ def change_all_optionlib_loggers_level(level: str = None):
     for logger in loggers:
         change_logger_stream_level(logger, getattr(logging, level.upper(), logging.INFO))
 
+def change_all_logger(level: str = None):
+    """Change logging level for all loggers under 'trade'."""
+    if level is None:
+        level = LOGGING_LEVEL
+    change_all_optionlib_loggers_level(level)
+    change_logging_in_all_datamanager_loggers(level)
+
 
 def register_to_factor_list(name:str):
     FACTOR_DMS.add(name)

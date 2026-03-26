@@ -19,6 +19,7 @@ from pathlib import Path
 import os
 from typing import Tuple, List, Optional, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade import MARKET_CLOSE, MARKET_OPEN
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
@@ -34,6 +35,51 @@ LIST_DATE_CACHE = CustomCache(
     clear_on_exit=False,
     expire_days=365,
 )
+
+def _convert_expiration_to_datetime(expiration: Union[str, datetime]) -> datetime:
+    """
+    Converts an expiration date to a datetime object. If the input is already a datetime, it is returned as is.
+
+    Args:
+        expiration: The expiration date as a string or datetime.
+    Returns:
+        A datetime object representing the expiration date.
+    """
+    if isinstance(expiration, datetime):
+        return expiration.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+    else:
+        return to_datetime(expiration).replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)
+    
+def _convert_dates_to_datetime(dates: List[Union[str, datetime]]) -> List[datetime]:
+    """
+    Converts a list of dates to datetime objects. If an element is already a datetime, it is returned as is.
+
+    Args:
+        dates: A list of dates as strings or datetimes.
+    Returns:
+        A list of datetime objects representing the input dates.
+    """
+    converted_dates = []
+    for d in dates:
+        if isinstance(d, datetime):
+            converted_dates.append(d.replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute))  # Set to market open time for accurate T calculation
+        else:
+            converted_dates.append(to_datetime(d).replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute))
+    return converted_dates
+
+def _convert_date_to_datetime(date_input: Union[str, datetime]) -> datetime:
+    """
+    Converts a date to a datetime object. If the input is already a datetime, it is returned as is.
+
+    Args:
+        date_input: The date as a string or datetime.
+    Returns:
+        A datetime object representing the input date.
+    """
+    if isinstance(date_input, datetime):
+        return date_input.replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)  # Set to market open time for accurate T calculation
+    else:
+        return to_datetime(date_input).replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)
 
 def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
     """Synchronizes the date indices of multiple time series."""

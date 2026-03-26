@@ -1,4 +1,5 @@
 from trade.helpers.Logging import setup_logger
+from dbase.DataAPI.ThetaData.utils import THETA_FIRST_ALLOW_DATE
 from . import load_config
 from .ssvi.controller import get_global_config
 logger = setup_logger('trade.optionlib.config.defaults')
@@ -9,7 +10,7 @@ SSVI_GLOBAL_CONFIG = get_global_config()
 DAILY_BASIS = config['DAILY_BASIS']
 DIVIDEND_LOOKBACK_YEARS = config['DIVIDEND_FORECAST_LOOKBACK_YEARS']
 DIVIDEND_LOOKFORWARD_YEARS = config['DIVIDEND_FORECAST_LOOKFORWARD_YEARS']
-OPTION_TIMESERIES_START_DATE = config['OPTION_TIMESERIES_START_DATE']
+OPTION_TIMESERIES_START_DATE = THETA_FIRST_ALLOW_DATE
 DIVIDEND_FORECAST_METHOD = config['DIVIDEND_FORECAST_METHOD']
 VOL_EST_UPPER_BOUND= config['VOL_EST_UPPER_BOUND']
 VOL_EST_LOWER_BOUND= config['VOL_EST_LOWER_BOUND']

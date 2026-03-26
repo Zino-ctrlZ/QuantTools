@@ -94,5 +94,3 @@ TODAY_RELOAD_CUTOFF = time(18, 30)  # 6:30 PM
 ## rely on RealTimeFallback option
 MIN_TIME_BEFORE_REAL_TIME = time(9, 45)  # 9:45 AM
 
-## This is done to avoid circular import issues. MarketTimeseries is the main class responsible
-set_times_series()

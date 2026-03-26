@@ -24,7 +24,7 @@ from trade.helpers.parse import *
 from trade.helpers.helper import *
 from trade.helpers.openbb_helper import *
 import yfinance as yf
-from trade.assets.rates import get_risk_free_rate_helper
+from trade.assets.rates import get_risk_free_rate_helper_v2
 from dbase.DataAPI.ThetaData import resample
 from pandas.tseries.offsets import BDay
 from trade.helpers.helper import change_to_last_busday
@@ -333,7 +333,7 @@ class Stock:
         """
         Class method that initiates Risk Free rate timeseries across all classes
         """
-        ts = get_risk_free_rate_helper()
+        ts = get_risk_free_rate_helper_v2()
         self.__rf_ts = ts
 
     def init_risk_free_rate(self):
@@ -725,7 +725,7 @@ class Stock:
             print(f"Market Cap: N/A")
         else:
             cap = int(info.get("marketCap", "N/A"))
-            print(f"Market Cap: {cap/1_000_000_000:.2f}bn")
+            print(f"Market Cap: {cap / 1_000_000_000:.2f}bn")
         print(f"PE Ratio: {info.get('trailingPE', 'N/A')}")
         print(f"Dividend Yield: {info.get('dividendYield', 'N/A')}")
         print(f"52 Week High: {info.get('fiftyTwoWeekHigh', 'N/A')}")

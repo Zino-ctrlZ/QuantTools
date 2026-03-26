@@ -201,15 +201,16 @@ from pandas.tseries.offsets import BDay
 from dbase.DataAPI.ThetaData import resample  # noqa
 from trade.helpers.helper import retrieve_timeseries, ny_now, CustomCache, YFinanceEmptyData, to_datetime
 from trade.helpers.Logging import setup_logger
-from trade.assets.rates import get_risk_free_rate_helper
-from EventDriven._vars import OPTION_TIMESERIES_START_DATE, load_riskmanager_cache
+from trade.assets.rates import get_risk_free_rate_helper_v2
+from EventDriven._vars import load_riskmanager_cache
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 from EventDriven.exceptions import UnaccessiblePropertyError
 from trade.datamanager.utils.cache import (
     _cache_it_timeseries_data_structure,
     _data_structure_cache_check_missing,
-    _CachedData, # noqa
-    _extract_data, # noqa
-    _simple_extract_from_cache # noqa
+    _CachedData,  # noqa
+    _extract_data,  # noqa
+    _simple_extract_from_cache,  # noqa
 )
 from trade import SIGNALS_TO_RUN
 
@@ -413,7 +414,6 @@ class MarketTimeseries:
     """
 
     additional_data: Dict[str, Any] = field(default_factory=dict)
-    rates: pd.DataFrame = field(default_factory=get_risk_free_rate_helper)
     DEFAULT_NAMES: ClassVar[List[str]] = ["spot", "chain_spot", "dividends", "split_factor", "dividend_yield"]
     _refresh_delta: Optional[timedelta] = timedelta(minutes=30)
     _last_refresh: Optional[datetime] = field(default_factory=ny_now)
@@ -421,6 +421,27 @@ class MarketTimeseries:
     _end: str = (datetime.now() - BDay(1)).strftime("%Y-%m-%d")
     _today: str = datetime.now().strftime("%Y-%m-%d")
     should_refresh: bool = True
+    _rates: ClassVar[pd.DataFrame] = None
+
+    @property
+    def rates(self) -> pd.DataFrame:
+        """Risk-free rates DataFrame with annualized yields.
+
+        Retrieves and caches the risk-free rate curve from the Federal Reserve. Rates
+        are annualized and indexed by date and tenor (e.g., 1M, 3M, 6M, 1Y). Used for
+        option pricing and discounting cash flows.
+
+        Returns:
+            DataFrame with columns ['date', 'tenor', 'rate'] where 'rate' is the
+            annualized yield for that tenor on that date.
+        Examples:
+            >>> mts = MarketTimeseries()
+            >>> rates = mts.rates
+            >>> print(rates.head())
+        """
+        if self._rates is None:
+            self._rates = get_risk_free_rate_helper_v2()
+        return self._rates
 
     @property
     def spot(self) -> dict:
@@ -540,6 +561,7 @@ class MarketTimeseries:
                 end=end,
                 spot_type="chain_spot",
             )
+
             _cache_it_timeseries_data_structure(
                 existing=self._chain_spot.get(sym),
                 key=sym,
@@ -733,7 +755,6 @@ class MarketTimeseries:
                 sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
-
         return self._clip_to_date_range(cached_data, start, end)
 
     def _get_dividends_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.Series:
@@ -880,7 +901,7 @@ class MarketTimeseries:
         split_factor_series = self._split_factor.get(sym)
         if split_factor_series is None:
             return 1.0
-        
+
         split_factor_series = _extract_data(split_factor_series)
         # if isinstance(split_factor_series, _CachedData) or split_factor_series.__class__.__name__ == "_CachedData":
         #     split_factor_series = split_factor_series.data

@@ -87,6 +87,7 @@ from trade.helpers.helper_types import DATE_HINT
 from trade.optionlib.config.types import DivType
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade import MARKET_CLOSE
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
@@ -409,11 +410,13 @@ class GreekDataManager(BaseDataManager):
         if early_return:
             result.timeseries = cached_data[greeks_to_compute]
             return result
-
+        
+        expiration_ts = to_datetime(expiration)
+        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
         request = self._create_load_request(
             start_date=start_date,
             end_date=end_date,
-            expiration=expiration,
+            expiration=expiration_ts,
             strike=strike,
             right=right,
             dividend_type=dividend_type,
@@ -437,13 +440,13 @@ class GreekDataManager(BaseDataManager):
             d = vector_convert_to_time_frac(
                 schedules=d,
                 valuation_dates=to_datetime(S.index.tolist(), format="%Y-%m-%d"),
-                end_dates=to_datetime([expiration] * len(S), format="%Y-%m-%d"),
+                end_dates=to_datetime([expiration_ts] * len(S), format="%Y-%m-%d"),
             )
 
         ## Now compute greeks
         greeks_res_dict = binomial_tree_greeks(
             K=[strike] * len(S),
-            expiration=[expiration] * len(S),
+            expiration=[expiration_ts] * len(S),
             sigma=vol,
             S=S,
             r=r,
@@ -594,20 +597,22 @@ class GreekDataManager(BaseDataManager):
         vol = model_data.vol.timeseries if request.load_vol else vol.timeseries
         f = model_data.forward.timeseries if request.load_forward else f.timeseries
         s, f, r, d, vol = sync_date_index(S, f, r, d, vol)
+        expiration_ts = to_datetime(expiration)
+        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
 
         ## Convert dividends to present value amounts
         if dividend_type == DivType.DISCRETE:
             pv_divs = vectorized_discrete_pv(
                 schedules=d,
                 _valuation_dates=f.index.tolist(),
-                _end_dates=[expiration] * len(f),
+                _end_dates=[expiration_ts] * len(f),
                 r=r,
             )
 
         ## Continuous dividends. Discount dividend rates to present value amounts
         else:
             pv_divs = get_vectorized_continuous_dividends(
-                div_rates=d.values, _valuation_dates=f.index.tolist(), _end_dates=[expiration] * len(f)
+                div_rates=d.values, _valuation_dates=f.index.tolist(), _end_dates=[expiration_ts] * len(f)
             )
 
         ## Now compute greeks
@@ -618,7 +623,7 @@ class GreekDataManager(BaseDataManager):
             r=r,
             sigma=vol,
             valuation_dates=s.index.tolist(),
-            end_dates=[expiration] * len(s),
+            end_dates=[expiration_ts] * len(s),
             option_type=[right.lower()] * len(s),
             dividend_type=dividend_type.value,
             div_amount=pv_divs,

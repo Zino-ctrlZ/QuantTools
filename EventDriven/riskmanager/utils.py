@@ -183,8 +183,9 @@ from .config import get_avoid_opticks
 import functools
 from trade.assets.helpers.utils import swap_ticker
 from trade.datamanager.loaders import load_full_option_data
+
 # from trade.datamanager.vars import get_times_series
-from trade.datamanager._enums import DivType
+from trade.datamanager._enums import DivType, OptionPricingModel
 from trade.datamanager.utils.date import sync_date_index
 from trade.helpers.helper import generate_option_tick_new, parse_option_tick, CustomCache, change_to_last_busday
 from dbase.DataAPI.ThetaData import retrieve_bulk_open_interest, retrieve_chain_bulk
@@ -202,7 +203,7 @@ from pathlib import Path
 import signal
 from EventDriven._vars import get_use_temp_cache
 from .config import ffwd_data
-from .._vars import OPTION_TIMESERIES_START_DATE
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 
 
 ## Vars
@@ -216,8 +217,8 @@ BASE.mkdir(exist_ok=True)
 location = Path(os.environ["GEN_CACHE_PATH"])  ## Allows users to set a custom cache location
 
 ## Loggers
-logger = setup_logger("QuantTools.EventDriven.riskmanager")
-time_logger = setup_logger("QuantTools.EventDriven.riskmanager.time")
+logger = setup_logger("EventDriven.riskmanager.utils")
+time_logger = setup_logger("EventDriven.riskmanager.utils.time")
 logger.info("RISK MANAGER is Using New DataManager")
 
 ## Caches
@@ -249,18 +250,6 @@ def set_use_temp_cache(use_temp_cache: bool) -> None:  # noqa
     logger.critical(
         f"USE_TEMP_CACHE set to: {USE_TEMP_CACHE}. This will use a temporary cache that is cleared on exit. Utilize reset_persistent_cache() to reset the persistent cache."
     )
-
-
-# def get_use_temp_cache() -> bool:
-#     """
-#     Returns the current value of USE_TEMP_CACHE.
-
-#     Returns:
-#         bool: The current value of USE_TEMP_CACHE.
-#     """
-#     raise AttributeError("get_use_temp_cache has been moved to EventDriven._vars. Please update your imports.")
-#     global USE_TEMP_CACHE
-#     return USE_TEMP_CACHE
 
 
 # 2a) Create persistent cache or temp
@@ -327,8 +316,8 @@ def register_info_stack(id, data, data_col, update_kwargs=None):
         copy_cat["streak_id"] = copy_cat[f"{k}_skip_day"].ne(copy_cat[f"{k}_skip_day"].shift()).cumsum()
         copy_cat["streak"] = copy_cat.groupby("streak_id").cumcount() + 1
         info[f"{k.upper()}_MAX_STREAK"] = (
-            copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.max() # noqa
-            if not copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.empty #noqa
+            copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.max()  # noqa
+            if not copy_cat[copy_cat[f"{k}_skip_day"] == True].streak.empty  # noqa
             else 0
         )  # noqa
     info["DATA_LEN"] = len(data)
@@ -433,13 +422,18 @@ def get_cache(name: str) -> CustomCache:
 
 
 @dynamic_memoize
-def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
+def populate_cache_with_chain(
+    tick, 
+    date, 
+    chain_spot=None, 
+    print_url=True,
+    add_greeks=False,
+):
     """
     Populate the cache with chain data.
     """
     chain = retrieve_chain_bulk(tick, "", date, date, "16:00", "C", print_url=False)
     logger.info(f"Retrieved chain for {tick} on {date}")
-    logger.error(f"Retrieved chain for {tick} on {date}")
 
     ## Retrieve OI
     ## Info: We use the previous business day to get OI
@@ -495,7 +489,7 @@ def populate_cache_with_chain(tick, date, chain_spot=None, print_url=True):
         ]  ## Filter out extreme moneyness to reduce size
     chain_clipped.columns = chain_clipped.columns.str.lower()
     chain_clipped["pct_spread"] = (chain_clipped["closeask"] - chain_clipped["closebid"]) / chain_clipped["midpoint"]
-
+    chain_clipped[["iv", "delta", "gamma", "vega", "theta", "rho", "volga"]] = np.nan  # Placeholder for Greeks, to be filled in later when we have the data
     return chain_clipped
 
 
@@ -514,6 +508,7 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     It does not apply any splits or adjustments. It will only retrieve the data for the given option tick.
     """
     import time
+
     ## Check if the option tick is already processed
     if opttick in processed_option_data:
         return processed_option_data[opttick]
@@ -528,10 +523,11 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
         right=option_meta["put_call"],
         start_date=start,
         end_date=end,
-        dividend_type=DivType.CONTINUOUS
+        dividend_type=DivType.CONTINUOUS,
+        market_model=OptionPricingModel.BSM,
     )
     logger.info(f"Data loading for {opttick} took {time.time() - start_time:.2f} seconds")
-    
+
     ## Convert to DataFrame for easier comparison
     greeks = new_data.greek.timeseries
     option_spot = new_data.option_spot.timeseries
@@ -539,7 +535,6 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     y = new_data.dividend.timeseries
     r = new_data.rates.timeseries
     greeks, option_spot, s, y, r = sync_date_index(greeks, option_spot, s, y, r)
-
 
     ## set names properly
     start_time = time.time()
@@ -558,6 +553,7 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     processed_option_data[opttick] = data
     return data
 
+
 def load_position_data(opttick, processed_option_data, start, end, *args, **kwargs) -> pd.DataFrame:
     """
     Load position data for a given position ID.
@@ -572,6 +568,7 @@ def load_position_data(opttick, processed_option_data, start, end, *args, **kwar
     It will retrieve the data for all option ticks in the position ID and concatenate them together.
     """
     return load_position_data_new(opttick, processed_option_data, start, end)
+
 
 def enrich_data(data, ticker, s, r, y, s0_close):
     """
@@ -592,7 +589,6 @@ def enrich_data(data, ticker, s, r, y, s0_close):
     data["s0_close"] = s0_close
     data = ffwd_data(data, ticker)
     return data
-
 
 
 def new_generate_spot_greeks(opttick, start_date: str | datetime, end_date: str | datetime) -> pd.DataFrame:

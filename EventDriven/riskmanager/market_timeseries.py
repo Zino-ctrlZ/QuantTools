@@ -148,18 +148,13 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from trade.datamanager.market_data import MarketTimeseries
 from EventDriven._vars import load_riskmanager_cache, ADD_COLUMNS_FACTORY
-from EventDriven.riskmanager.utils import (
-    parse_position_id,
-    swap_ticker,
-    add_skip_columns,
-    load_position_data_new
-)
+from EventDriven.riskmanager.utils import parse_position_id, swap_ticker, add_skip_columns, load_position_data_new
 from trade.helpers.decorators import timeit
-from trade.helpers.threads import runThreads # noqa
-from trade.helpers.pools import runProcesses # noqa
-from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new
+from trade.helpers.threads import runThreads  # noqa
+from trade.helpers.pools import runProcesses  # noqa
+from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new, to_datetime
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
-from trade.assets.rates import get_risk_free_rate_helper
+from trade.assets.rates import get_risk_free_rate_helper_v2
 from threading import Lock
 from typing import Dict, Any, Union
 import pandas as pd
@@ -188,7 +183,7 @@ class BacktestTimeseries:
         self.special_dividends = load_riskmanager_cache(target="special_dividend")
         self.splits = load_riskmanager_cache(target="splits_raw")
         self.adjusted_strike_cache = load_riskmanager_cache(target="adjusted_strike_cache")
-        self.rf_timeseries = get_risk_free_rate_helper()["annualized"]
+        self.rf_timeseries = get_risk_free_rate_helper_v2()["annualized"]
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
         self.lock = Lock()
@@ -351,7 +346,7 @@ class BacktestTimeseries:
             for _set in positon_meta:
                 thread_input_list[0].append(_set[1])  ## Append the option id to the thread input list
                 thread_input_list[1].append(_set[0])  ## Append the direction to the thread input list
-            
+
             start_time = time.time()
             runThreads(
                 get_timeseries, thread_input_list, block=True
@@ -445,10 +440,15 @@ class BacktestTimeseries:
                     )
                     continue
                 position_data[f"{col[0]}_{col[1]}".capitalize()] = func(position_data[col[0]])
+
+        ## Final clean up to ensure no infinite or NaN values in Midpoint after adjustments, and forward fill any missing values to maintain continuity for skip calculations
+        ## NOTE: RETURN TO THIS. IDK IF THIS IS A GOOD IDEA
+        position_data["Midpoint"] = position_data["Midpoint"].replace(0, np.nan).ffill()
+
         return position_data
         # self.position_data[position_id] = position_data
 
-    def load_position_data(self, opttick) -> pd.DataFrame: # noqa
+    def load_position_data(self, opttick) -> pd.DataFrame:  # noqa
         """
         Load position data for a given option tick.
 
@@ -458,12 +458,10 @@ class BacktestTimeseries:
         ## Get Meta
         meta = parse_option_tick(opttick)
         self.market_timeseries.load_timeseries(sym=meta["ticker"])
-        
+
         return load_position_data_new(
-            opttick=opttick,
-            processed_option_data=self.options_cache,
-            start=self.start_date,
-            end=self.end_date)
+            opttick=opttick, processed_option_data=self.options_cache, start=self.start_date, end=self.end_date
+        )
 
     def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """
@@ -474,6 +472,10 @@ class BacktestTimeseries:
         """
 
         meta = parse_option_tick(opttick)
+        exp = to_datetime(meta["exp_date"])
+        effective_end = min(
+            to_datetime(self.end_date), exp
+        )  ## Ensure that we load data at least until the expiration date of the option, even if it is after the backtest end date, to account for any splits or dividends that might happen until expiration.
 
         ## Check if there's any split/special dividend
         splits = self.splits.get(meta["ticker"], [])
@@ -486,7 +488,7 @@ class BacktestTimeseries:
                 pack[0],
                 # self.start_date,
                 check_date,
-                self.end_date,
+                effective_end,
             ):
                 pack = list(pack)  ## Convert to list to append later
                 pack.append("SPLIT")
@@ -497,7 +499,7 @@ class BacktestTimeseries:
                 pack[0],
                 # self.start_date,
                 check_date,
-                self.end_date,
+                effective_end,
             ):
                 pack = list(pack)
                 pack.append("DIVIDEND")
@@ -518,7 +520,7 @@ class BacktestTimeseries:
             self.adjusted_strike_cache[opttick] = data["adj_strike"]
             return data[
                 (data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
-                & (data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
+                & (data.index <= pd.to_datetime(effective_end) + relativedelta(months=3))
             ]
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
@@ -527,22 +529,6 @@ class BacktestTimeseries:
             adj_meta = meta.copy()
             adj_strike = meta["strike"]
             logger.info(f"Generating data for {opttick} with splits: {to_adjust_split}")
-
-            # ## Load the data for picked option first
-            # first_set_data = self.load_position_data(opttick).copy()
-
-            # ## If check_date is before the first split date, first_set_data is only up to the first split date
-            # if compare_dates.is_before(check_date, to_adjust_split[0][0]):
-            #     first_set_data = first_set_data[first_set_data.index < to_adjust_split[0][0]]
-
-            # ## If check_date is after the first split date, first_set_data is only from the first split date onwards
-            # else:
-            #     first_set_data = first_set_data[first_set_data.index >= to_adjust_split[0][0]]
-
-            # ## Add Strike to keep track of adjustments
-            # print(f"Initial adj_strike for {opttick}: {adj_strike}")
-            # first_set_data['adj_strike'] = adj_strike
-            # first_set_data['factor'] = 1.0
             segments = []
 
             for event_date, factor, event_type in to_adjust_split:
@@ -611,7 +597,7 @@ class BacktestTimeseries:
         ## Leave residual data outside the PM date range
         final_data = final_data[
             (final_data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
-            & (final_data.index <= pd.to_datetime(self.end_date) + relativedelta(months=3))
+            & (final_data.index <= pd.to_datetime(effective_end) + relativedelta(months=3))
         ]
         self.adjusted_strike_cache[opttick] = final_data["adj_strike"]
         return final_data

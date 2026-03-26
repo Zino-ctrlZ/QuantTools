@@ -137,6 +137,11 @@ class BaseDataManager(ABC):
     @classmethod
     def clear_all_caches(cls) -> None:
         """Clears caches for all registered DataManager subclasses."""
+        from .market_data import MarketTimeseries
+        from .market_data_helpers.dividends import DIVIDEND_CACHE
+
+        MarketTimeseries.clear_caches()
+        DIVIDEND_CACHE.clear()
         for cache_name, manager_cls in cls._CACHE_NAME_REGISTRY.items():
             logger.info(f"Clearing cache for {manager_cls.__name__} (CACHE_NAME='{cache_name}')")
             manager_cls.get_cache().clear()

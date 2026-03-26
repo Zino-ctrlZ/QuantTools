@@ -1,15 +1,17 @@
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 from typing import Any, List, Optional, Union, Tuple
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import CustomCache, change_to_last_busday, get_missing_dates, to_datetime
+from trade import get_pricing_config
 from dataclasses import dataclass
 from .date import _should_save_today, DATE_HINT
 from ..base import BaseDataManager
 from .data_structure import _data_structure_sanitize
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
-
+MARKET_OPEN = pd.Timestamp(get_pricing_config()["MARKET_OPEN_TIME"]).time()
+MARKET_CLOSE = pd.Timestamp(get_pricing_config()["MARKET_CLOSE_TIME"]).time()
 @dataclass
 class _CachedData:
     """
@@ -66,6 +68,9 @@ class _CachedData:
         - missing_start_date: The earliest missing date if partially present, else start_dt
         - missing_end_date: The latest missing date if partially present, else end_dt
         """
+        if to_datetime(end_dt).date() == date.today() and datetime.now().time() < MARKET_OPEN:
+            logger.info(f"Requested end date {end_dt} is today but market has not opened yet. Adjusting end date to last business day.")
+            end_dt = to_datetime(end_dt) - pd.tseries.offsets.BDay(1)
         if self.is_fully_covered(start_dt, end_dt):
             logger.info(f"Cache hit for timeseries data structure key: {self.key}")
             sanitized_data = _data_structure_sanitize(

@@ -676,7 +676,7 @@ def retrieve_timeseries(
     Returns:
         pd.DataFrame: DataFrame with OHLCV data and additional columns for split adjustments
     """
-    if spot_type == "chain_price":
+    if spot_type == "chain_price" or spot_type == "chain_spot":
         df = retrieve_timeseries(
             tick,
             end=(change_to_last_busday(datetime.today()) + BDay(1)).strftime("%Y-%m-%d"),
@@ -686,7 +686,10 @@ def retrieve_timeseries(
         )
         df.index = pd.to_datetime(df.index)
         df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
-        df["close"] = df["chain_price"]
+        df["close"] = df["close"] * df["split_factor"]
+        df["open"] = df["open"] * df["split_factor"]
+        df["high"] = df["high"] * df["split_factor"]
+        df["low"] = df["low"] * df["split_factor"]
         df["cum_split_from_start"] = df["split_ratio"].cumprod()
         return df
     else:
@@ -754,6 +757,7 @@ def retrieve_timeseries(
         data["unadjusted_close"] = data.close * data.max_cum_split
         data["split_factor"] = data.max_cum_split / data.cum_split
         data["chain_price"] = data.close * data.split_factor
+
         data = data[
             [
                 "open",
@@ -1026,14 +1030,16 @@ def time_distance_helper(
     ## Assert equal length
     assert_equal_length(start, end, names=("start", "end"))
 
-    ## Convert to datetime
-    start = np.array(start, dtype="datetime64[D]")
-    end = np.array(end, dtype="datetime64[D]")
+    ## Convert to datetime and preserve intraday precision
+    start = np.array(to_datetime(start), dtype="datetime64[ns]")
+    end = np.array(to_datetime(end), dtype="datetime64[ns]")
 
     ## Calculate time distance in years
     dte = (end - start) / np.timedelta64(1, "D")
     dte_in_seconds = dte * SECONDS_IN_DAY
     dte_in_years = dte_in_seconds / SECONDS_IN_YEAR
+
+
 
     if not initial_is_iterable:
         return dte_in_years[0]
@@ -1562,6 +1568,7 @@ def binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, di
 
 
 def generate_option_tick(symbol, right, exp, strike):
+    exp = to_datetime(exp).strftime("%Y-%m-%d")
     assert right.upper() in ["P", "C"], f"Recieved '{right}' for right. Expected 'P' or 'C'"
     assert isinstance(exp, str), f"Recieved '{type(exp)}' for exp. Expected 'str'"
     assert isinstance(strike, (float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"

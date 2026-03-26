@@ -7,7 +7,7 @@ from dbase.DataAPI.ThetaData import (
 )
 from trade.helpers.helper import retrieve_timeseries, change_to_last_busday, time_distance_helper
 from trade.helpers.Logging import setup_logger
-from trade.assets.rates import get_risk_free_rate_helper
+from trade.assets.rates import get_risk_free_rate_helper_v2
 from trade.optionlib.assets.forward import (
     vectorized_market_forward_calc,
 )
@@ -355,4 +355,4 @@ def get_rates(date):
         float: The risk-free rate for the specified date.
     """
     date = pd.to_datetime(date).strftime("%Y-%m-%d")
-    return get_risk_free_rate_helper()["annualized"][date]
+    return get_risk_free_rate_helper_v2()["annualized"][date]

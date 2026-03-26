@@ -21,7 +21,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import concurrent.futures
 from trade.assets.Stock import Stock
 from trade.helpers.helper import generate_option_tick_new
-from trade.assets.rates import get_risk_free_rate_helper
 from trade.helpers.helper import IV_handler, time_distance_helper, binomial_implied_vol, wait_for_response
 from trade.helpers.helper import extract_numeric_value, change_to_last_busday, parse_option_tick
 from trade.helpers.Logging import setup_logger

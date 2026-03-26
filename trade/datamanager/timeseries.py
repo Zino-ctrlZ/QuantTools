@@ -52,6 +52,7 @@ Architecture:
 
 from typing import Any, Optional
 import inspect
+from trade.datamanager.result import Result
 from trade.helpers.Logging import setup_logger
 from .spot import SpotDataManager
 from .vol import VolDataManager
@@ -140,21 +141,21 @@ class TimeseriesAdapter:
         # Set as instance attribute (overrides class method)
         setattr(self, wrapper_name, wrapper)
 
-    def rt(self, *args, **kwargs):
+    def rt(self, *args, **kwargs) -> Result:
         """Call the underlying manager's real-time method."""
         if self._rt_method and hasattr(self._manager, self._rt_method):
             method = getattr(self._manager, self._rt_method)
             return method(*args, **kwargs)
         raise NotImplementedError(f"{self._manager.__class__.__name__} does not support rt()")
 
-    def get_at_time(self, *args, **kwargs):
+    def get_at_time(self, *args, **kwargs) -> Result:
         """Call the underlying manager's get-at-time method."""
         if self._get_at_time_method and hasattr(self._manager, self._get_at_time_method):
             method = getattr(self._manager, self._get_at_time_method)
             return method(*args, **kwargs)
         raise NotImplementedError(f"{self._manager.__class__.__name__} does not support get_at_time()")
 
-    def get_timeseries(self, *args, **kwargs):
+    def get_timeseries(self, *args, **kwargs) -> Result:
         """Call the underlying manager's timeseries method."""
         if self._get_timeseries_method and hasattr(self._manager, self._get_timeseries_method):
             method = getattr(self._manager, self._get_timeseries_method)

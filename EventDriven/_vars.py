@@ -8,6 +8,7 @@ import os
 import yaml
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 logger = setup_logger('EventDriven._vars')
 
 CONTRACT_MULTIPLIER = 100
@@ -32,7 +33,6 @@ BASE = Path(os.environ["WORK_DIR"]) / ".riskmanager_cache"  ## Main Cache for Ri
 HOME_BASE = Path(os.environ["WORK_DIR"]) / ".cache"
 BASE.mkdir(exist_ok=True)
 
-OPTION_TIMESERIES_START_DATE: str|datetime = '2017-01-01'
 Y1_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=1)).strftime('%Y-%m-%d')
 Y2_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=2)).strftime('%Y-%m-%d')
 Y3_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=3)).strftime('%Y-%m-%d')

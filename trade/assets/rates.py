@@ -1,9 +1,6 @@
 from dotenv import load_dotenv
 import sys
 import os
-
-load_dotenv()
-
 from dbase.database.SQLHelpers import *
 from dbase.DataAPI.ThetaData import *
 import datetime
@@ -16,6 +13,7 @@ import logging
 from pandas.tseries.offsets import BDay
 import time
 
+load_dotenv()
 warnings.filterwarnings("ignore")
 logger = setup_logger("rates")
 rates_thread_logger = setup_logger("rates_thread", stream_log_level=logging.INFO)
@@ -58,12 +56,37 @@ def get_risk_free_rate_helper(interval="1d", use="db") -> pd.DataFrame:
         Source of the data. Default is 'yf', other option is 'db'
 
     """
+    # from trade.datamanager import RatesDataManager
     data = _fetch_rates(interval=interval).copy()
 
     if interval != "1d":
         data = resample(data, interval)
     data = data[~data.index.duplicated(keep="first")]
     return data  ## Not adding the resample schema for now
+
+
+def get_risk_free_rate_helper_v2(*args, **kwargs) -> pd.Series:
+    """
+    Return the latest risk free rate as a single value. This is used for discounting cash flows and other calculations where we need a single rate.
+
+    Returns
+    -------
+    pd.Series
+        A series with the latest risk free rate, indexed by datetime.
+    """
+    from trade.datamanager import RatesDataManager
+
+    annualized = (
+        RatesDataManager()
+        .get_risk_free_rate_timeseries(start_date="2017-01-01", end_date=datetime.datetime.now().strftime("%Y-%m-%d"))
+        .timeseries
+    )
+    daily = (annualized * 100).apply(deannualize)
+    data = pd.DataFrame({"annualized": annualized, "daily": daily})
+    data.index = pd.to_datetime(data.index)
+    data.index.name = "Date"
+    data = data[["daily", "annualized"]]
+    return data
 
 
 def _fetch_rates(interval):
@@ -74,7 +97,7 @@ def _fetch_rates(interval):
     global DAILY_RATES_CACHE
 
     choice_cache = _rates_cache if interval != "1d" else DAILY_RATES_CACHE
-    
+
     if ny_now().hour < 25:
         print("Fetching rates data from yfinance directly during market hours")
         ## Just use yfinance directly during market hours to avoid stale data
@@ -156,7 +179,7 @@ def save_previous_rates_date():
     import yfinance as yf
 
     print("Saving previous rates date")
-    max_date = get_risk_free_rate_helper().index.max()
+    max_date = get_risk_free_rate_helper_v2().index.max()
     rtes = yf.download(
         "^IRX",
         progress=False,
@@ -174,7 +197,9 @@ def save_previous_rates_date():
     rtes["daily"] = (1 + rtes["annualized"]) ** (1 / 365) - 1
     rtes["yf_tick"] = "^IRX"
     rtes["description"] = "13 WEEK TREASURY BILL"
-    rtes = rtes[rtes.index > get_risk_free_rate_helper().index.min()][["yf_tick", "description", "annualized", "daily"]]
+    rtes = rtes[rtes.index > get_risk_free_rate_helper_v2().index.min()][
+        ["yf_tick", "description", "annualized", "daily"]
+    ]
     rtes.rename(columns={"annualized": "annualized_rate", "daily": "daily_rate", "Date": "datetime"}, inplace=True)
     rtes.index.name = "datetime"
     rtes.reset_index(inplace=True)
