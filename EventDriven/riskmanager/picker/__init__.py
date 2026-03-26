@@ -132,7 +132,9 @@ class OrderSchema:
             "min_moneyness": 0.9,
             "max_moneyness": 1.1,
             "max_attempts": 3,
-            "increment": 0.25,
+            "increment": 0.05,
+            "max_pct_width": 0.20,
+            "min_oi": 100,
         }
         for key, default in optional.items():
             if key not in self.data:
@@ -162,10 +164,13 @@ def filter_contracts(
     spot: float,
     min_moneyness: float = 0.5,
     max_moneyness: float = 1.5,
-    increment=0.25,
+    increment=0.05,
 ) -> pd.DataFrame:
+    
     df = df.copy()
     df = df[df["right"].str.lower() == schema["option_type"].lower()]
+    if df.empty:
+        raise ValueError(f"No contracts found for {schema['option_type']} in the provided chain.")
 
     ## Calculate Moneyness
     if schema["option_type"].lower() == "c":
@@ -176,43 +181,22 @@ def filter_contracts(
     dte_tol = schema["dte_tolerance"]
     filtered = pd.DataFrame()
     attempt = 0
-    max_attempts = schema.get("max_attempts", 3)
     min_moneyness = schema.get("min_moneyness", min_moneyness)
     max_moneyness = schema.get("max_moneyness", max_moneyness)
-    max_pct_width = schema.get("max_pct_width", 0.10)  ## NOTE: Add to schema
-    min_oi = schema.get("min_open_interest", 25)  ## NOTE: Add to schema
     increment = schema.get("increment", increment)
 
-    while filtered.empty and attempt < max_attempts:
-        _filter = pd.Series([True] * len(df), index=df.index)
 
-        ## Add DTE filter
-        _filter &= df["dte"].between(target_dte - dte_tol, target_dte + dte_tol)
+    _filter = pd.Series([True] * len(df), index=df.index)
 
-        ## Add Moneyness filter. Convert to bounds based on increment
+    ## Add DTE filter
+    _filter &= df["dte"].between(target_dte - dte_tol, target_dte + dte_tol)
 
-        logger.info(
-            f"Filtering contracts with strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] on attempt {attempt + 1}"
-        )
-        _filter &= df["moneyness"].between(min_moneyness, max_moneyness)
+    ## Add Moneyness filter. Convert to bounds based on increment
+    logger.info(f"Filtering contracts with strike range [{min_moneyness:.2f}, {max_moneyness:.2f}], dte range [{target_dte - dte_tol}, {target_dte + dte_tol}] on attempt {attempt + 1}")
+    _filter &= df["moneyness"].between(min_moneyness, max_moneyness)
+    filtered = df[_filter].copy()
+    logger.info(f"Number of contracts after filtering: {len(filtered)}")
 
-        ## Update moneyness bounds for next attempt
-        min_moneyness *= 1 - increment
-        max_moneyness *= 1 + increment
-
-        ## Add Open Interest filter if specified
-        if min_oi is not None:
-            logger.info(f"Applying minimum open interest filter: {min_oi}")
-            _filter &= df["open_interest"] >= min_oi
-
-        ## Add Percentage Spread filter if specified
-        if max_pct_width is not None:
-            logger.info(f"Applying maximum percentage spread filter: {max_pct_width}")
-            _filter &= df["pct_spread"] <= max_pct_width
-
-        filtered = df[_filter].copy()
-        logger.info(f"Number of contracts after filtering: {len(filtered)}")
-        attempt += 1
     if filtered.empty:
         logger.critical(
             f"Failed to filter contracts: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] after {attempt} attempts."

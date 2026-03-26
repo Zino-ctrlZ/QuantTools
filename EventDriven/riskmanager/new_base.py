@@ -207,6 +207,7 @@ from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisCon
 from EventDriven.types import ResultsEnum, Order
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
+from pprint import pprint
 
 logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
 
@@ -280,11 +281,6 @@ class RiskManager:
         - Loads configuration from RiskManagerConfig with overrides from kwargs
         - Sets up caching infrastructure for market data and position analytics
         """
-        ## For testing override the passed args
-        # bkt_start = '2025-01-01'
-        # bkt_end = '2025-06-30'
-        # symbol_list = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'JNJ', 'V', 'WMT']
-
         ## Backtest Window
         self.start_date = bkt_start
         self.end_date = bkt_end
@@ -314,7 +310,8 @@ class RiskManager:
         ## Initialize on disk caches. These will be cleared on exit.
 
         ##Order Cache
-        self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
+        # self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
+        self.order_cache = {}
         if len(self.order_cache.values()) > 0:
             logger.info(f"Order cache loaded with {len(self.order_cache.values())} orders")
 
@@ -378,6 +375,12 @@ class RiskManager:
         ## Update request with data
         req.spot = spot
         req.chain_spot = chain_spot
+        req.delta_lmt = self.position_analyzer.get_delta_limit(
+            tick_cash=req.tick_cash,
+            chain_spot=chain_spot,
+            date=req.date,
+            ticker=req.symbol
+        )
 
         ## Get order
         print(f"Generating order for request: {req}")
@@ -390,7 +393,8 @@ class RiskManager:
         ## Process order
 
         if not order_failed(order):
-            print(f"\nOrder Received: {order}\n")
+            print(f"\nOrder Received:\n")
+            pprint(order)
             position_id = order["data"]["trade_id"]
         else:
             print(f"\nOrder Failed: {order}\n")

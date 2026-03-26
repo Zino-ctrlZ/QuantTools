@@ -221,6 +221,7 @@ Notes:
     - Config changes trigger sizer reload
 """
 
+import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from datetime import datetime
@@ -231,7 +232,7 @@ from EventDriven.exceptions import EVBacktestError
 from typing import List, Optional, Union, Dict
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.position.base import BaseCog
-from EventDriven.riskmanager.sizer._sizer import DefaultSizer, BaseSizer, ZscoreRVolSizer
+from EventDriven.riskmanager.sizer._sizer import DefaultSizer, BaseSizer, ZscoreRVolSizer, default_delta_limit # noqa
 from EventDriven.configs.core import ZscoreSizerConfigs, DefaultSizerConfigs
 from EventDriven.dataclasses.limits import PositionLimits
 from EventDriven.dataclasses.states import (
@@ -395,7 +396,7 @@ class LimitsAndSizingCog(BaseCog):
             current_cash=request.tick_cash,
             underlier_price_at_time=undl_data.chain_spot["close"],
         )
-        logger.info(f"Calculated limits for position {order['data']['trade_id']}: {limits}")
+        logger.info(f"Calculated limits for position {order['data']['trade_id']}: {limits}. Details: cash={request.tick_cash}, undl_price={undl_data.chain_spot['close']}")
         pos_lmts = PositionLimits(
             delta=limits,
             dte=self.config.default_dte,
@@ -515,4 +516,12 @@ class LimitsAndSizingCog(BaseCog):
                 action.verbose_info = None
             position.action = action
             opinions.append(position)
-        return CogActions(opinions=opinions, strategy_id="", date=portfolio_context.date, source_cog=self.name)
+        return CogActions(opinions=opinions, strategy_id=self.config.run_name, date=portfolio_context.date, source_cog=self.name)
+
+    def get_delta_limit(self, tick_cash: float, chain_spot: float, date: pd.Timestamp, ticker: str) -> float:
+        """
+        Override to provide delta limits based on mean reversion logic.
+        This can be used by the position manager to enforce sizing constraints.
+        """
+
+        return np.inf  # No limit by default, can be overridden by specific logic in cogs like mean reversion cog

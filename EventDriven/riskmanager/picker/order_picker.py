@@ -182,6 +182,7 @@ Notes:
 from datetime import datetime
 import pandas as pd
 from EventDriven.riskmanager._order_validator import OrderInputs
+from trade.datamanager.market_data import Optional
 from ..utils import (
     LOOKBACKS,
     populate_cache_with_chain,
@@ -196,7 +197,7 @@ from ..utils import (
 )
 from .builder import order_builder
 from trade.helpers.Logging import setup_logger
-from trade.helpers.decorators import timeit
+from trade.helpers.decorators import timeit # noqa
 from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.riskmanager._orders import order_resolve_loop, order_failed
@@ -298,6 +299,7 @@ class OrderPicker:
                 "min_total_price": self._order_schema_config.min_total_price,
                 "option_type": option_type,  # Default to Put options
                 "max_total_price": max_total_price,
+                "max_attempts": self._order_schema_config.max_attempts,
             }
         )
         schema.data.update(self._chain_config.__dict__)
@@ -318,10 +320,11 @@ class OrderPicker:
         spot,
         chain_spot: float = None,
         print_url: bool = False,
+        delta_lmt: Optional[float] = None,
     ):
         schema = tuple(schema.data.items())
         chain_spot = spot
-        return self._get_order(schema, date, spot, chain_spot, print_url=print_url)
+        return self._get_order(schema, date, spot, chain_spot, print_url=print_url, delta_lmt=delta_lmt)
 
     # @dynamic_memoize
     def _get_order(
@@ -331,6 +334,7 @@ class OrderPicker:
         spot: float,
         chain_spot: float = None,
         print_url: bool = False,
+        delta_lmt: Optional[float] = None,
     ) -> dict:
         """
         Get the order for the given schema, date, and spot price.
@@ -338,35 +342,10 @@ class OrderPicker:
         
         assert isinstance(schema, tuple), "Schema must be a tuple of items."
         schema = OrderSchema(dict(schema))
-        # if schema["option_type"].lower() == "c":  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-        #     logger.info(
-        #         f"Call Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-        #     )
-        #     min_m, max_m = 2 - schema["min_moneyness"], 2 - schema["max_moneyness"]
-        #     schema["min_moneyness"] = min(min_m, max_m)  ## For Calls, we want the min moneyness to be 2 - min_moneyness
-        #     schema["max_moneyness"] = max(min_m, max_m)
-        #     logger.info(
-        #         f"Call Option Detected, Adjusting Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-        #     )
-        # elif (
-        #     schema["option_type"].lower() == "p"
-        # ):  ## This ensures that both call and put OTM are < 1.0 and ITM are > 1.0
-        #     logger.info(
-        #         f"Put Option Detected, Pre-Adjustment Moneyness: {schema['min_moneyness']} - {schema['max_moneyness']}"
-        #     )
-        # else:
-        #     raise ValueError(f"Invalid option type: {schema['option_type']}. Must be 'c' or 'p'.")
-
         chain = populate_cache_with_chain(schema["tick"], date, chain_spot, print_url=print_url)
+        return order_builder(unfiltered_chain=chain.copy(deep=True), schema=schema, spot=chain_spot, date=date, delta_lmt=delta_lmt)
 
-        # cache = get_cache("spot")
-        # cache = {k: v for k, v in cache.items()}
-
-        # raw_order = build_strategy(chain, schema, chain_spot, cache)
-        # return extract_order(raw_order)
-        return order_builder(unfiltered_chain=chain, schema=schema, spot=chain_spot)
-
-    @timeit
+    # @timeit
     def get_order(self, request: OrderRequest) -> Order:
         """
         Get the order based on the request.
@@ -378,6 +357,11 @@ class OrderPicker:
         inputs = self.construct_inputs(
             request=request, schema=schema, order_resolution_config=self._order_resolution_config
         )
+        if not self._chain_config.enable_delta_filter:
+            logger.info("Delta filter not enabled in chain config. Setting delta_lmt to None for order builder.")
+            request.delta_lmt = None  # Ensure delta_lmt is None if delta filtering is not enabled
+        else:
+            logger.info(f"Delta filter enabled in chain config. Using delta_lmt {request.delta_lmt} for order builder.")
         return _get_open_order_backtest(
             picker=self,
             request=request,
@@ -438,6 +422,7 @@ def _get_open_order_backtest(
     returns:
     Order: The resolved order object.
     """
+    delta_lmt = request.delta_lmt
     order = picker.get_preset_order(signal_id=inputs.signal_id, date=inputs.date)
     if not order:
         logger.info(f"No preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Generating new order.")
@@ -446,7 +431,12 @@ def _get_open_order_backtest(
         )
         schema_as_tuple = tuple(schema.data.items())
         order = picker._get_order(
-            schema=schema_as_tuple, date=request.date, spot=request.spot, chain_spot=request.chain_spot, print_url=False
+            schema=schema_as_tuple, 
+            date=request.date, 
+            spot=request.spot, 
+            chain_spot=request.chain_spot, 
+            delta_lmt=delta_lmt,
+            print_url=False
         )
 
         ## Resolve order if failed and resolution is enabled
@@ -455,7 +445,7 @@ def _get_open_order_backtest(
                 order=order,
                 schema=schema,
                 date=inputs.date,
-                spot=inputs.spot,
+                spot=request.chain_spot,
                 max_close=inputs.tick_cash / 100,  ## Use tick cash to determine max close. Normalize to 100 contracts
                 max_dte_tolerance=inputs.max_dte_tolerance,
                 max_tries=inputs.max_tries,
@@ -465,7 +455,8 @@ def _get_open_order_backtest(
                 signalID=inputs.signal_id,
                 schema_cache={},
                 picker=picker,
-                tick_cash=request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash/100
+                tick_cash=request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash / 100,
+                delta_lmt=delta_lmt,
             )
     else:
         logger.info(f"Preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Using preset order.")

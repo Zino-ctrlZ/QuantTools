@@ -68,7 +68,7 @@ Notes:
     - Consider relaxing initial constraints if failures are frequent
 """
 
-from typing import Dict, Any, TYPE_CHECKING, Tuple
+from typing import Dict, Any, TYPE_CHECKING, Optional, Tuple
 from datetime import datetime
 import pandas as pd
 from trade.helpers.Logging import setup_logger
@@ -104,7 +104,10 @@ def resolve_schema(
     itm_moneyness_width: float,
     max_close: float,
     max_tries: int = 6,
-    tick_cash: int = 10
+    tick_cash: int = 10,
+    *,
+    starting_min_moneyness: float = None,
+    starting_max_moneyness: float = None,
 ) -> Tuple[OrderSchema, int]:
     """
     Resolving schema by order of importance
@@ -119,17 +122,28 @@ def resolve_schema(
         schema (OrderSchema): The schema to resolve.
         tries (int): The number of tries already made.
         max_dte_tolerance (int): The maximum DTE tolerance to allow.
-        moneyness_width (float): The moneyness width to allow.
+        otm_moneyness_width (float): In future iteration, this serve as the max width min moneyness can grow from starting_min_moneyness. It is the max width btwn new min moneyness and starting_min_moneyness. It is the max width btwn OTM strikes and 1 
+        itm_moneyness_width (float): In future iteration, this serve as the max width max moneyness can grow from starting_max_moneyness. It is the max width btwn new max moneyness and starting_max_moneyness. It is the max width btwn ITM strikes and 1.
         max_close (float): The maximum close price to allow.
         max_tries (int): The maximum number of tries allowed.
 
     Returns:
         tuple: A tuple containing the resolved schema or False if no schema was found, and the number of tries made.
     """
+    if starting_min_moneyness is None:
+        raise ValueError("Missing starting_min_moneyness. This is required to ensure we do not relax constraints too much and to serve as a reference point for how much we can relax the min moneyness.")
+        
+    if starting_max_moneyness is None:
+        raise ValueError("Missing starting_max_moneyness. This is required to ensure we do not relax constraints too much and to serve as a reference point for how much we can relax the max moneyness.")
+    current_min_moneyness = schema["min_moneyness"]
+    current_max_moneyness = schema["max_moneyness"]
+    current_min_moneyness_width = starting_min_moneyness - current_min_moneyness
+    current_max_moneyness_width = current_max_moneyness - starting_max_moneyness
     tick = schema["tick"]
     ##0). Max schema tries
     if tries >= max_tries:
         return False, tries
+
 
     # 1). DTE Resolve
     tries += 1
@@ -141,19 +155,19 @@ def resolve_schema(
         return schema, tries
 
     # 2). Min Moneyness Resolve
-    elif 1 - schema["min_moneyness"] <= otm_moneyness_width:
+    elif current_min_moneyness_width < otm_moneyness_width:
         logger.info(
-            f"Resolving Schema ({tick}): {1 - schema['min_moneyness']} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1 from {schema['min_moneyness']} to {schema['min_moneyness'] - 0.1}"
+            f"Resolving Schema ({tick}): {current_min_moneyness_width} <= {otm_moneyness_width}, decreasing Min Moneyness by 0.1 from {schema['min_moneyness']} to {schema['min_moneyness'] - 0.1}"
         )
-        schema["min_moneyness"] -= 0.1
+        schema["min_moneyness"] -= 0.05
         return schema, tries
 
     # 3). Max Moneyness Resolve
-    elif schema["max_moneyness"] - 1 <= itm_moneyness_width:
+    elif current_max_moneyness_width < itm_moneyness_width:
         logger.info(
-            f"Resolving Schema ({tick}): {schema['max_moneyness'] - 1} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1 from {schema['max_moneyness']} to {schema['max_moneyness'] + 0.1}"
+            f"Resolving Schema ({tick}): {current_max_moneyness_width} <= {itm_moneyness_width}, increasing Max Moneyness by 0.1 from {schema['max_moneyness']} to {schema['max_moneyness'] + 0.1}"
         )
-        schema["max_moneyness"] += 0.1
+        schema["max_moneyness"] += 0.05
         return schema, tries
 
     # 4). Close Resolve
@@ -184,6 +198,7 @@ def order_resolve_loop(
     picker: "OrderPicker",
     request: OrderRequest = None,
     tick_cash: int = 10,
+    delta_lmt: Optional[float] = None,
 ):
     """
     Attempt to resolve an order schema until a successful order is produced or maximum tries are exceeded.
@@ -222,6 +237,8 @@ def order_resolve_loop(
         )
         schema_as_tuple = tuple(schema.data.items())
         use_request = True
+    min_moneyness = schema.get("min_moneyness", None)
+    max_moneyness = schema.get("max_moneyness", None)
 
     while order_failed(order):
         logger.info(f"Failed to produce order with schema: {schema}, trying to resolve schema, on try {tries}")
@@ -233,7 +250,9 @@ def order_resolve_loop(
             max_tries=max_tries,
             otm_moneyness_width=otm_moneyness_width,
             itm_moneyness_width=itm_moneyness_width,
-            tick_cash=tick_cash
+            tick_cash=tick_cash,
+            starting_min_moneyness=min_moneyness,
+            starting_max_moneyness=max_moneyness,
         )
         schema, tries = pack
 
@@ -254,9 +273,10 @@ def order_resolve_loop(
                 spot=request.spot,
                 chain_spot=request.chain_spot,
                 print_url=False,
+                delta_lmt=delta_lmt,
             )
         else:
-            order = picker.get_order_new(schema, date, spot, print_url=False)  ## Get the order from the OrderPicker
+            order = picker.get_order_new(schema, date, spot, print_url=False, delta_lmt=delta_lmt)  ## Get the order from the OrderPicker
     schema_cache.setdefault(date, {}).update({signalID: schema})
     return order
 

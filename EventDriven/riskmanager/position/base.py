@@ -219,6 +219,10 @@ from EventDriven.dataclasses.states import (
     PositionAnalysisContext,
     CogActions,
 )
+from trade.helpers.Logging import setup_logger
+import pandas as pd
+
+logger = setup_logger("EventDriven.riskmanager.position.base")
 
 
 ### RUNTIME DATACLASSES
@@ -266,7 +270,7 @@ class BaseCog:
     default_config_class_attr_name = "default_config"
 
     def __init__(self, config: BaseCogConfig):
-        assert isinstance(config, BaseCogConfig), "config must be an instance of BaseCogConfig or its subclass"
+        assert isinstance(config, BaseCogConfig), f"config must be an instance of BaseCogConfig or its subclass, got {type(config)}"
         self._config = config
 
     def __init_subclass__(cls):
@@ -330,3 +334,11 @@ class BaseCog:
         Subclasses can override this to perform any initialization or logging.
         """
         raise NotImplementedError("Subclasses must implement on_new_position().")
+    
+    def get_delta_limit(self, tick_cash: float, chain_spot: float, date: pd.Timestamp, ticker: str) -> float:
+        """
+        Hook method to provide delta limits for position sizing.
+        Subclasses can override this to return specific limits based on their logic.
+        By default, returns infinity (no limit).
+        """
+        return float("inf")

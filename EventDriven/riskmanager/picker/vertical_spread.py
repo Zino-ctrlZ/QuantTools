@@ -1,9 +1,13 @@
-
 import numpy as np
 import pandas as pd
+from typing import Optional
 from EventDriven.riskmanager.picker import _order_formatting, create_trade_id
+from EventDriven.riskmanager.picker.utils import _delta_lmt, _verify_delta_in_chain
 from EventDriven.types import ResultsEnum, OrderDict
 from EventDriven.riskmanager.picker import OrderSchema
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.riskmanager.picker.vertical_spread")
 
 
 def vertical_spread_pairer_by_exp(
@@ -11,7 +15,9 @@ def vertical_spread_pairer_by_exp(
     spread_tick: int = 1,
     min_total_price: float = 0.5,
     max_total_price: float = 1.0,
-    add_spread_filters: bool = True,
+    max_pct_width: float = np.inf,
+    min_oi: int = 0,
+    delta_lmt: Optional[float] = None,
 ) -> pd.DataFrame:
     """
     For a given row (option contract), find the corresponding leg of the vertical spread based on the spread_tick.
@@ -23,12 +29,13 @@ def vertical_spread_pairer_by_exp(
         spread_tick (int): The number of ticks between the legs of the spread.
         min_total_price (float): Minimum total price of the spread to filter the results.
         max_total_price (float): Maximum total price of the spread to filter the results.
+        delta_lmt (Optional[float]): Optional delta limit for the spread.
     Returns:
         pd.DataFrame: A DataFrame containing the paired legs of the vertical spread and their calculated metrics, filtered by the total spread mid price.
     """
-    tgt_details = ["opttick", "midpoint", "closebid", "closeask", "open_interest"]
-    if "volume" in row.columns:
-        tgt_details.append("volume")
+    logger.debug(f"vertical_spread_pairer_by_exp recieved delta_lmt: {delta_lmt}")  ## DEBUG
+    tgt_details = ["opttick", "midpoint", "closebid", "closeask", "open_interest", "delta"]
+
     long_leg_details = row[tgt_details].reset_index(drop=True)
     short_leg_details = row[tgt_details].shift(-spread_tick).reset_index(drop=True)
 
@@ -41,6 +48,9 @@ def vertical_spread_pairer_by_exp(
     spread_bid = long_leg_details["closebid"] - short_leg_details["closeask"]
     spread_ask = long_leg_details["closeask"] - short_leg_details["closebid"]
     spread_mid = long_leg_details["midpoint"] - short_leg_details["midpoint"]
+    spread_delta = (long_leg_details["delta"] - short_leg_details["delta"]).fillna(
+        np.inf
+    )  # If delta is missing, set to infinity to fail delta filter.
     bid_ask_spread = spread_ask - spread_bid
     spread_pct_ratio = abs(spread_bid - spread_ask) / spread_mid.replace(0, np.nan)  # Avoid division by zero.
     spread_oi = abs(long_leg_details["open_interest"] + short_leg_details["open_interest"])
@@ -62,6 +72,7 @@ def vertical_spread_pairer_by_exp(
             spread_pct_ratio,
             spread_oi,
             spread_volume,
+            spread_delta,
         ),
         axis=1,
     )
@@ -75,55 +86,67 @@ def vertical_spread_pairer_by_exp(
         "spread_pct_ratio",
         "spread_oi",
         "spread_volume",
+        "spread_delta",
     ]
-    ## Ensure bid, ask > 0
-    ## Ensure spread_pct <= 1.0 (we want tight spreads relative to the mid price)
-    if add_spread_filters:
-        paired_opttick = paired_opttick[
-            (paired_opttick["spread_bid"] > 0)
-            & (paired_opttick["spread_ask"] > 0)
-            & (paired_opttick["spread_pct_ratio"] <= 1.25)
-        ].reset_index(drop=True)
-    return paired_opttick[paired_opttick["spread_mid"].between(min_total_price, max_total_price)].reset_index(drop=True)
+
+    mid_mask = paired_opttick["spread_mid"].between(min_total_price, max_total_price)
+    spread_oi_mask = paired_opttick["spread_oi"] >= min_oi
+    pct_width_mask = paired_opttick["spread_pct_ratio"] <= max_pct_width
+    spread_bid_mask = paired_opttick["spread_bid"] > 0
+    spread_ask_mask = paired_opttick["spread_ask"] > 0
+    delta_mask = paired_opttick["spread_delta"].abs() <= abs(_delta_lmt(delta_lmt))
+    full_mask = mid_mask & spread_oi_mask & pct_width_mask & spread_bid_mask & spread_ask_mask & delta_mask
+    logger.debug(f"Number of spreads after applying all filters: {full_mask.sum()}")  ## DEBUG
+    logger.debug(
+        f"spread_oi_mask: {spread_oi_mask.sum()}, pct_width_mask: {pct_width_mask.sum()}, spread_bid_mask: {spread_bid_mask.sum()}, spread_ask_mask: {spread_ask_mask.sum()}, delta_mask: {delta_mask.sum()}"
+    )  ## DEBUG
+    return paired_opttick[full_mask].reset_index(drop=True)
 
 
 def _vertical_spread_pairer(
     filtered_chain: pd.DataFrame,
     schema: OrderSchema,
-) -> pd.DataFrame:
+    delta_lmt: Optional[float] = None,
+) -> pd.Series:
     """
     For a given filtered option chain, find the best option contract based on the spread_tick.
     Args:
         filtered_chain (pd.DataFrame): The filtered option chain DataFrame.
         schema (OrderSchema): The order schema containing parameters for building the vertical spread.
+        delta_lmt (Optional[float]): The delta limit for filtering options. Defaults to None.
     Returns:
-        pd.DataFrame: A Series containing the picked vertical spread contract details.
+        pd.Series: A Series containing the picked vertical spread contract details.
     """
+    logger.debug(f"_vertical_spread_pairer recieved delta_lmt: {delta_lmt}")  ## DEBUG
+    if filtered_chain.empty:
+        return pd.Series()  # Return empty Series if no contracts are available after filtering.
     # Start by ordering by strike, from ITM to OTM.
     #   For calls, ITM is lower strike, for puts, ITM is higher strike.
-
+    max_pct_width = schema.get("max_pct_width", 0.10)  ## NOTE: Add to schema
+    min_oi = schema.get("min_oi", 25)  ## NOTE: Add to schema
     spread_tick = schema["spread_ticks"]
     is_call = schema["option_type"].lower() == "c"
     sorted_chain = filtered_chain.sort_values(
         by="strike",
         ascending=is_call,  # Calls: Ascending (lower strike = ITM). Puts: Descending (higher strike = ITM).
     ).reset_index(drop=True)
+    if sorted_chain.empty:
+        return pd.Series()  # Return empty Series if no contracts are available after filtering.
 
     # spread_ticks is the number of ticks between the legs of the spread.
     # For a call spread with spread_ticks=1, we buy the ITM call and sell the next lower strike call.
     # For a put spread with spread_ticks=1, we buy the ITM put and sell the next higher strike put.
     # For vertical spreads it is important that the legs are paired to expiration.
-    vertical_chain = (
-        sorted_chain.groupby("expiration")
-        .apply(
-            vertical_spread_pairer_by_exp,
-            spread_tick=spread_tick,
-            min_total_price=schema["min_total_price"],
-            max_total_price=schema["max_total_price"],
-        )
-        .reset_index(level=1, drop=True)
-        .sort_index()
+    vertical_chain = sorted_chain.groupby("expiration").apply(
+        vertical_spread_pairer_by_exp,
+        spread_tick=spread_tick,
+        min_total_price=schema["min_total_price"],
+        max_total_price=schema["max_total_price"],
+        max_pct_width=max_pct_width,
+        min_oi=min_oi,
+        delta_lmt=delta_lmt,
     )
+    vertical_chain = vertical_chain.reset_index(level=1, drop=True).sort_index()
 
     ## Now we have our vertical spread chain with paired optticks and spread metrics for analysis.
     ## We pick the spread we want based on specific criteria. We sort based on (this is by priority):
@@ -136,13 +159,13 @@ def _vertical_spread_pairer(
 
 
 def _extract_order_for_vertical_spread(picked_spread: pd.Series, schema: OrderSchema) -> OrderDict:
-    """ 
-     Extract order details for a vertical spread based on the picked spread and the provided schema.
-     Args:
-        picked_spread (pd.Series): A Series containing the details of the picked vertical spread contract.
-        schema (OrderSchema): The order schema containing parameters for building the vertical spread.
-     Returns:
-        "OrderResult": A dictionary containing the result status and order data.
+    """
+    Extract order details for a vertical spread based on the picked spread and the provided schema.
+    Args:
+       picked_spread (pd.Series): A Series containing the details of the picked vertical spread contract.
+       schema (OrderSchema): The order schema containing parameters for building the vertical spread.
+    Returns:
+       "OrderResult": A dictionary containing the result status and order data.
     """
     ## Extract order
     if not picked_spread.empty:
@@ -160,9 +183,7 @@ def _extract_order_for_vertical_spread(picked_spread: pd.Series, schema: OrderSc
                 "short": short,
             }
         )
-        data = _order_formatting(
-            trade_id=trade_id, legs=leg_info, close=close_price, dir=schema["structure_direction"]
-        )
+        data = _order_formatting(trade_id=trade_id, legs=leg_info, close=close_price, dir=schema["structure_direction"])
         order = {
             "result": ResultsEnum.SUCCESSFUL.value,
             "data": data,
@@ -183,7 +204,8 @@ def _extract_order_for_vertical_spread(picked_spread: pd.Series, schema: OrderSc
 def vertical_spread_order_builder(
     filtered_chain: pd.DataFrame,
     schema: dict,
-) ->  OrderDict:
+    delta_lmt: Optional[float] = None,
+) -> OrderDict:
     """
     Build a vertical spread order based on the filtered option chain and the provided schema.
     Args:
@@ -192,9 +214,14 @@ def vertical_spread_order_builder(
     Returns:
         dict: A dictionary containing the result status and order data.
     """
+    logger.debug(f"vertical_spread_order_builder recieved delta_lmt: {delta_lmt}")  ## DEBUG
     picked_spread = _vertical_spread_pairer(
         filtered_chain=filtered_chain,
         schema=schema,
+        delta_lmt=delta_lmt,
     )
+    filtered_chain = _verify_delta_in_chain(
+        filtered_chain
+    )  # Ensure delta column exists before proceeding to finder function.
     order = _extract_order_for_vertical_spread(picked_spread, schema=schema)
     return order

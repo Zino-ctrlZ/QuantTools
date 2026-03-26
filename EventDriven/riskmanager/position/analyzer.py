@@ -204,6 +204,7 @@ Notes:
 """
 
 from typing import Iterable, List, Dict
+import pandas as pd
 from trade.helpers.Logging import setup_logger
 from .base import (
     BaseCog,
@@ -350,3 +351,13 @@ class PositionAnalyzer:
         for cog in self._cogs.values():
             cog.on_new_position(new_position_state)
         return new_position_state
+
+    def get_delta_limit(self, tick_cash: float, chain_spot: float, date: pd.Timestamp, ticker: str) -> float:
+        """
+        Utility method to calculate delta limits based on cash and spot price.
+        This can be used by cogs to determine position sizing constraints.
+        """
+        lmts = []
+        for cog in self._cogs.values():
+            lmts.append(cog.get_delta_limit(tick_cash=tick_cash, chain_spot=chain_spot, date=date, ticker=ticker))
+        return min(lmts) if lmts else float("inf")

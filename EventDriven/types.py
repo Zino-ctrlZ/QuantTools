@@ -3,14 +3,30 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 from EventDriven.helpers import parse_signal_id, generate_signal_id, parse_position_id
+from trade.helpers.Logging import setup_logger
 
+logger = setup_logger("EventDriven.types")
+
+class OptionFloat(float):
+    """Custom float type for option-related values to allow for future extensions or validations."""
+    
+    def __new__(cls, value):
+        return super().__new__(cls, value)
+    
+    def __init__(self, value, dollar_normalized=False):
+        super().__init__()
+        self.dollar_normalized = dollar_normalized
 
 class Metrics(TypedDict):
-    spread_pct_ratio: float
-    spread_oi: float
+    spread_pct_ratio: Optional[float]
+    spread_oi: Optional[float]
+    min_dte: Optional[int]
+    max_dte: Optional[int]
+    min_moneyness: Optional[float]
+    max_moneyness: Optional[float]
 
 
 class SignalID(str):
@@ -41,7 +57,7 @@ class SignalID(str):
 
     def __repr__(self) -> str:
         return f"SignalID({str(self)})"
-    
+
     def __str__(self):
         return super().__str__()
 
@@ -63,7 +79,7 @@ class TradeID(str):
 
     def __repr__(self) -> str:
         return f"TradeID({str(self)})"
-    
+
     def __str__(self):
         return super().__str__()
 
@@ -327,7 +343,14 @@ class Order:
             data_dict = {"trade_id": None, "long": None, "short": None, "close": None, "quantity": None}
 
         if metrics is not None:
-            d["metrics"] = Metrics(spread_pct_ratio=metrics["spread_pct_ratio"], spread_oi=metrics["spread_oi"])
+            d["metrics"] = Metrics(
+                spread_pct_ratio=metrics["spread_pct_ratio"], 
+                spread_oi=metrics["spread_oi"], 
+                min_dte=metrics.get("min_dte", None),
+                max_dte=metrics.get("max_dte", None),
+                min_moneyness=metrics.get("min_moneyness", None),
+                max_moneyness=metrics.get("max_moneyness", None),
+            )
         else:
             d["metrics"] = None
 

@@ -10,7 +10,9 @@ from EventDriven.configs.base import (
     BaseConfigs,
     _CustomFrozenBaseConfigs,
 )
-from EventDriven._vars import OPTION_TIMESERIES_START_DATE
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
+from trade.helpers.Logging import setup_logger
+logger = setup_logger("EventDriven.configs.core")
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -22,6 +24,7 @@ class ChainConfig(BaseConfigs):
 
     max_pct_width: numbers.Number = None
     min_oi: numbers.Number = None
+    enable_delta_filter: bool = False
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -38,6 +41,7 @@ class OrderSchemaConfigs(BaseConfigs):
     min_moneyness: numbers.Number = 0.65
     max_moneyness: numbers.Number = 1
     min_total_price: numbers.Number = 0.95
+    max_attempts: int = 3
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -218,6 +222,8 @@ class BacktesterConfig(BaseConfigs):
     raise_errors: bool = False
     min_slippage_pct: float = 0.075
     max_slippage_pct: float = 0.15
+    commission_per_contract_in_units: float = 0.0065
+        
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -254,8 +260,21 @@ class RiskManagerConfig(BaseConfigs):
     Configuration class for Risk Manager related settings.
     """
 
-    min_slippage_pct: float = 0.25
-    max_slippage_pct: float = 0.16
     cache_orders: bool = False
     cache_position_analysis: bool = False
     cache_order_requests: bool = False
+
+
+@pydantic_dataclass
+class MeanReversionSizerConfigs(BaseCogConfig):
+    beta: float = 0.5
+    name: str = "custom_mean_reversion_sizer"
+    min_scale: float = 0.5
+    max_scale: float = 2.0
+    sizing_lev: int = 3
+    default_dte: int = 10
+    enabled_limits: StrategyLimitsEnabled = Field(
+        default_factory=lambda: StrategyLimitsEnabled(delta=False, dte=True, moneyness=False)
+    )
+    # Minimum z-score threshold to trigger scaling adjustments
+    min_zscore: float = 2.5 
