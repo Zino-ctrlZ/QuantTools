@@ -6,8 +6,11 @@ from pydantic import validate_call, ConfigDict
 from trade.assets.calculate.data_classes import SymbolPayload, OptionPnlPayload, TradePnlInfo, SYMBOL_PAYLOADS
 from trade.assets.calculate.enums import AttributionModel
 from trade.assets.calculate.adjustments import trade_pnl_adjustment
-from trade.assets.rates import get_risk_free_rate_helper_v2
-from trade.helpers.helper import retrieve_timeseries, change_to_last_busday
+from trade.helpers.helper import (
+    parse_option_tick,
+    retrieve_timeseries,  # noqa
+    change_to_last_busday,
+)
 from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_time
 from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, set_skip_mysql_query
@@ -16,6 +19,17 @@ from trade.datamanager.timeseries import TimeseriesDataManager  # noqa
 ##TODO: Take this out once DataManagers has been optimized
 set_skip_mysql_query(True)
 logger = setup_logger("trade.assets.calculate.xmultiply_attr")
+
+
+def get_symbol_timeseries(symbol) -> TimeseriesDataManager:
+    """
+    Get a timeseries data manager for a given symbol.
+    Args:
+        symbol (str): The asset symbol to retrieve data for.
+    Returns:
+        TimeseriesDataManager: The data manager for the symbol's timeseries data.
+    """
+    return TimeseriesDataManager(symbol=symbol)
 
 
 @log_time()
@@ -32,7 +46,7 @@ def load_symbol_payload(symbol: str, today: datetime, yesterday: datetime) -> Sy
         SymbolPayload: The loaded symbol data.
     """
 
-    spot_series = retrieve_timeseries(tick=symbol, start=yesterday - BDay(1), end=today)["close"]
+    spot_series = get_symbol_timeseries(symbol).spot.get_timeseries(start_date=yesterday, end_date=today).timeseries
     spot_series.name = "spot"
 
     return SymbolPayload(symbol=symbol, datetime=today, spot=spot_series)
@@ -50,7 +64,9 @@ def load_rate_payload(today: datetime, yesterday: datetime) -> SymbolPayload:
     Returns:
         SymbolPayload: The loaded rate data.
     """
-    rates_series: pd.Series = get_risk_free_rate_helper_v2()["annualized"]
+    rates_series: pd.Series = (
+        get_symbol_timeseries("RATES_USD").rates.get_timeseries(start_date=yesterday, end_date=today).timeseries
+    )
     rates_series = rates_series[rates_series.index.date >= yesterday.date()]
     rates_series.name = "rates"
 
@@ -74,6 +90,10 @@ def add_dod_change(payload: OptionPnlPayload, yesterday: datetime, today: dateti
     opt_change = payload.spot.diff()
     opt_change.name = "opt_change"
     raw = pd.concat([raw, opt_change], axis=1)
+
+    opt_spot = payload.spot
+    opt_spot.name = "opt_spot"
+    raw = pd.concat([raw, opt_spot], axis=1)
 
     vol_change = payload.vol.diff()
     vol_change.name = "vol_change"
@@ -111,33 +131,51 @@ def load_option_pnl_data(
     """
     if dm is None and opttick is None:
         raise ValueError("Either 'dm' or 'opttick' must be provided.")
-    if dm is None:
-        dm = OptionDataManager(opttick=opttick)
+    if dm is not None:
+        raise ValueError("Data manager input is currently not supported. Please provide 'opttick' directly.")
+    option_meta = parse_option_tick(opttick)
 
     ## Back up yesterday by 1BDAY to ensure inclusive data retrieval
     yesterday = change_to_last_busday(yesterday - BDay(1))
+    ts = get_symbol_timeseries(option_meta["ticker"])
 
     ## Query Vol Data
-    vol_req = dm.get_timeseries(start=yesterday, end=today, type_="vol", model="bs")
-    vol_data = vol_req.post_processed_data["Midpoint_bs_iv"]
+    vol_req = ts.vol.get_timeseries(
+        start_date=yesterday,
+        end_date=today,
+        expiration=option_meta["exp_date"],
+        strike=option_meta["strike"],
+        right=option_meta["put_call"],
+    )
+    vol_data = vol_req.timeseries
     vol_data.name = "vol"
 
     ## Query Option Spot Data
-    spot_req = dm.get_timeseries(start=yesterday, end=today, type_="spot")
-    spot_data = spot_req.post_processed_data["Midpoint"]
+    spot_req = ts.option_spot.get_timeseries(
+        start_date=yesterday,
+        end_date=today,
+        expiration=option_meta["exp_date"],
+        strike=option_meta["strike"],
+        right=option_meta["put_call"],
+    )
+    spot_data = spot_req.price
     spot_data.name = "spot"
 
     ## Query Greeks Data
-    greeks_req = dm.get_timeseries(start=yesterday, end=today, type_="greeks", model="bs")
-    greeks_cols = greeks_req.post_processed_data.columns.str.contains("Midpoint")
-    greeks_data = greeks_req.post_processed_data.loc[:, greeks_cols]
-    greeks_data.columns = [col.split("_")[-1] for col in greeks_data.columns]
+    greeks_req = ts.greeks.get_timeseries(
+        start_date=yesterday,
+        end_date=today,
+        expiration=option_meta["exp_date"],
+        strike=option_meta["strike"],
+        right=option_meta["put_call"],
+    )
+    greeks_data = greeks_req.timeseries
 
     ## Load Symbol Payload
-    sym_payload = SYMBOL_PAYLOADS.get((dm.symbol, yesterday, today))
+    sym_payload = SYMBOL_PAYLOADS.get((option_meta["ticker"], yesterday, today))
     if sym_payload is None:
-        sym_payload = load_symbol_payload(symbol=dm.symbol, today=today, yesterday=yesterday)
-        SYMBOL_PAYLOADS[(dm.symbol, yesterday, today)] = sym_payload
+        sym_payload = load_symbol_payload(symbol=option_meta["ticker"], today=today, yesterday=yesterday)
+        SYMBOL_PAYLOADS[(option_meta["ticker"], yesterday, today)] = sym_payload
 
     ## Load Rates Payload
     rates_payload = SYMBOL_PAYLOADS.get(("RATES_USD", yesterday, today))
@@ -149,7 +187,7 @@ def load_option_pnl_data(
         SYMBOL_PAYLOADS[("RATES_USD", yesterday, today)] = rates_payload
 
     payload = OptionPnlPayload(
-        opttick=dm.opttick,
+        opttick=opttick,
         date=today,
         vol=vol_data,
         spot=spot_data,
@@ -183,7 +221,7 @@ def calculate_pnl_decomposition(
     dod_change = payload.dod_change.copy()
 
     ## This serves as moving yesterday's greeks to today. In other to align with DoD changes
-    greeks["shifted_date"] = greeks.index.shift(1)
+    greeks["shifted_date"] = greeks.index.to_series().shift(-1)
     greeks = greeks.reset_index().set_index("shifted_date")
     delta_pnl = (dod_change["asset_spot_change"] * greeks["delta"]).dropna()
     delta_pnl.name = "delta_pnl"
@@ -199,7 +237,12 @@ def calculate_pnl_decomposition(
     theta_pnl = (dod_change.index.to_series().diff().dt.days * greeks["theta"]).dropna()
     theta_pnl.name = "theta_pnl"
 
-    vanna_pnl = (dod_change["asset_spot_change"] * dod_change["vol_change"] * greeks["vanna"] * 100).dropna()
+    if "vanna" not in greeks.columns:
+        vanna_pnl = pd.Series(
+            dtype=float, data=0.0, index=vega_pnl.index
+        )  # Placeholder for vanna PnL, currently set to empty series
+    else:
+        vanna_pnl = (dod_change["asset_spot_change"] * dod_change["vol_change"] * greeks["vanna"] * 100).dropna()
     vanna_pnl.name = "vanna_pnl"
 
     volga_pnl = (0.5 * ((dod_change["vol_change"] ** 2) * 100) * greeks["volga"]).dropna()
@@ -208,14 +251,13 @@ def calculate_pnl_decomposition(
     rho_pnl = (dod_change["rates_change"] * greeks["rho"] * 100).dropna()
     rho_pnl.name = "rho_pnl"
 
-    total_pnl = delta_pnl + gamma_pnl + vega_pnl + theta_pnl + vanna_pnl + rho_pnl + volga_pnl
-    total_pnl.name = "total_pnl_excl_trade_pnl"
 
-    unexplained_pnl = (dod_change["opt_change"] - total_pnl).dropna()
-    unexplained_pnl.name = "unexplained_pnl"
 
     opt_change = dod_change["opt_change"].dropna()
     opt_change.name = "opt_dod_change"
+
+    opt_spot = dod_change["opt_spot"].dropna()
+    opt_spot.name = "opt_spot"
 
     all_pnl: pd.DataFrame = pd.concat(
         [
@@ -226,13 +268,15 @@ def calculate_pnl_decomposition(
             vanna_pnl,
             rho_pnl,
             volga_pnl,
-            total_pnl,
-            unexplained_pnl,
             opt_change,
+            opt_spot,
         ],
         axis=1,
     )
     all_pnl.index.name = "date"
+    all_pnl.fillna(0, inplace=True)
+    all_pnl["total_pnl_excl_trade_pnl"] = all_pnl.drop(columns=["opt_dod_change", "opt_spot"]).sum(axis=1)
+    all_pnl["unexplained_pnl"] = all_pnl["opt_dod_change"] - all_pnl["total_pnl_excl_trade_pnl"]
     all_pnl = trade_pnl_adjustment(attribution_table=all_pnl, entry_info=trade_pnl_entries or [])
     payload.attribution = all_pnl
     return payload
