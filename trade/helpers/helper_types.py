@@ -12,7 +12,7 @@ from trade.helpers.Logging import setup_logger
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from typeguard import check_type
-
+from typeguard._exceptions import TypeCheckError
 
 logger = setup_logger(__name__)
 DATE_HINT = Union[datetime, str]
@@ -28,7 +28,12 @@ class TypeValidatedMixin:
     def _validate_field(self, name: str, value: Any) -> None:
         hint = _hints(type(self)).get(name)
         if hint is not None:
-            check_type(value, hint)
+            try:
+                check_type(value, hint)
+            except TypeCheckError as e:
+                raise IncorrectTypeError(
+                    f"Field '{name}' in {type(self).__name__} expected type {hint}, but got value {value!r} of type {type(value)}. Original error: {e}"
+                ) from e
 
     def _validate_all_fields(self) -> None:
         for f in fields(self):
