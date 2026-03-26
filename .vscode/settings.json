@@ -22,11 +22,12 @@
     "python.languageServer": "Pylance",
     "python.analysis.useLibraryCodeForTypes": true,
     "python.analysis.typeCheckingMode": "off",
-    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.diagnosticMode": "openFilesOnly",
     "python.analysis.indexing": true,
     "python.analysis.autoImportCompletions": true,
     "python.analysis.includeAliasesFromUserFiles": true,
     "python.analysis.userFileIndexingLimit": 5000,
+    "editor.colorDecorators": true,
     "python.analysis.packageIndexDepths": [
         {
             "name": "pydantic",
@@ -36,7 +37,7 @@
     ],
     "python-envs.pythonProjects": [
         {
-            "path": "",
+            "path": ".",
             "envManager": "ms-python.python:conda",
             "packageManager": "ms-python.python:conda"
         }

@@ -41,6 +41,54 @@ date_obj = to_datetime(datetime.now())
 - Include Args, Returns, Raises, and Examples sections
 - Examples should be executable and demonstrate real-world usage
 
+### Module-Level Docstring Format
+- All Python modules must start with a module docstring as the very first statement.
+- Use this schema for module docstrings:
+    1) First line: one-sentence summary title ending with a period.
+    2) Blank line.
+    3) One short overview paragraph (2-4 lines) describing scope and purpose.
+    4) Blank line.
+    5) Structured sections for module schema using heading labels with trailing colons.
+- Preferred section labels (choose those that apply):
+    - Core Classes:
+    - Core Dataclasses:
+    - Core Functions:
+    - Processing Flow:
+    - Risk/Assumptions:
+    - Caching Strategy:
+    - Usage:
+- Keep section content concise and domain-specific.
+- For Usage, use a short executable doctest-style snippet when practical.
+
+**Module docstring example:**
+```python
+"""Position attribution workflows for EventDriven backtests.
+
+Provides quantity normalization, option attribution loading, and position-level
+PnL decomposition with trade-aware adjustments (fills, commission, and slippage).
+
+Core Dataclasses:
+        QuantityTimeSeries: Daily quantity state and execution metadata.
+        BacktestPositionAttribution: Attribution output for a single trade.
+
+Core Functions:
+        create_position_attribution: Loads and combines leg-level attribution.
+        compute_position_attribution: Applies quantity and trade adjustments.
+        compute_backtest_position_attribution: End-to-end portfolio integration.
+
+Processing Flow:
+        1. Build trade quantity time series from ledgers.
+        2. Load/aggregate raw leg attribution by date.
+        3. Scale by quantity and apply open/close trade adjustments.
+        4. Return normalized attribution components.
+
+Usage:
+        >>> analyzer = PositionAttributionAnalyzer(portfolio)
+        >>> result = analyzer.analyze_trade(trade_id)
+        >>> daily_attr = result.attribution
+"""
+```
+
 **Example:**
 ```python
 def get_forward_timeseries(
