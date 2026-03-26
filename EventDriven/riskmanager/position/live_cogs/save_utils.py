@@ -149,7 +149,7 @@ from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import DatabaseAdapter, dynamic_batch_update, get_engine
 from EventDriven.riskmanager.position.cogs.vars import MEASURES_SET
 
-logger = setup_logger("algo.positions.limits.save_utils")
+logger = setup_logger("EventDriven.riskmanager.position.live_cogs.save_utils")
 LIMITS_DF = None
 _ACCESS_COUNTER = 0
 db = DatabaseAdapter()

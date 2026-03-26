@@ -217,14 +217,21 @@ from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog, Pos
 from EventDriven.configs.core import LimitsEnabledConfig, BaseSizerConfigs
 from .save_utils import get_position_limit, store_position_limits
 from ..cogs.vars import MEASURES_SET
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.riskmanager.position.live_cogs.limits")
+
 
 def enable_storing_to_db(enable: bool = True):
     """Utility to enable or disable database storage of limits globally for testing."""
     LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = enable
 
+
 def reset_storing_to_db():
     """Utility to reset database storage of limits to default (enabled)."""
     LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = True
+
+
 class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
     """
     Live trading specialized limits cog with database persistence.
@@ -244,6 +251,7 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
         state must persist across restarts and limit history must be maintained
         for compliance and analysis.
     """
+
     SAVE_LIMITS_TO_DB: bool = True
 
     def __init__(
@@ -262,7 +270,7 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
         if not self.SAVE_LIMITS_TO_DB:
             self.position_limits[trade_id] = limits
             return
-        
+
         store_position_limits(
             delta_limit=limits.delta,
             gamma_limit=limits.gamma,
@@ -280,7 +288,7 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
         """
         if trade_id in self.position_limits:
             return self.position_limits[trade_id]
-    
+
         lm = PositionLimits()
         for risk_measure in MEASURES_SET:
             date, limit_value = get_position_limit(

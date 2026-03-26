@@ -147,7 +147,7 @@ from enum import Enum
 from trade.helpers.Logging import setup_logger
 from trade.backtester_._types import Side, SideInt  # noqa
 
-logger = setup_logger("algo.strategies.fill_optimizer")
+logger = setup_logger("EventDriven.riskmanager.price_execution")
 
 ALPHA_LEVELS = {
     1: 0.25,  # very passive

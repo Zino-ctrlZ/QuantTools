@@ -230,7 +230,7 @@ if TYPE_CHECKING:
     from EventDriven.new_portfolio import OptionSignalPortfolio
 
 
-logger = setup_logger("QuantTools.EventDriven.riskmanager.sizer")
+logger = setup_logger("EventDriven.riskmanager.sizer._sizer")
 BASE = Path(os.environ["WORK_DIR"]) / ".riskmanager_cache"
 
 
@@ -564,7 +564,7 @@ class DefaultSizer(BaseSizer):
             ]  ## s -> chain spot, s0_close -> adjusted close
             logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
             logger.info(
-                f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}"
+                f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available / (opt_price * 100))}"
             )
             max_size_cash_can_buy = abs(
                 math.floor(cash_available / (opt_price * 100))
@@ -643,12 +643,12 @@ class ZscoreRVolSizer(BaseSizer):
 
         ## Ensure underlier_list is provided if pm and rm are not provided
         if self._unavailable:
-            assert (
-                "underlier_list" in kwargs
-            ), "underlier_list must be provided in kwargs when pm and rm are not provided."
-            assert (
-                isinstance(kwargs["underlier_list"], list) and len(kwargs["underlier_list"]) > 0
-            ), "underlier_list must be a non-empty list."
+            assert "underlier_list" in kwargs, (
+                "underlier_list must be provided in kwargs when pm and rm are not provided."
+            )
+            assert isinstance(kwargs["underlier_list"], list) and len(kwargs["underlier_list"]) > 0, (
+                "underlier_list must be a non-empty list."
+            )
             self.underlier_list = kwargs["underlier_list"]
         else:
             logger.critical(
@@ -700,9 +700,9 @@ class ZscoreRVolSizer(BaseSizer):
         elif isinstance(
             rvol_window, tuple
         ):  ## If rvol_window is a tuple, it must be of length 3 and vol_type must be 'weighted_mean' or 'mean'
-            assert (
-                vol_type == "weighted_mean" or vol_type == "mean"
-            ), "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
+            assert vol_type == "weighted_mean" or vol_type == "mean", (
+                "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
+            )
             assert len(rvol_window) == 3, "rvol_window must be a tuple of length 3 for weighted mean calculation."
 
         return rvol_window
@@ -882,7 +882,7 @@ class ZscoreRVolSizer(BaseSizer):
         ]  ## s -> chain spot, s0_close -> adjusted close
         logger.info(f"Spot Price at Purchase: {s0_at_purchase} at time {purchase_date}")
         logger.info(
-            f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available/(opt_price*100))}"
+            f"Cash Available: {cash_available}, Option Price: {opt_price}, Cash_Available/OptPRice: {(cash_available / (opt_price * 100))}"
         )
         max_size_cash_can_buy = abs(
             math.floor(cash_available / (opt_price * 100))

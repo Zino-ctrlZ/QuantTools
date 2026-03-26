@@ -1,4 +1,3 @@
-
 # Class-level descriptions for each config class
 CONFIG_CLASS_DESCRIPTIONS = {
     "BaseConfigs": "Base configuration class providing common functionality and run tracking for all configuration types.",
@@ -19,7 +18,7 @@ CONFIG_CLASS_DESCRIPTIONS = {
     "PositionAnalyzerConfig": "Configuration for the position analyzer orchestrating multiple cogs for comprehensive position analysis.",
     "PortfolioManagerConfig": "Configuration for portfolio management including weights haircut adjustments.",
     "BacktesterConfig": "Configuration for backtest execution including settlement delays and trade finalization.",
-    "RiskManagerConfig": "Configuration for the risk manager controlling slippage limits and order caching behavior.",
+    "RiskManagerConfig": "Configuration for the risk manager controlling order and analysis caching behavior.",
     "CashAllocatorConfig": "Threshold-based cash bucket allocator for symbols.",
 }
 
@@ -134,26 +133,28 @@ CONFIG_DEFINITIONS = {
     "PortfolioManagerConfig": {
         "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
         "weights_haircut": "Haircut applied to position weights for conservative allocation (default 0.0).",
-        "t_plus_n": "Settlement delay for orders in business days (T+N, default 1).",
+        "roll_failed_orders": "Whether signals that fail to be processed should be rolled forward to the next available date (default True).",
     },
     "BacktesterConfig": {
         "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
         "t_plus_n": "Settlement delay for orders in business days (T+N, default 1).",
         "finalize_trades": "Flag to enable finalization of trades at end of backtest (default False).",
         "raise_errors": "Flag to raise errors during backtest execution instead of logging them (default False).",
+        "min_slippage_pct": "Minimum slippage percentage applied to trade execution (default 0.075).",
+        "max_slippage_pct": "Maximum slippage percentage applied to trade execution (default 0.15).",
     },
     "RiskManagerConfig": {
         "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
-        "max_slippage": "Maximum allowable slippage percentage for trade execution (default 0.25).",
-        "min_slippage": "Minimum allowable slippage percentage for trade execution (default 0.16).",
         "cache_orders": "Flag to enable caching of generated orders for reuse (default False).",
         "cache_position_analysis": "Flag to enable caching of position analysis results for performance optimization (default False).",
+        "cache_order_requests": "Flag to enable caching of order requests to avoid redundant order generation (default False).",
     },
     "CashAllocatorConfig": {
         "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
         "thresholds": "(min_alloc, bucket_value) pairs; first pair whose min_alloc is satisfied sets the bucket. Cash is supplied at runtime.",
     },
 }
+
 
 def get_config_class_description(class_name: str) -> str:
     """
@@ -167,6 +168,7 @@ def get_config_class_description(class_name: str) -> str:
     """
     return CONFIG_CLASS_DESCRIPTIONS.get(class_name, "")
 
+
 def get_class_config_descriptions(class_name: str) -> dict:
     """
     Retrieve the configuration descriptions for a given class name.
@@ -179,6 +181,7 @@ def get_class_config_descriptions(class_name: str) -> dict:
     """
     return CONFIG_DEFINITIONS.get(class_name, {})
 
+
 def get_variable_in_class_config_description(class_name: str, config_name: str) -> str:
     """
     Retrieve the description for a specific configuration of a given class.
@@ -190,5 +193,5 @@ def get_variable_in_class_config_description(class_name: str, config_name: str) 
     returns:
     str: The description of the configuration.
     """
-    
+
     return get_class_config_descriptions(class_name).get(config_name, None)

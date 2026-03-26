@@ -342,7 +342,7 @@ def analyze_position(
         if dte - t_plus_n <= 0:  # Inline the check for performance
             action = EXERCISE(trade_id=trade_id, action=Changes(quantity_diff=qty, new_quantity=0))
             action.reason = f"position is expiring (DTE: {dte} <= {t_plus_n})"
-            logger.debug(f"EXERCISE action for {trade_id} due to expiration.")
+            logger.debug(f"EXERCISE action for {trade_id} due to expiration. DTE: {dte}, threshold: {t_plus_n}")
             return action
 
     ## P2: ROLL Checks (second priority - return immediately if triggered)
@@ -351,7 +351,7 @@ def analyze_position(
         if dte < dte_limit:  # Inline the check for performance
             action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
             action.reason = f"not enough DTE ({dte} < {dte_limit})"
-            logger.debug(f"ROLL action for {trade_id} due to DTE check.")
+            logger.debug(f"ROLL action for {trade_id} due to DTE check. DTE: {dte}, threshold: {dte_limit}")
             return action
 
     # Moneyness Check
@@ -360,7 +360,7 @@ def analyze_position(
             m = min(moneyness_list, key=abs)
             action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
             action.reason = f"position is too ITM ({m} exceeds {moneyness_limit})"
-            logger.debug(f"ROLL action for {trade_id} due to moneyness check.")
+            logger.debug(f"ROLL action for {trade_id} due to moneyness check. Moneyness values: {moneyness_list}, threshold: {moneyness_limit}")
             return action
 
     ## P3: ADJUST Checks (lowest actionable priority)

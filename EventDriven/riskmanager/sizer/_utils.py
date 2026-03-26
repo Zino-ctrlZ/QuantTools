@@ -167,9 +167,12 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal, ClassVar
 import pandas as pd
-from EventDriven.riskmanager.utils import logger
+from trade.helpers.Logging import setup_logger
 from ..._vars import Y2_LAGGED_START_DATE
 from trade.datamanager.market_data import get_timeseries_obj
+import numpy as np
+
+logger = setup_logger("EventDriven.riskmanager.sizer._utils")
 
 
 def default_delta_limit(
@@ -283,7 +286,10 @@ def scaler(realized_vol_series: pd.Series, factor: float, window: int) -> pd.Ser
     rolling_mean = realized_vol_series.rolling(window=window).mean()
     rolling_std = realized_vol_series.rolling(window=window).std()
     z = (realized_vol_series - rolling_mean) / rolling_std
-    return factor / (1 + z.abs())
+    # return factor / (1 + z.abs())
+    # return factor / (1 + np.exp(z))
+    scaler = np.clip(factor / (1 + np.exp(z)), 0.5, factor)
+    return scaler
 
 
 @dataclass
@@ -340,9 +346,9 @@ class ZcoreScalar:
         elif isinstance(
             rvol_window, tuple
         ):  ## If rvol_window is a tuple, it must be of length 3 and vol_type must be 'weighted_mean' or 'mean'
-            assert (
-                vol_type == "weighted_mean" or vol_type == "mean"
-            ), "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
+            assert vol_type == "weighted_mean" or vol_type == "mean", (
+                "rvol_window must be a tuple only when vol_type is 'weighted_mean' or 'mean'."
+            )
             assert len(rvol_window) == 3, "rvol_window must be a tuple of length 3 for weighted mean calculation."
 
         return rvol_window
@@ -397,9 +403,7 @@ class ZcoreScalar:
 
         ## Load timeseries for each symbol and calculate the z-score scaler
         for sym in syms:
-            timeseries.load_timeseries(
-                sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now()
-            )
+            timeseries.load_timeseries(sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now())
             ts = timeseries.get_timeseries(sym=sym).spot["close"]
 
             if self.vol_type == "window":

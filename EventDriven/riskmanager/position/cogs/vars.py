@@ -123,7 +123,7 @@ from EventDriven.types import EventTypes
 from dbase.database.SQLHelpers import DatabaseAdapter
 
 
-logger = setup_logger("algo.positions.analyze")
+logger = setup_logger("EventDriven.riskmanager.position.cogs.vars")
 db = DatabaseAdapter()
 MEASURES = ("delta", "gamma", "vega", "theta")
 MEASURES_SET = frozenset(MEASURES)  # O(1) lookup for filtering performance

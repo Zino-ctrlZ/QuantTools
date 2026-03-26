@@ -105,6 +105,9 @@ from datetime import datetime, date
 import numbers
 import pandas as pd
 import numpy as np
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.riskmanager.config")
 
 
 def assert_missing_keys(config: dict) -> None:
