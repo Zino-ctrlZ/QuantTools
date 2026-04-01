@@ -1,7 +1,7 @@
 from EventDriven.configs.base import pydantic_dataclass
 from pydantic import ConfigDict
 import numbers
-from typing import Union, Tuple, List, Literal, Dict
+from typing import Union, Tuple, List, Literal, Dict, Optional
 from datetime import datetime, date
 import pandas as pd
 from abc import ABC
@@ -12,6 +12,7 @@ from EventDriven.configs.base import (
 )
 from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 from trade.helpers.Logging import setup_logger
+
 logger = setup_logger("EventDriven.configs.core")
 
 
@@ -22,8 +23,8 @@ class ChainConfig(BaseConfigs):
     Ultimately, it would be used to filter the chain data retrieved from the data source.
     """
 
-    max_pct_width: numbers.Number = None
-    min_oi: numbers.Number = None
+    max_pct_width: numbers.Number = 0.2
+    min_oi: numbers.Number = 25
     enable_delta_filter: bool = False
 
 
@@ -87,7 +88,7 @@ class ZscoreSizerConfigs(BaseSizerConfigs):
     """
 
     sizing_lev: numbers.Number = 1.0
-    rvol_window: Union[numbers.Number, Tuple[numbers.Number, ...]] = None
+    rvol_window: Optional[Union[numbers.Number, Tuple[numbers.Number, ...]]] = None
     rolling_window: numbers.Number = 100
     weights: Tuple[numbers.Number, numbers.Number, numbers.Number] = (0.5, 0.3, 0.2)
     vol_type: str = "mean"
@@ -156,7 +157,7 @@ class BaseCogConfig(BaseConfigs):
     Each cog will usually subclass this for its specific settings.
     """
 
-    name: str = None
+    name: Optional[str] = None
     enabled: bool = True
 
 
@@ -223,7 +224,6 @@ class BacktesterConfig(BaseConfigs):
     min_slippage_pct: float = 0.075
     max_slippage_pct: float = 0.15
     commission_per_contract_in_units: float = 0.0065
-        
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -265,16 +265,56 @@ class RiskManagerConfig(BaseConfigs):
     cache_order_requests: bool = False
 
 
-@pydantic_dataclass
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class MeanReversionSizerConfigs(BaseCogConfig):
     beta: float = 0.5
     name: str = "custom_mean_reversion_sizer"
     min_scale: float = 0.5
     max_scale: float = 2.0
-    sizing_lev: int = 3
+    sizing_lev: int = 2
     default_dte: int = 10
     enabled_limits: StrategyLimitsEnabled = Field(
         default_factory=lambda: StrategyLimitsEnabled(delta=False, dte=True, moneyness=False)
     )
     # Minimum z-score threshold to trigger scaling adjustments
-    min_zscore: float = 2.5 
+    min_zscore: float = 2.5
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class ScoringConfigs(BaseConfigs):
+    tilt_strength: numbers.Number = 0.2
+    spread_ticks: int = 2
+    structure_direction: Literal["long", "short"] = "long"
+    strategy: Literal["vertical", "naked"] = "vertical"
+
+    # Moneyness
+    m_target: numbers.Number = 0.8
+    min_moneyness: numbers.Number = 0.45
+    max_moneyness: numbers.Number = 1.05
+    m_sigma: numbers.Number = 0.2
+    m_tilt: Literal["otm", "itm", "atm"] = "otm"
+
+    # DTE
+    target_dte: numbers.Number = 200
+    dte_tolerance: numbers.Number = 100
+    dte_sigma: numbers.Number = 10
+    dte_tilt: Literal["flat", "short", "long"] = "short"
+
+    # Mid price
+    mid_min: numbers.Number = 0.5
+    mid_max: numbers.Number = 3.0
+    mid_upper_limit: numbers.Number = 5
+    mid_lower_limit: numbers.Number = 0.25
+    mid_sigma: numbers.Number = 1.0
+
+    # Spread
+    pct_spread_max: numbers.Number = 1.0
+    target_spread_pct: numbers.Number = 0.2
+    pct_spread_sigma: numbers.Number = 0.10
+
+    # Open Interest
+    oi_target: int = 1000
+
+    # Theta burden
+    theta_burden_max: numbers.Number = 0.03
+    theta_burden_sigma: numbers.Number = 0.02
