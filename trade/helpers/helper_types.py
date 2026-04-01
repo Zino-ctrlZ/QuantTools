@@ -1,13 +1,12 @@
-
 from typing import Iterable, TypedDict, Any
 from enum import Enum
 from datetime import datetime
+import numbers
 from abc import ABC, abstractmethod
 from typing import ClassVar
 from weakref import WeakSet
 from trade.helpers.exception import SymbolChangeError
-from typing import get_origin, get_args, Union, get_type_hints, Literal, Type, Dict
-import types
+from typing import Union, get_type_hints, Type, Dict, get_origin, get_args
 from trade.helpers.Logging import setup_logger
 from dataclasses import dataclass, fields
 from functools import lru_cache
@@ -18,16 +17,38 @@ logger = setup_logger(__name__)
 DATE_HINT = Union[datetime, str]
 
 
-
 @lru_cache(maxsize=None)
 def _hints(cls: Type[Any]) -> Dict[str, Any]:
     return get_type_hints(cls)
 
 
+def _hint_allows_numbers_number(hint: Any) -> bool:
+    """Return True when a type hint includes numbers.Number."""
+    if hint is numbers.Number:
+        return True
+
+    origin = get_origin(hint)
+    if origin is None:
+        return False
+
+    return any(_hint_allows_numbers_number(arg) for arg in get_args(hint))
+
+
 class TypeValidatedMixin:
+    """Backward-compatible alias mixin for dataclass type validation.
+
+    Prefer `DataclassTypeValidationMixin` for new code. This class remains to
+    avoid breaking existing imports.
+    """
+
     def _validate_field(self, name: str, value: Any) -> None:
         hint = _hints(type(self)).get(name)
         if hint is not None:
+            # bool is a subclass of int; reject it explicitly for numeric hints.
+            if isinstance(value, bool) and _hint_allows_numbers_number(hint):
+                raise IncorrectTypeError(
+                    f"Field '{name}' in {type(self).__name__} expected a numeric value, but got boolean {value!r}."
+                )
             try:
                 check_type(value, hint)
             except TypeCheckError as e:
@@ -43,107 +64,69 @@ class TypeValidatedMixin:
         self._validate_all_fields()
 
 
-@dataclass
-class MutableValidated(TypeValidatedMixin):
+class DataclassTypeValidationMixin(TypeValidatedMixin):
+    """Validate annotated dataclass fields after initialization.
+
+    This mixin is designed for both stdlib dataclasses and pydantic dataclasses.
+    It performs full-object validation in `__post_init__` using type annotations.
+
+    Usage:
+        - Mutable models should combine this with
+          `DataclassAssignmentValidationMixin`.
+        - Frozen models should use this mixin (or `FrozenTypeValidationMixin`) and
+          rely on the dataclass decorator's `frozen=True` behavior.
+    """
+
+
+class DataclassAssignmentValidationMixin(DataclassTypeValidationMixin):
+    """Add post-init assignment validation for mutable dataclasses.
+
+    A constructor gate is used so assignment checks only run after initialization
+    has completed. This avoids false positives while dataclass/pydantic populates
+    fields during construction.
+    """
+
+    _validation_ready: bool = False
+
+    def __post_init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__post_init__()
+        object.__setattr__(self, "_validation_ready", True)
+
     def __setattr__(self, name: str, value: Any) -> None:
-        self._validate_field(name, value)
+        ready = getattr(self, "_validation_ready", False)
+        if ready and name in getattr(self, "__dict__", {}):
+            self._validate_field(name, value)
         super().__setattr__(name, value)
 
 
-@dataclass(frozen=True)
-class FrozenValidated(TypeValidatedMixin):
+class FrozenTypeValidationMixin(DataclassTypeValidationMixin):
+    """Marker mixin for frozen dataclasses.
+
+    This class intentionally adds no assignment behavior. Immutability is
+    provided by `@dataclass(frozen=True)` or pydantic dataclass `frozen=True`.
+    """
+
     pass
 
 
-# frozen update pattern:
-# new_obj = replace(old_obj, some_field=new_value)
+@dataclass
+class MutableValidated(DataclassAssignmentValidationMixin):
+    """Legacy mutable validated dataclass kept for compatibility."""
 
+    pass
+
+
+@dataclass(frozen=True)
+class FrozenValidated(FrozenTypeValidationMixin):
+    """Legacy frozen validated dataclass kept for compatibility."""
+
+    pass
 
 
 class IncorrectTypeError(Exception):
     """Custom exception for incorrect type errors in configuration validation."""
 
     pass
-
-
-def validate_inputs(self: object, raise_on_fail: bool = False) -> None:
-    type_hints = get_type_hints(type(self))
-
-    for f in fields(self):
-        try:
-            field_name = f.name
-            field_value = getattr(self, field_name)
-
-            type_hint = type_hints.get(field_name)
-            if type_hint is None:
-                continue  # no annotation, skip
-
-            origin = get_origin(type_hint)
-            args = get_args(type_hint)
-
-            # --- Handle Literal[...] ---
-            if origin is Literal:
-                # e.g. name: Literal["LimitsCog", "OtherCog"]
-                allowed_values = args  # tuple of literals
-
-                if field_value is None:
-                    # If you want to allow None here, add it to the Literal.
-                    logger.warning(f"Configuration '{field_name}' is None but expected one of {allowed_values}.")
-                elif field_value not in allowed_values:
-                    raise IncorrectTypeError(
-                        f"Configuration '{field_name}' expected one of {allowed_values}, " f"but got {field_value!r}."
-                    )
-                continue
-
-            # --- Handle Optional / Union[...] ---
-            if origin in (Union, types.UnionType):
-                allows_none = any(arg is type(None) for arg in args)
-                if field_value is None:
-                    if not allows_none:
-                        logger.warning(
-                            f"Configuration '{field_name}' is not set (None) and is not Optional. Please review."
-                        )
-                    continue
-
-                valid_types = tuple(arg for arg in args if arg is not type(None))
-                if not isinstance(field_value, valid_types):
-                    raise IncorrectTypeError(
-                        f"Configuration '{field_name}' expected types {valid_types}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Simple (non-generic) types ---
-            if origin is None:
-                if field_value is None:
-                    logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                    continue
-
-                if not isinstance(field_value, type_hint):
-                    raise IncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {type_hint}, " f"but got {type(field_value)}."
-                    )
-                continue
-
-            # --- Other generics (List, Dict, etc.) – shallow check ---
-            if field_value is None:
-                logger.warning(f"Configuration '{field_name}' is not set (None). Please review.")
-                continue
-
-            try:
-                if not isinstance(field_value, origin):
-                    raise IncorrectTypeError(
-                        f"Configuration '{field_name}' expected type {origin}, " f"but got {type(field_value)}."
-                    )
-            except TypeError:
-                logger.warning(
-                    f"Could not validate field '{field_name}' with value '{field_value}' against type '{type_hint}' due to TypeError."
-                )
-                pass
-
-        except Exception as e:
-            logger.critical(f"Failed to validate field '{f.name}' in {self.__class__.__name__}. Error: {e}")
-            if raise_on_fail:
-                raise e
 
 
 class OptionTickMetaData(TypedDict):
