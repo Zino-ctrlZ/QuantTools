@@ -6,9 +6,14 @@ from trade.optionlib.vol.implied_vol import vector_bsm_iv_estimation
 from trade.optionlib.greeks.analytical.black_scholes import black_scholes_analytic_greeks_vectorized
 from trade.datamanager import RatesDataManager
 import pandas as pd
+from trade.datamanager import DividendDataManager
+from trade.datamanager._enums import DivType
+import numpy as np
 
 CHAIN_GREEKS_CACHE = load_riskmanager_cache(target="chain_greeks_cache", create_on_missing=True, clear_on_exit=False)
 rates_cache = {}
+
+
 
 
 def get_rates_on_date(date):
@@ -22,6 +27,8 @@ def get_rates_on_date(date):
 
 
 def _add_greeks_and_iv_to_chain(filtered: pd.DataFrame, date: pd.Timestamp, chain_spot: float) -> pd.DataFrame:
+    if filtered.empty:
+        return filtered
     date = pd.to_datetime(date).date()
     ## get rates data for the date
     at_time = get_rates_on_date(date)
@@ -50,13 +57,17 @@ def _add_greeks_and_iv_to_chain(filtered: pd.DataFrame, date: pd.Timestamp, chai
     ## Filter out the contracts that were found in the cache to avoid redundant calculations
     if cached_data:
         nan_iv_chain = nan_iv_chain[~nan_iv_chain.index.isin(cached_data.keys())]
+    ## Get dividend data
+    div_dm = DividendDataManager(filtered["root"].iloc[0])  # Assuming all contracts in the chain have the same root
+    q = div_dm.get_schedule(date, date, DivType.CONTINUOUS).timeseries.values[0]
 
     ## Calculate forward price for the contracts with NaN iv
-    t = time_distance_helper([date] * len(nan_iv_chain["expiration"].values), nan_iv_chain["expiration"].values)
+    t = np.array(time_distance_helper([date] * len(nan_iv_chain["expiration"].values), nan_iv_chain["expiration"].values))
+    q_factor = np.exp(-q * t)
     f = vectorized_forward_continuous(
         S=[chain_spot] * len(nan_iv_chain["expiration"].values),
         r=[at_time] * len(nan_iv_chain["expiration"].values),
-        q_factor=[1] * len(nan_iv_chain["expiration"].values),
+        q_factor=q_factor,
         T=t,
     )
 
