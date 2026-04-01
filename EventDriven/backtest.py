@@ -240,7 +240,7 @@ class OptionSignalBacktest:
         ## We will not use trades dataframe in this process.
         self.start_date = pd.to_datetime(eq_strategy.start_date).date()
         if is_USholiday(self.start_date):
-            self.logger.warning(f"Start date {self.start_date} is a US holiday. Adjusting to previous business day.")
+            self.logger.info(f"Start date {self.start_date} is a US holiday. Adjusting to previous business day.")
             self.start_date = change_to_last_busday(self.start_date, -1).date()
 
         start_date, end_date = self.start_date, self.end_date

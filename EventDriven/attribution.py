@@ -280,7 +280,7 @@ def compute_position_attribution(
     attribution = attribution.copy()
     commission = qty_ts.commission
     slippage = qty_ts.slippage
-
+    
     ## Ensure attribution has necessary columns, if not create them with default values
     if "commission_cost" not in attribution.columns:
         attribution["commission_cost"] = commission.fillna(0)
@@ -303,13 +303,13 @@ def compute_position_attribution(
         """
         if qty > 0:
             # OPEN: entry is execution price on this date, close is current position price
-            entry_p = abs(exec_price.loc[date])
+            entry_p = abs(exec_price.loc[date]) #+ slippage.loc[date] + commission.loc[date]
             close_p = get_position_price_func(_id=trade_id, date=date, force=True)
         else:
             # CLOSE: entry is previous day's position price, close is execution price on this date
             prev_date = change_to_last_busday(date - BDay(1))
             entry_p = get_position_price_func(_id=trade_id, date=prev_date, force=True)
-            close_p = abs(exec_price.loc[date])
+            close_p = abs(exec_price.loc[date]) #- slippage.loc[date] - commission.loc[date]
         pnl = (close_p - entry_p) * abs(qty)
         return pnl, entry_p, close_p
 
@@ -340,7 +340,7 @@ def compute_position_attribution(
         trade_pnl, entry_p, close_p = _compute_pnl_for_change(date, qty_change)
         commission_cost = commission.get(date, 0) * abs(qty_change)
         slippage_cost = slippage.get(date, 0) * abs(qty_change)
-        trade_pnl -= commission_cost + slippage_cost
+        # trade_pnl -= commission_cost + slippage_cost  # Decide whether to include costs in the trade PnL or keep them separate for attribution purposes
 
         # if fully closed or just opened, zero other components on that date
         if fully_closed or just_opened:
@@ -348,14 +348,13 @@ def compute_position_attribution(
 
         # apply adjustments
         attribution.loc[date, "trade_pnl_adjustment"] += trade_pnl
-        attribution.loc[date, "commission_cost"] += commission_cost
-        attribution.loc[date, "slippage_cost"] += slippage_cost
-        attribution.loc[date, "total_pnl"] += trade_pnl
+        attribution.loc[date, "commission_cost"] -= commission_cost
+        attribution.loc[date, "slippage_cost"] -= slippage_cost
+        attribution.loc[date, "total_pnl"] += trade_pnl - commission_cost - slippage_cost
         logger.info(
             f"Date: {date.date()}, Qty: {qty_change}, Entry: {entry_p}, Close: {close_p}, PnL: {trade_pnl}, PrevQty: {prev_qty}, Commission: {commission_cost}, Slippage: {slippage_cost}"
         )
-
-    attribution["opt_plus_adj"] = attribution["opt_dod_change"] + attribution["trade_pnl_adjustment"]
+    attribution["opt_plus_adj"] = attribution["opt_dod_change"] + attribution["trade_pnl_adjustment"] + attribution["commission_cost"] + attribution["slippage_cost"]   
     attribution = attribution[
         [
             "opt_dod_change",
@@ -371,6 +370,7 @@ def compute_position_attribution(
             "theta_pnl",
             "volga_pnl",
             "vanna_pnl",
+            "rho_pnl",
         ]
     ]
 

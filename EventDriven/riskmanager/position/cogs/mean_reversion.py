@@ -1,3 +1,5 @@
+import math
+
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.configs.core import MeanReversionSizerConfigs
 from typing import Optional
@@ -122,3 +124,29 @@ class MeanReversionSizerCog(BaseCog):
         ## Update order quantity based on scaler
         limit = base_delta * scaler
         return limit
+
+
+class SeniorMeanReversionSizerCog(MeanReversionSizerCog):
+    def __init__(self, eq_strategy: MultiAssetStrategy, config: Optional[MeanReversionSizerConfigs] = None):
+        super().__init__(eq_strategy, config)
+
+    def on_new_position(self, state):
+        """
+        Overrides the on_new_position method to add logging and handle cases where the order quantity is reduced to 0 after mean reversion sizing.
+        If the order quantity is 0, it logs this information and checks if based on the available cash and option price, at least 1 contract could be afforded. If so, it logs this insight and optionally sets the"""
+
+        ret = super().on_new_position(state)
+        if state.order["data"]["quantity"] == 0:
+            logger.info(f"Order quantity is 0 after mean reversion sizing for trade_id {state.order['data']['trade_id']}. This means the position will not be opened based on the current z-score and cash constraints.")
+            cash_available = state.request.tick_cash
+            option_price_at_time = state.at_time_data.get_price()
+            max_size_cash_can_buy = abs(math.floor(cash_available / (option_price_at_time * 100)))
+            if max_size_cash_can_buy >= 1:
+                logger.info(f"However, based on the available cash of {cash_available} and option price of {option_price_at_time}, the strategy could afford to buy up to {max_size_cash_can_buy} contracts. Consider adjusting the beta or z-score thresholds to allow for smaller position sizes in such scenarios.")
+                state.order["data"]["quantity"] = 1  # Optionally set to 1 to allow for at least a small position, or keep at 0 to strictly follow the sizing logic.
+            else:
+                logger.info(f"Based on the available cash of {cash_available} and option price of {option_price_at_time}, even a single contract cannot be afforded. The order will remain at quantity 0.")
+        return ret
+
+
+

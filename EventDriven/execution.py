@@ -95,7 +95,6 @@ class SimulatedExecutionHandler(ExecutionHandler):
         assert order_event.type == 'ORDER', f"Event type must be 'ORDER' received {order_event.type}"
         assert order_event.direction == 'BUY' or order_event.direction == 'SELL', f"Event direction must be 'BUY' or 'SELL' received {order_event.direction}"
         exec_cache['order'][f'{order_event.signal_id}_{order_event.datetime.strftime("%Y-%m-%d")}'] = deepcopy(order_event)
-
         # Generate slippage as a percentage
         ## Slippage improvement
         if order_event.direction == 'BUY':
