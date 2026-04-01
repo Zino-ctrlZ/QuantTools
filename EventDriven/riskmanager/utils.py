@@ -208,7 +208,9 @@ from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 
 ## Vars
 TIMESERIES_START = pd.to_datetime(OPTION_TIMESERIES_START_DATE)
-TIMESERIES_END = datetime.now().strftime("%Y-%m-%d")
+_NOW = datetime.now()
+# Set end date to one year ago to avoid lookahead bias and ensure we have enough data for backtesting
+TIMESERIES_END = _NOW.replace(year=_NOW.year - 1, month=12, day=31).strftime("%Y-%m-%d")  
 LOOKBACKS = {}
 
 ## Paths

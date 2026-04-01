@@ -195,7 +195,7 @@ from .utils import (
 from EventDriven._vars import get_use_temp_cache
 from trade.helpers.helper import CustomCache, is_USholiday
 import pandas as pd
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker.order_picker import OrderPicker, order_failed
@@ -340,6 +340,70 @@ class RiskManager:
         else:
             logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
+    def _liquity_multiplier(self, pct_ratio: float, good: Optional[float] = None, bad: Optional[float] = None) -> float:
+        """
+        Calculate a liquidity multiplier based on the bid-ask spread percentage.
+
+        Parameters
+        ----------
+        pct_ratio : float
+            The percentage ratio of the bid-ask spread to the mid price.
+        good : float, optional
+            The multiplier value when the spread is very good (default is 1.0).
+        bad : float, optional
+            The multiplier value when the spread is very bad (default is 0.5).
+
+        Returns
+        -------
+        float
+            A liquidity multiplier between `bad` and `good` based on the `pct_ratio`.
+
+        Notes
+        -----
+        - The function uses an exponential decay to assign higher multipliers to better spreads.
+        - If `good` and `bad` are not provided, it defaults to a range of [0.5, 1.0].
+        - The `pct_ratio` is expected to be a positive value representing the spread as a percentage of the mid price.
+        """
+        if good is None:
+            good = self.order_picker._scoring_config.target_spread_pct
+        if bad is None:
+            bad = self.order_picker._scoring_config.pct_spread_max
+
+        if pct_ratio <= good:
+            return 1.0
+        elif pct_ratio >= bad:
+            return 0.25
+        else:
+            x = (pct_ratio - good) / (bad - good)  # Normalize to [0, 1]
+            return 1.0 - x * 0.75  # Scale to [1.0, 0.25]
+    
+    def _quantiy_liquidity_adjustment(self, quantity: int, pct_ratio: float) -> int:
+        """
+        Adjust the order quantity based on the liquidity of the option, as measured by the bid-ask spread percentage.
+
+        Parameters
+        ----------
+        quantity : int
+            The original order quantity before adjustment.
+        pct_ratio : float
+            The percentage ratio of the bid-ask spread to the mid price.
+
+        Returns
+        -------
+        int
+            The adjusted order quantity after applying the liquidity multiplier.
+
+        Notes
+        -----
+        - The function calculates a liquidity multiplier using `_liquity_multiplier` and applies it to the original quantity.
+        - The resulting quantity is rounded to the nearest integer and cannot be negative.
+        - This adjustment helps to reduce position size for options with poor liquidity (wide spreads).
+        """
+        multiplier = self._liquity_multiplier(pct_ratio)
+        adjusted_quantity = int(round(quantity * multiplier))
+        q = max(adjusted_quantity, 1)  # Ensure quantity is at least 1
+        return q
+
     def get_order(self, req: OrderRequest) -> NewPositionState:
         """
         Generates an order based on the provided OrderRequest dataclass and returns
@@ -453,6 +517,12 @@ class RiskManager:
 
         order = updated_pos_state.order.to_dict()
 
+        ## Update order for liquidity
+        if not order_failed(order) and q > 0:
+            pct_ratio = updated_pos_state.order["metrics"]["spread_pct_ratio"]
+            q = self._quantiy_liquidity_adjustment(q, pct_ratio)
+            updated_pos_state.order.data["quantity"] = q
+            logger.info(f"Order quantity after liquidity adjustment: {q} for position ID: {position_id}")
         return updated_pos_state
 
     def analyze_position(self, context: PositionAnalysisContext) -> StrategyChangeMeta:
