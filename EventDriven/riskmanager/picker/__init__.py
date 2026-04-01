@@ -160,25 +160,30 @@ class OrderSchema:
 
 def filter_contracts(
     df: pd.DataFrame,
-    schema: OrderSchema,
-    spot: float,
+    schema: OrderSchema = None,
+    spot: float = None,
+    option_type: str = None,
     min_moneyness: float = 0.5,
     max_moneyness: float = 1.5,
     increment=0.05,
+    dte_tol: int = 5,
+    target_dte: int = 30,
 ) -> pd.DataFrame:
     
+    schema = schema or {}
     df = df.copy()
-    df = df[df["right"].str.lower() == schema["option_type"].lower()]
+    right = option_type if option_type else schema.get("option_type")
+    df = df[df["right"].str.lower() == right.lower()]
     if df.empty:
-        raise ValueError(f"No contracts found for {schema['option_type']} in the provided chain.")
+        raise ValueError(f"No contracts found for {right} in the provided chain.")
 
     ## Calculate Moneyness
-    if schema["option_type"].lower() == "c":
+    if right.lower() == "c":
         df["moneyness"] = spot / df["strike"]
     else:
         df["moneyness"] = df["strike"] / spot
-    target_dte = schema["target_dte"]
-    dte_tol = schema["dte_tolerance"]
+    target_dte = schema.get("target_dte", target_dte)
+    dte_tol = schema.get("dte_tolerance", dte_tol)
     filtered = pd.DataFrame()
     attempt = 0
     min_moneyness = schema.get("min_moneyness", min_moneyness)
@@ -199,7 +204,7 @@ def filter_contracts(
 
     if filtered.empty:
         logger.critical(
-            f"Failed to filter contracts: No contracts found for {schema['option_type']} with DTE {target_dte} ± {dte_tol} and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] after {attempt} attempts."
+            f"Failed to filter contracts: No contracts found for {right} with DTE {target_dte} ± {dte_tol} and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] after {attempt} attempts."
         )
     return filtered.reset_index(drop=True)
 

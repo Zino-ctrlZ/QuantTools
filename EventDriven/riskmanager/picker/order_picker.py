@@ -179,6 +179,7 @@ Notes:
     - print_url param useful for debugging data sources
 """
 
+from copy import deepcopy
 from datetime import datetime
 import pandas as pd
 from EventDriven.riskmanager._order_validator import OrderInputs
@@ -188,8 +189,8 @@ from ..utils import (
     populate_cache_with_chain,
     precompute_lookbacks,
 )
-from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPickerConfig, OrderResolutionConfig
-from EventDriven.types import ResultsEnum
+from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPickerConfig, OrderResolutionConfig, ScoringConfigs
+from EventDriven.types import OrderData, ResultsEnum
 
 from ..utils import (
     dynamic_memoize, # noqa
@@ -212,6 +213,7 @@ class OrderPicker:
     This class is solely responsible for picking orders based on predefined schemas and configurations.
     All it does is find the right order based on the schema provided. It does not execute trades or manage risk.
     """
+    BUILD_WITH_SCORING_METHOD: bool = True  # Class variable to toggle between standard builder and scoring builder methods
 
     def __init__(self, start_date: str | datetime, end_date: str | datetime):
         """
@@ -227,6 +229,7 @@ class OrderPicker:
         self._order_picker_config = OrderPickerConfig(start_date=start_date, end_date=end_date)
         self._order_schema_config = OrderSchemaConfigs()
         self._order_resolution_config = OrderResolutionConfig()
+        self._scoring_config = ScoringConfigs()
 
         ## Others
         self.preset_orders = {}
@@ -237,6 +240,51 @@ class OrderPicker:
     @property
     def lookback(self):
         return self.__lookback
+    
+    def _overwrite_scoring_configs_with_schema_config(self, configs: ScoringConfigs = None) -> ScoringConfigs:
+        """
+        This function takes the scoring configs and overwrites any values with the corresponding values from the order schema config if they exist. This allows us to use the order schema config as a source of truth for scoring parameters, while still allowing for dynamic overrides through the scoring configs.
+        """
+        if configs is None:
+            configs = ScoringConfigs()
+
+        ## key mapping is attr in schema config : attr in scoring config
+        mapping = {
+            "spread_ticks": "spread_ticks",
+            "strategy": "strategy",
+            "structure_direction": "structure_direction",
+            "min_moneyness": "min_moneyness",
+            "max_moneyness": "max_moneyness",
+            "target_dte": "target_dte",
+            "dte_tolerance": "dte_tolerance",
+            "min_total_price": "mid_min",
+        }
+        for schema_attr, scoring_attr in mapping.items():
+            schema_value = getattr(self._order_schema_config, schema_attr, None)
+            if schema_value is not None:
+                setattr(configs, scoring_attr, schema_value)
+        return configs
+    
+    def _overwrite_configs(self):
+        """
+        This function overwrites the scoring configs with the values from the order schema config. This is useful for ensuring that the scoring functions use the same parameters as defined in the order schema config, which is the source of truth for our order selection criteria.
+        """
+        self._scoring_config = self._overwrite_scoring_configs_with_schema_config(self._scoring_config)
+    
+    def _get_order_with_scoring(self, req: OrderRequest) -> OrderData:
+        """
+        This function is an alternative to the standard _get_order function that incorporates scoring into the order selection process. It builds the order using the builder function that includes scoring, and then validates the resulting order before returning it.
+        """
+
+        ## Create a copy per request. 
+        ## This is because we'll be changing mid_max from req
+        configs = deepcopy(self._scoring_config)
+        configs.mid_upper_limit = req.max_close
+        order = order_builder(
+            req=req,
+            configs=configs,
+        )
+        return order
     
     def register_preset_order(self, 
                               signal_id: str, 
@@ -350,6 +398,9 @@ class OrderPicker:
         """
         Get the order based on the request.
         """
+
+
+
         schema = self.get_order_schema(
             ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
         )
@@ -357,6 +408,21 @@ class OrderPicker:
         inputs = self.construct_inputs(
             request=request, schema=schema, order_resolution_config=self._order_resolution_config
         )
+
+        if self.BUILD_WITH_SCORING_METHOD:
+            order = self._get_order_with_scoring(request)
+            
+            ## Add necessary tags for identification
+            order["signal_id"] = inputs.signal_id
+            order["map_signal_id"] = inputs.signal_id
+            if order_failed(order):
+                logger.warning(f"Order failed to resolve for request: {request} with schema: {schema}")
+                return Order.from_dict(order)
+            order["data"]["quantity"] = 1
+            order["date"] = pd.to_datetime(request.date).date()
+            order = Order.from_dict(order)
+            return order
+        
         if not self._chain_config.enable_delta_filter:
             logger.info("Delta filter not enabled in chain config. Setting delta_lmt to None for order builder.")
             request.delta_lmt = None  # Ensure delta_lmt is None if delta filtering is not enabled
@@ -377,12 +443,13 @@ class OrderPicker:
         if order_resolution_config is None:
             order_resolution_config = self._order_resolution_config
 
-        if request.max_close > request.tick_cash/100: ## Tick cash is scaled
+        tick_cash = request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash / 100
+        if request.max_close > tick_cash:
 
             logger.warning(
-                f"Request max_close {request.max_close} is greater than tick_cash {request.tick_cash}. Adjusting max_close to tick_cash."
+                f"Request max_close {request.max_close} is greater than tick_cash {tick_cash}. Adjusting max_close to tick_cash."
             )
-            request.max_close = request.tick_cash
+            request.max_close = tick_cash
 
         inputs = OrderInputs(
             tick=request.symbol,

@@ -4,6 +4,8 @@ from typing import Union
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger("EventDriven.riskmanager.picker.utils")
+
+
 def _verify_delta_in_chain(chain: pd.DataFrame) -> pd.DataFrame:
     """
     Verify if the 'delta' column exists in the option chain DataFrame. If it does not exist, add it with NaN values.
@@ -31,7 +33,7 @@ def _delta_lmt(f: float) -> Union[float, np.float64]:
     """
     if f is None:
         return np.inf  # If no delta limit percentage is provided, we set it to infinity to not filter based on delta.
-    
+
     if isinstance(f, str):
         try:
             f = float(f)
@@ -45,3 +47,26 @@ def _delta_lmt(f: float) -> Union[float, np.float64]:
         return np.inf  # If no delta limit percentage is provided, we set it to infinity to not filter based on delta.
 
     return np.float64(f)
+
+
+def _build_common_pair_mask(
+    spread_mid: pd.Series,
+    spread_bid: pd.Series,
+    spread_ask: pd.Series,
+    spread_pct_ratio: pd.Series,
+    spread_oi: pd.Series,
+    spread_delta: pd.Series,
+    min_total_price: float,
+    max_total_price: float,
+    max_pct_width: float,
+    min_oi: int,
+    delta_lmt: Union[float, np.float64],
+) -> pd.Series:
+    """Build a shared mask used by pairers for spread contract filtering."""
+    mid_mask = spread_mid.between(min_total_price, max_total_price)
+    spread_oi_mask = spread_oi >= min_oi
+    pct_width_mask = spread_pct_ratio <= max_pct_width
+    spread_bid_mask = spread_bid > 0
+    spread_ask_mask = spread_ask > 0
+    delta_mask = spread_delta.abs() <= abs(delta_lmt)
+    return mid_mask & spread_oi_mask & pct_width_mask & spread_bid_mask & spread_ask_mask & delta_mask

@@ -5,19 +5,20 @@ from EventDriven.riskmanager.picker import _order_formatting, create_trade_id
 from EventDriven.types import ResultsEnum, OrderDict
 from EventDriven.riskmanager.picker import OrderSchema
 from trade.helpers.Logging import setup_logger
-from .utils import _verify_delta_in_chain, _delta_lmt
+from .utils import _verify_delta_in_chain, _delta_lmt, _build_common_pair_mask
 
 logger = setup_logger("EventDriven.riskmanager.picker.naked_option")
 
 
 ## Utility function to pair naked option legs and calculate spread metrics by expiration date.
 def naked_option_by_exp(
-    row: pd.Series,
+    row: pd.DataFrame,
     min_total_price: float = 0.5,
     max_total_price: float = 1.0,
     max_pct_width: float = np.inf,
     min_oi: int = 0,
     delta_lmt: Optional[float] = None,
+    **kwargs,
 ) -> pd.DataFrame:
     """
     For a given row (option contract), find the corresponding leg of the naked option based on the spread_tick.
@@ -44,43 +45,93 @@ def naked_option_by_exp(
     bid_ask_spread = spread_ask - spread_bid
     spread_pct_ratio = abs(spread_bid - spread_ask) / spread_mid.replace(0, np.nan)  # Avoid division by zero.
     spread_oi = abs(long_leg_details["open_interest"])
+    spread_moneyness = (
+        row["moneyness"].reset_index(drop=True)
+        if "moneyness" in row.columns
+        else pd.Series(np.nan, index=long_leg_details.index)
+    )
+    spread_dte = (
+        row["dte"].reset_index(drop=True) if "dte" in row.columns else pd.Series(np.nan, index=long_leg_details.index)
+    )
+    spread_theta = (
+        row["theta"].reset_index(drop=True)
+        if "theta" in row.columns
+        else pd.Series(np.nan, index=long_leg_details.index)
+    )
+    spread_volume = (
+        abs(row["volume"].reset_index(drop=True))
+        if "volume" in row.columns
+        else pd.Series(np.nan, index=long_leg_details.index)
+    )
+    short_leg_opttick = pd.Series(np.nan, index=long_leg_details.index)
 
     ## Combine into a DataFrame for analysis.
     paired_opttick = pd.concat(
         (
             long_leg_details["opttick"],
+            short_leg_opttick,
             spread_mid,
             spread_bid,
             spread_ask,
             bid_ask_spread,
             spread_pct_ratio,
             spread_oi,
+            spread_volume,
             spread_delta,
+            spread_moneyness,
+            spread_dte,
+            spread_theta,
         ),
         axis=1,
     )
     paired_opttick.columns = [
         "long_leg_opttick",
+        "short_leg_opttick",
         "spread_mid",
         "spread_bid",
         "spread_ask",
         "bid_ask_spread",
         "spread_pct_ratio",
         "spread_oi",
+        "spread_volume",
         "spread_delta",
+        "spread_moneyness",
+        "spread_dte",
+        "spread_theta",
     ]
+    shrunk_delta_lmt = round(_delta_lmt(delta_lmt) * 0.95, 2)
+
+    full_mask = _build_common_pair_mask(
+        spread_mid=paired_opttick["spread_mid"],
+        spread_bid=paired_opttick["spread_bid"],
+        spread_ask=paired_opttick["spread_ask"],
+        spread_pct_ratio=paired_opttick["spread_pct_ratio"],
+        spread_oi=paired_opttick["spread_oi"],
+        spread_delta=paired_opttick["spread_delta"],
+        min_total_price=min_total_price,
+        max_total_price=max_total_price,
+        max_pct_width=max_pct_width,
+        min_oi=min_oi,
+        delta_lmt=shrunk_delta_lmt,
+    )
 
     mid_mask = paired_opttick["spread_mid"].between(min_total_price, max_total_price)
     spread_oi_mask = paired_opttick["spread_oi"] >= min_oi
     pct_width_mask = paired_opttick["spread_pct_ratio"] <= max_pct_width
     spread_bid_mask = paired_opttick["spread_bid"] > 0
     spread_ask_mask = paired_opttick["spread_ask"] > 0
-    delta_mask = paired_opttick["spread_delta"].abs() <= abs(_delta_lmt(delta_lmt))
-    full_mask = mid_mask & spread_oi_mask & pct_width_mask & spread_bid_mask & spread_ask_mask & delta_mask
-    logger.debug(f"Number of naked options after applying all filters: {full_mask.sum()}")  ## DEBUG
+    delta_mask = (
+        paired_opttick["spread_delta"].abs() <= abs(shrunk_delta_lmt)
+    )  # Manually shrinking the delta limit by 10% to be more conservative. And avoid issues in picking options that are right on the edge of the delta limit
     logger.debug(
-        f"mid_mask: {mid_mask.sum()}, spread_oi_mask: {spread_oi_mask.sum()}, pct_width_mask: {pct_width_mask.sum()}, spread_bid_mask: {spread_bid_mask.sum()}, spread_ask_mask: {spread_ask_mask.sum()}, delta_mask: {delta_mask.sum()}"
+        f"Number of naked options after applying all filters: {full_mask.sum()}. Number before filtering: {len(paired_opttick)}"
     )  ## DEBUG
+    logger.debug(f"mid_mask: {mid_mask.sum()} (between {min_total_price} and {max_total_price}), ")
+    logger.debug(f"spread_oi_mask: {spread_oi_mask.sum()} (>= {min_oi}), ")
+    logger.debug(f"pct_width_mask: {pct_width_mask.sum()} (<= {max_pct_width}), ")
+    logger.debug(f"spread_bid_mask: {spread_bid_mask.sum()}, (>0) ")
+    logger.debug(f"spread_ask_mask: {spread_ask_mask.sum()}, (>0) ")
+    logger.debug(f"delta_mask: {delta_mask.sum()} (<= {abs(shrunk_delta_lmt)})")  ## DEBUG
     return paired_opttick[full_mask].reset_index(drop=True)
 
 
@@ -102,7 +153,6 @@ def _naked_option_finder(
     logger.debug(f"_naked_option_finder recieved delta_lmt: {delta_lmt}")  ## DEBUG
     if filtered_chain.empty:
         return pd.Series()  # Return empty Series if no contracts are available after filtering.
-
     # Start by ordering by strike, from ITM to OTM.
     #   For calls, ITM is lower strike, for puts, ITM is higher strike.
     max_pct_width = schema.get("max_pct_width", 0.10)  ## NOTE: Add to schema
@@ -134,9 +184,26 @@ def _naked_option_finder(
     ## 1. spread_pct_ratio (we want this to be low, meaning the spread is relatively tight compared to its midpoint)
     ## 2. spread_oi (we want this to be high, meaning there's good liquidity in the spread)
     ## Finally, pick the top row as our chosen spread.
-    naked_option_chain.sort_values(by=["spread_pct_ratio", "spread_oi"], ascending=[True, False], inplace=True)
+    order_delta_ascending = (
+        True if is_call else False
+    )  # For calls, we want lower delta (more negative), for puts we want higher delta (less negative).
+    logger.debug(
+        "Verfiying delta has been integrated into the naked option chain before sorting. This is crucial for ensuring the correct ordering of options based on their delta values."
+    )  ## DEBUG
+    naked_option_chain.sort_values(
+        by=[
+            "spread_pct_ratio",
+            "spread_oi",
+            "spread_delta",
+        ],
+        ascending=[
+            True,
+            False,
+            order_delta_ascending,
+        ],
+        inplace=True,
+    )
     picked_spread = naked_option_chain.iloc[0] if not naked_option_chain.empty else pd.Series()
-
     return picked_spread
 
 
@@ -170,6 +237,7 @@ def _extract_order_for_naked_option(
         ## Other details from spread
         pct_ratio = picked_spread["spread_pct_ratio"]
         spread_oi = picked_spread["spread_oi"]
+        delta = picked_spread["spread_delta"]
 
         close_price = picked_spread["spread_mid"]
         trade_id = create_trade_id(
@@ -185,6 +253,15 @@ def _extract_order_for_naked_option(
             "metrics": {
                 "spread_pct_ratio": pct_ratio,
                 "spread_oi": spread_oi,
+                "delta": delta,
+            },
+            "scores": {
+                "moneyness_score": picked_spread.get("moneyness_score", np.nan),
+                "dte_score": picked_spread.get("dte_score", np.nan),
+                "mid_score": picked_spread.get("mid_score", np.nan),
+                "pct_spread_score": picked_spread.get("pct_spread_score", np.nan),
+                "oi_score": picked_spread.get("oi_score", np.nan),
+                "theta_burden_score": picked_spread.get("theta_burden_score", np.nan),
             },
         }
     else:
