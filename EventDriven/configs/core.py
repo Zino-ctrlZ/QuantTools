@@ -199,6 +199,18 @@ class PortfolioManagerConfig(BaseConfigs):
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class LiquidityConfig(BaseConfigs):
+    """Centralized liquidity control for both risk and execution layers."""
+
+    level: int = 1
+    max_spread_pct: float = 0.25
+
+    def __post_init__(self, ctx=None):
+        super().__post_init__(ctx)
+        self.level = max(0, min(2, int(self.level)))
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class BacktesterConfig(BaseConfigs):
     """
     Configuration class for Backtest related settings.
@@ -210,6 +222,7 @@ class BacktesterConfig(BaseConfigs):
     min_slippage_pct: float = 0.075
     max_slippage_pct: float = 0.15
     commission_per_contract_in_units: float = 0.0065
+    liquidity: LiquidityConfig = Field(default_factory=LiquidityConfig)
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))

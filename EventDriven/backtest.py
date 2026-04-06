@@ -2,7 +2,7 @@ from queue import Empty as emptyEventQueue
 from typing import Dict, Optional, cast
 import pandas as pd
 from EventDriven.data import HistoricTradeDataHandler
-from EventDriven.event import Event
+from EventDriven.event import Event, SignalEvent
 from EventDriven.strategy import OptionSignalStrategy
 from EventDriven.new_portfolio import OptionSignalPortfolio
 from EventDriven.execution import SimulatedExecutionHandler
@@ -10,13 +10,14 @@ from EventDriven.riskmanager.new_base import RiskManager
 from EventDriven.eventScheduler import EventScheduler
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday, is_USholiday
+from trade.helpers.helper import change_to_last_busday, is_USholiday, to_datetime
 from EventDriven.helpers import generate_signal_id
-from copy import deepcopy # noqa
+from copy import deepcopy  # noqa
 import traceback
 from pandas.tseries.offsets import BDay
 from EventDriven.types import EventTypes, SignalTypes
 from EventDriven.configs.core import BacktesterConfig
+from EventDriven.liquidity import LiquidityPolicy
 
 LOGGER = setup_logger("EventDriven.backtest", stream_log_level="WARNING")
 
@@ -200,6 +201,7 @@ class OptionSignalBacktest:
 
         ## Tracker for eq_strategy runs, to ensure we only run the strategy once per date
         self.run_dates: Dict[pd.Timestamp, bool] = {}
+        self._finalize_close_injected_dates: set[str] = set()
         if config is not None and not isinstance(config, BacktesterConfig):
             raise TypeError("config must be an instance of BacktesterConfig or None")
 
@@ -207,6 +209,7 @@ class OptionSignalBacktest:
             BacktesterConfig,
             config if config is not None else BacktesterConfig(),
         )
+        self.liquidity_policy = LiquidityPolicy(self.config.liquidity)
         self.end_date = end_date
         if self.is_eq_strategy:
             self.logger.info("Initializing backtest with equity strategy. Trades DataFrame will be ignored.")
@@ -256,12 +259,13 @@ class OptionSignalBacktest:
             start_date=start_date,
             end_date=end_date,
         )
-        self.executor = SimulatedExecutionHandler(self.eventScheduler)
+        self.executor = SimulatedExecutionHandler(self.eventScheduler, liquidity_policy=self.liquidity_policy)
         self.risk_manager = RiskManager(
             symbol_list=self.bars.symbol_list,
             bkt_start=start_date,
             bkt_end=end_date,
             initial_capital=cash,
+            liquidity_policy=self.liquidity_policy,
         )
         self.portfolio = OptionSignalPortfolio(
             self.bars,
@@ -339,12 +343,13 @@ class OptionSignalBacktest:
             end_date=self.end_date,
         )
         self.strategy = OptionSignalStrategy(self.bars, self.eventScheduler)
-        self.executor = SimulatedExecutionHandler(self.eventScheduler)
+        self.executor = SimulatedExecutionHandler(self.eventScheduler, liquidity_policy=self.liquidity_policy)
         self.risk_manager = RiskManager(
             symbol_list=self.bars.symbol_list,
             bkt_start=self.start_date,
             bkt_end=self.end_date,
             initial_capital=initial_capital,
+            liquidity_policy=self.liquidity_policy,
         )
 
         self.portfolio = OptionSignalPortfolio(
@@ -374,7 +379,7 @@ class OptionSignalBacktest:
                 )
             )  ## Adjust ExitTime by t_plus_n business days, and offseting to next business day if holiday
         return trades
-    
+
     def reset(self):
         """
         Resets the backtest to its initial state, allowing for a fresh run with the original trades and configuration.
@@ -389,6 +394,55 @@ class OptionSignalBacktest:
             end_date=self.end_date,
             symbol_list=self.symbol_list,
         )
+
+    def _is_last_backtest_day(self) -> bool:
+        """
+        Returns True if the scheduler is currently on the final backtest date.
+        """
+        if self.eventScheduler.current_date is None:
+            return False
+
+        current_str = to_datetime(self.eventScheduler.current_date).strftime("%Y-%m-%d")
+        end_str = to_datetime(self.eventScheduler.end_date).strftime("%Y-%m-%d")
+        return current_str == end_str
+
+    def _inject_finalize_close_signals_for_current_day(self) -> int:
+        """
+        On the final backtest day, force CLOSE signals for all open positions.
+        Returns the number of CLOSE signals successfully scheduled.
+        """
+        if not self.is_eq_strategy or not self.config.finalize_trades:
+            return 0
+        if self.eventScheduler.current_date is None:
+            return 0
+
+        day_key = self.eventScheduler.current_date
+        if day_key in self._finalize_close_injected_dates:
+            return 0
+
+        current_dt = to_datetime(self.eventScheduler.current_date)
+        injected = 0
+
+        for symbol, positions_by_signal in self.portfolio.current_positions.items():
+            for signal_id, position_pack in positions_by_signal.items():
+                if "position" not in position_pack:
+                    continue
+                if "exit_price" in position_pack:
+                    continue
+
+                close_signal = SignalEvent(
+                    symbol=symbol,
+                    datetime=current_dt,
+                    signal_type=SignalTypes.CLOSE.value,
+                    signal_id=signal_id,
+                    parent_event=None,
+                )
+                if self.eventScheduler.schedule_event(current_dt, close_signal):
+                    injected += 1
+
+        self._finalize_close_injected_dates.add(day_key)
+        return injected
+
     def _pre_signal_analysis(self):
         """
         Placeholder for any analysis or operations that need to be performed before signal processing in each loop iteration.
@@ -397,14 +451,14 @@ class OptionSignalBacktest:
 
         has_run_strategy = self.run_dates.get(self.eventScheduler.current_date, False)
         if self.is_eq_strategy and self.eq_strategy.tplusn == 0 and not has_run_strategy:
-            ## For equity strategy, we want to run the strategy at the beginning of the loop before processing any events, 
-            ## to ensure that we capture signals generated for the current date in the same loop iteration. If we put it after get_nowait, 
+            ## For equity strategy, we want to run the strategy at the beginning of the loop before processing any events,
+            ## to ensure that we capture signals generated for the current date in the same loop iteration. If we put it after get_nowait,
             ## we might miss signals generated for the current date until the next loop iteration, which could lead to delayed signal processing and execution
             self.logger.info(f"Running equity strategy with T+0 settlement on {self.eventScheduler.current_date}")
             self.portfolio.analyze_multiasset_strategy()
             self.run_dates[self.eventScheduler.current_date] = True
             self.logger.info(f"Completed running equity strategy for {self.eventScheduler.current_date}")
-    
+
     def _post_signal_analysis(self):
         """
         Placeholder for any analysis or operations that need to be performed after signal processing in each loop iteration.
@@ -413,12 +467,30 @@ class OptionSignalBacktest:
         meta = self.portfolio.analyze_positions()  # noqa
         self.logger.info(f"Position Analysis Meta: {meta}")
 
-        ## For equity strategy with T+n (n>=1), we want to run the strategy after analyzing positions, 
-        ## to ensure that we are using the most up-to-date position information for the strategy analysis. 
-        ## This is especially important for T+1 strategies, where the signals generated on the current date will only be actionable on the next business day. 
+        # On final backtest day, finalize any open positions and avoid scheduling new
+        # forward-settled equity signals that may fall outside the configured range.
+        if self.is_eq_strategy and self._is_last_backtest_day():
+            injected = self._inject_finalize_close_signals_for_current_day()
+            if injected > 0:
+                self.logger.info(
+                    f"Injected {injected} forced CLOSE signal(s) on final backtest day {self.eventScheduler.current_date}"
+                )
+
+            if self.eq_strategy.tplusn >= 1:
+                self.logger.info(
+                    f"Skipping equity strategy run on final backtest day {self.eventScheduler.current_date} "
+                    f"for T+{self.eq_strategy.tplusn} settlement."
+                )
+            return
+
+        ## For equity strategy with T+n (n>=1), we want to run the strategy after analyzing positions,
+        ## to ensure that we are using the most up-to-date position information for the strategy analysis.
+        ## This is especially important for T+1 strategies, where the signals generated on the current date will only be actionable on the next business day.
         ## By running the strategy after position analysis, we can ensure that any new signals generated based on the current positions and market data are captured and processed in a timely manner in the next loop iteration.
         if self.is_eq_strategy and self.eq_strategy.tplusn >= 1:
-            self.logger.info(f"Running equity strategy with T+{self.eq_strategy.tplusn} settlement on {self.eventScheduler.current_date}")
+            self.logger.info(
+                f"Running equity strategy with T+{self.eq_strategy.tplusn} settlement on {self.eventScheduler.current_date}"
+            )
             self.portfolio.analyze_multiasset_strategy()
 
     def run(self):
@@ -444,7 +516,7 @@ class OptionSignalBacktest:
             # Process events for the current bar
             # Avoid blocking. Loops through the event queue
             while True:
-                self._pre_signal_analysis()  # Placeholder for any pre-signal processing logic  
+                self._pre_signal_analysis()  # Placeholder for any pre-signal processing logic
 
                 try:
                     # ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
@@ -456,7 +528,7 @@ class OptionSignalBacktest:
                     if current_event_queue.empty() and not _post_signal_ran:
                         self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
 
-                        self._post_signal_analysis() 
+                        self._post_signal_analysis()
                         _post_signal_ran = True
 
                     event = current_event_queue.get_nowait()

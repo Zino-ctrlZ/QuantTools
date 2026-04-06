@@ -208,6 +208,7 @@ from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisCon
 from EventDriven.types import ResultsEnum, Order
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
+from EventDriven.liquidity import LiquidityPolicy
 from pprint import pprint
 
 logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
@@ -288,6 +289,7 @@ class RiskManager:
 
         ## Configs
         self.config = RiskManagerConfig()
+        self.liquidity_policy = kwargs.pop("liquidity_policy", None) or LiquidityPolicy()
 
         ## Get start and end dates for timeseries loading
         start, end = get_timeseries_start_end()
@@ -379,7 +381,7 @@ class RiskManager:
             decay = np.exp(-5 * x)  # Exponential decay factor
             multiplier = round(0.25 + 0.75 * decay, 4)  # Scale to [0.25, 1.0]
             return multiplier
-    
+
     def _quantiy_liquidity_adjustment(self, quantity: int, pct_ratio: float) -> int:
         """
         Adjust the order quantity based on the liquidity of the option, as measured by the bid-ask spread percentage.
@@ -443,10 +445,7 @@ class RiskManager:
         req.spot = spot
         req.chain_spot = chain_spot
         req.delta_lmt = self.position_analyzer.get_delta_limit(
-            tick_cash=req.tick_cash,
-            chain_spot=chain_spot,
-            date=req.date,
-            ticker=req.symbol
+            tick_cash=req.tick_cash, chain_spot=chain_spot, date=req.date, ticker=req.symbol
         )
 
         ## Get order
@@ -520,8 +519,8 @@ class RiskManager:
 
         order = updated_pos_state.order.to_dict()
 
-        ## Update order for liquidity
-        if not order_failed(order) and q > 0:
+        ## Level 1 liquidity measure: quantity haircut by spread_pct_ratio
+        if not order_failed(order) and q > 0 and self.liquidity_policy.enabled(1):
             pct_ratio = updated_pos_state.order["metrics"]["spread_pct_ratio"]
             q = self._quantiy_liquidity_adjustment(q, pct_ratio)
             updated_pos_state.order.data["quantity"] = q
