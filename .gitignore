@@ -207,3 +207,9 @@ trade/assets/notebooks
 # allow notebooks in any demo folder (demo or demos)
 !**/demo/**/*.ipynb
 !**/demos/**/*.ipynb
+
+# Local decommission staging (keep out of remote)
+.decomission/
+.decommission/
+EventDriven/riskmanager/.decomission/
+EventDriven/riskmanager/.decommission/

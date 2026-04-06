@@ -1,211 +1,53 @@
-"""Intelligent Order Selection and Option Chain Filtering.
+"""Scoring-based option order picker.
 
-This module implements the OrderPicker class responsible for selecting optimal option
-orders from available chains based on strategy criteria, risk constraints, and market
-conditions. It handles order schema creation, chain filtering, strategy building, and
-retry logic when initial criteria cannot be met.
+This module contains the scoring-only `OrderPicker` runtime used by RiskManager.
+Legacy schema-driven helpers remain only as hard-error compatibility entrypoints.
 
 Core Class:
-    OrderPicker: Main order selection engine with caching and retry logic
+    OrderPicker: Selects and formats orders from `OrderRequest` using scoring.
 
-Key Features:
-    - Strategy-aware option selection (spreads, condors, butterflies, etc.)
-    - Moneyness-based filtering (ITM, ATM, OTM ranges)
-    - DTE (days to expiration) targeting with tolerance bands
-    - Price constraints (min/max total price limits)
-    - Liquidity filtering (volume, open interest, bid-ask spreads)
-    - Automatic retry with relaxed constraints on failure
-    - Memoization for performance optimization
-    - Call/Put moneyness adjustment logic
+Processing Flow:
+    1. Normalize request-level cash constraints.
+    2. Build scored candidate order via `order_builder`.
+    3. Attach signal metadata and normalize output shape.
+    4. Return typed `Order` with `ResultsEnum` status.
 
-Order Selection Process:
-    1. Schema Creation:
-       - Build OrderSchema from request parameters
-       - Set target DTE, moneyness range, price limits
-       - Configure strategy type and structure direction
+Risk/Assumptions:
+    - `get_order(request=...)` is the only supported selection API.
+    - Legacy methods (`get_order_schema`, `get_order_new`, `_get_order`,
+      `construct_inputs`) raise hard deprecation errors.
+    - Scoring limits are derived from `ScoringConfigs` with per-request caps.
 
-    2. Chain Retrieval:
-       - Fetch option chain for date and underlying
-       - Cache chains to avoid redundant API calls
-       - Filter by expiration dates within tolerance
-
-    3. Strike Filtering:
-       - Apply moneyness bounds (min/max strike/spot ratios)
-       - Special handling for calls vs puts
-       - ITM/OTM width constraints
-
-    4. Strategy Building:
-       - Select strikes for strategy legs
-       - Apply spread_ticks for multi-leg structures
-       - Validate structure meets requirements
-
-    5. Price Validation:
-       - Check total structure price against limits
-       - Consider bid-ask spreads
-       - Verify liquidity thresholds
-
-    6. Result Extraction:
-       - Package successful order with all details
-       - Include order metadata and trade_id
-       - Return ResultsEnum status
-
-Moneyness Adjustment for Calls:
-    Puts: moneyness = strike / spot
-        - OTM: < 1.0
-        - ATM: ~1.0
-        - ITM: > 1.0
-
-    Calls: moneyness inverted for consistency
-        - Original put range: [0.90, 1.10]
-        - Call range: [2-1.10, 2-0.90] = [0.90, 1.10]
-        - Maintains same OTM/ITM interpretation
-
-Configuration Objects:
-    ChainConfig:
-        - Data source settings
-        - Chain retrieval parameters
-        - Filtering options
-
-    OrderSchemaConfigs:
-        - Default DTE, moneyness, prices
-        - Strategy defaults
-        - Structure direction defaults
-
-    OrderPickerConfig:
-        - Start/end dates for data range
-        - Cache configuration
-        - Retry settings
-
-    OrderResolutionConfig:
-        - Max tries
-        - Tolerance expansions
-        - Resolution priorities
-
-Lookback Management:
-    - Precomputed date lookback dictionaries
-    - Efficient date arithmetic for DTE calculations
-    - Configurable lookback ranges (30, 60, 90 days)
-    - Global LOOKBACKS dict for performance
-
-Caching Strategy:
-    Memoization:
-        - @dynamic_memoize decorator on _get_order()
-        - Schema tuple used as cache key
-        - Avoids redundant chain fetching
-        - Cleared between backtest runs
-
-    Chain Caching:
-        - populate_cache_with_chain() for data
-        - Persistent across order requests
-        - Indexed by (ticker, date, spot)
-
-Retry Logic Integration:
-    - Uses order_resolve_loop from _orders module
-    - Progressive constraint relaxation
-    - Logged attempts for debugging
-    - Configurable max_tries limit
-    - Returns best available or failure
-
-Order Schema Structure:
-    Required Fields:
-        - tick: Underlying ticker
-        - target_dte: Target days to expiration
-        - strategy: Strategy name (e.g., 'vertical_spread')
-        - structure_direction: 'long' or 'short'
-        - spread_ticks: Strike separation for spreads
-        - dte_tolerance: Acceptable DTE deviation
-        - min_moneyness: Lower bound for strike/spot
-        - max_moneyness: Upper bound for strike/spot
-        - min_total_price: Minimum structure price
-        - option_type: 'C' or 'P'
-        - max_total_price: Upper price limit
-
-    Chain Config Fields (merged):
-        - Liquidity filters
-        - Data source settings
-        - Additional constraints
-
-Usage Examples:
-    # Initialize order picker
-    picker = OrderPicker(
-        start_date='2024-01-01',
-        end_date='2024-12-31'
-    )
-
-    # Create order request
-    request = OrderRequest(
-        symbol='AAPL',
-        date='2024-03-15',
-        spot=185.50,
-        option_type='P',
-        target_dte=45,
-        max_close=3.50
-    )
-
-    # Get order
-    order = picker.get_order(request)
-
-    # Check result
-    if not order_failed(order):
-        print(f"Selected: {order['data']['trade_id']}")
-        print(f"Price: ${order['data']['total_price']:.2f}")
-    else:
-        print(f"Failed: {order['result']}")
-
-Performance Optimizations:
-    - Schema memoization prevents redundant calculations
-    - Chain caching reduces API calls
-    - Precomputed lookbacks for date math
-    - Efficient pandas filtering operations
-    - Lazy loading of option data
-
-Integration Points:
-    - Called by RiskManager for new position orders
-    - Used in position rolling for replacement orders
-    - Feeds OrderRequest dataclasses
-    - Returns Order type for execution
-
-Error Handling:
-    - Invalid option types caught and corrected
-    - Missing chains logged and handled gracefully
-    - Failed orders return descriptive ResultsEnum
-    - Schema validation before processing
-
-Notes:
-    - Lookback setter triggers precomputation if needed
-    - get_order_new() is the public interface
-    - _get_order() is the memoized implementation
-    - Schema converted to tuple for hashability in cache
-    - print_url param useful for debugging data sources
+Usage:
+    >>> picker = OrderPicker(start_date="2024-01-01", end_date="2024-12-31")
+    >>> order = picker.get_order(request)
 """
 
 from copy import deepcopy
 from datetime import datetime
 import pandas as pd
-from EventDriven.riskmanager._order_validator import OrderInputs
 from trade.datamanager.market_data import Optional
 from ..utils import (
     LOOKBACKS,
-    populate_cache_with_chain,
     precompute_lookbacks,
 )
-from EventDriven.configs.core import ChainConfig, OrderSchemaConfigs, OrderPickerConfig, OrderResolutionConfig, ScoringConfigs
+from EventDriven.configs.core import OrderPickerConfig, ScoringConfigs
 from EventDriven.types import OrderData, ResultsEnum
 
-from ..utils import (
-    dynamic_memoize, # noqa
-    parse_position_id
-)
+from ..utils import parse_position_id
 from .builder import order_builder
 from trade.helpers.Logging import setup_logger
-from trade.helpers.decorators import timeit # noqa
 from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
-from EventDriven.riskmanager._orders import order_resolve_loop, order_failed
 from EventDriven.types import Order
 import numpy as np
 
 logger = setup_logger("EventDriven.riskmanager.picker.order_picker")
+
+
+def order_failed(order: dict) -> bool:
+    """Return True when the picker result is not successful."""
+    return order.get("result") != ResultsEnum.SUCCESSFUL.value
 
 
 class OrderPicker:
@@ -213,7 +55,6 @@ class OrderPicker:
     This class is solely responsible for picking orders based on predefined schemas and configurations.
     All it does is find the right order based on the schema provided. It does not execute trades or manage risk.
     """
-    BUILD_WITH_SCORING_METHOD: bool = True  # Class variable to toggle between standard builder and scoring builder methods
 
     def __init__(self, start_date: str | datetime, end_date: str | datetime):
         """
@@ -225,10 +66,7 @@ class OrderPicker:
         self.__lookback = 30
 
         ## Setting up configs
-        self._chain_config = ChainConfig()
         self._order_picker_config = OrderPickerConfig(start_date=start_date, end_date=end_date)
-        self._order_schema_config = OrderSchemaConfigs()
-        self._order_resolution_config = OrderResolutionConfig()
         self._scoring_config = ScoringConfigs()
 
         ## Others
@@ -240,58 +78,25 @@ class OrderPicker:
     @property
     def lookback(self):
         return self.__lookback
-    
-    def _overwrite_scoring_configs_with_schema_config(self, configs: ScoringConfigs = None) -> ScoringConfigs:
-        """
-        This function takes the scoring configs and overwrites any values with the corresponding values from the order schema config if they exist. This allows us to use the order schema config as a source of truth for scoring parameters, while still allowing for dynamic overrides through the scoring configs.
-        """
-        if configs is None:
-            configs = ScoringConfigs()
 
-        ## key mapping is attr in schema config : attr in scoring config
-        mapping = {
-            "spread_ticks": "spread_ticks",
-            "strategy": "strategy",
-            "structure_direction": "structure_direction",
-            "min_moneyness": "min_moneyness",
-            "max_moneyness": "max_moneyness",
-            "target_dte": "target_dte",
-            "dte_tolerance": "dte_tolerance",
-            "min_total_price": "mid_min",
-        }
-        for schema_attr, scoring_attr in mapping.items():
-            schema_value = getattr(self._order_schema_config, schema_attr, None)
-            if schema_value is not None:
-                setattr(configs, scoring_attr, schema_value)
-        return configs
-    
-    def _overwrite_configs(self):
-        """
-        This function overwrites the scoring configs with the values from the order schema config. This is useful for ensuring that the scoring functions use the same parameters as defined in the order schema config, which is the source of truth for our order selection criteria.
-        """
-        self._scoring_config = self._overwrite_scoring_configs_with_schema_config(self._scoring_config)
-    
     def _get_order_with_scoring(self, req: OrderRequest) -> OrderData:
         """
         This function is an alternative to the standard _get_order function that incorporates scoring into the order selection process. It builds the order using the builder function that includes scoring, and then validates the resulting order before returning it.
         """
 
-        ## Create a copy per request. 
+        ## Create a copy per request.
         ## This is because we'll be changing mid_max from req
         configs = deepcopy(self._scoring_config)
-        configs.mid_upper_limit = req.max_close
+
+        ## Limit the mid price to the tick cash value from the request. Don't entertain any orders that are priced above the cash available
+        configs.mid_upper_limit = req.tick_cash / 100 if req.is_tick_cash_scaled else req.tick_cash
         order = order_builder(
             req=req,
             configs=configs,
         )
         return order
-    
-    def register_preset_order(self, 
-                              signal_id: str, 
-                              trade_id: str,
-                              date: str | datetime,
-                              close_price: float = np.nan):
-        
+
+    def register_preset_order(self, signal_id: str, trade_id: str, date: str | datetime, close_price: float = np.nan):
         """
         Register a preset order to be used instead of generating a new one.
         This is useful for backtesting scenarios where specific orders need to be enforced.
@@ -299,7 +104,7 @@ class OrderPicker:
         self.preset_orders[signal_id] = {
             "trade_id": trade_id,
             "date": pd.to_datetime(date, format="%Y-%m-%d").date(),
-            "close_price": close_price
+            "close_price": close_price,
         }
 
     def clear_preset_orders(self):
@@ -317,11 +122,7 @@ class OrderPicker:
         preset_order = self.preset_orders.get(signal_id, None)
         if preset_order and preset_order["date"] == pd.to_datetime(date, format="%Y-%m-%d").date():
             _, legs = parse_position_id(preset_order["trade_id"])
-            data = _order_formatting(
-                trade_id=preset_order["trade_id"],
-                legs=legs,
-                close=preset_order["close_price"]
-            )
+            data = _order_formatting(trade_id=preset_order["trade_id"], legs=legs, close=preset_order["close_price"])
             return {
                 "result": ResultsEnum.SUCCESSFUL.value,
                 "data": data,
@@ -331,27 +132,10 @@ class OrderPicker:
         return {}
 
     def get_order_schema(self, ticker: str, option_type: str = "P", max_total_price: float = None) -> OrderSchema:
-        """
-        Get the current order schema based on the order schema configurations.
-        """
-        schema = OrderSchema(
-            {
-                "tick": ticker,
-                "target_dte": self._order_schema_config.target_dte,
-                "strategy": self._order_schema_config.strategy,
-                "structure_direction": self._order_schema_config.structure_direction,
-                "spread_ticks": self._order_schema_config.spread_ticks,
-                "dte_tolerance": self._order_schema_config.dte_tolerance,
-                "min_moneyness": self._order_schema_config.min_moneyness,
-                "max_moneyness": self._order_schema_config.max_moneyness,
-                "min_total_price": self._order_schema_config.min_total_price,
-                "option_type": option_type,  # Default to Put options
-                "max_total_price": max_total_price,
-                "max_attempts": self._order_schema_config.max_attempts,
-            }
+        raise AttributeError(
+            "OrderPicker.get_order_schema is deprecated and has been removed. "
+            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
         )
-        schema.data.update(self._chain_config.__dict__)
-        return schema
 
     @lookback.setter
     def lookback(self, value):
@@ -370,9 +154,10 @@ class OrderPicker:
         print_url: bool = False,
         delta_lmt: Optional[float] = None,
     ):
-        schema = tuple(schema.data.items())
-        chain_spot = spot
-        return self._get_order(schema, date, spot, chain_spot, print_url=print_url, delta_lmt=delta_lmt)
+        raise AttributeError(
+            "OrderPicker.get_order_new is deprecated and has been removed. "
+            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
+        )
 
     # @dynamic_memoize
     def _get_order(
@@ -384,157 +169,49 @@ class OrderPicker:
         print_url: bool = False,
         delta_lmt: Optional[float] = None,
     ) -> dict:
-        """
-        Get the order for the given schema, date, and spot price.
-        """
-        
-        assert isinstance(schema, tuple), "Schema must be a tuple of items."
-        schema = OrderSchema(dict(schema))
-        chain = populate_cache_with_chain(schema["tick"], date, chain_spot, print_url=print_url)
-        return order_builder(unfiltered_chain=chain.copy(deep=True), schema=schema, spot=chain_spot, date=date, delta_lmt=delta_lmt)
+        raise AttributeError(
+            "OrderPicker._get_order is deprecated and has been removed. "
+            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
+        )
 
     # @timeit
     def get_order(self, request: OrderRequest) -> Order:
         """
         Get the order based on the request.
         """
-
-
-
-        schema = self.get_order_schema(
-            ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
-        )
-
-        inputs = self.construct_inputs(
-            request=request, schema=schema, order_resolution_config=self._order_resolution_config
-        )
-
-        if self.BUILD_WITH_SCORING_METHOD:
-            order = self._get_order_with_scoring(request)
-            
-            ## Add necessary tags for identification
-            order["signal_id"] = inputs.signal_id
-            order["map_signal_id"] = inputs.signal_id
-            if order_failed(order):
-                logger.warning(f"Order failed to resolve for request: {request} with schema: {schema}")
-                return Order.from_dict(order)
-            order["data"]["quantity"] = 1
-            order["date"] = pd.to_datetime(request.date).date()
-            order = Order.from_dict(order)
-            return order
-        
-        if not self._chain_config.enable_delta_filter:
-            logger.info("Delta filter not enabled in chain config. Setting delta_lmt to None for order builder.")
-            request.delta_lmt = None  # Ensure delta_lmt is None if delta filtering is not enabled
-        else:
-            logger.info(f"Delta filter enabled in chain config. Using delta_lmt {request.delta_lmt} for order builder.")
-        return _get_open_order_backtest(
-            picker=self,
-            request=request,
-            inputs=inputs,
-        )
-
-    def construct_inputs(
-        self, request: OrderRequest, schema: OrderSchema, order_resolution_config: OrderResolutionConfig = None
-    ) -> OrderInputs:
-        """
-        Construct OrderInputs dataclass from OrderRequest and OrderSchema.
-        """
-        if order_resolution_config is None:
-            order_resolution_config = self._order_resolution_config
-
         tick_cash = request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash / 100
         if request.max_close > tick_cash:
-
             logger.warning(
                 f"Request max_close {request.max_close} is greater than tick_cash {tick_cash}. Adjusting max_close to tick_cash."
             )
             request.max_close = tick_cash
 
-        inputs = OrderInputs(
-            tick=request.symbol,
-            date=request.date,
-            option_type=request.option_type,
-            signal_id=request.signal_id,
-            spot=request.spot,
-            option_strategy=schema["strategy"],
-            structure_direction=schema["structure_direction"],
-            spread_ticks=schema.data.get("spread_ticks", 0),
-            dte_tolerance=schema.data.get("dte_tolerance", 0),
-            min_moneyness=schema.data.get("min_moneyness", 0),
-            max_moneyness=schema.data.get("max_moneyness", float("inf")),
-            target_dte=schema.data.get("target_dte", 0),
-            min_total_price=schema.data.get("min_total_price", 0),
-            direction=request.direction,
-            tick_cash=request.tick_cash,
-            **order_resolution_config.__dict__,
+        order = self._get_order_with_scoring(request)
+
+        ## Add necessary tags for identification
+        order["signal_id"] = request.signal_id
+        order["map_signal_id"] = request.signal_id
+        if order_failed(order):
+            logger.warning(f"Order failed to resolve for request: {request}")
+            return Order.from_dict(order)
+        order["data"]["quantity"] = 1
+        order["date"] = pd.to_datetime(request.date).date()
+        order = Order.from_dict(order)
+        return order
+
+    def construct_inputs(self, request: OrderRequest, schema: OrderSchema) -> None:
+        """Deprecated legacy entrypoint retained for API compatibility."""
+        raise AttributeError(
+            "OrderPicker.construct_inputs is deprecated and has been removed. "
+            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
         )
-        return inputs
 
 
 def _get_open_order_backtest(
     picker: OrderPicker,
     request: OrderRequest,
-    inputs: OrderInputs,
 ) -> Order:
-    """
-    Helper function to get open order in backtest mode.
-    OR at least with order picker.
-
-    params:
-    picker: OrderPicker: The OrderPicker instance to use for getting the order.
-    request: OrderRequest: The order request containing necessary parameters.
-    inputs: OrderInputs: The order inputs constructed from the request and schema.
-
-    returns:
-    Order: The resolved order object.
-    """
-    delta_lmt = request.delta_lmt
-    order = picker.get_preset_order(signal_id=inputs.signal_id, date=inputs.date)
-    if not order:
-        logger.info(f"No preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Generating new order.")
-        schema = picker.get_order_schema(
-            ticker=request.symbol, option_type=request.option_type, max_total_price=request.max_close
-        )
-        schema_as_tuple = tuple(schema.data.items())
-        order = picker._get_order(
-            schema=schema_as_tuple, 
-            date=request.date, 
-            spot=request.spot, 
-            chain_spot=request.chain_spot, 
-            delta_lmt=delta_lmt,
-            print_url=False
-        )
-
-        ## Resolve order if failed and resolution is enabled
-        if picker._order_resolution_config.resolve_enabled:
-            order = order_resolve_loop(
-                order=order,
-                schema=schema,
-                date=inputs.date,
-                spot=request.chain_spot,
-                max_close=inputs.tick_cash / 100,  ## Use tick cash to determine max close. Normalize to 100 contracts
-                max_dte_tolerance=inputs.max_dte_tolerance,
-                max_tries=inputs.max_tries,
-                otm_moneyness_width=inputs.otm_moneyness_width,
-                itm_moneyness_width=inputs.itm_moneyness_width,
-                logger=logger,
-                signalID=inputs.signal_id,
-                schema_cache={},
-                picker=picker,
-                tick_cash=request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash / 100,
-                delta_lmt=delta_lmt,
-            )
-    else:
-        logger.info(f"Preset order found for signal_id {inputs.signal_id} on date {inputs.date}. Using preset order.")
-
-    ## Add necessary tags for identification
-    order["signal_id"] = inputs.signal_id
-    order["map_signal_id"] = inputs.signal_id
-    if order_failed(order):
-        logger.warning(f"Order failed to resolve for request: {request} with schema: {schema}")
-        return Order.from_dict(order)
-    order["data"]["quantity"] = 1
-    order["date"] = pd.to_datetime(request.date).date()
-    order = Order.from_dict(order)
-    return order
+    raise AttributeError(
+        "_get_open_order_backtest is deprecated and has been removed. "
+        "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
+    )
