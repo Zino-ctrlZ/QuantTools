@@ -97,20 +97,6 @@ class ZscoreSizerConfigs(BaseSizerConfigs):
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class OrderResolutionConfig(BaseConfigs):
-    """
-    Configuration class for Order Resolution settings.
-    """
-
-    resolve_enabled: bool = True
-    otm_moneyness_width: float = 0.45
-    itm_moneyness_width: float = 0.45
-    max_close: float = 10.0
-    max_tries: int = 20
-    max_dte_tolerance: int = 90
-
-
-@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class UndlTimeseriesConfig(BaseConfigs):
     """
     Configuration class for underlying timeseries data.
@@ -305,7 +291,7 @@ class ScoringConfigs(BaseConfigs):
     mid_max: numbers.Number = 3.0
     mid_upper_limit: numbers.Number = 5
     mid_lower_limit: numbers.Number = 0.25
-    mid_sigma: numbers.Number = 1.0
+    mid_sigma: numbers.Number = 0.25
 
     # Spread
     pct_spread_max: numbers.Number = 1.0
@@ -318,3 +304,11 @@ class ScoringConfigs(BaseConfigs):
     # Theta burden
     theta_burden_max: numbers.Number = 0.03
     theta_burden_sigma: numbers.Number = 0.02
+
+
+@pydantic_dataclass
+class ExecutionHandlerConfig(BaseConfigs):
+    slippage_model: Literal["randomized", "fixed", "spread_pct"] = (
+        "randomized"  # Whether to use randomized slippage, fixed slippage, or slippage as a percentage of the spread. Default is randomized slippage.
+    )
+    pct_alpha: float = 0.25  # If using spread_pct slippage model, this is the percentage of the spread to use as slippage. For example, if pct_alpha is 0.25 and the spread is $0.20, then the slippage will be $0.05.
