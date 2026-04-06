@@ -25,7 +25,6 @@ Usage:
 
 from copy import deepcopy
 from datetime import datetime
-import pandas as pd
 from trade.datamanager.market_data import Optional
 from ..utils import (
     LOOKBACKS,
@@ -41,6 +40,7 @@ from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.types import Order
 import numpy as np
+from trade.helpers.helper import to_datetime
 
 logger = setup_logger("EventDriven.riskmanager.picker.order_picker")
 
@@ -103,7 +103,7 @@ class OrderPicker:
         """
         self.preset_orders[signal_id] = {
             "trade_id": trade_id,
-            "date": pd.to_datetime(date, format="%Y-%m-%d").date(),
+            "date": to_datetime(date, format="%Y-%m-%d").date(),
             "close_price": close_price,
         }
 
@@ -120,7 +120,7 @@ class OrderPicker:
         It we will format the order as expected by the rest of the system.
         """
         preset_order = self.preset_orders.get(signal_id, None)
-        if preset_order and preset_order["date"] == pd.to_datetime(date, format="%Y-%m-%d").date():
+        if preset_order and preset_order["date"] == to_datetime(date, format="%Y-%m-%d").date():
             _, legs = parse_position_id(preset_order["trade_id"])
             data = _order_formatting(trade_id=preset_order["trade_id"], legs=legs, close=preset_order["close_price"])
             return {
@@ -179,6 +179,13 @@ class OrderPicker:
         """
         Get the order based on the request.
         """
+        preset_order = self.get_preset_order(signal_id=request.signal_id, date=request.date)
+        if preset_order:
+            if preset_order.get("data") is not None and "quantity" not in preset_order["data"]:
+                preset_order["data"]["quantity"] = 1
+            preset_order["date"] = to_datetime(request.date).date()
+            return Order.from_dict(preset_order)
+
         tick_cash = request.tick_cash if not request.is_tick_cash_scaled else request.tick_cash / 100
         if request.max_close > tick_cash:
             logger.warning(
@@ -195,7 +202,7 @@ class OrderPicker:
             logger.warning(f"Order failed to resolve for request: {request}")
             return Order.from_dict(order)
         order["data"]["quantity"] = 1
-        order["date"] = pd.to_datetime(request.date).date()
+        order["date"] = to_datetime(request.date).date()
         order = Order.from_dict(order)
         return order
 
