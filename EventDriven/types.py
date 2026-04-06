@@ -181,6 +181,20 @@ class FillDirection(Enum):
     EXERCISE = "EXERCISE"
 
 
+class AggregationLevel(Enum):
+    """Aggregation granularity for portfolio trade reporting.
+
+    Values:
+        BY_TRADE_SIGNAL: One row per (TradeID, SignalID) pair. Default behaviour.
+        BY_SIGNAL: One row per SignalID, collapsing all TradeIDs under that signal.
+        BY_TRADE: One row per TradeID, collapsing all SignalIDs under that trade.
+    """
+
+    BY_TRADE_SIGNAL = "by_trade_signal"
+    BY_SIGNAL = "by_signal"
+    BY_TRADE = "by_trade"
+
+
 class PositionAdjustmentReason(Enum):
     DTE_ROLL = "DTE_ROLL"
     MONEYNESS_ROLL = "MONEYNESS_ROLL"

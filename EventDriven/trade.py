@@ -16,7 +16,7 @@ class Trade:
     Has separate ledgers for buy and sell events.
     """
 
-    def __init__(self, trade_id: str, symbol: str, signa_id: str = None):
+    def __init__(self, trade_id: str, symbol: str, signal_id: str = None):
         self.trade_id = trade_id
         self.symbol = symbol
         self.buy_ledger = TradeLedger(f"{trade_id}_buy")
@@ -25,7 +25,7 @@ class Trade:
         self.exit_date = None
         self.current_price = None
         self.stats = None
-        self.signal_id = signa_id
+        self.signal_id = signal_id
 
     def __getitem__(self, key):
         """
