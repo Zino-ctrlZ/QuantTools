@@ -194,6 +194,7 @@ from .utils import (
 )
 from EventDriven._vars import get_use_temp_cache
 from trade.helpers.helper import CustomCache, is_USholiday
+import numpy as np
 import pandas as pd
 from typing import List, Optional
 from datetime import datetime
@@ -375,7 +376,9 @@ class RiskManager:
             return 0.25
         else:
             x = (pct_ratio - good) / (bad - good)  # Normalize to [0, 1]
-            return 1.0 - x * 0.75  # Scale to [1.0, 0.25]
+            decay = np.exp(-5 * x)  # Exponential decay factor
+            multiplier = round(0.25 + 0.75 * decay, 4)  # Scale to [0.25, 1.0]
+            return multiplier
     
     def _quantiy_liquidity_adjustment(self, quantity: int, pct_ratio: float) -> int:
         """

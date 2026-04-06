@@ -380,6 +380,7 @@ def compute_position_attribution(
 def compute_backtest_position_attribution(
     portfolio: OptionSignalPortfolio,
     trade_id: TradeID,
+    signal_id: SignalID,
 ) -> BacktestPositionAttribution:
     """Compute position attribution for a given TradeID within a backtest portfolio.
 
@@ -398,7 +399,7 @@ def compute_backtest_position_attribution(
         ValueError: If trade_id is not found in portfolio.trades_map.
     """
     # Retrieve the trade object from the portfolio using the trade_id
-    trade_obj: Trade = portfolio.trades_map.get(trade_id)
+    trade_obj: Trade = portfolio._get_trade_object(trade_id, signal_id)
     if not trade_obj:
         raise ValueError(f"TradeID {trade_id} not found in portfolio trades_map")
 
@@ -432,35 +433,37 @@ class PositionAttributionAnalyzer:
 
     def __init__(self, portfolio: OptionSignalPortfolio):
         self.portfolio = portfolio
-        self.attribution_cache: Dict[TradeID, BacktestPositionAttribution] = {}
+        self.attribution_cache: Dict[Tuple[TradeID, SignalID], BacktestPositionAttribution] = {}
 
-    def analyze_trade(self, trade_id: TradeID, force: bool = False) -> BacktestPositionAttribution:
+    def analyze_trade(self, trade_id: TradeID, signal_id: SignalID, force: bool = False) -> BacktestPositionAttribution:
         """Analyze a specific trade by computing its position attribution.
 
         Args:
             trade_id: The TradeID of the trade to analyze.
+            signal_id: The SignalID associated with the trade.
             force: If True, forces re-computation even if the result is cached.
 
         Returns:
             A BacktestPositionAttribution containing the attribution analysis
             for the specified trade.
         """
-        if trade_id not in self.attribution_cache or force:
-            self.attribution_cache[trade_id] = compute_backtest_position_attribution(self.portfolio, trade_id)
-        return self.attribution_cache[trade_id]
+        trade_key = self.portfolio._get_trade_key(trade_id, signal_id)
+        if trade_key not in self.attribution_cache or force:
+            self.attribution_cache[trade_key] = compute_backtest_position_attribution(self.portfolio, trade_id, signal_id)
+        return self.attribution_cache[trade_key]
 
-    def analyze_all_trades(self, force: bool = False) -> Dict[TradeID, BacktestPositionAttribution]:
+    def analyze_all_trades(self, force: bool = False) -> Dict[Tuple[TradeID, SignalID], BacktestPositionAttribution]:
         """Analyze all trades in the portfolio by computing their position attributions.
 
         Args:
             force: If True, forces re-computation even if results are cached.
 
         Returns:
-            A dictionary mapping each TradeID to its BacktestPositionAttribution.
+            A dictionary mapping each (TradeID, SignalID) tuple to its BacktestPositionAttribution.
         """
-        for trade_id in tqdm(self.portfolio.trades_map.keys(), desc="Analyzing trades"):
-            if trade_id not in self.attribution_cache or force:
-                self.attribution_cache[trade_id] = compute_backtest_position_attribution(self.portfolio, trade_id)
+        for trade_key, trade_obj in tqdm(self.portfolio.trades_map.items(), desc="Analyzing trades"):
+            if trade_key not in self.attribution_cache or force:
+                self.attribution_cache[trade_key] = compute_backtest_position_attribution(self.portfolio, trade_obj.trade_id, trade_obj.signal_id)
         return self.attribution_cache
 
     def convert_attribution_to_df(self, groupby: str = "signal_id", ignore_missing: bool = False) -> pd.DataFrame:
@@ -486,10 +489,10 @@ class PositionAttributionAnalyzer:
             raise ValueError("No attributions computed yet. Please run analyze_all_trades first.")
         if not ignore_missing:
             missing_trades = [
-                trade_id for trade_id in self.portfolio.trades_map.keys() if trade_id not in self.attribution_cache
+                trade_key for trade_key in self.portfolio.trades_map.keys() if trade_key not in self.attribution_cache
             ]
             if missing_trades:
-                raise ValueError(f"Missing attributions for TradeIDs: {missing_trades}")
+                raise ValueError(f"Missing attributions for TradeKeys: {missing_trades}")
         records = []
         for attr in self.attribution_cache.values():
             df = attr.attribution.copy()

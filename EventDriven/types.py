@@ -44,15 +44,20 @@ class SignalID(str):
     """Unique identifier for a trading signal.
 
     Format:
-        {TICKER}{YYYYMMDD}{SIGNAL_TYPE}
+        {TICKER}{YYYYMMDD}{SIGNAL_TYPE}(::_{STRATEGY_SLUG}) (optional strategy slug prefix)
     """
 
-    __slots__ = ("ticker", "date", "direction")
+    __slots__ = ("ticker", "date", "direction", "strategy_slug")
 
     def __new__(cls, signal_id: str) -> "SignalID":
         return super().__new__(cls, signal_id)
 
     def __init__(self, signal_id: str) -> None:
+        if "::" in signal_id:
+            strategy_slug, signal_id = signal_id.split("::", 1)  # Remove strategy slug if present
+            self.strategy_slug = strategy_slug
+        else:
+            self.strategy_slug = None
         parsed = parse_signal_id(signal_id)
         self.ticker = parsed["ticker"]
         self.date = parsed["date"]
@@ -62,8 +67,10 @@ class SignalID(str):
         return parse_signal_id(self)
 
     @staticmethod
-    def generate(underlier: str, date: pd.Timestamp, signal_type: str) -> "SignalID":
+    def generate(underlier: str, date: pd.Timestamp, signal_type: str, strategy_slug: str = None) -> "SignalID":
         signal_id = generate_signal_id(underlier, date, signal_type)
+        if strategy_slug:
+            signal_id = strategy_slug + "::" + signal_id
         return SignalID(signal_id)
 
     def __repr__(self) -> str:

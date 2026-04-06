@@ -221,6 +221,8 @@ Notes:
     - Config changes trigger sizer reload
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
@@ -350,8 +352,61 @@ class LimitsAndSizingCog(BaseCog):
         self._calculate_limits(new_pos_state)
         self._update_position_quantity(new_pos_state)
         self._create_position_metadata(new_pos_state)
+        self._on_new_position_failsafe(new_pos_state)  # Ensure limits and quantity are set to reasonable values even if there are issues in the main logic
         return new_pos_state
 
+    def _on_new_position_failsafe(self, new_pos_state: NewPositionState) -> NewPositionState:
+        """
+        Failsafe method ensures the quantity size is never 0 as long as cash can buy at least 1 contract, and that limits are set to some default value, even
+        if there are errors in the main on_new_position logic.
+        """
+        if new_pos_state.limits is not None and new_pos_state.order["data"]["quantity"] != 0:
+            return new_pos_state
+        request = new_pos_state.request
+        option_price = new_pos_state.at_time_data.get_price()
+        delta = new_pos_state.at_time_data.delta
+        tick_cash = request.tick_cash
+        chain_spot = new_pos_state.undl_at_time_data.chain_spot["close"]
+        order = new_pos_state.order
+        default_delta_lmt = default_delta_limit(
+            cash_available=tick_cash,
+            underlier_price_at_time=chain_spot,
+            sizing_lev=self.sizer_configs.sizing_lev,
+        )
+        if new_pos_state.limits is None:
+            logger.warning(f"Limits were not set for trade_id {new_pos_state.order['data']['trade_id']}. Setting to default delta limit of {default_delta_lmt}.")
+            new_pos_state.limits = PositionLimits(delta=default_delta_lmt, dte=self.config.default_dte, moneyness=self.config.default_moneyness)
+        if new_pos_state.order["data"]["quantity"] == 0:
+            max_size_cash_can_buy = abs(math.floor(tick_cash / (option_price * 100)))
+            if max_size_cash_can_buy >= 1:
+                logger.warning(f"Quantity was calculated as 0 for trade_id {new_pos_state.order['data']['trade_id']}. However, based on the available cash of {tick_cash} and option price of {option_price}, the strategy could afford to buy up to {max_size_cash_can_buy} contracts. Setting quantity to 1.")
+                order_dict = new_pos_state.order.to_dict()
+                order_dict["data"]["quantity"] = 1
+                new_pos_state.order = Order.from_dict(order_dict)
+            else:
+                logger.warning(f"Quantity was calculated as 0 for trade_id {new_pos_state.order['data']['trade_id']}, and even a single contract cannot be afforded based on the available cash of {tick_cash} and option price of {option_price}. Quantity will remain at 0.")
+        
+            ## Update limits to set to delta + buffer to avoid repeated sizing issues if the issue was with limit calculation
+            logger.warning(f"Delta limit for trade_id {new_pos_state.order['data']['trade_id']} was calculated as {new_pos_state.limits.delta}, which is below the default delta per contract of {delta}. Setting delta limit to {delta * 1.075} to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation.")
+            new_pos_state.limits.delta = delta * 1.075  # Set delta limit to 7.5% above the delta of a single contract to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation
+            pos_lmts = PositionLimits(
+                delta=new_pos_state.limits.delta,
+                dte=self.config.default_dte,
+                moneyness=self.config.default_moneyness,
+                creation_date=request.date,
+            )
+            self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
+
+            ## Update metadata as well to reflect the new limits and quantity
+            metadata = self.position_metadata.get(new_pos_state.order["data"]["trade_id"])
+            if metadata is not None:
+                metadata.delta_lmt = new_pos_state.limits.delta
+                metadata.new_quantity = new_pos_state.order["data"]["quantity"]
+                logger.warning(f"Updated metadata for trade_id {new_pos_state.order['data']['trade_id']} to reflect new delta limit of {metadata.delta_lmt} and new quantity of {metadata.new_quantity}.")
+            
+
+            
+        return new_pos_state
     def _create_position_metadata(self, new_pos_state: NewPositionState) -> None:
         """
         Create and store metadata for the new position.
@@ -502,7 +557,11 @@ class LimitsAndSizingCog(BaseCog):
 
             ## Update analysis_date
             action.analysis_date = last_updated
-            action.effective_date = last_updated + t_plus_n_timedelta
+
+            ## Update effective date to be the next trading day after last_updated + t_plus_n
+            ## This is because analysis is based on EOD data at last_updated. Execution therefore has to start from the next trading day.
+            ## If t_plus_n is 0, then effective date will be the next trading day after last_updated, which is the expected behavior.
+            action.effective_date = last_updated + t_plus_n_timedelta + pd.Timedelta(days=1)  # Add 1 day to ensure we are on the next trading day after last_updated + t_plus_n
 
             ## Only generate verbose_info for non-HOLD actions (Task #4 optimization)
             if action.action != "HOLD":

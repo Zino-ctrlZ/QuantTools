@@ -336,6 +336,12 @@ class BacktestTimeseries:
                 if direction == "L":
                     long.append(data)
                 elif direction == "S":
+                    ask = data["Closeask"]
+                    bid = data["Closebid"]
+
+                    ## Swap bid and ask for short positions to reflect the perspective of the position holder
+                    data["Closeask"] = bid
+                    data["Closebid"] = ask
                     short.append(data)
                 else:
                     raise ValueError(f"Position Type {_set[0]} not recognized")

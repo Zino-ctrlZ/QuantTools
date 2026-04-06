@@ -1,11 +1,14 @@
 import math
+from typing import Optional
 import numpy as np
 from abc import ABCMeta, abstractmethod
-
 from EventDriven.event import ExerciseEvent, FillEvent, OrderEvent
 from trade.helpers.helper import parse_option_tick
 from trade.helpers.Logging import setup_logger
+from .configs.core import ExecutionHandlerConfig
 from copy import deepcopy
+
+
 
 logger = setup_logger('EventDriven.execution')
 exec_cache = {
@@ -54,7 +57,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
     handler.
     """
     
-    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.0065):
+    def __init__(self, events, max_slippage_pct : float = 0.002, commission_rate : float = 0.0065, config: Optional[ExecutionHandlerConfig] = None):
         """
         Initialises the handler, setting the event queues
         up internally.
@@ -70,6 +73,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         self.max_slippage_pct = max_slippage_pct
         self.min_slippage_pct = max_slippage_pct / 2 # Minimum slippage is half of max slippage
         self.commission_rate = commission_rate
+        self.config: ExecutionHandlerConfig = config or ExecutionHandlerConfig()
         
     def execute_order_naively(self, order_event: OrderEvent):
         """
@@ -85,6 +89,72 @@ class SimulatedExecutionHandler(ExecutionHandler):
             fill_event = FillEvent(order_event.datetime, order_event.symbol,
                                    'ARCA', order_event.quantity, order_event.direction, fill_cost=0, commission=None, option=order_event.option, parent_event=order_event)
             self.events.put(fill_event)
+
+
+
+    def calculate_slippage_value_randomized(self, order_event: OrderEvent) -> float:
+        """
+        Calculate slippage value based on a random percentage within the specified slippage range.
+        The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+        """
+        if order_event.direction == 'BUY':
+            slippage_pct = np.random.uniform(self.min_slippage_pct, self.max_slippage_pct) ## Ensure that slippage is always positive, and never 0 or more than max_slippage_pct
+        elif order_event.direction == 'SELL':
+            slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.min_slippage_pct) ## Ensure that slippage is always negative, and never 0 or less than -max_slippage_pct
+        else:
+            raise ValueError(f"Invalid order direction: {order_event.direction}. Must be 'BUY' or 'SELL'.")
+
+        slippage_value = order_event.position['close'] * slippage_pct * order_event.quantity
+        
+        return slippage_value
+    
+    def calculate_slippage_value_fixed(self, order_event: OrderEvent) -> float:
+        """
+        Calculate slippage value based on a fixed percentage defined by max_slippage_pct.
+        The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+        """
+        if order_event.direction == 'BUY':
+            slippage_pct = self.max_slippage_pct
+        elif order_event.direction == 'SELL':
+            slippage_pct = -self.max_slippage_pct
+        else:
+            raise ValueError(f"Invalid order direction: {order_event.direction}. Must be 'BUY' or 'SELL'.")
+
+        slippage_value = order_event.position['close'] * slippage_pct * order_event.quantity
+        return slippage_value
+    
+    def calculate_slippage_pct_of_spread(self, order_event: OrderEvent) -> float:
+        """
+        Calculate slippage value as a percentage of the bid-ask spread.
+        The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+        """
+        spread = order_event.position.get("spread", None)
+        if spread is None:
+            raise ValueError("Spread information is required in the order_event position data to calculate slippage as a percentage of the spread.")
+        spread_slippage = spread * self.config.pct_alpha
+        if order_event.direction == 'BUY':
+            slippage =  spread_slippage * order_event.quantity
+        elif order_event.direction == 'SELL':
+            slippage = -spread_slippage * order_event.quantity
+        else:
+            raise ValueError(f"Invalid order direction: {order_event.direction}. Must be 'BUY' or 'SELL'.")
+        close = order_event.position['close']
+        pct_spread_slippage = (spread_slippage / close) if close != 0 else 0
+        print(f"Spread: {spread}, Spread Slippage: {spread_slippage}, Total Slippage: {slippage}, Pct Spread Slippage: {pct_spread_slippage}, Signal ID: {order_event.signal_id}, Direction: {order_event.direction}, Date: {order_event.datetime}")
+        return slippage
+    def calculate_slippage_value(self, order_event: OrderEvent) -> float:
+        """
+        Calculate slippage value based on the specified slippage model in the config.
+        """
+        if self.config.slippage_model == 'randomized':
+            return self.calculate_slippage_value_randomized(order_event)
+        elif self.config.slippage_model == 'fixed':
+            return self.calculate_slippage_value_fixed(order_event)
+        elif self.config.slippage_model == 'spread_pct':
+            return self.calculate_slippage_pct_of_spread(order_event)
+        else:
+            raise ValueError(f"Invalid slippage model: {self.config.slippage_model}. Must be 'randomized', 'fixed', or 'spread_pct'.")
+
             
     def execute_order_randomized_slippage(self, order_event: OrderEvent):
         """
@@ -103,7 +173,11 @@ class SimulatedExecutionHandler(ExecutionHandler):
         elif order_event.direction == 'SELL':
             ## We want to decrease the price for sells by slippage
             slippage_pct = np.random.uniform(-self.max_slippage_pct, -self.min_slippage_pct) ## Ensure that slippage is always negative, and never 0 or less than -max_slippage_pct
-
+        
+        slippage_pct_value = self.calculate_slippage_value(order_event)
+        slippage_per_contract = slippage_pct_value / order_event.quantity if order_event.quantity != 0 else 0
+        slippage_pct = slippage_per_contract / order_event.position['close'] if order_event.position['close'] != 0 else 0
+        
         
         #slippage may increase or decrease intended price
         price = order_event.position['close'] * (1 + slippage_pct)          

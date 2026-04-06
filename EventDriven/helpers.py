@@ -27,10 +27,14 @@ def normalize_dollar_amount(price: float | int) -> float | int:
 
 
 def parse_signal_id(id):
+    if "::" in id:
+        strategy_slug, id = id.split("::", 1)  # Remove strategy slug if present
+    else:
+        strategy_slug = None
     if "SHORT" in id:
-        return dict(direction=id[-5:], date=pd.to_datetime(id[-13:-5]), ticker=id[:-13])
+        return dict(direction=id[-5:], date=pd.to_datetime(id[-13:-5]), ticker=id[:-13], strategy_slug=strategy_slug)
     elif "LONG" in id:
-        return dict(direction=id[-4:], date=pd.to_datetime(id[-12:-4]), ticker=id[:-12])
+        return dict(direction=id[-4:], date=pd.to_datetime(id[-12:-4]), ticker=id[:-12], strategy_slug=strategy_slug)
     else:
         raise ValueError(f"Invalid signal id `{id}`, neither LONG nor SHORT was found in the id")
 

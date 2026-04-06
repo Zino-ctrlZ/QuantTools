@@ -65,6 +65,9 @@ class MeanReversionSizerCog(BaseCog):
             delta=delta,
             delta_limit=limit,
         )
+        logger.info(
+            f"Calculated delta limit: {limit}, resulting quantity: {q} lev: {self.config.sizing_lev}. Raw scaler: {scaler_raw}, applied scaler: {scaler}. Trade ID: {order['data']['trade_id']} with z-score {z_raw} and z-excess {z_excess}"
+        )
 
         ## Update order quantity and log metadata
         order["data"]["quantity"] = q

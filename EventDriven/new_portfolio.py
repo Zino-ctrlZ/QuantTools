@@ -12,7 +12,7 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData, Order
+from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData, Order, TradeID
 from EventDriven.riskmanager.new_base import RiskManager, order_failed
 from EventDriven.riskmanager.utils import parse_position_id
 from trade.helpers.Logging import setup_logger
@@ -34,7 +34,7 @@ from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
 from typing import Optional
 import plotly
-from EventDriven.dataclasses.states import PositionState, PortfolioMetaInfo, PortfolioState, PositionAnalysisContext
+from EventDriven.dataclasses.states import AtTimePositionData, PositionState, PortfolioMetaInfo, PortfolioState, PositionAnalysisContext
 from EventDriven.dataclasses.states import StrategyChangeMeta
 from EventDriven.configs.core import PortfolioManagerConfig, CashAllocatorConfig
 from EventDriven.portfolio_utils import extract_events
@@ -311,7 +311,8 @@ class OptionSignalPortfolio(Portfolio):
         return self.trades_df
 
     def aggregate_trades(self):
-        trades_data = [self.trades_map[trade_id].stats for trade_id in self.trades_map.keys()]
+        # trades_data = [self.trades_map[trade_id].stats for trade_id in self.trades_map.keys()]
+        trades_data = [trade.stats for trade in self.trades_map.values()]
         return pd.concat(trades_data, ignore_index=True) if trades_data else None
 
     @property
@@ -353,11 +354,13 @@ class OptionSignalPortfolio(Portfolio):
         symbol = signal_event.symbol
         signal_type = signal_event.signal_type
         order_type = "MKT"
+        order = None
+        
 
         if signal_type != "CLOSE":  # generate order for LONG or SHORT
             order = self.create_order(signal_event, order_type)
             self.order_cache["OPEN"].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
-            return order
+            
         elif signal_type == "CLOSE":
             ## Check if we have signal_id in current positions. If not, log warning and skip.
             if signal_event.signal_id not in self.current_positions[symbol]:
@@ -382,10 +385,10 @@ class OptionSignalPortfolio(Portfolio):
                 )
                 return None
 
-            ## Prepare order details
+            ## Prepare order details. Will leave close price and spread to be handled at the end of this if statment
             position = current_position["position"]
             self.logger.info(f"Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}")
-            position["close"] = self.calculate_close_on_position(position)
+            # position["close"] = self.calculate_close_on_position(position)
 
             ## Access skip from risk_manager market data
             skip = self.risk_manager.market_data.skip(position_id=position["trade_id"], date=signal_event.datetime)
@@ -426,9 +429,20 @@ class OptionSignalPortfolio(Portfolio):
                 parent_event=signal_event,
             )
             self.order_cache["CLOSE"].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
-            return order
-
-        return None
+            
+        ## Update order with at-time data for execution handler to use for slippage calculations and order generation logic.
+        if order is not None:
+            at_time_data = self.get_at_time_position_data(position_id=order.position["trade_id"], date=signal_event.datetime)
+            spread = at_time_data.get_spread()
+            close = at_time_data.get_price()
+            self.logger.info(
+                f"Generated order for {symbol} at {signal_event.datetime} with spread {spread} and position {order.position if order is not None else None}"
+            )
+            order.position["spread"] = spread
+            order.position["close"] = close
+            
+        
+        return order
 
     def resolve_order_result(self, position_result, signal):
         """
@@ -454,11 +468,6 @@ class OptionSignalPortfolio(Portfolio):
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
 
         ## TODO: Decommision self.__max_contract_price and rely solely on cash allocator config for max contract price.
-        # max_contract_price = (
-        #     self.__max_contract_price[signal_event.symbol]
-        #     if signal_event.max_contract_price is None
-        #     else signal_event.max_contract_price
-        # )
 
         ## Determine max contract price based on cash allocator config or default to 50% of allocated cash
         max_contract_dict = (
@@ -839,6 +848,15 @@ class OptionSignalPortfolio(Portfolio):
         """
         return price * 100
 
+    def _get_trade_object(self, trade_id: str, signal_id: str) -> Trade:
+        return self.trades_map.get(self._get_trade_key(trade_id, signal_id))
+    
+    def _get_trade_key(self, trade_id: str, signal_id: str) -> tuple:
+        return (trade_id, signal_id)
+    
+    def _set_trade_object(self, trade_id: str, signal_id: str, trade: Trade):
+        self.trades_map[self._get_trade_key(trade_id, signal_id)] = trade
+
     def update_positions_on_fill(self, fill_event: FillEvent):
         """
         Takes a FilltEvent object and updates the current positions in the portfolio
@@ -849,14 +867,15 @@ class OptionSignalPortfolio(Portfolio):
         """
         # Check whether the fill is a buy or sell
         new_position_data = {}
-
-        if fill_event.position["trade_id"] not in self.trades_map:
-            self.trades_map[fill_event.position["trade_id"]] = Trade(
-                fill_event.position["trade_id"], fill_event.symbol, fill_event.signal_id
-            )
-            self.trades_map[fill_event.position["trade_id"]].update(fill_event)
+        trade_map_key = self._get_trade_key(fill_event.position["trade_id"], fill_event.signal_id) # noqa
+        trade_id = fill_event.position["trade_id"]
+        symbol = fill_event.symbol
+        if trade_map_key not in self.trades_map:
+            trade_obj = Trade(trade_id, symbol, fill_event.signal_id)
+            self._set_trade_object(trade_id, fill_event.signal_id, trade_obj)
+            self._get_trade_object(trade_id, fill_event.signal_id).update(fill_event)
         else:
-            self.trades_map[fill_event.position["trade_id"]].update(fill_event)
+            self._get_trade_object(trade_id, fill_event.signal_id).update(fill_event)
 
         if fill_event.direction == "BUY":
             if fill_event.position is not None:
@@ -980,14 +999,20 @@ class OptionSignalPortfolio(Portfolio):
             current_cash[sym] = self.allocated_cash_map[sym]  # update current cash for the symbol
             remove_signals = []
             for signal_id in self.current_positions[sym]:
-                current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]["position"])
+                trade_id = self.current_positions[sym][signal_id]["position"]["trade_id"]
+                at_time_position_data = self.get_at_time_position_data(position_id=trade_id, date=current_date)
+                spread = at_time_position_data.get_spread()
+                # current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]["position"])
+                current_close = at_time_position_data.get_price()
                 market_value = self.__normalize_dollar_amount(
                     self.current_positions[sym][signal_id]["quantity"] * current_close
                 )
+                current_position = self.current_positions[sym][signal_id]
+                current_position["position"]["spread"] = spread
+                current_trade_id = current_position["position"]["trade_id"]
+                current_trade = self._get_trade_object(current_trade_id, signal_id)
+                current_trade.update_current_price(self.__normalize_dollar_amount(current_close)) ## Update current price on trade object for PnL calculations in risk manager analysis. This is important to have accurate and up to date price information on the trade object for the position analysis and risk management decisions.
 
-                self.trades_map[self.current_positions[sym][signal_id]["position"]["trade_id"]].update_current_price(
-                    self.__normalize_dollar_amount(current_close)
-                )  # update current price on trade
 
                 self.current_positions[sym][signal_id]["position"]["close"] = (
                     current_close  ##Update close price for every iteration
@@ -1034,15 +1059,29 @@ class OptionSignalPortfolio(Portfolio):
                 if roll_event is not None:
                     self.execute_roll_buy(roll_event)
 
-    def calculate_close_on_position(self, position) -> float:
+    def calculate_close_on_position(self, position, date=None) -> float:
         """
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position
         """
         return self.risk_manager.market_data.get_at_time_position_data(
-            position["trade_id"], self.eventScheduler.current_date
+            position["trade_id"], date or self.eventScheduler.current_date
         ).get_price()
+    
+    def calculate_spread_on_position(self, position_id:TradeID, date=None) -> float:
+        """
+        Calculate the spread on a position
+        the spread is the difference between the bid and ask price of the position
+        """
+        return self.risk_manager.market_data.get_at_time_position_data(
+            position_id=position_id, date=date or self.eventScheduler.current_date
+        ).get_spread()
 
+    def get_at_time_position_data(self, position_id:TradeID, date=None) -> AtTimePositionData:
+        """
+        Get the position data at a given time
+        """
+        return self.risk_manager.market_data.get_at_time_position_data(position_id=position_id, date=date or self.eventScheduler.current_date)
     # Getters
     def get_weighted_holdings(self) -> pd.DataFrame:
         """
