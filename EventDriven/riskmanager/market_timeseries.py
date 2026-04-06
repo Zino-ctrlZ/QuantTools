@@ -469,6 +469,23 @@ class BacktestTimeseries:
             opttick=opttick, processed_option_data=self.options_cache, start=self.start_date, end=self.end_date
         )
 
+    def _ffill_adj_strike_business_days(
+        self,
+        strike_series: pd.Series,
+        start_date: Union[datetime, str],
+        end_date: Union[datetime, str],
+    ) -> pd.Series:
+        """Forward-fill adjusted strike values across business days only."""
+        if strike_series is None or strike_series.empty:
+            return strike_series
+
+        series = strike_series.copy()
+        series.index = pd.DatetimeIndex(to_datetime(series.index)).normalize()
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+
+        bday_index = pd.bdate_range(start=to_datetime(start_date), end=to_datetime(end_date))
+        return series.reindex(bday_index).ffill()
+
     def generate_option_data_for_trade(self, opttick, check_date) -> pd.DataFrame:
         """
         Generate option data for a given trade.
@@ -523,11 +540,15 @@ class BacktestTimeseries:
             data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
             data["adj_strike"] = meta["strike"]
             data["factor"] = 1.0
-            self.adjusted_strike_cache[opttick] = data["adj_strike"]
-            return data[
-                (data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
-                & (data.index <= pd.to_datetime(effective_end) + relativedelta(months=3))
-            ]
+            window_start = to_datetime(self.start_date) - relativedelta(months=3)
+            window_end = to_datetime(effective_end) + relativedelta(months=3)
+            data = data[(data.index >= window_start) & (data.index <= window_end)]
+            self.adjusted_strike_cache[opttick] = self._ffill_adj_strike_business_days(
+                data["adj_strike"],
+                start_date=window_start,
+                end_date=window_end,
+            )
+            return data
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
         else:
@@ -601,9 +622,12 @@ class BacktestTimeseries:
         final_data = final_data[~final_data.index.duplicated(keep="last")]
 
         ## Leave residual data outside the PM date range
-        final_data = final_data[
-            (final_data.index >= pd.to_datetime(self.start_date) - relativedelta(months=3))
-            & (final_data.index <= pd.to_datetime(effective_end) + relativedelta(months=3))
-        ]
-        self.adjusted_strike_cache[opttick] = final_data["adj_strike"]
+        window_start = to_datetime(self.start_date) - relativedelta(months=3)
+        window_end = to_datetime(effective_end) + relativedelta(months=3)
+        final_data = final_data[(final_data.index >= window_start) & (final_data.index <= window_end)]
+        self.adjusted_strike_cache[opttick] = self._ffill_adj_strike_business_days(
+            final_data["adj_strike"],
+            start_date=window_start,
+            end_date=window_end,
+        )
         return final_data

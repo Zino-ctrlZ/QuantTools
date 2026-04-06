@@ -210,7 +210,7 @@ from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 TIMESERIES_START = pd.to_datetime(OPTION_TIMESERIES_START_DATE)
 _NOW = datetime.now()
 # Set end date to one year ago to avoid lookahead bias and ensure we have enough data for backtesting
-TIMESERIES_END = _NOW.replace(year=_NOW.year - 1, month=12, day=31).strftime("%Y-%m-%d")  
+TIMESERIES_END = _NOW.replace(year=_NOW.year - 1, month=12, day=31).strftime("%Y-%m-%d")
 LOOKBACKS = {}
 
 ## Paths
@@ -425,9 +425,9 @@ def get_cache(name: str) -> CustomCache:
 
 # @dynamic_memoize
 def populate_cache_with_chain(
-    tick, 
-    date, 
-    chain_spot=None, 
+    tick,
+    date,
+    chain_spot=None,
     print_url=True,
     add_greeks=False,
 ):
@@ -498,7 +498,9 @@ def populate_cache_with_chain(
         ]  ## Filter out extreme moneyness to reduce size
     chain_clipped.columns = chain_clipped.columns.str.lower()
     chain_clipped["pct_spread"] = (chain_clipped["closeask"] - chain_clipped["closebid"]) / chain_clipped["midpoint"]
-    chain_clipped[["iv", "delta", "gamma", "vega", "theta", "rho", "volga"]] = np.nan  # Placeholder for Greeks, to be filled in later when we have the data
+    chain_clipped[["iv", "delta", "gamma", "vega", "theta", "rho", "volga"]] = (
+        np.nan
+    )  # Placeholder for Greeks, to be filled in later when we have the data
     return chain_clipped
 
 

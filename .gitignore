@@ -213,3 +213,7 @@ trade/assets/notebooks
 .decommission/
 EventDriven/riskmanager/.decomission/
 EventDriven/riskmanager/.decommission/
+
+# Local debug folders (keep out of remote)
+debug/
+**/debug/
