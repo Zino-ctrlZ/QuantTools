@@ -52,7 +52,7 @@ class SimulationResults:
     def __repr__(self) -> str:
         """String representation showing summary statistics."""
         tickers = list(self.trades.keys())
-        total_trades = sum(len(t) for t in self.trades.values())
+        total_trades = sum(len(t) for t in self.trades.values()) / 2 # Assuming each trade has an open and close action
         return f"SimulationResults(" f"tickers={tickers}, " f"total_trades={total_trades})"
     
 @dataclass

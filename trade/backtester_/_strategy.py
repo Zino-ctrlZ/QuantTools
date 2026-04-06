@@ -60,7 +60,12 @@ class TradeDecision:
             raise TypeError("TradeDecision.side must be an integer.")
         if self.side not in (1, -1, 0):
             raise ValueError("TradeDecision.side must be 1 (long), -1 (short), or 0 (no position).")
-        if (self.signal_id is not None and not isinstance(self.signal_id, SignalID)) and self.signal_id != "N/A":
+        if (self.signal_id is not None and not isinstance(self.signal_id, (SignalID, str))) and self.signal_id != "N/A":
+            if isinstance(self.signal_id, str) and self.signal_id != "N/A":
+                try:
+                    self.signal_id = SignalID.parse(self.signal_id)
+                except Exception as e:
+                    raise ValueError(f"Invalid signal_id string: {self.signal_id}") from e
             raise TypeError("TradeDecision.signal_id must be of type SignalID, 'N/A', or None. Received type: {}".format(type(self.signal_id)))
         if self.pos_effect is not None and not isinstance(self.pos_effect, PositionEffect):
             raise TypeError("TradeDecision.pos_effect must be of type PositionEffect or None.")
@@ -233,6 +238,15 @@ class StrategyBase(ABC):
         for req in must_have_in_init:
             if req not in params:
                 raise TypeError(f"{cls.__name__}.__init__ must accept parameter '{req}'.")
+
+        # Enfore params are in bt_params
+        for p in params.values():
+            if p.name in must_have_in_init + ["self", "kwargs", "args"]:
+                continue
+            if p.name not in cls.bt_params:
+                raise TypeError(
+                    f"{cls.__name__}.__init__ has parameter '{p.name}' which is not listed in {cls.__name__}.bt_params."
+                )
 
         # If __init__ has **kwargs, accept anything; still enforce bt_params existence/type.
         # has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())

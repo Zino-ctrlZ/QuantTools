@@ -423,7 +423,7 @@ def get_cache(name: str) -> CustomCache:
         raise ValueError(f"Invalid cache name: {name}")
 
 
-@dynamic_memoize
+# @dynamic_memoize
 def populate_cache_with_chain(
     tick, 
     date, 
@@ -434,30 +434,37 @@ def populate_cache_with_chain(
     """
     Populate the cache with chain data.
     """
-    chain = retrieve_chain_bulk(tick, "", date, date, "16:00", "C", print_url=False)
-    logger.info(f"Retrieved chain for {tick} on {date}")
+    key = (tick, pd.to_datetime(date, format="%Y-%m-%d").strftime("%Y-%m-%d"))
+    if key in get_persistent_cache():
+        chain_clipped = get_persistent_cache()[key]
 
-    ## Retrieve OI
-    ## Info: We use the previous business day to get OI
-    ## This is because thetadata updates OI at the end of the day
-    ## Therefore to avoid lookahead bias, we use the previous business day
-    prev = change_to_last_busday((pd.to_datetime(date) - BDay(1))).strftime("%Y-%m-%d")
-    oi = retrieve_bulk_open_interest(symbol=tick, exp=0, start_date=prev, end_date=prev, print_url=False)
+    else:
+        chain = retrieve_chain_bulk(tick, "", date, date, "16:00", "C", print_url=False)
+        logger.info(f"Retrieved chain for {tick} on {date}")
 
-    ## Clip Chain
-    chain_clipped = chain.reset_index()  # [['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
-    chain_clipped = chain_clipped.merge(
-        oi[["Root", "Expiration", "Strike", "Right", "Open_interest"]],
-        on=["Root", "Expiration", "Strike", "Right"],
-        how="left",
-    )
-    if PATCH_TICKERS:
-        chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
+        ## Retrieve OI
+        ## Info: We use the previous business day to get OI
+        ## This is because thetadata updates OI at the end of the day
+        ## Therefore to avoid lookahead bias, we use the previous business day
+        prev = change_to_last_busday((pd.to_datetime(date) - BDay(1))).strftime("%Y-%m-%d")
+        oi = retrieve_bulk_open_interest(symbol=tick, exp=0, start_date=prev, end_date=prev, print_url=False)
 
-    ## Create ID
-    id_params = chain_clipped[["Root", "Right", "Expiration", "Strike"]].T.to_numpy()
-    ids = runThreads(generate_option_tick_new, id_params)
-    chain_clipped["opttick"] = ids
+        ## Clip Chain
+        chain_clipped = chain.reset_index()  # [['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+        chain_clipped = chain_clipped.merge(
+            oi[["Root", "Expiration", "Strike", "Right", "Open_interest"]],
+            on=["Root", "Expiration", "Strike", "Right"],
+            how="left",
+        )
+        if PATCH_TICKERS:
+            chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
+
+        ## Create ID
+        id_params = chain_clipped[["Root", "Right", "Expiration", "Strike"]].T.to_numpy()
+        ids = runThreads(generate_option_tick_new, id_params)
+        chain_clipped["opttick"] = ids
+        _PERSISTENT_CACHE[key] = chain_clipped  ## Cache the chain data to avoid redundant API calls in the future
+
     filter_opt = get_avoid_opticks(tick)
     chain_clipped = chain_clipped[~chain_clipped["opttick"].isin(filter_opt)]  ## Optticks to avoid
     chain_clipped["chain_id"] = chain_clipped["opttick"] + "_" + chain_clipped["datetime"].astype(str)

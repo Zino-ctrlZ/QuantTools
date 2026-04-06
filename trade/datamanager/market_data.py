@@ -716,7 +716,7 @@ class MarketTimeseries:
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
-        return self._clip_to_date_range(cached_data, start, end)
+        return self._clip_to_date_range(cached_data, start, end).copy()
 
     def _get_chain_spot_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.DataFrame:
         """Retrieve chain-derived spot timeseries for a symbol with automatic cache management.

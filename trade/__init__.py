@@ -41,7 +41,12 @@ all_trading_days = mcal.date_range(schedule, frequency="1D").date  ## type: igno
 all_days = pd.date_range(start="2000-01-01", end="2040-01-01", freq="B")
 holidays = set(all_days.difference(all_trading_days).strftime("%Y-%m-%d").to_list())
 all_new_years = pd.date_range(start="2000-01-01", end="2040-01-01", freq="AS").strftime("%Y-%m-%d").to_list()
-all_christmas = pd.date_range(start="2000-01-01", end="2040-01-01", freq="A-DEC").strftime("%Y-%m-%d").to_list()
+all_christmas = list(
+    map(
+        lambda x: x.replace(day=25).strftime("%Y-%m-%d"),
+        pd.date_range(start="2000-01-01", end="2040-01-01", freq="A-DEC"),
+    )
+)
 holidays.update(all_new_years)
 holidays.update(all_christmas)
 HOLIDAY_SET = set(holidays)
