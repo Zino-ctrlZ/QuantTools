@@ -561,7 +561,9 @@ class LimitsAndSizingCog(BaseCog):
             ## Update effective date to be the next trading day after last_updated + t_plus_n
             ## This is because analysis is based on EOD data at last_updated. Execution therefore has to start from the next trading day.
             ## If t_plus_n is 0, then effective date will be the next trading day after last_updated, which is the expected behavior.
-            action.effective_date = last_updated + t_plus_n_timedelta + pd.Timedelta(days=1)  # Add 1 day to ensure we are on the next trading day after last_updated + t_plus_n
+            ## If t_plus_n is > 0, then effective date will be last_updated + t_plus_n, but if that falls on a non-trading day, we need to move it to the next trading day. Therefore, we add a buffer of 1 day to ensure we move to the next trading day if last_updated + t_plus_n falls on a non-trading day.
+            tplus_n_timedelta = max(t_plus_n_timedelta, pd.Timedelta(days=1))  # Ensure at least 1 day is added to move to the next trading day
+            action.effective_date = last_updated + tplus_n_timedelta
 
             ## Only generate verbose_info for non-HOLD actions (Task #4 optimization)
             if action.action != "HOLD":
