@@ -13,7 +13,8 @@ FACTOR_DMS = {
     "trade.datamanager.vol",
     "trade.datamanager.option_spot",
     "trade.datamanager.greeks",
-    "trade.datamanager.base"
+    "trade.datamanager.base",
+    "trade.datamanager.market_data_helpers.dividends",
 }
 
 VARS = [

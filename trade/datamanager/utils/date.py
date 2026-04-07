@@ -191,7 +191,7 @@ def _sync_date(
         logger.info(f"Using cached date range for {start_date} - {end_date} and option tick {opttick}")
         cached_dates = LIST_DATE_CACHE.get(key=opttick)
         min_date = cached_dates["min_date"]
-        max_date = _get_max_date(end_date)
+        max_date = cached_dates["max_date"]
 
         start_date = max(min_date, start_date)
         end_date = min(max_date, end_date)
@@ -212,12 +212,13 @@ def _sync_date(
 
     ## Adjust start date to min
     min_date = min(dates)
+    max_date = max(dates)
     start_date = max(min_date, start_date)
-    end_date = _get_max_date(end_date)
+    end_date = min(_get_max_date(end_date), max_date)
 
-    LIST_DATE_CACHE.set(key=opttick, value={"min_date": min_date}, expire=None)
+    LIST_DATE_CACHE.set(key=opttick, value={"min_date": min_date, "max_date": end_date}, expire=None)
 
-    return min(start_date, end_date), max(start_date, end_date)
+    return to_datetime(min(start_date, end_date)), to_datetime(max(start_date, end_date))
 
 
 @dataclass(slots=True)
