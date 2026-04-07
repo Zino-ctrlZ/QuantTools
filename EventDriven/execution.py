@@ -91,7 +91,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         if spread is None or close in [None, 0]:
             return None
         try:
-            return abs(float(spread) / float(close))
+            return abs(float(spread) / float(close) * self.config.pct_alpha)
         except Exception:
             return None
 
