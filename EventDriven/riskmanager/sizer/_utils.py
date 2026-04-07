@@ -317,6 +317,8 @@ class ZcoreScalar:
         if isinstance(self.rvol_window, list):
             self.rvol_window = tuple(self.rvol_window)
 
+        self.syms = list(set(self.syms))  ## Ensure syms is a list of unique symbols
+
         ## Assert rvol_window is valid
         self.rvol_window = self.__rvol_window_assert(self.vol_type, self.rvol_window)
         assert self.vol_type in self.VOL_TYPES, f"vol_type must be one of {self.VOL_TYPES}, got {self.vol_type}"
@@ -379,7 +381,7 @@ class ZcoreScalar:
         ## If syms is None, use the existing syms
         ## This is to avoid reloading timeseries if already loaded
         if syms is None:
-            syms = self.syms
+            syms = set(self.syms)
 
         if not isinstance(syms, list):
             raise TypeError(f"syms must be a list, got {type(syms)}")
@@ -403,8 +405,7 @@ class ZcoreScalar:
 
         ## Load timeseries for each symbol and calculate the z-score scaler
         for sym in syms:
-            timeseries.load_timeseries(sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now())
-            ts = timeseries.get_timeseries(sym=sym).spot["close"]
+            ts = timeseries.get_timeseries(sym=sym, start_date=Y2_LAGGED_START_DATE, end_date=datetime.now()).spot["close"]
 
             if self.vol_type == "window":
                 func = lambda x: realized_vol(x, self.rvol_window)
@@ -479,3 +480,22 @@ class ZcoreScalar:
             raise ValueError(f"Date {date} not found in scaler_ts index for symbol {sym}.")
 
         return scaler_ts.loc[date]
+
+    def get_rvol_on_date(self, sym: str, date: pd.Timestamp | str | datetime) -> float:
+        """
+        Get the realized volatility for a specific symbol on a specific date.
+        """
+        if isinstance(date, str):
+            date = pd.Timestamp(date).date()
+        elif isinstance(date, datetime):
+            date = date.date()
+
+        if sym not in self.rvol_timeseries:
+            raise ValueError(f"Symbol {sym} not found in rvol_timeseries.")
+
+        rvol_ts = self.rvol_timeseries[sym]
+        date = pd.to_datetime(date).strftime("%Y-%m-%d")
+        if date not in rvol_ts.index:
+            raise ValueError(f"Date {date} not found in rvol_ts index for symbol {sym}.")
+
+        return rvol_ts.loc[date]

@@ -263,6 +263,7 @@ class _LimitsMetaData:
     undl_price: Optional[float] = None
     prev_quantity: Optional[int] = None
     new_quantity: Optional[int] = None
+    rvol: Optional[float] = None
 
 
 class LimitsAndSizingCog(BaseCog):
@@ -281,7 +282,7 @@ class LimitsAndSizingCog(BaseCog):
         self._sizer_configs: Optional[Union[DefaultSizerConfigs, ZscoreSizerConfigs]] = sizer_configs
         self.position_limits: Dict[str, PositionLimits] = {}
         self.position_metadata: Dict[str, _LimitsMetaData] = {}
-        self.underlier_list = underlier_list if underlier_list is not None else []
+        self.underlier_list = list(set(underlier_list if underlier_list is not None else []))
         if config is None:
             config = LimitsEnabledConfig()
 
@@ -421,6 +422,11 @@ class LimitsAndSizingCog(BaseCog):
             if isinstance(self.sizer, DefaultSizer)
             else self.sizer.scaler.get_scaler_on_date(sym=new_pos_state.symbol, date=request.date)
         )
+        rvol = (
+            None
+            if isinstance(self.sizer, DefaultSizer)
+            else self.sizer.scaler.get_rvol_on_date(sym=new_pos_state.symbol, date=request.date)
+        )
         metadata = _LimitsMetaData(
             trade_id=order["data"]["trade_id"],
             date=request.date,
@@ -432,6 +438,8 @@ class LimitsAndSizingCog(BaseCog):
             undl_price=undl_data.chain_spot["close"],
             delta_lmt=new_pos_state.limits.delta,
             new_quantity=order["data"]["quantity"],
+            rvol=rvol,
+
         )
         logger.info(f"Storing position metadata: {metadata}")
         self.position_metadata[order["data"]["trade_id"]] = metadata
