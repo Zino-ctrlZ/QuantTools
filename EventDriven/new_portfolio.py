@@ -1248,6 +1248,61 @@ class OptionSignalPortfolio(Portfolio):
             position_id=position_id, date=date or self.eventScheduler.current_date
         ).get_spread()
 
+    def get_trade_timeseries(self, trade_id: str, signal_id: Optional[str] = None) -> pd.DataFrame:
+        """Return position timeseries for a trade, bounded by entry and exit dates.
+
+        If ``signal_id`` is omitted, it is inferred from aggregated trade rows for the
+        provided ``trade_id``. If inference is ambiguous, a ValueError is raised.
+        If the trade has no exit date, the backtest end date is used.
+        """
+        # Use normalized trade rows as the single source of entry/exit bounds.
+        trades_df = self.aggregate_trades(level=AggregationLevel.BY_TRADE_SIGNAL)
+        if trades_df is None or trades_df.empty:
+            raise ValueError("No trades available in portfolio")
+
+        trade_rows = trades_df[trades_df["TradeID"] == trade_id]
+        if trade_rows.empty:
+            raise ValueError(f"TradeID {trade_id} not found in portfolio trades")
+
+        # If signal_id is omitted, it must resolve to exactly one candidate.
+        if signal_id is None:
+            signal_ids = trade_rows["SignalID"].dropna().unique().tolist()
+            if len(signal_ids) != 1:
+                raise ValueError(
+                    f"signal_id cannot be inferred for trade_id {trade_id}; multiple signal_ids found: {signal_ids}"
+                )
+            signal_id = signal_ids[0]
+
+        trade_rows = trade_rows[trade_rows["SignalID"] == signal_id]
+        if trade_rows.empty:
+            raise ValueError(f"TradeID {trade_id} with signal_id {signal_id} not found in portfolio trades")
+
+        row = trade_rows.iloc[0]
+        entry_time = row.get("EntryTime")
+        if pd.isna(entry_time):
+            raise ValueError(f"TradeID {trade_id} with signal_id {signal_id} has no entry time")
+
+        # Open trades are sliced through configured backtest end date.
+        exit_time = row.get("ExitTime")
+        if pd.isna(exit_time):
+            exit_time = self.eventScheduler.end_date
+
+        start_dt = pd.Timestamp(to_datetime(entry_time))
+        end_dt = pd.Timestamp(to_datetime(exit_time))
+
+        position_data = self.risk_manager.market_data.get_position_data(position_id=trade_id)
+        if position_data.empty:
+            return position_data
+
+        # Normalize index to daily keys before date-window slicing.
+        position_slice = position_data.copy()
+        if isinstance(position_slice.index, pd.DatetimeIndex):
+            position_slice.index = position_slice.index.normalize()
+        else:
+            position_slice.index = pd.DatetimeIndex(to_datetime(position_slice.index)).normalize()
+
+        return position_slice.loc[start_dt.normalize() : end_dt.normalize()]
+
     def get_at_time_position_data(self, position_id: TradeID, date=None) -> AtTimePositionData:
         """
         Get the position data at a given time
