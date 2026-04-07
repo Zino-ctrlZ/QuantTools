@@ -180,10 +180,9 @@ def _get_trade_quantity_time_series(
         signal_id=trade_obj.signal_id,
         daily_qty=qty_frame["cumulative_qty"],
         quantity_change=qty_frame["qty_change"],
-
         ## Scale everything to per-unit
         exec_price=qty_frame["per_unit_market_value"] / 100,
-        commission=abs(qty_frame["per_unit_commission"].fillna(0)/100),
+        commission=abs(qty_frame["per_unit_commission"].fillna(0) / 100),
         slippage=abs(qty_frame["per_unit_slippage"].fillna(0) / 100),
         trade_entry=trade_entry,
         trade_exit=trade_exit,
@@ -280,7 +279,7 @@ def compute_position_attribution(
     attribution = attribution.copy()
     commission = qty_ts.commission
     slippage = qty_ts.slippage
-    
+
     ## Ensure attribution has necessary columns, if not create them with default values
     if "commission_cost" not in attribution.columns:
         attribution["commission_cost"] = commission.fillna(0)
@@ -303,13 +302,13 @@ def compute_position_attribution(
         """
         if qty > 0:
             # OPEN: entry is execution price on this date, close is current position price
-            entry_p = abs(exec_price.loc[date]) #+ slippage.loc[date] + commission.loc[date]
+            entry_p = abs(exec_price.loc[date])  # + slippage.loc[date] + commission.loc[date]
             close_p = get_position_price_func(_id=trade_id, date=date, force=True)
         else:
             # CLOSE: entry is previous day's position price, close is execution price on this date
             prev_date = change_to_last_busday(date - BDay(1))
             entry_p = get_position_price_func(_id=trade_id, date=prev_date, force=True)
-            close_p = abs(exec_price.loc[date]) #- slippage.loc[date] - commission.loc[date]
+            close_p = abs(exec_price.loc[date])  # - slippage.loc[date] - commission.loc[date]
         pnl = (close_p - entry_p) * abs(qty)
         return pnl, entry_p, close_p
 
@@ -354,7 +353,12 @@ def compute_position_attribution(
         logger.info(
             f"Date: {date.date()}, Qty: {qty_change}, Entry: {entry_p}, Close: {close_p}, PnL: {trade_pnl}, PrevQty: {prev_qty}, Commission: {commission_cost}, Slippage: {slippage_cost}"
         )
-    attribution["opt_plus_adj"] = attribution["opt_dod_change"] + attribution["trade_pnl_adjustment"] + attribution["commission_cost"] + attribution["slippage_cost"]   
+    attribution["opt_plus_adj"] = (
+        attribution["opt_dod_change"]
+        + attribution["trade_pnl_adjustment"]
+        + attribution["commission_cost"]
+        + attribution["slippage_cost"]
+    )
     attribution = attribution[
         [
             "opt_dod_change",
@@ -449,7 +453,9 @@ class PositionAttributionAnalyzer:
         """
         trade_key = self.portfolio._get_trade_key(trade_id, signal_id)
         if trade_key not in self.attribution_cache or force:
-            self.attribution_cache[trade_key] = compute_backtest_position_attribution(self.portfolio, trade_id, signal_id)
+            self.attribution_cache[trade_key] = compute_backtest_position_attribution(
+                self.portfolio, trade_id, signal_id
+            )
         return self.attribution_cache[trade_key]
 
     def analyze_all_trades(self, force: bool = False) -> Dict[Tuple[TradeID, SignalID], BacktestPositionAttribution]:
@@ -463,15 +469,17 @@ class PositionAttributionAnalyzer:
         """
         for trade_key, trade_obj in tqdm(self.portfolio.trades_map.items(), desc="Analyzing trades"):
             if trade_key not in self.attribution_cache or force:
-                self.attribution_cache[trade_key] = compute_backtest_position_attribution(self.portfolio, trade_obj.trade_id, trade_obj.signal_id)
+                self.attribution_cache[trade_key] = compute_backtest_position_attribution(
+                    self.portfolio, trade_obj.trade_id, trade_obj.signal_id
+                )
         return self.attribution_cache
 
     def convert_attribution_to_df(self, groupby: str = "signal_id", ignore_missing: bool = False) -> pd.DataFrame:
         """Convert cached attributions to a grouped summary DataFrame.
 
         Args:
-            groupby: Column by which to group results. Must be ``"signal_id"`` or
-                ``"trade_id"``.
+            groupby: Aggregation mode. Must be ``"signal_id"``, ``"trade_id"``,
+                or ``"daily"``.
             ignore_missing: If True, skips trades without computed attributions.
                 If False, raises an error for any missing trades.
 
@@ -482,9 +490,12 @@ class PositionAttributionAnalyzer:
         Raises:
             ValueError: If no attributions have been computed yet.
             ValueError: If ``ignore_missing=False`` and any trades are missing attributions.
-            AssertionError: If ``groupby`` is not ``"signal_id"`` or ``"trade_id"``.
+            AssertionError: If ``groupby`` is not ``"signal_id"``, ``"trade_id"``,
+                or ``"daily"``.
         """
-        assert groupby in ["signal_id", "trade_id"], "groupby must be either 'signal_id' or 'trade_id'"
+        assert groupby in ["signal_id", "trade_id", "daily"], (
+            "groupby must be one of 'signal_id', 'trade_id', or 'daily'"
+        )
         if not self.attribution_cache:
             raise ValueError("No attributions computed yet. Please run analyze_all_trades first.")
         if not ignore_missing:
@@ -502,5 +513,9 @@ class PositionAttributionAnalyzer:
         combined_df = pd.concat(records)
         if groupby == "signal_id":
             return combined_df.drop(columns=["trade_id"]).groupby("signal_id").sum() * 100
-        else:
+        if groupby == "trade_id":
             return combined_df.drop(columns=["signal_id"]).groupby("trade_id").sum() * 100
+
+        # Daily aggregation drops both IDs and sums across all trades/signals per date.
+        daily_df = combined_df.drop(columns=["signal_id", "trade_id"])
+        return daily_df.groupby(daily_df.index).sum() * 100
