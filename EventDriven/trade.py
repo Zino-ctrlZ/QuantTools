@@ -24,8 +24,18 @@ class Trade:
         self.entry_date = None
         self.exit_date = None
         self.current_price = None
-        self.stats = None
         self.signal_id = signal_id
+        self.closed_pnl = 0.0
+        self.unrealized_pnl = 0.0
+        self.total_pnl = 0.0
+
+    @property
+    def stats(self):        
+        """
+        Returns a DataFrame of aggregated statistics for the trade.
+        Caches the result and only recalculates if the underlying data has changed.
+        """
+        return pd.DataFrame([self.aggregate()])
 
     def __getitem__(self, key):
         """
@@ -47,6 +57,23 @@ class Trade:
         else:
             raise KeyError(f"Key '{key}' not found in stats.")
 
+    def _calculate_pnl_from_ledgers(self):
+        """Calculate realized/unrealized/total PnL directly from buy/sell ledgers."""
+        entry_qty = self.buy_ledger.quantity
+        exit_qty = self.sell_ledger.quantity
+        closed_qty = min(entry_qty, exit_qty)
+        open_qty = max(entry_qty - exit_qty, 0)
+
+        entry_price = self.buy_ledger.avg_price
+        exit_price = self.sell_ledger.avg_price
+
+        realized = (exit_price - entry_price) * closed_qty if closed_qty > 0 else 0.0
+        unrealized = (
+            (self.current_price - entry_price) * open_qty if open_qty > 0 and self.current_price is not None else 0.0
+        )
+        total = realized + unrealized
+        return realized, unrealized, total
+
     def update(self, fill_event: FillEvent):
         """
         Update the appropriate ledger based on the fill event direction
@@ -62,7 +89,7 @@ class Trade:
             if self.is_closed():
                 self.exit_date = fill_event.datetime
 
-        self.stats = pd.DataFrame([self.aggregate()])
+        self.update_pnls()
 
     def _update_kw(self, **entry_kwargs):
         """
@@ -101,7 +128,7 @@ class Trade:
             if self.is_closed():
                 self.exit_date = entry_time
 
-        self.stats = pd.DataFrame([self.aggregate()])
+        self.update_pnls()
 
     def is_closed(self):
         """
@@ -133,7 +160,7 @@ class Trade:
         stats["EntrySlippage"] = self.buy_ledger.slippage
         stats["EntryQuantity"] = self.buy_ledger.quantity
         stats["EntryAuxilaryCost"] = self.buy_ledger.aux_cost
-        stats["TotalEntryCost"] = self.buy_ledger.avg_total_cost
+        stats["TotalEntryCost"] = self.buy_ledger.total_cost
 
         # Calculate metrics for sell transactions
         stats["ExitPrice"] = self.sell_ledger.avg_price
@@ -141,7 +168,7 @@ class Trade:
         stats["ExitSlippage"] = self.sell_ledger.slippage
         stats["ExitQuantity"] = self.sell_ledger.quantity
         stats["ExitAuxilaryCost"] = self.sell_ledger.aux_cost
-        stats["TotalExitCost"] = self.sell_ledger.avg_total_cost
+        stats["TotalExitCost"] = self.sell_ledger.total_cost
 
         stats["Quantity"] = stats["ExitQuantity"]
 
@@ -182,14 +209,31 @@ class Trade:
                 stats["Duration"] = (self.exit_date - self.entry_date).days
             else:
                 stats["Duration"] = None
-
+        
         return stats
+    
+    def update_pnls(self):
+        """
+        Helper method to update the closed, unrealized, and total PnL for the trade.
+        Should be called after any update to the ledgers or current price.
+        """
+        self.closed_pnl, self.unrealized_pnl, self.total_pnl = self._calculate_pnl_from_ledgers()
 
     def update_current_price(self, price):
         """
         Update the current market price for calculating unrealized PnL
         """
         self.current_price = price
+        self.update_pnls()
+
+    def get_current_pnl(self):
+        """Return current realized/unrealized/total PnL computed from ledgers."""
+        self.update_pnls()
+        return {
+            "realized": self.closed_pnl,
+            "unrealized": self.unrealized_pnl,
+            "total": self.total_pnl,
+        }
 
     def entries(self):
         """

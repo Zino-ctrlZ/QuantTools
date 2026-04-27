@@ -211,6 +211,7 @@ from .base import (
 )
 from EventDriven.configs.core import PositionAnalyzerConfig
 from EventDriven.dataclasses.states import NewPositionState
+from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.states import (
     PositionAnalysisContext,
     StrategyChangeMeta,
@@ -310,12 +311,21 @@ class PositionAnalyzer:
           and just attach the raw opinions.
         - We'll replace this with the full Cog Process reconciler later.
         """
-
-        all_actions: List[PositionState] = []
+        all_position_states: Dict[str, PositionState] = {pos_state.trade_id: pos_state for pos_state in context.portfolio.positions}
+        all_actions: List[RMAction] = []
 
         for cog in self._iter_active_cogs():
+
+            ## Analyze and collect opinions
             actions = cog.analyze(context)
-            all_actions.extend(actions.opinions)
+
+            ## Extract RMAction objects from opinions and log them
+            rm_actions = [op.action for op in actions.opinions if op.action is not None]
+            logger.info(f"Cog {cog.name} returned {len(rm_actions)} actions: {[(action.type.value, action.reason) for action in rm_actions]}")
+
+            ## Extend the master list of all actions with this cog's actions
+            all_actions.extend(rm_actions)
+        logger.info(f"All actions collected: {all_actions}")
 
         ## Get unique trade IDs from all actions
         unique_trade_ids = set(action.trade_id for action in all_actions)
@@ -323,16 +333,56 @@ class PositionAnalyzer:
 
         ## Get the most important action for each trade ID
         for trade_id in unique_trade_ids:
+
+            ## Filter actions for this trade ID and log them
             trade_actions = [action for action in all_actions if action.trade_id == trade_id]
-            trade_actions.sort(key=lambda x: ACTION_PRIORITY.get(x.action.type, float("inf")))
+            logger.info(f"Trade ID {trade_id} has actions: {trade_actions}")
+
+            ## Sort actions by priority and log the sorted list
+            trade_actions.sort(key=lambda x: ACTION_PRIORITY.get(x.type, float("inf")))
+            all_trade_id_actions = [(action.type.value, action.reason) for action in trade_actions]
+            combined_reasons = "; ".join([f"{action.type.value}: {action.reason}" for action in trade_actions])
+            logger.info(f"Actions for trade {trade_id}: {all_trade_id_actions}")
+            
+            ## Select the most important action (the one with the highest priority) and log it
             most_important_action = trade_actions[0]
-            strategy_changes.append(most_important_action)
+            most_important_action.reason = combined_reasons  # Combine reasons for all actions into one string
+            logger.info(f"Most important action for trade {trade_id}: {most_important_action.type.value} - Combined Reasons: {most_important_action.reason}")
+
+            ## Attach the most important action to the corresponding PositionState
+            position_state = all_position_states.get(trade_id)
+            if position_state is None:
+                logger.warning(f"No position state found for trade ID {trade_id}. Skipping action assignment.")
+                continue
+            position_state.action = most_important_action
+            logger.info(f"Most important action for trade {trade_id}: {most_important_action.type.value} - Reason: {most_important_action.reason}")
+
+            ## Add the position state with the assigned action to the strategy changes list
+            strategy_changes.append(position_state)
 
         return StrategyChangeMeta(
             date=context.date,
             actionables=strategy_changes,
             portfolio_meta=context.portfolio_meta,
         )
+    
+    def on_new_order_request(self, new_request_state: OrderRequest) -> OrderRequest:
+        """
+        Hook method called when a new order request is generated.
+        Delegates to all registered cogs.
+        Args:
+            new_request_state (OrderRequest): The new order request state containing order details.
+        Returns:
+            OrderRequest: The updated order request state after all cogs have processed it.
+        What this does:
+            - It iterates through all registered cogs and calls their `on_new_order_request` method.
+            - Each cog can modify the `new_request_state` as needed (e.g., adjusting max_close based on risk limits).
+            - Finally, it returns the potentially modified `new_request_state`.
+        """        
+        for cog in self._cogs.values():
+            if cog.enabled:
+                cog.on_new_order_request(new_request_state)
+        return new_request_state
 
     def on_new_position(self, new_position_state: NewPositionState) -> NewPositionState:
         """
@@ -349,7 +399,8 @@ class PositionAnalyzer:
             - Finally, it returns the potentially modified `new_position_state`.
         """
         for cog in self._cogs.values():
-            cog.on_new_position(new_position_state)
+            if cog.enabled:
+                cog.on_new_position(new_position_state)
         return new_position_state
 
     def get_delta_limit(self, tick_cash: float, chain_spot: float, date: pd.Timestamp, ticker: str) -> float:
@@ -359,5 +410,6 @@ class PositionAnalyzer:
         """
         lmts = []
         for cog in self._cogs.values():
-            lmts.append(cog.get_delta_limit(tick_cash=tick_cash, chain_spot=chain_spot, date=date, ticker=ticker))
+            if cog.enabled:
+                lmts.append(cog.get_delta_limit(tick_cash=tick_cash, chain_spot=chain_spot, date=date, ticker=ticker))
         return min(lmts) if lmts else float("inf")

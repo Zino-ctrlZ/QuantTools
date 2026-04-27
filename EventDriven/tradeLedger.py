@@ -25,7 +25,8 @@ class TradeLedger:
         ledger (dict): A dictionary storing trade entries, with datetime as keys.
         ledger_df (pd.DataFrame): A DataFrame representation of the ledger for easier analysis.
         market_value (float): The total market value of the trades. This is a running sum.
-        avg_total_cost (float): The average total cost of all trades. This is an average value.
+        total_cost (float): The cumulative total cost across all fills.
+        avg_total_cost (float): The average fill-level total cost across all fills.
         aux_cost (float): The total auxiliary costs (commission + slippage) incurred. This is a running sum.
     """
 
@@ -38,6 +39,7 @@ class TradeLedger:
         self.ledger = []
         self.ledger_df = None
         self.market_value = 0.0
+        self.total_cost = 0.0
         self.avg_total_cost = 0.0
         self.aux_cost = 0.0
 
@@ -111,6 +113,15 @@ class TradeLedger:
         
         Everything is scaled to dollar amounts and by quantity."""
 
+        if quantity is None or quantity <= 0:
+            raise ValueError(f"Quantity must be a positive integer. Received: {quantity}")
+
+        def _weighted_avg_price(existing_avg_price, existing_quantity, new_price, new_quantity):
+            total_quantity = existing_quantity + new_quantity
+            if total_quantity == 0:
+                return 0.0
+            return ((existing_avg_price * existing_quantity) + (new_price * new_quantity)) / total_quantity
+
         uid = f"{trade_id}_{signal_id}_{entry_time}"
         # Normalize monetary fields unless explicitly disabled
         price_val = normalize_dollar_amount(fill_cost / quantity) if normalize else fill_cost / quantity
@@ -150,10 +161,10 @@ class TradeLedger:
             "direction": direction,
         }
 
-        self.avg_price = ((self.avg_price * self.quantity) + (entry["price"] * quantity)) / (self.quantity + quantity)
-        self.avg_total_cost = ((self.avg_total_cost * self.quantity) + (entry["total_cost"] * quantity)) / (
-            self.quantity + quantity
-        )
+        self.avg_price = _weighted_avg_price(self.avg_price, self.quantity, entry["price"], quantity)
+        self.total_cost += entry["total_cost"]
+        fill_count = len(self.ledger) + 1
+        self.avg_total_cost = self.total_cost / fill_count
         self.aux_cost += entry["aux_cost"]
         self.quantity += entry["quantity"]
         self.commission += entry["commission"]

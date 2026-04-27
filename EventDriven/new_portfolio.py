@@ -5,6 +5,7 @@
 # - Position Management: Rolling Options, Hedging, Position sizing
 # -
 
+from ast import Dict
 from copy import deepcopy
 import logging
 from abc import ABCMeta, abstractmethod
@@ -192,8 +193,7 @@ class OptionSignalPortfolio(Portfolio):
         self.underlier_list_data = {}
         self.unprocessed_signals = []
         self.allow_multiple_trades = True  # allow multiple trades for the same signal_id
-        self.__equity = None
-        self.__transactions = []
+
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
         self.__construct_current_positions()
@@ -213,6 +213,11 @@ class OptionSignalPortfolio(Portfolio):
         self.is_backtest = True  ## Move to config?
         self.eq_strategy = eq_strategy
         self.using_eq_strategy = eq_strategy is not None
+
+        ## Hidden attributes
+        self.__position_entry_dates = {}
+        self.__equity = None
+        self.__transactions = []
 
     def _is_holiday(self, dt):
         """
@@ -673,6 +678,8 @@ class OptionSignalPortfolio(Portfolio):
                     tick_cash=cash_at_hand,
                     direction=signal_event.signal_type,
                     signal_id=signal_event.signal_id,
+                    signal_total_pnl=self._get_signal_total_pnl(signal_event.signal_id),
+                    symbol_total_pnl=self._get_symbol_total_pnl(signal_event.symbol)
                 )
             )
             self.position_cache[cache_key] = position_state
@@ -699,6 +706,32 @@ class OptionSignalPortfolio(Portfolio):
             quantity=position["quantity"],
             parent_event=signal_event,
         )
+
+    def _get_signal_total_pnl(self, signal_id: str):
+        """
+        Helper function to calculate total PnL for a given signal_id across all trades.
+        """
+        total_pnl = 0.0
+        tm: Dict[TradeID, Trade] = self.trades_map
+        for trade in tm.values():
+            trade: Trade
+            trade.update_pnls()  # ensure pnl is updated before accessing
+            if trade.signal_id == signal_id:
+                total_pnl = total_pnl + trade.total_pnl
+        return total_pnl
+    
+    def _get_symbol_total_pnl(self, symbol: str):
+        """
+        Helper function to calculate total PnL for a given symbol across all trades.
+        """
+        total_pnl = 0.0
+        tm: Dict[TradeID, Trade] = self.trades_map
+        for trade in tm.values():
+            trade: Trade
+            trade.update_pnls()  # ensure pnl is updated before accessing
+            if trade.symbol == symbol:
+                total_pnl = total_pnl + trade.total_pnl
+        return total_pnl
 
     def _process_failed_order(self, signal_event: SignalEvent, order_result: Order = None):
         """
@@ -867,6 +900,21 @@ class OptionSignalPortfolio(Portfolio):
             )
             self.eventScheduler.schedule_event(exec_date, signal_event)
 
+    def _get_entry_date_for_position(self, trade_id: str, signal_id: str) -> Optional[pd.Timestamp]:
+        """
+        Get the entry date for a position based on the trade_id and signal_id
+        """
+        key = (str(trade_id), str(signal_id))
+        if key in self.__position_entry_dates:
+            return self.__position_entry_dates[key]
+        trade_obj = self._get_trade_object(trade_id, signal_id)
+        if trade_obj is not None:
+            entry_time_str = trade_obj.stats["EntryTime"].values[0]
+            entry_date = pd.to_datetime(entry_time_str, format="%Y-%m-%d")
+            self.__position_entry_dates[key] = entry_date
+            return entry_date
+        return None
+
     @staticmethod
     def _construct_position(
         signal_id: str,
@@ -895,6 +943,7 @@ class OptionSignalPortfolio(Portfolio):
             "quantity": quantity,
             "entry_price": entry_price,
             "market_value": close * quantity * 100,
+
         }
         return position
 
@@ -911,6 +960,8 @@ class OptionSignalPortfolio(Portfolio):
         positions_states = []
         for tick, pos_pack in positions.items():
             for signal_id, position in pos_pack.items():
+                trade_obj = self._get_trade_object(position["position"]["trade_id"], signal_id)
+                entry_date = self._get_entry_date_for_position(position["position"]["trade_id"], signal_id)
                 trade_id = position["position"]["trade_id"]
                 qty = position["quantity"]
                 entry_price = position["entry_price"] / qty
@@ -933,6 +984,10 @@ class OptionSignalPortfolio(Portfolio):
                     current_underlier_data=current_underlier_data,
                     pnl=pnl,
                     last_updated=date,
+                    entry_date=entry_date,
+                    trades=trade_obj,
+                    signal_total_pnl=self._get_signal_total_pnl(signal_id),
+                    symbol_total_pnl=self._get_symbol_total_pnl(tick)
                 )
                 positions_states.append(pos_state)
 
@@ -1022,10 +1077,10 @@ class OptionSignalPortfolio(Portfolio):
         return self.trades_map.get(self._get_trade_key(trade_id, signal_id))
 
     def _get_trade_key(self, trade_id: str, signal_id: str) -> tuple:
-        return (trade_id, signal_id)
+        return (str(trade_id), str(signal_id))
 
     def _set_trade_object(self, trade_id: str, signal_id: str, trade: Trade):
-        self.trades_map[self._get_trade_key(trade_id, signal_id)] = trade
+        self.trades_map[self._get_trade_key(str(trade_id), str(signal_id))] = trade
 
     def update_positions_on_fill(self, fill_event: FillEvent):
         """

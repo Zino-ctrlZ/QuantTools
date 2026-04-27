@@ -282,6 +282,7 @@ class LimitsAndSizingCog(BaseCog):
         self._sizer_configs: Optional[Union[DefaultSizerConfigs, ZscoreSizerConfigs]] = sizer_configs
         self.position_limits: Dict[str, PositionLimits] = {}
         self.position_metadata: Dict[str, _LimitsMetaData] = {}
+        self.allow_buffer = True  # Whether to allow a buffer to the delta limit if the calculated position size is very low (e.g. <=2 contracts). 
         self.underlier_list = list(set(underlier_list if underlier_list is not None else []))
         if config is None:
             config = LimitsEnabledConfig()
@@ -388,8 +389,8 @@ class LimitsAndSizingCog(BaseCog):
                 logger.warning(f"Quantity was calculated as 0 for trade_id {new_pos_state.order['data']['trade_id']}, and even a single contract cannot be afforded based on the available cash of {tick_cash} and option price of {option_price}. Quantity will remain at 0.")
         
             ## Update limits to set to delta + buffer to avoid repeated sizing issues if the issue was with limit calculation
-            logger.warning(f"Delta limit for trade_id {new_pos_state.order['data']['trade_id']} was calculated as {new_pos_state.limits.delta}, which is below the default delta per contract of {delta}. Setting delta limit to {delta * 1.075} to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation.")
-            new_pos_state.limits.delta = delta * 1.075  # Set delta limit to 7.5% above the delta of a single contract to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation
+            logger.warning(f"Delta limit for trade_id {new_pos_state.order['data']['trade_id']} was calculated as {new_pos_state.limits.delta}, which is below the default delta per contract of {delta}. Setting delta limit to {delta * 1.15} to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation.")
+            new_pos_state.limits.delta = delta * 1.15  # Set delta limit to 15% above the delta of a single contract to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation
             pos_lmts = PositionLimits(
                 delta=new_pos_state.limits.delta,
                 dte=self.config.default_dte,
@@ -399,7 +400,7 @@ class LimitsAndSizingCog(BaseCog):
             self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
 
             ## Update metadata as well to reflect the new limits and quantity
-            metadata = self.position_metadata.get(new_pos_state.order["data"]["trade_id"])
+            metadata = self._get_metadata(new_pos_state.order["data"]["trade_id"])
             if metadata is not None:
                 metadata.delta_lmt = new_pos_state.limits.delta
                 metadata.new_quantity = new_pos_state.order["data"]["quantity"]
@@ -442,7 +443,19 @@ class LimitsAndSizingCog(BaseCog):
 
         )
         logger.info(f"Storing position metadata: {metadata}")
-        self.position_metadata[order["data"]["trade_id"]] = metadata
+        self._store_metadata(metadata)
+
+    def _store_metadata(self, metadata: _LimitsMetaData) -> None:
+        """
+        Store the given metadata in the position_metadata dictionary.
+        """
+        self.position_metadata[metadata.trade_id] = metadata
+
+    def _get_metadata(self, trade_id: str) -> Optional[_LimitsMetaData]:
+        """
+        Retrieve metadata for a given trade ID.
+        """
+        return self.position_metadata.get(trade_id, None)
 
     def _calculate_limits(self, new_pos_state: NewPositionState) -> float:
         """
@@ -500,6 +513,32 @@ class LimitsAndSizingCog(BaseCog):
             logger.warning(
                 f"Calculated position size is 0 for order {order['data']['trade_id']}. Delta per contract ({delta}) exceeds limit {delta_lmt}."
             )
+
+        ## Add buffer to delta limit if quantity is <=2 to avoid repeatedly hitting delta limit.
+        elif q <= 2 and self.allow_buffer:
+            logger.warning(
+                f"Calculated position size is {q} for order {order['data']['trade_id']}, which is very low and may indicate that the position is hitting the delta limit. Delta per contract is {delta} and delta limit is {delta_lmt}. Consider reviewing the position or adjusting the delta limit to allow for more flexibility."
+            )
+            if isinstance(self.sizer, ZscoreRVolSizer):
+                rvol_z = self.sizer.scaler.get_rvol_on_date(
+                    sym=new_position_state.symbol, date=request.date
+                )
+                multiplier = min(
+                    1 + 0.15 * max(rvol_z, 0),
+                    1.20
+                )
+            else:
+                multiplier = 1.15
+            new_delta_lmt = delta_lmt * multiplier
+            lmts = PositionLimits(
+                delta=new_delta_lmt,
+                dte=self.config.default_dte,
+                moneyness=self.config.default_moneyness,
+                creation_date=request.date,
+            )
+            self._save_position_limits(order["data"]["trade_id"], order["signal_id"], lmts)
+            logger.warning(f"Delta limit for order {order['data']['trade_id']} has been increased from {delta_lmt} to {new_delta_lmt} to allow for a larger position size and to avoid repeatedly hitting the delta limit. This adjustment is based on a multiplier of {multiplier} applied to the original delta limit.")  
+            
         logger.info(f"Updated position quantity to {q} for order {order['data']['trade_id']}.")
         new_position_state.order = Order.from_dict(order_dict)
 
