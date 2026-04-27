@@ -225,7 +225,7 @@ logger.info("RISK MANAGER is Using New DataManager")
 
 ## Caches
 _TEMP_CACHE = CustomCache(location / "temp", fname="temp_cache", clear_on_exit=True)
-_PERSISTENT_CACHE = CustomCache(location, fname="persistent_cache", expire_days=30)
+_PERSISTENT_CACHE = CustomCache(location, fname="persistent_cache", expire_days=30, size_limit=10e9) ## 10 GB size limit for persistent cache
 spot_cache = CustomCache(BASE, fname="spot", expire_days=45)
 
 ## Flags
@@ -437,9 +437,15 @@ def populate_cache_with_chain(
     key = (tick, pd.to_datetime(date, format="%Y-%m-%d").strftime("%Y-%m-%d"))
     if key in get_persistent_cache():
         chain_clipped = get_persistent_cache()[key]
+        chain_clipped.columns = chain_clipped.columns.str.capitalize()
+        chain_clipped.rename(columns={"Opttick": "opttick"}, inplace=True)
+        drops = ["Datetime", "Dte", "Moneyness"]
+        for col in drops:
+            if col in chain_clipped.columns:
+                chain_clipped.drop(columns=col, inplace=True)
 
     else:
-        chain = retrieve_chain_bulk(tick, "", date, date, "16:00", "C", print_url=False)
+        chain = retrieve_chain_bulk(symbol=tick, start_date=date, end_date=date, end_time="16:00", option_type="C", print_url=False, exp = None)
         logger.info(f"Retrieved chain for {tick} on {date}")
 
         ## Retrieve OI
@@ -449,38 +455,50 @@ def populate_cache_with_chain(
         prev = change_to_last_busday((pd.to_datetime(date) - BDay(1))).strftime("%Y-%m-%d")
         oi = retrieve_bulk_open_interest(symbol=tick, exp=0, start_date=prev, end_date=prev, print_url=False)
 
+
+        
         ## Clip Chain
-        chain_clipped = chain.reset_index()  # [['datetime', 'Root', 'Strike', 'Right', 'Expiration', 'Midpoint']]
+        chain_clipped = (
+            chain.reset_index()
+        ) 
+
         chain_clipped = chain_clipped.merge(
             oi[["Root", "Expiration", "Strike", "Right", "Open_interest"]],
             on=["Root", "Expiration", "Strike", "Right"],
             how="left",
         )
+
         if PATCH_TICKERS:
             chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
-
-        ## Create ID
-        id_params = chain_clipped[["Root", "Right", "Expiration", "Strike"]].T.to_numpy()
-        ids = runThreads(generate_option_tick_new, id_params)
-        chain_clipped["opttick"] = ids
+            
         _PERSISTENT_CACHE[key] = chain_clipped  ## Cache the chain data to avoid redundant API calls in the future
+        chain_clipped.columns = chain_clipped.columns.str.capitalize()
+
+    ## Create ID
+    id_params = chain_clipped[
+        ["Root", "Right", "Expiration", "Strike"]
+    ].T.to_numpy()
+    ids = runThreads(generate_option_tick_new, id_params)
+    chain_clipped["opttick"] = ids
+
 
     filter_opt = get_avoid_opticks(tick)
+    chain_clipped["datetime"] = pd.to_datetime(date)
     chain_clipped = chain_clipped[~chain_clipped["opttick"].isin(filter_opt)]  ## Optticks to avoid
     chain_clipped["chain_id"] = chain_clipped["opttick"] + "_" + chain_clipped["datetime"].astype(str)
     chain_clipped["dte"] = (
         pd.to_datetime(chain_clipped["Expiration"]) - pd.to_datetime(chain_clipped["datetime"])
     ).dt.days
 
-    ## Save to cache
-    def save_to_cache(id, date, spot):
-        date = pd.to_datetime(date).strftime("%Y-%m-%d")
-        save_id = f"{id}_{date}"
-        if save_id not in get_cache("spot"):
-            spot_cache[save_id] = spot
+    # ## Save to cache
+    # def save_to_cache(id, date, spot):
+    #     date = pd.to_datetime(date).strftime("%Y-%m-%d")
+    #     save_id = f"{id}_{date}"
+    #     if save_id not in get_cache("spot"):
+    #         spot_cache[save_id] = spot
 
-    save_params = chain_clipped[["opttick", "datetime", "Midpoint"]].T.to_numpy()
-    runThreads(save_to_cache, save_params)
+    # save_params = chain_clipped[["opttick", "datetime", "Midpoint"]].T.to_numpy()
+    # runThreads(save_to_cache, save_params)
 
     if chain_spot:
         chain_clipped["spot"] = chain_spot
@@ -501,6 +519,7 @@ def populate_cache_with_chain(
     chain_clipped[["iv", "delta", "gamma", "vega", "theta", "rho", "volga"]] = (
         np.nan
     )  # Placeholder for Greeks, to be filled in later when we have the data
+    
     return chain_clipped
 
 
@@ -545,16 +564,18 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     s = new_data.spot.timeseries
     y = new_data.dividend.timeseries
     r = new_data.rates.timeseries
-    greeks, option_spot, s, y, r = sync_date_index(greeks, option_spot, s, y, r)
+    vol = new_data.vol.timeseries
+    greeks, option_spot, s, y, r, vol = sync_date_index(greeks, option_spot, s, y, r, vol)
 
     ## set names properly
     start_time = time.time()
     s.name = "s"
     y.name = "y"
     r.name = "r"
+    vol.name = "vol"
     data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
     data.columns = data.columns.str.capitalize()
-    data = data.join(s).join(y).join(r)
+    data = data.join(s).join(y).join(r).join(vol)
     logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
     processed_option_data[opttick] = data
     return data

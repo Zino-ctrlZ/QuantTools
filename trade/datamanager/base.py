@@ -78,12 +78,12 @@ class BaseDataManager(ABC):
 
         # Enforce uniqueness to avoid collisions
         existing = cls._CACHE_NAME_REGISTRY.get(cache_name) # noqa
-        # if existing is not None and existing is not cls:
-        #     raise TypeError(
-        #         f"Duplicate CACHE_NAME='{cache_name}'. "
-        #         f"Already used by {existing.__name__}. "
-        #         f"Pick a unique CACHE_NAME for {cls.__name__}."
-        #     )
+        if existing is not None and existing is not cls:
+            raise TypeError(
+                f"Duplicate CACHE_NAME='{cache_name}'. "
+                f"Already used by {existing.__name__}. "
+                f"Pick a unique CACHE_NAME for {cls.__name__}."
+            )
 
         cls._CACHE_NAME_REGISTRY[cache_name] = cls
 
@@ -139,9 +139,13 @@ class BaseDataManager(ABC):
         """Clears caches for all registered DataManager subclasses."""
         from .market_data import MarketTimeseries
         from .market_data_helpers.dividends import DIVIDEND_CACHE
+        from .utils.date import LIST_DATE_CACHE
+        from .dividend import DIV_TEMP_CACHE
 
         MarketTimeseries.clear_caches()
         DIVIDEND_CACHE.clear()
+        LIST_DATE_CACHE.clear()
+        DIV_TEMP_CACHE.clear()
         for cache_name, manager_cls in cls._CACHE_NAME_REGISTRY.items():
             logger.info(f"Clearing cache for {manager_cls.__name__} (CACHE_NAME='{cache_name}')")
             manager_cls.get_cache().clear()

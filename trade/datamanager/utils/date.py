@@ -183,6 +183,8 @@ def _sync_date(
 
     is_market_hrs = is_market_hours_today()
     today = ny_now()
+    timestamp_today = pd.Timestamp(today.date())
+    timestamp_exp = pd.Timestamp(to_datetime(expiration).date())
     prev_busday = (today - BDay(1)).to_pydatetime()
     start_date = to_datetime(start_date)
     end_date = to_datetime(end_date)
@@ -198,12 +200,12 @@ def _sync_date(
         return min(start_date, end_date), max(start_date, end_date)
 
     logger.info(f"Fetching date range from Thetadata for {opttick}")
-    dates = list_dates(
+    dates = list(list_dates(
         symbol=symbol,
         exp=expiration,
         right=right,
         strike=strike,
-    )
+    ))
 
     if not dates:
         raise ValueError(f"No trading dates found for {opttick}")
@@ -215,8 +217,9 @@ def _sync_date(
     max_date = max(dates)
     start_date = max(min_date, start_date)
     end_date = min(_get_max_date(end_date), max_date)
+    max_allowable = min(timestamp_today, timestamp_exp) if endpoint_source == OptionSpotEndpointSource.EOD else timestamp_exp
 
-    LIST_DATE_CACHE.set(key=opttick, value={"min_date": min_date, "max_date": end_date}, expire=None)
+    LIST_DATE_CACHE.set(key=opttick, value={"min_date": pd.Timestamp(min_date), "max_date": pd.Timestamp(max_allowable)}, expire=None)
 
     return to_datetime(min(start_date, end_date)), to_datetime(max(start_date, end_date))
 

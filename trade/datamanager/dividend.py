@@ -40,6 +40,10 @@ from .utils.data_structure import _data_structure_sanitize
 logger = setup_logger("trade.datamanager.dividend", stream_log_level=get_logging_level())
 TS = get_times_series()
 
+DIV_TEMP_CACHE = CustomCache(
+            location=DM_GEN_PATH.as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
+        )
+
 class DividendDataManager(BaseDataManager):
     """Manages dividend data retrieval, caching, and schedule construction for a specific symbol.
 
@@ -127,9 +131,7 @@ class DividendDataManager(BaseDataManager):
         self._initialized = True
         super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
-        self.temp_cache: CustomCache = CustomCache(
-            location=DM_GEN_PATH.as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
-        )
+        self.temp_cache: CustomCache = DIV_TEMP_CACHE
 
     ## General caching logic
     def cache_it(self, key: str, value: Any, *, expire: Optional[int] = None, _type: str = "discrete") -> None:
