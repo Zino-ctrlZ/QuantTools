@@ -1,33 +1,32 @@
-
 import numpy as np
 from typing import Optional
-from trade.helpers.helper import parse_option_tick
-from EventDriven.riskmanager.picker import filter_contracts, OrderSchema
+from EventDriven.riskmanager.picker import filter_contracts
 from EventDriven.configs.core import ScoringConfigs
 import pandas as pd
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import parse_option_tick, to_datetime
 from EventDriven.riskmanager.utils import populate_cache_with_chain
 from EventDriven.dataclasses.orders import OrderRequest
-from .vertical_spread import _extract_order_for_vertical_spread, vertical_spread_order_builder, vertical_spread_pairer_by_exp
-from .naked_option import _extract_order_for_naked_option, naked_option_order_builder, naked_option_by_exp
+from .vertical_spread import _extract_order_for_vertical_spread, vertical_spread_pairer_by_exp
+from .naked_option import _extract_order_for_naked_option, naked_option_by_exp
 from ...types import ResultsEnum, OrderData
 from .iv_helper import _add_greeks_and_iv_to_chain
 from .chain_scoring import _score_chain
 
 
-
 logger = setup_logger("EventDriven.riskmanager.picker.builder", stream_log_level="WARNING")
-
-BUILDER_FACTORY = {
-    "vertical": vertical_spread_order_builder,
-    "naked": naked_option_order_builder,
-}
 
 
 def validate_order(order: dict, date: pd.Timestamp, spot: Optional[float] = None) -> bool:
-    """
-    Validates the order dictionary structure and contents.
-    Raises ValueError if validation fails.
+    """Validate constructed order payload and derive basic risk metrics.
+
+    Args:
+        order: The order dictionary returned by order extraction helpers.
+        date: Trade date used for DTE computation.
+        spot: Optional underlying spot used for moneyness computation.
+
+    Returns:
+        True when validation passes.
     """
     assert "result" in order, "Order must have a 'result' key."
     assert order["result"] in [e.value for e in ResultsEnum], f"Invalid result value: {order['result']}."
@@ -55,21 +54,23 @@ def validate_order(order: dict, date: pd.Timestamp, spot: Optional[float] = None
     ## Add min_dte to order
     data = order.get("data", {})
 
-    ## No data to validate, so we can skip DTE calculation. 
+    ## No data to validate, so we can skip DTE calculation.
     if not data:
         return True
-    
+
     ## If there is data, we want to calculate DTE for risk management purposes.
     trade_id = order["data"].get("trade_id", None)
     dt = []
     moneyness = []
     if trade_id is not None and hasattr(trade_id, "meta"):
+        date_dt = to_datetime(date)
         for _, meta in trade_id.meta.items():
             for m in meta:
-                dt.append((pd.to_datetime(m["exp_date"]) - pd.to_datetime(date)).days)
+                dt.append((to_datetime(m["exp_date"]) - date_dt).days)
                 if spot is not None:
                     moneyness.append(m["strike"] / spot if m["put_call"].lower() == "p" else spot / m["strike"])
 
+        order.setdefault("metrics", {})
         order["metrics"]["min_dte"] = min(dt) if dt else None
         order["metrics"]["max_dte"] = max(dt) if dt else None
         order["metrics"]["min_moneyness"] = min(moneyness) if moneyness else None
@@ -78,62 +79,22 @@ def validate_order(order: dict, date: pd.Timestamp, spot: Optional[float] = None
 
 
 def order_builder(
-    unfiltered_chain: pd.DataFrame = None,
-    schema: OrderSchema = None,
-    spot: float = None,
-    date: pd.Timestamp = None,
-    delta_lmt: Optional[float] = None,
-    *,
-    req: Optional[OrderRequest] = None,
-    configs: Optional[ScoringConfigs] = None,
+    req: OrderRequest,
+    configs: ScoringConfigs,
 ) -> OrderData:
-    """
-    Build an order based on the unfiltered option chain and the provided schema.
+    """Build an order from an OrderRequest using scoring-based selection.
+
     Args:
-        unfiltered_chain (pd.DataFrame): The unfiltered option chain DataFrame.
-        schema (OrderSchema): The order schema containing parameters for building the order.
+        req: The order request containing symbol, date, option type, and pricing constraints.
+        configs: Scoring configuration defining moneyness, DTE, spread, and pricing targets.
+
     Returns:
         OrderData: Detailed trade execution data including positions and pricing.
     """
-    if req is not None and configs is not None:
-        return _order_builder_with_scoring(req=req, configs=configs)
-    
-    if unfiltered_chain is None or schema is None or spot is None or date is None:
-        raise ValueError("unfiltered_chain, schema, spot, and date must all be provided if req and configs are not used.")
-    # Step 1: Filter contracts based on schema
-    filtered_chain = filter_contracts(
-        df=unfiltered_chain,
-        schema=schema,
-        spot=spot,
-    )
-    logger.info(f"Recieved {len(unfiltered_chain)} contracts from data source. Delta limit for this order: {delta_lmt}")
-    if not filtered_chain.empty:
-        filtered_chain = _add_greeks_and_iv_to_chain(filtered_chain, date, spot)
-
-    
-    logger.info(f"Filtered chain size: {len(filtered_chain)} contracts after applying schema filters.")
-
-    # Step 2: Build order using the appropriate builder function
-    structure_type = schema.get("strategy")
-    if structure_type not in BUILDER_FACTORY:
-        raise ValueError(
-            f"Unsupported structure type: {structure_type}. Supported types are: {list(BUILDER_FACTORY.keys())}"
-        )
-
-    builder_function = BUILDER_FACTORY[structure_type]
-    order = builder_function(
-        filtered_chain=filtered_chain,
-        schema=schema,
-        delta_lmt=delta_lmt,
-    )
-
-    # Step 3: Validate the constructed order
-    try:
-        validate_order(order, date, spot)
-    except AssertionError as e:
-        raise ValueError(f"Order validation failed: {e}") from e
-
+    order = _order_builder_with_scoring(req=req, configs=configs)
+    validate_order(order, date=req.date, spot=req.chain_spot)
     return order
+
 
 def _order_builder_with_scoring(
     req: OrderRequest,
@@ -147,11 +108,13 @@ def _order_builder_with_scoring(
     ## Step 1: Build scored chain
     scored_chain = build_scored_chain(req=req, configs=configs)
     if scored_chain.empty:
-        logger.warning(f"Following are used for filtering but resulted in empty chain: min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}, spread_ratio_max={configs.pct_spread_max}, mid_price_range=({configs.mid_lower_limit}, {configs.mid_upper_limit})")
-        order =  _extract_order_with_scoring_config(chain_row=pd.Series(), configs=configs)
+        logger.warning(
+            f"Following are used for filtering but resulted in empty chain: min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}, spread_ratio_max={configs.pct_spread_max}, mid_price_range=({configs.mid_lower_limit}, {configs.mid_upper_limit})"
+        )
+        order = _extract_order_with_scoring_config(chain_row=pd.Series(), configs=configs)
         order["result"] = ResultsEnum.NO_CONTRACTS_FOUND.value
         return order
-    
+
     ## Step 2: Extract top scored row and build order from it
     top_scored_row = scored_chain.iloc[0]
 
@@ -159,6 +122,7 @@ def _order_builder_with_scoring(
     order = _extract_order_with_scoring_config(chain_row=top_scored_row, configs=configs)
     validate_order(order, date=req.date, spot=req.chain_spot)
     return order
+
 
 def build_scored_chain(req: OrderRequest, configs: ScoringConfigs) -> pd.DataFrame:
     """
@@ -179,7 +143,6 @@ def build_scored_chain(req: OrderRequest, configs: ScoringConfigs) -> pd.DataFra
     Returns:
         pd.DataFrame: A DataFrame containing the scored option chain, with additional columns for each
     """
-
     ## Step 1: Get chain
     chain = populate_cache_with_chain(tick=req.symbol, date=req.date, chain_spot=req.chain_spot)
 
@@ -194,12 +157,15 @@ def build_scored_chain(req: OrderRequest, configs: ScoringConfigs) -> pd.DataFra
         dte_tol=configs.dte_tolerance,
     )
     if filtered.empty:
+        logger.warning(
+            f"Filtering resulted in empty chain for {req.symbol} on {req.date}. Parameters used for filtering: option_type={req.option_type}, min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}"
+        )
         return filtered
 
     ## Step 3: Add Greeks and IV
     filtered = _add_greeks_and_iv_to_chain(filtered=filtered, date=req.date, chain_spot=req.chain_spot)
 
-    ## Step 4: Pair vertical spreads
+    ## Step 4: Pair vertical spreads or naked options
     is_call = req.option_type.lower() == "c"
     filtered = filtered.sort_values(by="strike", ascending=is_call).reset_index(drop=True)
     vertical_chain = (
@@ -239,7 +205,8 @@ def build_scored_chain(req: OrderRequest, configs: ScoringConfigs) -> pd.DataFra
     ].sort_values("total_score", ascending=False)
     return scored_chain
 
-def _extract_order_with_scoring_config(chain_row: pd.Series, configs: ScoringConfigs) -> OrderSchema:
+
+def _extract_order_with_scoring_config(chain_row: pd.Series, configs: ScoringConfigs) -> OrderData:
     """
     Extract order schema from a scored chain row, applying any necessary adjustments based on scoring configs.
     """
@@ -250,4 +217,3 @@ def _extract_order_with_scoring_config(chain_row: pd.Series, configs: ScoringCon
         if configs.strategy == "naked"
         else _extract_order_for_vertical_spread(chain_row, schema=schema)
     )
-

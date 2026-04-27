@@ -1,4 +1,3 @@
-
 from EventDriven._vars import load_riskmanager_cache
 from trade.optionlib.assets.forward import vectorized_forward_continuous
 from trade.helpers.helper import time_distance_helper
@@ -12,8 +11,6 @@ import numpy as np
 
 CHAIN_GREEKS_CACHE = load_riskmanager_cache(target="chain_greeks_cache", create_on_missing=True, clear_on_exit=False)
 rates_cache = {}
-
-
 
 
 def get_rates_on_date(date):
@@ -35,13 +32,22 @@ def _add_greeks_and_iv_to_chain(filtered: pd.DataFrame, date: pd.Timestamp, chai
 
     ## Filter for contracts with NaN iv to start adding greeks and iv
     nan_iv_chain = filtered[filtered["iv"].isna()]
+    if nan_iv_chain.empty:
+        return filtered
 
     ## Check cache for existing iv and greeks before calculating
     cached_data = {}
-    for idx, row in nan_iv_chain.iterrows():
-        contract_key = (row["root"], row["expiration"], row["strike"], row["right"], date)
-        if contract_key in CHAIN_GREEKS_CACHE:
-            cached_data[idx] = CHAIN_GREEKS_CACHE[contract_key]
+    cache_get = CHAIN_GREEKS_CACHE.get
+    for idx, root, expiration, strike, right in zip(
+        nan_iv_chain.index,
+        nan_iv_chain["root"].values,
+        nan_iv_chain["expiration"].values,
+        nan_iv_chain["strike"].values,
+        nan_iv_chain["right"].values,
+    ):
+        cached_value = cache_get((root, expiration, strike, right, date))
+        if cached_value is not None:
+            cached_data[idx] = cached_value
 
     ## If there are cached values, add them to the filtered DataFrame and return early
     if cached_data:
@@ -57,12 +63,17 @@ def _add_greeks_and_iv_to_chain(filtered: pd.DataFrame, date: pd.Timestamp, chai
     ## Filter out the contracts that were found in the cache to avoid redundant calculations
     if cached_data:
         nan_iv_chain = nan_iv_chain[~nan_iv_chain.index.isin(cached_data.keys())]
+    if nan_iv_chain.empty:
+        return filtered
+
     ## Get dividend data
     div_dm = DividendDataManager(filtered["root"].iloc[0])  # Assuming all contracts in the chain have the same root
     q = div_dm.get_schedule(date, date, DivType.CONTINUOUS).timeseries.values[0]
 
     ## Calculate forward price for the contracts with NaN iv
-    t = np.array(time_distance_helper([date] * len(nan_iv_chain["expiration"].values), nan_iv_chain["expiration"].values))
+    t = np.array(
+        time_distance_helper([date] * len(nan_iv_chain["expiration"].values), nan_iv_chain["expiration"].values)
+    )
     q_factor = np.exp(-q * t)
     f = vectorized_forward_continuous(
         S=[chain_spot] * len(nan_iv_chain["expiration"].values),
@@ -101,17 +112,22 @@ def _add_greeks_and_iv_to_chain(filtered: pd.DataFrame, date: pd.Timestamp, chai
     filtered.loc[nan_iv_chain.index, "rho"] = greeks_df["rho"]
     filtered.loc[nan_iv_chain.index, "volga"] = greeks_df["volga"]
 
-    ## Store the calculated iv and greeks in the CHAIN_GREEKS_CACHE
-    for _, row in filtered.iterrows():
-        contract_key = (row["root"], row["expiration"], row["strike"], row["right"], date)
-        CHAIN_GREEKS_CACHE[contract_key] = {
-            "iv": row["iv"],
-            "delta": row["delta"],
-            "gamma": row["gamma"],
-            "vega": row["vega"],
-            "theta": row["theta"],
-            "rho": row["rho"],
-            "volga": row["volga"],
+    ## Store only newly computed iv and greeks in the CHAIN_GREEKS_CACHE
+    for idx, root, expiration, strike, right in zip(
+        nan_iv_chain.index,
+        nan_iv_chain["root"].values,
+        nan_iv_chain["expiration"].values,
+        nan_iv_chain["strike"].values,
+        nan_iv_chain["right"].values,
+    ):
+        CHAIN_GREEKS_CACHE[(root, expiration, strike, right, date)] = {
+            "iv": filtered.at[idx, "iv"],
+            "delta": filtered.at[idx, "delta"],
+            "gamma": filtered.at[idx, "gamma"],
+            "vega": filtered.at[idx, "vega"],
+            "theta": filtered.at[idx, "theta"],
+            "rho": filtered.at[idx, "rho"],
+            "volga": filtered.at[idx, "volga"],
         }
 
     return filtered

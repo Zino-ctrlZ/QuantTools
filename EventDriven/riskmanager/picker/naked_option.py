@@ -5,7 +5,7 @@ from EventDriven.riskmanager.picker import _order_formatting, create_trade_id
 from EventDriven.types import ResultsEnum, OrderDict
 from EventDriven.riskmanager.picker import OrderSchema
 from trade.helpers.Logging import setup_logger
-from .utils import _verify_delta_in_chain, _delta_lmt, _build_common_pair_mask
+from .utils import _verify_delta_in_chain, _delta_lmt, _build_common_pair_masks, _finalize_paired_output
 
 logger = setup_logger("EventDriven.riskmanager.picker.naked_option")
 
@@ -18,6 +18,7 @@ def naked_option_by_exp(
     max_pct_width: float = np.inf,
     min_oi: int = 0,
     delta_lmt: Optional[float] = None,
+    return_mask: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -101,7 +102,7 @@ def naked_option_by_exp(
     ]
     shrunk_delta_lmt = round(_delta_lmt(delta_lmt) * 0.95, 2)
 
-    full_mask = _build_common_pair_mask(
+    mask_df = _build_common_pair_masks(
         spread_mid=paired_opttick["spread_mid"],
         spread_bid=paired_opttick["spread_bid"],
         spread_ask=paired_opttick["spread_ask"],
@@ -114,25 +115,17 @@ def naked_option_by_exp(
         min_oi=min_oi,
         delta_lmt=shrunk_delta_lmt,
     )
-
-    mid_mask = paired_opttick["spread_mid"].between(min_total_price, max_total_price)
-    spread_oi_mask = paired_opttick["spread_oi"] >= min_oi
-    pct_width_mask = paired_opttick["spread_pct_ratio"] <= max_pct_width
-    spread_bid_mask = paired_opttick["spread_bid"] > 0
-    spread_ask_mask = paired_opttick["spread_ask"] > 0
-    delta_mask = (
-        paired_opttick["spread_delta"].abs() <= abs(shrunk_delta_lmt)
-    )  # Manually shrinking the delta limit by 10% to be more conservative. And avoid issues in picking options that are right on the edge of the delta limit
+    full_mask = mask_df["full_mask"]
     logger.debug(
         f"Number of naked options after applying all filters: {full_mask.sum()}. Number before filtering: {len(paired_opttick)}"
     )  ## DEBUG
-    logger.debug(f"mid_mask: {mid_mask.sum()} (between {min_total_price} and {max_total_price}), ")
-    logger.debug(f"spread_oi_mask: {spread_oi_mask.sum()} (>= {min_oi}), ")
-    logger.debug(f"pct_width_mask: {pct_width_mask.sum()} (<= {max_pct_width}), ")
-    logger.debug(f"spread_bid_mask: {spread_bid_mask.sum()}, (>0) ")
-    logger.debug(f"spread_ask_mask: {spread_ask_mask.sum()}, (>0) ")
-    logger.debug(f"delta_mask: {delta_mask.sum()} (<= {abs(shrunk_delta_lmt)})")  ## DEBUG
-    return paired_opttick[full_mask].reset_index(drop=True)
+    logger.debug(f"mid_mask: {mask_df['mid_mask'].sum()} (between {min_total_price} and {max_total_price}), ")
+    logger.debug(f"spread_oi_mask: {mask_df['spread_oi_mask'].sum()} (>= {min_oi}), ")
+    logger.debug(f"pct_width_mask: {mask_df['pct_width_mask'].sum()} (<= {max_pct_width}), ")
+    logger.debug(f"spread_bid_mask: {mask_df['spread_bid_mask'].sum()}, (>0) ")
+    logger.debug(f"spread_ask_mask: {mask_df['spread_ask_mask'].sum()}, (>0) ")
+    logger.debug(f"delta_mask: {mask_df['delta_mask'].sum()} (<= {abs(shrunk_delta_lmt)})")  ## DEBUG
+    return _finalize_paired_output(paired_opttick=paired_opttick, mask_df=mask_df, return_mask=return_mask)
 
 
 ## Finder function to identify the best naked

@@ -2,7 +2,12 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 from EventDriven.riskmanager.picker import _order_formatting, create_trade_id
-from EventDriven.riskmanager.picker.utils import _delta_lmt, _verify_delta_in_chain, _build_common_pair_mask
+from EventDriven.riskmanager.picker.utils import (
+    _delta_lmt,
+    _verify_delta_in_chain,
+    _build_common_pair_masks,
+    _finalize_paired_output,
+)
 from EventDriven.types import ResultsEnum, OrderDict
 from EventDriven.riskmanager.picker import OrderSchema
 from trade.helpers.Logging import setup_logger
@@ -18,6 +23,7 @@ def vertical_spread_pairer_by_exp(
     max_pct_width: float = np.inf,
     min_oi: int = 0,
     delta_lmt: Optional[float] = None,
+    return_mask: bool = False,
 ) -> pd.DataFrame:
     """
     For a given row (option contract), find the corresponding leg of the vertical spread based on the spread_tick.
@@ -79,7 +85,6 @@ def vertical_spread_pairer_by_exp(
             spread_moneyness,
             dte,
             spread_theta,
-
         ),
         axis=1,
     )
@@ -101,7 +106,7 @@ def vertical_spread_pairer_by_exp(
 
     shrunk_delta_lmt = round(_delta_lmt(delta_lmt) * 0.95, 2)
 
-    full_mask = _build_common_pair_mask(
+    mask_df = _build_common_pair_masks(
         spread_mid=paired_opttick["spread_mid"],
         spread_bid=paired_opttick["spread_bid"],
         spread_ask=paired_opttick["spread_ask"],
@@ -114,18 +119,12 @@ def vertical_spread_pairer_by_exp(
         min_oi=min_oi,
         delta_lmt=shrunk_delta_lmt,
     )
-
-    mid_mask = paired_opttick["spread_mid"].between(min_total_price, max_total_price)
-    spread_oi_mask = paired_opttick["spread_oi"] >= min_oi
-    pct_width_mask = paired_opttick["spread_pct_ratio"] <= max_pct_width
-    spread_bid_mask = paired_opttick["spread_bid"] > 0
-    spread_ask_mask = paired_opttick["spread_ask"] > 0
-    delta_mask = paired_opttick["spread_delta"].abs() <= abs(shrunk_delta_lmt)
+    full_mask = mask_df["full_mask"]
     logger.debug(f"Number of spreads after applying all filters: {full_mask.sum()}")  ## DEBUG
     logger.debug(
-        f"mid_mask: {mid_mask.sum()} (between {min_total_price} and {max_total_price}), spread_oi_mask: {spread_oi_mask.sum()}, pct_width_mask: {pct_width_mask.sum()}, spread_bid_mask: {spread_bid_mask.sum()}, spread_ask_mask: {spread_ask_mask.sum()}, delta_mask: {delta_mask.sum()}"
+        f"mid_mask: {mask_df['mid_mask'].sum()} (between {min_total_price} and {max_total_price}), spread_oi_mask: {mask_df['spread_oi_mask'].sum()}, pct_width_mask: {mask_df['pct_width_mask'].sum()}, spread_bid_mask: {mask_df['spread_bid_mask'].sum()}, spread_ask_mask: {mask_df['spread_ask_mask'].sum()}, delta_mask: {mask_df['delta_mask'].sum()}"
     )  ## DEBUG
-    return paired_opttick[full_mask].reset_index(drop=True)
+    return _finalize_paired_output(paired_opttick=paired_opttick, mask_df=mask_df, return_mask=return_mask)
 
 
 def _vertical_spread_pairer(

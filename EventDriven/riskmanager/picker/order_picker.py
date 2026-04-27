@@ -25,7 +25,6 @@ Usage:
 
 from copy import deepcopy
 from datetime import datetime
-from trade.datamanager.market_data import Optional
 from ..utils import (
     LOOKBACKS,
     precompute_lookbacks,
@@ -40,7 +39,13 @@ from EventDriven.riskmanager.picker import OrderSchema, _order_formatting
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.types import Order
 import numpy as np
+import pandas as pd
 from trade.helpers.helper import to_datetime
+from EventDriven.riskmanager.utils import populate_cache_with_chain
+from .iv_helper import _add_greeks_and_iv_to_chain
+from .naked_option import naked_option_by_exp
+from .vertical_spread import vertical_spread_pairer_by_exp
+from . import filter_contracts
 
 logger = setup_logger("EventDriven.riskmanager.picker.order_picker")
 
@@ -145,34 +150,7 @@ class OrderPicker:
             precompute_lookbacks("2000-01-01", "2030-12-31", _range=[value])
         self.__lookback = value
 
-    def get_order_new(
-        self,
-        schema: OrderSchema,
-        date: str | datetime,
-        spot,
-        chain_spot: float = None,
-        print_url: bool = False,
-        delta_lmt: Optional[float] = None,
-    ):
-        raise AttributeError(
-            "OrderPicker.get_order_new is deprecated and has been removed. "
-            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
-        )
 
-    # @dynamic_memoize
-    def _get_order(
-        self,
-        schema: tuple,
-        date: str | datetime,
-        spot: float,
-        chain_spot: float = None,
-        print_url: bool = False,
-        delta_lmt: Optional[float] = None,
-    ) -> dict:
-        raise AttributeError(
-            "OrderPicker._get_order is deprecated and has been removed. "
-            "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
-        )
 
     # @timeit
     def get_order(self, request: OrderRequest) -> Order:
@@ -198,9 +176,40 @@ class OrderPicker:
         ## Add necessary tags for identification
         order["signal_id"] = request.signal_id
         order["map_signal_id"] = request.signal_id
+        
+        ## L1 Resolution with optional hybrid fallback
         if order_failed(order):
             logger.warning(f"Order failed to resolve for request: {request}")
-            return Order.from_dict(order)
+
+            ## If hybrid strategy is disabled, return the failed order immediately without attempting fallback. 
+            ## This allows the system to recognize the failure and handle it according to its design.
+            if not self._scoring_config.hybrid_strategy_enabled:
+                logger.warning("Hybrid strategy is disabled. Returning failed order without fallback.")
+                return Order.from_dict(order)
+            
+            ## If hybrid strategy is enabled, attempt a single fallback with the reverse strategy before giving up
+            ## This provides a safety net for cases where the primary strategy fails, while still avoiding infinite fallback loops.
+            ## Reverse strategy is determined based on the original strategy: if the original is "vertical", the fallback will be "naked", and vice versa.
+            else:
+                reverse_strategy = "naked" if self._scoring_config.strategy == "vertical" else "vertical"
+                original_strategy = self._scoring_config.strategy
+                self._scoring_config.strategy = reverse_strategy
+                logger.warning(f"Primary strategy '{original_strategy}' failed. Attempting fallback with reverse strategy '{reverse_strategy}'.")
+                order = self._get_order_with_scoring(request)
+                self._scoring_config.strategy = original_strategy ## Reset strategy to original after fallback attempt
+                order["signal_id"] = request.signal_id
+                order["map_signal_id"] = request.signal_id
+                
+                ## If the fallback also fails, log a warning and return the original failed order to ensure the system can recognize the failure state. 
+                if order_failed(order):
+                    logger.warning(f"Fallback order also failed for request: {request}. Returning original failed order.")
+                    return Order.from_dict(order)
+                
+                ## If the fallback succeeds, log a warning indicating that the fallback was successful and return the fallback order
+                else:
+                    logger.warning(f"Fallback order succeeded for request: {request}. Returning fallback order.")
+
+        ## Final post order gen processing
         order["data"]["quantity"] = 1
         order["date"] = to_datetime(request.date).date()
         order = Order.from_dict(order)
@@ -213,12 +222,81 @@ class OrderPicker:
             "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
         )
 
+    def display_chain(
+        self,
+        req: OrderRequest,
+        filter_chain: bool = True,
+        return_mask: bool = True,
+    ) -> pd.DataFrame:
+        """Return the paired option chain for inspection without scoring.
 
-def _get_open_order_backtest(
-    picker: OrderPicker,
-    request: OrderRequest,
-) -> Order:
-    raise AttributeError(
-        "_get_open_order_backtest is deprecated and has been removed. "
-        "Use OrderPicker.get_order(request=OrderRequest(...)) instead."
-    )
+        Executes steps 1-4 of the scored chain pipeline: fetch chain,
+        enrich with Greeks/IV, pair contracts by expiration, then optionally
+        filter paired candidates using scoring-config thresholds. Useful for
+        debugging contract selection or reviewing available spreads before committing
+        to an order.
+
+        Args:
+            req: Order request supplying the symbol, date, option type, and chain spot.
+            filter_chain: If True, applies spread-level moneyness, DTE, and pricing
+                constraints from the scoring config after pairing. If False, returns
+                all paired candidates.
+
+        Returns:
+            pd.DataFrame: Paired contracts (vertical spreads or naked options indexed
+            by expiration), with Greeks and IV columns added. Empty DataFrame if no
+            contracts survive filtering or pairing.
+
+        Examples:
+            >>> picker = OrderPicker(start_date="2025-01-01", end_date="2025-12-31")
+            >>> req = OrderRequest(symbol="AAPL", date="2025-06-01", option_type="P",
+            ...                   chain_spot=190.0, tick_cash=3.0)
+            >>> df = picker.display_chain(req)
+            >>> df = picker.display_chain(req, filter_chain=False)  # full chain
+        """
+        configs = self._scoring_config
+        configs = deepcopy(configs)  # Avoid mutating shared config state, especially if we adjust mid price limits for display purposes
+        configs.mid_upper_limit = req.tick_cash / 100 if req.is_tick_cash_scaled else req.tick_cash
+
+        ## Step 1: Fetch chain
+        chain = populate_cache_with_chain(tick=req.symbol, date=req.date, chain_spot=req.chain_spot)
+
+
+        ## Step 2: Filter chain
+        chain = filter_contracts(
+            df=chain,
+            option_type=req.option_type,
+            spot=req.chain_spot,
+            min_moneyness=configs.min_moneyness,
+            max_moneyness=configs.max_moneyness,
+            target_dte=configs.target_dte,
+            dte_tol=configs.dte_tolerance,
+        )
+
+        if chain.empty:
+            print("No contracts available after initial filtering. Returning empty DataFrame.")
+            return chain
+
+        ## Step 3: Add Greeks and IV
+        chain = _add_greeks_and_iv_to_chain(filtered=chain, date=req.date, chain_spot=req.chain_spot)
+
+        ## Step 4: Pair contracts by expiration
+        is_call = req.option_type.lower() == "c"
+        chain = chain.sort_values(by="strike", ascending=is_call).reset_index(drop=True)
+        pairer = naked_option_by_exp if configs.strategy == "naked" else vertical_spread_pairer_by_exp
+        paired = (
+            chain.groupby("expiration")
+            .apply(
+                pairer,
+                spread_tick=configs.spread_ticks,
+                min_total_price=configs.mid_lower_limit,
+                max_total_price=configs.mid_upper_limit,
+                max_pct_width=configs.pct_spread_max if filter_chain else np.inf,
+                min_oi=-25 if filter_chain else -np.inf,
+                delta_lmt=np.inf,
+                return_mask=return_mask,
+            )
+            .reset_index(drop=True)
+        )
+
+        return paired
