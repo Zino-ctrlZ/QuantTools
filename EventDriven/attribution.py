@@ -27,9 +27,10 @@ Usage:
     >>> daily_attr = result.attribution
 """
 
-from trade.helpers.helper import change_to_last_busday
+
+from trade.helpers.helper import change_to_last_busday, to_datetime
 from pandas.tseries.offsets import BDay
-from typing import Callable
+from typing import Callable, Union
 import pandas as pd
 from dataclasses import dataclass
 from functools import partial
@@ -37,13 +38,14 @@ from trade.datamanager.utils.date import DATE_HINT
 from EventDriven.types import TradeID, SignalID
 from trade.helpers.helper_types import FrozenValidated
 from EventDriven.trade import Trade
-from trade.assets.calculate.xmultiply_attr_v2 import load_option_pnl_data
+from trade.assets.calculate.xmultiply_attr_v2 import load_option_pnl_data, OptionPnlPayload
 from trade.assets.calculate.xmultiply_attr import load_option_pnl_data as load_option_pnl_data_v1
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 from EventDriven.new_portfolio import OptionSignalPortfolio
 from typing import Tuple, Dict
 from tqdm import tqdm
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 
 logger = setup_logger("EventDriven.attribution")
 
@@ -112,8 +114,8 @@ class BacktestPositionAttribution(FrozenValidated):
             :func:`compute_position_attribution` for column definitions).
     """
 
-    trade_id: TradeID
-    signal_id: SignalID
+    trade_id: Union[TradeID, str]
+    signal_id: Union[SignalID, str]
     qty: QuantityTimeSeries
     attribution: pd.DataFrame
 
@@ -162,11 +164,40 @@ def _get_trade_quantity_time_series(
     ]
     individual_trades_df = individual_trades_df[cols]
     individual_trades_df.columns = new_col
+
+    ## Aggregate trades table
+    def _aggregate_trade_group(group):
+        total_qty = group["qty_change"].sum()
+
+        if total_qty == 0:
+            weighted_fill_price = 0
+        else:
+            weighted_fill_price = (group["fill_price"] * group["qty_change"]).sum() / total_qty
+
+        return pd.Series({
+            "qty_change": total_qty,
+            "per_unit_slippage": group["per_unit_slippage"].sum(),
+            "per_unit_commission": group["per_unit_commission"].sum(),
+            "per_unit_market_value": group["per_unit_market_value"].sum(),
+            "direction": group["direction"].iloc[0],
+            "fill_price": weighted_fill_price,
+        })
+
+    individual_trades_df = (
+        individual_trades_df
+        .groupby("fill_ts", group_keys=False)
+        .apply(_aggregate_trade_group)
+        .sort_index()
+        .reset_index()
+    )
+
     individual_trades_df["qty_change"] = individual_trades_df.apply(
         lambda row: row["qty_change"] if row["direction"] == "BUY" else -abs(row["qty_change"]), axis=1
     )
     trade_entry = individual_trades_df["fill_ts"].min()
     trade_exit = individual_trades_df["fill_ts"].max()
+
+
 
     ## Between entry and exit, extract daily quantity and quantiy change
     date_range = pd.date_range(start=trade_entry, end=trade_exit, freq="B")
@@ -190,7 +221,11 @@ def _get_trade_quantity_time_series(
 
 
 def create_position_attribution(
-    trade_id: TradeID, entry_date: DATE_HINT, exit_date: DATE_HINT, v1: bool = False
+    trade_id: TradeID, 
+    entry_date: DATE_HINT, 
+    exit_date: DATE_HINT, 
+    v1: bool = False,
+    portfolio: OptionSignalPortfolio = None,
 ) -> pd.DataFrame:
     """Create a position attribution DataFrame for a given trade ID.
 
@@ -206,15 +241,35 @@ def create_position_attribution(
     Returns:
         A DataFrame containing the position attribution for the given trade ID.
     """
+    def _get_payload(opttick: str) -> OptionPnlPayload:
+        """Helper function to load the option PnL payload with risk data for a given option tick."""
+        if v1: 
+            return None
+        else:
+            pay_load = OptionPnlPayload(
+                opttick=opttick,
+                date=to_datetime(entry_date),
+            )
+            opt_data = portfolio.risk_manager.market_data.generate_option_data_for_trade(opttick=opttick, check_date=entry_date)
+            pay_load.vol = opt_data["vol"]
+
+            greeks = opt_data[["Delta", "Gamma", "Vega", "Theta", "Rho", "Volga"]]
+            greeks.columns = ["delta", "gamma", "vega", "theta", "rho", "volga"]
+            option_spot = opt_data["Midpoint"]
+            pay_load.greeks = greeks
+            pay_load.spot = option_spot
+            return pay_load
     legs = trade_id.legs
     attribution_frames = []
-    entry_padding = pd.to_datetime(entry_date) - pd.Timedelta(days=3)
+    entry_padding = max(pd.to_datetime(entry_date) - pd.Timedelta(days=3), to_datetime(OPTION_TIMESERIES_START_DATE))
     exit_padding = pd.to_datetime(exit_date) + pd.Timedelta(days=3)
     for direction, opttick in legs:
         if v1:
             attribution = load_option_pnl_data_v1(yesterday=entry_padding, today=exit_padding, opttick=opttick)
         else:
-            attribution = load_option_pnl_data(yesterday=entry_padding, today=exit_padding, opttick=opttick)
+            payload = _get_payload(opttick)
+            payload.date = to_datetime(exit_padding)
+            attribution = load_option_pnl_data(yesterday=entry_padding, today=exit_padding, opttick=opttick, payload=payload)
         if direction == "S":
             attribution.attribution *= -1
         attribution_frames.append(attribution.attribution)
@@ -275,6 +330,8 @@ def compute_position_attribution(
     ## Extract series from qty_ts for easier access
     daily_qty = qty_ts.daily_qty
     quantity_change = qty_ts.quantity_change
+
+    ## Exec price is per unit market value
     exec_price = qty_ts.exec_price
     attribution = attribution.copy()
     commission = qty_ts.commission
@@ -282,9 +339,9 @@ def compute_position_attribution(
 
     ## Ensure attribution has necessary columns, if not create them with default values
     if "commission_cost" not in attribution.columns:
-        attribution["commission_cost"] = commission.fillna(0)
+        attribution["commission_cost"] = 0#commission.fillna(0)
     if "slippage_cost" not in attribution.columns:
-        attribution["slippage_cost"] = slippage.fillna(0)
+        attribution["slippage_cost"] = 0#slippage.fillna(0)
     if "trade_pnl_adjustment" not in attribution.columns:
         attribution["trade_pnl_adjustment"] = 0.0
     if "total_pnl" not in attribution.columns:
@@ -413,7 +470,7 @@ def compute_backtest_position_attribution(
     # Create initial attribution for the position)
     trade_entry = qty_ts.trade_entry
     trade_exit = qty_ts.trade_exit
-    attr = create_position_attribution(trade_id=trade_id, entry_date=trade_entry, exit_date=trade_exit, v1=False)
+    attr = create_position_attribution(trade_id=trade_id, entry_date=trade_entry, exit_date=trade_exit, v1=False, portfolio=portfolio)
     attr = attr.loc[trade_entry:trade_exit]
 
     # Make partial function for getting position price with market data from the portfolio's risk manager
