@@ -217,7 +217,7 @@ class BacktesterConfig(BaseConfigs):
     """
 
     t_plus_n: int = 1
-    finalize_trades: bool = False
+    finalize_trades: bool = True
     raise_errors: bool = False
     min_slippage_pct: float = 0.075
     max_slippage_pct: float = 0.15
@@ -285,6 +285,7 @@ class ScoringConfigs(BaseConfigs):
     spread_ticks: int = 2
     structure_direction: Literal["long", "short"] = "long"
     strategy: Literal["vertical", "naked"] = "vertical"
+    hybrid_strategy_enabled: bool = False
 
     # Moneyness
     m_target: numbers.Number = 0.8
@@ -321,7 +322,7 @@ class ScoringConfigs(BaseConfigs):
 
 @pydantic_dataclass
 class ExecutionHandlerConfig(BaseConfigs):
-    slippage_model: Literal["randomized", "fixed", "spread_pct"] = (
-        "randomized"  # Whether to use randomized slippage, fixed slippage, or slippage as a percentage of the spread. Default is randomized slippage.
+    slippage_model: Literal["randomized", "fixed", "spread_pct", "none"] = (
+        "randomized"  # Whether to use randomized slippage, fixed slippage, slippage as a percentage of the spread, or no slippage. Default is randomized slippage.
     )
     pct_alpha: float = 0.25  # If using spread_pct slippage model, this is the percentage of the spread to use as slippage. For example, if pct_alpha is 0.25 and the spread is $0.20, then the slippage will be $0.05.

@@ -11,8 +11,9 @@ from EventDriven.liquidity import LiquidityPolicy
 from copy import deepcopy
 
 
-logger = setup_logger("EventDriven.execution")
+logger = setup_logger("EventDriven.execution", stream_log_level="WARNING")
 exec_cache = {"order": {}, "fill": {}, "exercise": {}}
+fill_tracking = {}  # Tracks spread & commission per fill
 # execution.py
 
 
@@ -82,6 +83,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
         self.liquidity_policy = liquidity_policy or LiquidityPolicy()
         self.liquidity_drops: list[dict] = []
         self.drop_counts_by_signal_trade: dict[tuple[str, str], int] = {}
+        self.fill_tracking: list[dict] = []  # Track spread & commission per fill
 
     def _spread_pct(self, order_event: OrderEvent) -> Optional[float]:
         """Returns spread percentage as spread/close, or None if unavailable."""
@@ -94,6 +96,38 @@ class SimulatedExecutionHandler(ExecutionHandler):
             return abs(float(spread) / float(close) * self.config.pct_alpha)
         except Exception:
             return None
+
+    def _track_fill_metrics(
+        self, order_event: OrderEvent, spread: Optional[float], commission: float, slippage: float, slippage_model: str
+    ):
+        """Track spread & commission metrics for each fill."""
+        position = order_event.position or {}
+        close = position.get("close")
+        spread_pct = None
+        if spread is not None and close not in [None, 0]:
+            spread_pct = abs(float(spread) / float(close))
+
+        tracking_entry = {
+            "signal_id": order_event.signal_id,
+            "trade_id": position.get("trade_id", ""),
+            "datetime": order_event.datetime,
+            "direction": order_event.direction,
+            "symbol": order_event.symbol,
+            "quantity": order_event.quantity,
+            "close": close,
+            "spread": spread,
+            "spread_pct": spread_pct,
+            "commission": commission,
+            "slippage": slippage,
+            "slippage_model": slippage_model,
+        }
+        self.fill_tracking.append(tracking_entry)
+        key = f"{order_event.signal_id}::{order_event.datetime.strftime('%Y-%m-%d')}::{order_event.direction}"
+        fill_tracking[key] = tracking_entry
+        logger.debug(
+            f"Fill tracking: signal={order_event.signal_id}, spread={spread}, spread_pct={spread_pct}, "
+            f"commission={commission}, slippage={slippage}, model={slippage_model}"
+        )
 
     def _track_drop(self, order_event: OrderEvent, spread_pct: float):
         """Track silent drops by signal/trade pair and keep a detailed event log."""
@@ -162,6 +196,8 @@ class SimulatedExecutionHandler(ExecutionHandler):
         """
         Calculate slippage value based on a random percentage within the specified slippage range.
         The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+
+        Creates a tracking entry for spread & commission metrics.
         """
         if order_event.direction == "BUY":
             slippage_pct = np.random.uniform(
@@ -176,12 +212,23 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
         slippage_value = order_event.position["close"] * slippage_pct * order_event.quantity
 
+        # Track spread & commission for this fill
+        spread = order_event.position.get("spread")
+        commission = (
+            self.commission_rate
+            * order_event.quantity
+            * (len(order_event.position.get("trade_id", "&L:").split("&")) - 1)
+        )
+        self._track_fill_metrics(order_event, spread, commission, slippage_value, "randomized")
+
         return slippage_value
 
     def calculate_slippage_value_fixed(self, order_event: OrderEvent) -> float:
         """
         Calculate slippage value based on a fixed percentage defined by max_slippage_pct.
         The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+
+        Creates a tracking entry for spread & commission metrics.
         """
         if order_event.direction == "BUY":
             slippage_pct = self.max_slippage_pct
@@ -191,12 +238,24 @@ class SimulatedExecutionHandler(ExecutionHandler):
             raise ValueError(f"Invalid order direction: {order_event.direction}. Must be 'BUY' or 'SELL'.")
 
         slippage_value = order_event.position["close"] * slippage_pct * order_event.quantity
+
+        # Track spread & commission for this fill
+        spread = order_event.position.get("spread")
+        commission = (
+            self.commission_rate
+            * order_event.quantity
+            * (len(order_event.position.get("trade_id", "&L:").split("&")) - 1)
+        )
+        self._track_fill_metrics(order_event, spread, commission, slippage_value, "fixed")
+
         return slippage_value
 
     def calculate_slippage_pct_of_spread(self, order_event: OrderEvent) -> float:
         """
         Calculate slippage value as a percentage of the bid-ask spread.
         The slippage percentage is positive for BUY orders (increasing the price) and negative for SELL orders (decreasing the price).
+
+        Creates a tracking entry for spread & commission metrics.
         """
         spread = order_event.position.get("spread", None)
         if spread is None:
@@ -212,14 +271,56 @@ class SimulatedExecutionHandler(ExecutionHandler):
             raise ValueError(f"Invalid order direction: {order_event.direction}. Must be 'BUY' or 'SELL'.")
         close = order_event.position["close"]
         pct_spread_slippage = (spread_slippage / close) if close != 0 else 0
-        print(
+        logger.info(
             f"Spread: {spread}, Spread Slippage: {spread_slippage}, Total Slippage: {slippage}, Pct Spread Slippage: {pct_spread_slippage}, Signal ID: {order_event.signal_id}, Direction: {order_event.direction}, Date: {order_event.datetime}"
         )
+
+        # Track spread & commission for this fill
+        commission = (
+            self.commission_rate
+            * order_event.quantity
+            * (len(order_event.position.get("trade_id", "&L:").split("&")) - 1)
+        )
+        self._track_fill_metrics(order_event, spread, commission, slippage, "spread_pct")
+
         return slippage
+
+    def calculate_slippage_value_none(self, order_event: OrderEvent) -> float:
+        """
+        Calculate zero slippage value.
+        Used when slippage_model is 'none' for perfect execution at market price.
+
+        Creates a tracking entry for spread & commission metrics.
+
+        Args:
+            order_event: The order event (unused, but kept for interface consistency).
+
+        Returns:
+            float: Always returns 0.0 (no slippage).
+        """
+        # Track spread & commission for this fill (with zero slippage)
+        spread = order_event.position.get("spread")
+        commission = (
+            self.commission_rate
+            * order_event.quantity
+            * (len(order_event.position.get("trade_id", "&L:").split("&")) - 1)
+        )
+        self._track_fill_metrics(order_event, spread, commission, 0.0, "none")
+
+        return 0.0
 
     def calculate_slippage_value(self, order_event: OrderEvent) -> float:
         """
         Calculate slippage value based on the specified slippage model in the config.
+
+        Args:
+            order_event: The order event containing position and direction information.
+
+        Returns:
+            float: The calculated slippage value.
+
+        Raises:
+            ValueError: If an invalid slippage model is configured.
         """
         if self.config.slippage_model == "randomized":
             return self.calculate_slippage_value_randomized(order_event)
@@ -227,16 +328,16 @@ class SimulatedExecutionHandler(ExecutionHandler):
             return self.calculate_slippage_value_fixed(order_event)
         elif self.config.slippage_model == "spread_pct":
             return self.calculate_slippage_pct_of_spread(order_event)
+        elif self.config.slippage_model == "none":
+            return self.calculate_slippage_value_none(order_event)
         else:
             raise ValueError(
-                f"Invalid slippage model: {self.config.slippage_model}. Must be 'randomized', 'fixed', or 'spread_pct'."
+                f"Invalid slippage model: {self.config.slippage_model}. Must be 'randomized', 'fixed', 'spread_pct', or 'none'."
             )
 
-    def execute_order_randomized_slippage(self, order_event: OrderEvent):
+    def execute_order(self, order_event: OrderEvent):
         """
-        This method will execute an order with a random slippage
-        based on the max_slippage_pct attribute of the class.
-        Note: Quantity takes precedence if both quantity and cash are provided, else quantity is determined by cash / price_of_contract
+        This method will execute an order event, calculate the fill cost including slippage and commission, and put a fill event on the queue.
         """
         assert order_event.type == "ORDER", f"Event type must be 'ORDER' received {order_event.type}"
         assert order_event.direction == "BUY" or order_event.direction == "SELL", (
@@ -290,6 +391,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
                     ## Clamp quantity to ensure we don't exceed available cash
                     while total_cost > order_event.cash:
+                        logger.info(f"Total cost {total_cost} exceeds available cash {order_event.cash}. Reducing quantity.")
                         quantity -= 1
                         total_cost = quantity * price + self.commission_rate
                     logger.info(
@@ -343,7 +445,12 @@ class SimulatedExecutionHandler(ExecutionHandler):
         exec_cache["fill"][
             f"{order_event.signal_id}_{order_event.datetime.strftime('%Y-%m-%d')}_{order_event.direction}"
         ] = deepcopy(fill_event)
-        self.events.put(fill_event)
+        if quantity > 0:
+            self.events.put(fill_event)
+        else:
+            logger.warning(
+                f"Calculated quantity is zero or negative for signal {order_event.signal_id} after slippage and cash constraints. Order will not be executed. Final quantity: {quantity}, Signal ID: {order_event.signal_id}"
+            )
 
     def execute_exercise(self, exercise_event: ExerciseEvent):
         """
@@ -398,3 +505,37 @@ class SimulatedExecutionHandler(ExecutionHandler):
             return max(0, option_meta["strike"] - spot) - premium
         else:
             raise ValueError(f"Invalid option type: {option_meta['option_type']}")
+
+    def get_fill_tracking_df(self) -> pd.DataFrame:
+        """
+        Returns fill tracking data as a DataFrame.
+
+        Provides detailed spread, commission, and slippage metrics for each fill
+        executed during the backtest. Useful for analyzing transaction costs and
+        execution quality.
+
+        Returns:
+            pd.DataFrame: DataFrame with columns:
+                - signal_id: Signal identifier
+                - trade_id: Trade identifier
+                - datetime: Execution datetime
+                - direction: BUY or SELL
+                - symbol: Ticker symbol
+                - quantity: Number of contracts
+                - close: Close price used for execution
+                - spread: Bid-ask spread from position data
+                - spread_pct: Spread as percentage of close price
+                - commission: Total commission charged
+                - slippage: Total slippage cost
+                - slippage_model: Slippage model used (randomized, fixed, spread_pct, none)
+
+        Examples:
+            >>> handler = SimulatedExecutionHandler(events)
+            >>> # ... run backtest ...
+            >>> df = handler.get_fill_tracking_df()
+            >>> avg_commission = df['commission'].mean()
+            >>> avg_spread_pct = df['spread_pct'].mean()
+        """
+        if not self.fill_tracking:
+            return pd.DataFrame()
+        return pd.DataFrame(self.fill_tracking)
