@@ -12,7 +12,9 @@ from trade.helpers.clear_cache import cleanup_expired_caches
 from .helpers.Logging import setup_logger
 from pathlib import Path
 
+
 warnings.filterwarnings("ignore")
+pd.options.plotting.backend = "plotly"  # type: ignore
 
 # Load .env file first before accessing any environment variables
 load_dotenv()

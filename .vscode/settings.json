@@ -9,6 +9,7 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "editor.formatOnSave": false,
+    "python.terminal.useEnvFile": true,
     
     // Ruff: Linting only (style, code quality)
     "ruff.enable": true,
