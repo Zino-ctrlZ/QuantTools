@@ -15,14 +15,14 @@ from EventDriven.helpers import generate_signal_id
 from copy import deepcopy  # noqa
 import traceback
 from pandas.tseries.offsets import BDay
-from EventDriven.types import EventTypes, SignalTypes
+from EventDriven.types import EventTypes, SignalTypes, BacktestRunMixin
 from EventDriven.configs.core import BacktesterConfig
 from EventDriven.liquidity import LiquidityPolicy
 
 LOGGER = setup_logger("EventDriven.backtest", stream_log_level="WARNING")
 
 
-class OptionSignalBacktest:
+class OptionSignalBacktest(BacktestRunMixin):
     """
     Event-driven backtesting engine for option trading strategies.
 
@@ -192,8 +192,9 @@ class OptionSignalBacktest:
 
         if eq_strategy is not None and trades is not None:
             raise ValueError("Cannot provide both trades DataFrame and eq_strategy. Please choose one.")
+        self._eq_strategy: Optional[MultiAssetStrategy] = None
+        self.eq_strategy = eq_strategy
         self.is_eq_strategy = eq_strategy is not None
-        self.eq_strategy: Optional[MultiAssetStrategy] = eq_strategy
         self.strategy: Optional[OptionSignalStrategy] = None
         self.initial_capital = initial_capital
         self.trades = trades
@@ -219,6 +220,24 @@ class OptionSignalBacktest:
             if trades is None or trades.empty:
                 raise ValueError("Trades DataFrame cannot be None or empty when not using an equity strategy.")
             self.__init__with_trades(trades, initial_capital, symbol_list, end_date=end_date)
+
+        @property
+        def eq_strategy(self) -> Optional[MultiAssetStrategy]:
+            """Return equity strategy and keep dependent components synchronized."""
+            return self._eq_strategy
+
+        @eq_strategy.setter
+        def eq_strategy(self, strategy: Optional[MultiAssetStrategy]) -> None:
+            """Set equity strategy and propagate it to risk manager and portfolio if initialized."""
+            self._eq_strategy = strategy
+            self.is_eq_strategy = strategy is not None
+
+            if hasattr(self, "risk_manager") and self.risk_manager is not None:
+                self.risk_manager.eq_strategy = strategy
+
+            if hasattr(self, "portfolio") and self.portfolio is not None:
+                self.portfolio.eq_strategy = strategy
+                self.portfolio.using_eq_strategy = strategy is not None
 
     def __init__with_equity_strategy(
         self,
@@ -274,6 +293,7 @@ class OptionSignalBacktest:
             initial_capital=float(cash),
             eq_strategy=eq_strategy,
         )
+        self.eq_strategy = eq_strategy
         self.events = []
 
     def __init__with_trades(
@@ -355,6 +375,7 @@ class OptionSignalBacktest:
         self.portfolio = OptionSignalPortfolio(
             self.bars, self.eventScheduler, risk_manager=self.risk_manager, initial_capital=float(initial_capital)
         )
+        self.eq_strategy = self._eq_strategy
         self.events = []
 
     def __handle_t_plus_n(self, trades: pd.DataFrame) -> pd.DataFrame:
@@ -493,12 +514,20 @@ class OptionSignalBacktest:
             )
             self.portfolio.analyze_multiasset_strategy()
 
-    def run(self):
+    def pre_run_setup(self):
+        """Pre-run setup for the backtest. This method is called before the main run loop starts and is responsible for any necessary initialization or setup steps that need to be performed before processing events.
+        This includes pre-run setup for the market timeseries, risk manager, and any other components that require initialization before the backtest run begins.
+        """
         ## Runtime configurations changes
         self.portfolio.t_plus_n = self.config.t_plus_n
         self.executor.max_slippage_pct = self.config.max_slippage_pct
         self.executor.min_slippage_pct = self.config.min_slippage_pct
         self.executor.commission_rate = self.config.commission_per_contract_in_units
+        self.risk_manager.pre_run_setup()
+
+    def run(self):
+        self.logger.info("Starting backtest run.")
+        self.pre_run_setup()
 
         ## Begin backtest by looping through event scheduler dates
         while True:
@@ -519,15 +548,13 @@ class OptionSignalBacktest:
                 self._pre_signal_analysis()  # Placeholder for any pre-signal processing logic
 
                 try:
-                    # ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
-                    # if len(list(deepcopy(current_event_queue.queue))) == 0:
-                    #     meta = self.portfolio.analyze_positions()  # noqa
-                    #     # print(f"Position Analysis Meta: {meta}")
-
                     ## Placing before get_nowait because I want to check for roll, and if there is no roll, I want to break out of the loop
                     if current_event_queue.empty() and not _post_signal_ran:
                         self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
-
+                        
+                        # Update portfolio time index after processing all events. 
+                        # Update before analysis, so analysis uses eod info
+                        self.portfolio.update_timeindex()
                         self._post_signal_analysis()
                         _post_signal_ran = True
 
@@ -535,9 +562,6 @@ class OptionSignalBacktest:
 
                 except emptyEventQueue:
                     self.logger.info(f"Event queue is empty, processed {event_count} event(s)")
-
-                    # Update portfolio time index after processing all events
-                    self.portfolio.update_timeindex()
 
                     # advance scheduler queue to next date
                     self.eventScheduler.advance_date()
@@ -557,7 +581,7 @@ class OptionSignalBacktest:
                         if event.type == EventTypes.SIGNAL.value:
                             self.portfolio.analyze_signal(event)
                         elif event.type == EventTypes.ORDER.value:
-                            self.executor.execute_order_randomized_slippage(event)
+                            self.executor.execute_order(event)
                         elif event.type == EventTypes.FILL.value:
                             self.portfolio.update_fill(event)
                             self.portfolio.update_timeindex()
@@ -600,14 +624,6 @@ class OptionSignalBacktest:
         return timeseries of portfolio positions
         """
         pos_arr = []
-        for position in self.portfolio.all_positions:
-            pos_obj = {}
-            pos_obj["AMD"] = position["AMD"]["option"]
-            pos_obj["AAPL"] = position["AAPL"]["option"]
-            pos_obj["MSFT"] = position["MSFT"]["option"]
-            pos_obj["GOOGL"] = position["GOOGL"]["option"]
-            pos_obj["datetime"] = position["datetime"]
-            pos_arr.append(pos_obj)
         pos_df = pd.DataFrame(pos_arr)
         pos_df.set_index("datetime", inplace=True)
         return pos_df
@@ -616,7 +632,12 @@ class OptionSignalBacktest:
         """
         Store an event in the events list
         """
-        self.events.append(event.__dict__)
+        event_dict = event.__dict__.copy()
+        if "position" in event_dict:
+            event_dict["trade_id"] = event_dict["position"].get("trade_id", None)
+        else:
+            event_dict["trade_id"] = None
+        self.events.append(event_dict)
 
     def get_events(self) -> pd.DataFrame:
         """

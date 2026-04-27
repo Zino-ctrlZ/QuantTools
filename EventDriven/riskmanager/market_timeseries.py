@@ -149,6 +149,7 @@ from dateutil.relativedelta import relativedelta
 from trade.datamanager.market_data import MarketTimeseries
 from EventDriven._vars import load_riskmanager_cache, ADD_COLUMNS_FACTORY
 from EventDriven.riskmanager.utils import parse_position_id, swap_ticker, add_skip_columns, load_position_data_new
+from EventDriven.types import BacktestRunMixin
 from trade.helpers.decorators import timeit
 from trade.helpers.threads import runThreads  # noqa
 from trade.helpers.pools import runProcesses  # noqa
@@ -168,7 +169,7 @@ logger.info("Changing pools log level to WARNING for market_timeseries module")
 _change_global_stream_level("WARNING")
 
 
-class BacktestTimeseries:
+class BacktestTimeseries(BacktestRunMixin):
     """
     Class for managing and retrieving market timeseries data for options and positions during backtesting.
     """
@@ -178,11 +179,16 @@ class BacktestTimeseries:
         self.end_date = _end
         self._skip_calc_config = SkipCalcConfig(skip_columns=["Midpoint"])
         self.market_timeseries = MarketTimeseries(_start=self.start_date, _end=self.end_date)
-        self.options_cache = load_riskmanager_cache(target="processed_option_data")
+        self.options_cache = load_riskmanager_cache(
+            target="processed_option_data", clear_on_exit=True
+        )  ## Cache to store processed option data, cleared on exit to avoid polluting the cache with potentially large data that might not be needed in future sessions.
         self.position_data_cache = load_riskmanager_cache(target="position_data")
         self.special_dividends = load_riskmanager_cache(target="special_dividend")
         self.splits = load_riskmanager_cache(target="splits_raw")
         self.adjusted_strike_cache = load_riskmanager_cache(target="adjusted_strike_cache")
+        self.session_loaded_option_cache = load_riskmanager_cache(
+            target="session_loaded_option_cache", create_on_missing=True, clear_on_exit=True
+        )  ## Cache to store options that have been loaded during the session, to avoid repeated loading of the same option data during the session. Cleared on exit to avoid polluting the persistent cache.
         self.rf_timeseries = get_risk_free_rate_helper_v2()["annualized"]
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
@@ -199,6 +205,15 @@ class BacktestTimeseries:
         skip = skips_meta.get(column.capitalize())
 
         return skip.get("skip_day", False)
+    
+    def pre_run_setup(self):
+        """
+        Pre-run setup for BacktestTimeseries. Currently, all necessary setup is done in __init__, so this method is a placeholder for any future setup steps that might be needed before the backtest run starts.
+        """
+        ## Clear session related caches
+        self.session_loaded_option_cache.clear()
+        self.position_data_cache.clear()
+        self.adjusted_strike_cache.clear()
 
     def set_splits(self, d):
         """
@@ -216,7 +231,13 @@ class BacktestTimeseries:
         """
         Retrieve option data for a given option ticker.
         """
-        return self.options_cache.get(opttick, pd.DataFrame())
+        if opttick in self.options_cache:
+            logger.info(f"Option data for {opttick} found in options cache, returning cached data")
+            return self.options_cache[opttick]
+
+        raise KeyError(
+            f"Option data for {opttick} not found in options cache. Please ensure option data is loaded before access."
+        )
 
     def get_position_data(self, position_id: str) -> pd.DataFrame:
         """
@@ -292,84 +313,91 @@ class BacktestTimeseries:
     def calculate_option_data(self, position_id: str, date: Union[datetime, str]) -> Dict[str, Any]:
         """
         Calculate Greeks for a given position at a specific date.
+
+        If position data is already cached, returns cached data immediately.
+        Otherwise, calculates greeks, applies skip column adjustments, caches, and returns.
         """
         import time
 
         logger.info(
             f"Calculate Greeks Dates Start: {self.start_date}, End: {self.end_date}, Position ID: {position_id}, Date: {date}"
         )
+
+        ## Check cache first - early return if data exists
         if position_id in self.position_data_cache:
-            logger.info(f"Position Data for {position_id} already available, skipping calculation")
-            position_data = self.position_data_cache[position_id]
-        else:
-            logger.critical(f"Position Data for {position_id} not available, calculating greeks. Load time ~5 minutes")
+            logger.info(f"Position Data for {position_id} already available in cache, returning cached data")
+            return self.position_data_cache[position_id]
 
-            ## Initialize the Long and Short Lists
-            long = []
-            short = []
-            thread_input_list = [[], []]
+        ## Data not in cache - perform full calculation
+        logger.critical(f"Position Data for {position_id} not available, calculating greeks. Load time ~5 minutes")
 
-            date = pd.to_datetime(date)  ## Ensure date is in datetime format
+        ## Initialize the Long and Short Lists
+        long = []
+        short = []
+        thread_input_list = [[], []]
 
-            ## First get position info
-            position_dict, positon_meta = parse_position_id(position_id)
+        date = pd.to_datetime(date)  ## Ensure date is in datetime format
 
-            ## Now ensure that the spot and dividend data is available
-            for p in position_dict.values():
-                for s in p:
-                    ticker = swap_ticker(s["ticker"])
-            start_time = time.time()
-            # self.market_timeseries.load_timeseries(sym=ticker)
-            timeseries_data = self.market_timeseries.get_timeseries(sym=ticker)
-            logger.info(f"Timeseries loading for {ticker} took {time.time() - start_time:.2f} seconds")
+        ## First get position info
+        position_dict, positon_meta = parse_position_id(position_id)
 
-            @timeit
-            def get_timeseries(_id, direction):
-                logger.info("Calculate Greeks dates")
-                logger.info(f"Start Date: {self.start_date}")
-                logger.info(f"End Date: {self.end_date}")
+        ## Now ensure that the spot and dividend data is available
+        for p in position_dict.values():
+            for s in p:
+                ticker = swap_ticker(s["ticker"])
+        start_time = time.time()
 
-                logger.info(f"Calculating Greeks for {_id} on {date} in {direction} direction")
-                with self.lock:
-                    data = self.generate_option_data_for_trade(_id, date)  ## Generate the option data for the trade
+        ## TODO: Take this out, instead, use the info from loaded per leg option timeseries to get spot, dividend, etc. It's redundant to load the entire timeseries just to get the spot and dividend data for the position, when we can just get it from the option timeseries that we will be loading for the position anyway. This is especially important if we are calculating the greeks for a single point in time, as we don't need the entire timeseries for that.
+        timeseries_data = self.market_timeseries.get_timeseries(sym=ticker)
+        logger.info(f"Timeseries loading for {ticker} took {time.time() - start_time:.2f} seconds")
 
-                if direction == "L":
-                    long.append(data)
-                elif direction == "S":
-                    ask = data["Closeask"]
-                    bid = data["Closebid"]
+        @timeit
+        def get_timeseries(_id, direction):
+            logger.info("Calculate Greeks dates")
+            logger.info(f"Start Date: {self.start_date}")
+            logger.info(f"End Date: {self.end_date}")
 
-                    ## Swap bid and ask for short positions to reflect the perspective of the position holder
-                    data["Closeask"] = bid
-                    data["Closebid"] = ask
-                    short.append(data)
-                else:
-                    raise ValueError(f"Position Type {_set[0]} not recognized")
+            logger.info(f"Calculating Greeks for {_id} on {date} in {direction} direction")
+            with self.lock:
+                data = self.generate_option_data_for_trade(_id, date)  ## Generate the option data for the trade
 
-                return data
+            if direction == "L":
+                long.append(data)
+            elif direction == "S":
+                ask = data["Closeask"]
+                bid = data["Closebid"]
 
-            ## Calculating IVs & Greeks for the options
-            for _set in positon_meta:
-                thread_input_list[0].append(_set[1])  ## Append the option id to the thread input list
-                thread_input_list[1].append(_set[0])  ## Append the direction to the thread input list
+                ## Swap bid and ask for short positions to reflect the perspective of the position holder
+                data["Closeask"] = bid
+                data["Closebid"] = ask
+                short.append(data)
+            else:
+                raise ValueError(f"Position Type {_set[0]} not recognized")
 
-            start_time = time.time()
-            runThreads(
-                get_timeseries, thread_input_list, block=True
-            )  ## Run the threads to get the timeseries data for the options
-            print(f"Threads execution took {time.time() - start_time:.2f} seconds")
-            position_data = sum(long) - sum(short)
-            position_data = position_data[~position_data.index.duplicated(keep="first")]
-            position_data.columns = [x.capitalize() for x in position_data.columns]
+            return data
 
-            ## Retain the spot, risk free rate, and dividend yield for the position, after the greeks have been calculated & spread values subtracted
-            position_data["s0_close"] = timeseries_data.spot["close"]
-            position_data["s"] = timeseries_data.chain_spot["close"]
-            position_data["r"] = self.rf_timeseries
-            position_data["y"] = timeseries_data.dividends
-            position_data["spread"] = position_data["Closeask"] - position_data["Closebid"]
+        ## Calculating IVs & Greeks for the options
+        for _set in positon_meta:
+            thread_input_list[0].append(_set[1])  ## Append the option id to the thread input list
+            thread_input_list[1].append(_set[0])  ## Append the direction to the thread input list
 
-        ## Apply skip columns adjustment
+        start_time = time.time()
+        runThreads(
+            get_timeseries, thread_input_list, block=True
+        )  ## Run the threads to get the timeseries data for the options
+        print(f"Threads execution took {time.time() - start_time:.2f} seconds")
+        position_data = sum(long) - sum(short)
+        position_data = position_data[~position_data.index.duplicated(keep="first")]
+        position_data.columns = [x.capitalize() for x in position_data.columns]
+
+        ## Retain the spot, risk free rate, and dividend yield for the position, after the greeks have been calculated & spread values subtracted
+        position_data["s0_close"] = timeseries_data.spot["close"]
+        position_data["s"] = timeseries_data.chain_spot["close"]
+        position_data["r"] = self.rf_timeseries
+        position_data["y"] = timeseries_data.dividends
+        position_data["spread"] = position_data["Closeask"] - position_data["Closebid"]
+
+        ## Apply skip columns adjustment (only on newly calculated data)
         position_data = self._skip_columns_adjustment(position_data=position_data, position_id=position_id)
         logger.info(f"Completed calculation of Greeks for Position ID: {position_id}")
 
@@ -452,7 +480,6 @@ class BacktestTimeseries:
         position_data["Midpoint"] = position_data["Midpoint"].replace(0, np.nan).ffill()
 
         return position_data
-        # self.position_data[position_id] = position_data
 
     def load_position_data(self, opttick) -> pd.DataFrame:  # noqa
         """
@@ -465,9 +492,10 @@ class BacktestTimeseries:
         meta = parse_option_tick(opttick)
         self.market_timeseries.load_timeseries(sym=meta["ticker"])
 
-        return load_position_data_new(
+        data = load_position_data_new(
             opttick=opttick, processed_option_data=self.options_cache, start=self.start_date, end=self.end_date
         )
+        return data
 
     def _ffill_adj_strike_business_days(
         self,
@@ -493,6 +521,12 @@ class BacktestTimeseries:
         This function is written with the assumption that there is no cummulative splits. Expectation is only one split per option tick.
             Obviously, this might not be the case if the option was alive for ~5 years or more. But most options are not alive for that long.
         """
+        key = (opttick, to_datetime(check_date).strftime("%Y-%m-%d"))
+        if key in self.session_loaded_option_cache:
+            logger.info(
+                f"Option data for {opttick} on {check_date} already generated in session, returning cached data"
+            )
+            return self.session_loaded_option_cache[key]
 
         meta = parse_option_tick(opttick)
         exp = to_datetime(meta["exp_date"])
@@ -548,6 +582,9 @@ class BacktestTimeseries:
                 start_date=window_start,
                 end_date=window_end,
             )
+            self.session_loaded_option_cache[key] = (
+                data  ## Cache the loaded data for the session to avoid re-loading it if the same option and date is requested again during the session
+            )
             return data
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
@@ -571,6 +608,7 @@ class BacktestTimeseries:
                         adj_strike *= factor
                     elif event_type == "DIVIDEND":
                         adj_strike += factor
+
 
                 adj_opttick = generate_option_tick_new(
                     symbol=adj_meta["ticker"], strike=adj_strike, right=adj_meta["put_call"], exp=adj_meta["exp_date"]
@@ -629,5 +667,8 @@ class BacktestTimeseries:
             final_data["adj_strike"],
             start_date=window_start,
             end_date=window_end,
+        )
+        self.session_loaded_option_cache[key] = (
+            final_data  ## Cache the generated data for the session to avoid re-generating it if the same option and date is requested again during the session
         )
         return final_data

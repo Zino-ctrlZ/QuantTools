@@ -205,7 +205,7 @@ from EventDriven.riskmanager.position.analyzer import PositionAnalyzer
 from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisContext, StrategyChangeMeta
-from EventDriven.types import ResultsEnum, Order
+from EventDriven.types import ResultsEnum, Order, BacktestRunMixin
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
 from EventDriven.liquidity import LiquidityPolicy
@@ -214,7 +214,7 @@ from pprint import pprint
 logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
 
 
-class RiskManager:
+class RiskManager(BacktestRunMixin):
     """
     Manages portfolio risk and executes options trading strategies with position sizing and Greek-based limits.
 
@@ -290,6 +290,7 @@ class RiskManager:
         ## Configs
         self.config = RiskManagerConfig()
         self.liquidity_policy = kwargs.pop("liquidity_policy", None) or LiquidityPolicy()
+        self._eq_strategy = None
 
         ## Get start and end dates for timeseries loading
         start, end = get_timeseries_start_end()
@@ -331,6 +332,25 @@ class RiskManager:
         )
         if len(self.order_request_cache.values()) > 0:
             logger.info(f"Order request cache loaded with {len(self.order_request_cache.values())} requests")
+
+    @property
+    def eq_strategy(self):
+        """Return equity strategy reference used by this risk manager."""
+        return self._eq_strategy
+
+    @eq_strategy.setter
+    def eq_strategy(self, value) -> None:
+        """Set equity strategy reference used by this risk manager."""
+        self._eq_strategy = value
+
+    def pre_run_setup(self):
+        """
+        Pre-run setup for RiskManager. This method is called before the backtest run starts and is responsible for any necessary initialization or setup steps that need to be performed before processing orders and analyzing positions.
+        """
+        self.market_data.pre_run_setup()
+        self.analysis_cache.clear()
+        self.order_cache.clear()
+        self.order_request_cache.clear()
 
     def clear_caches(self):
         """
@@ -428,6 +448,10 @@ class RiskManager:
         if is_USholiday(req.date):
             logger.info(f"Date {req.date} is a US Holiday, skipping order generation")
             return {"result": ResultsEnum.IS_HOLIDAY.value, "data": None}
+        
+        ## Run through position analyzer first
+        print(f"Running order request through position analyzer: {req}")
+        self.position_analyzer.on_new_order_request(new_request_state=req)
 
         ## Investigate if tick cash is scaled
         if not req.is_tick_cash_scaled:
@@ -543,6 +567,40 @@ class RiskManager:
             dt = pd.to_datetime(context.date).strftime("%Y-%m-%d")
             self.analysis_cache[dt] = analysis
         return analysis
+
+    def get_position_analysis_df(self) -> pd.DataFrame:
+        """Build a flat DataFrame from the position analysis cache.
+
+        Returns:
+            pd.DataFrame: One row per (date, position) with columns:
+                ``date``, ``trade_id``, ``signal_id``, ``underlier_tick``,
+                ``entry_price``, ``pnl``, ``last_updated``,
+                ``action_name``, ``action_reason``, plus any key/value pairs
+                from ``action.action`` dict (e.g. ``quantity_diff``,
+                ``new_quantity``).
+        """
+        rows = []
+        for date_key, meta in self.analysis_cache.items():
+            for pos_state in meta.actionables:
+                action = pos_state.action
+                row = {
+                    "date": date_key,
+                    "trade_id": pos_state.trade_id,
+                    "signal_id": pos_state.signal_id,
+                    "underlier_tick": pos_state.underlier_tick,
+                    "entry_price": pos_state.entry_price,
+                    "current_quantity": pos_state.quantity,
+                    "pnl": pos_state.pnl,
+                    "last_updated": pos_state.last_updated,
+                    "action_name": action.name if action is not None else None,
+                    "action_reason": action.reason if action is not None else None,
+                    "entry_date": pos_state.entry_date,
+                }
+                action_dict = (action.action if action is not None else None) or {}
+                if isinstance(action_dict, dict):
+                    row.update(action_dict)
+                rows.append(row)
+        return pd.DataFrame(rows)
 
     def append_option_data(
         self,

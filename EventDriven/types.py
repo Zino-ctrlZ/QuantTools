@@ -422,3 +422,21 @@ class Order:
             metrics=d["metrics"],
             scores=d["scores"],
         )
+
+
+class BacktestRunMixin:
+    """
+    Mixin class to provide common functionality for backtest run objects.
+
+    This class can be inherited by any backtest run implementation to ensure
+    consistent handling of trade updates and stats management across different
+    backtesting frameworks or implementations.
+    """
+
+    def pre_run_setup(self):
+        """Initialize the classes behavior before the backtest run starts."""
+        pass
+    
+    def post_run_cleanup(self):
+        """Clean up any resources or perform finalization after the backtest run ends."""
+        pass
