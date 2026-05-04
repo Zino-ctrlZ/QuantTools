@@ -77,13 +77,13 @@ class BaseDataManager(ABC):
         cache_name = cache_name.strip()
 
         # Enforce uniqueness to avoid collisions
-        existing = cls._CACHE_NAME_REGISTRY.get(cache_name) # noqa
-        if existing is not None and existing is not cls:
-            raise TypeError(
-                f"Duplicate CACHE_NAME='{cache_name}'. "
-                f"Already used by {existing.__name__}. "
-                f"Pick a unique CACHE_NAME for {cls.__name__}."
-            )
+        # existing = cls._CACHE_NAME_REGISTRY.get(cache_name) # noqa
+        # if existing is not None and existing is not cls:
+        #     raise TypeError(
+        #         f"Duplicate CACHE_NAME='{cache_name}'. "
+        #         f"Already used by {existing.__name__}. "
+        #         f"Pick a unique CACHE_NAME for {cls.__name__}."
+        #     )
 
         cls._CACHE_NAME_REGISTRY[cache_name] = cls
 
