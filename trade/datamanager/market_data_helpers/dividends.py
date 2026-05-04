@@ -60,7 +60,10 @@ def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.S
     resampled.sort_index(inplace=True)  
     return resampled
 
-def get_div_schedule(ticker: str):
+def get_div_schedule(
+        ticker: str, 
+        filter_specials: bool = None,
+    ) -> pd.Series:
     """
     Fetch the dividend schedule for a given ticker.
     If the ticker is not in the cache, it fetches the data from yfinance and caches it.
@@ -77,7 +80,8 @@ def get_div_schedule(ticker: str):
     ## 4. Return the dividend schedule DataFrame
 
     # Check if ticker is in cache
-    filter_specials = OptionDataConfig().filter_out_special_dividends
+    if filter_specials is None:
+        filter_specials = OptionDataConfig().filter_out_special_dividends
     key = (ticker, filter_specials)
     if key not in DIVIDEND_CACHE:
         try:
