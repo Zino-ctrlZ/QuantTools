@@ -374,6 +374,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
         # Ensuring cash doesn't go below zero
         raw_quantity = order_event.quantity
+        quantity = 0
 
         try:
             if raw_quantity is not None:
@@ -391,7 +392,9 @@ class SimulatedExecutionHandler(ExecutionHandler):
 
                     ## Clamp quantity to ensure we don't exceed available cash
                     while total_cost > order_event.cash:
-                        logger.info(f"Total cost {total_cost} exceeds available cash {order_event.cash}. Reducing quantity.")
+                        logger.info(
+                            f"Total cost {total_cost} exceeds available cash {order_event.cash}. Reducing quantity."
+                        )
                         quantity -= 1
                         total_cost = quantity * price + self.commission_rate
                     logger.info(
@@ -402,10 +405,18 @@ class SimulatedExecutionHandler(ExecutionHandler):
                     # For SELL, we can only sell what we have in the position
                     quantity = raw_quantity
             else:
-                # Fall back to normal logic
-                quantity = math.floor(order_event.cash / (price + self.commission_rate))
-        except:
-            pass
+                # Fall back to cash-based sizing for BUY orders.
+                if order_event.direction == "BUY":
+                    quantity = math.floor(order_event.cash / (price + self.commission_rate))
+                else:
+                    quantity = 0
+        except Exception as exc:  # noqa
+            logger.exception(
+                f"Failed to determine quantity for signal {order_event.signal_id}. Defaulting quantity to 0. Error: {exc}, cash: {order_event.cash}, price: {price}, commission_rate: {self.commission_rate}, unit_cost: {price + self.commission_rate}"
+            )
+            quantity = 0
+
+        quantity = max(int(quantity), 0)
 
         commission = (
             self.commission_rate * quantity * (len(order_event.position.get("trade_id", "&L:").split("&")) - 1)
