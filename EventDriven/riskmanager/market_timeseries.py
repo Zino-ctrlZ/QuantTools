@@ -157,9 +157,11 @@ from trade.helpers.helper import compare_dates, parse_option_tick, generate_opti
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
 from trade.assets.rates import get_risk_free_rate_helper_v2
 from threading import Lock
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, List
 import pandas as pd
 import numpy as np
+import yaml
+from importlib.resources import files
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
@@ -167,6 +169,17 @@ from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionD
 logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="WARNING")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
 _change_global_stream_level("WARNING")
+SPECIAL_DIVIDENDS: Dict[str, List[Dict[str, Any]]] = {}
+NO_SPECIAL_DIVIDENDS: List[str] = []
+
+def load_special_divs():
+    global SPECIAL_DIVIDENDS, NO_SPECIAL_DIVIDENDS
+    loc = files("EventDriven.riskmanager").joinpath("special_dividends.yaml")
+    with open(loc, "r") as f:
+        info = yaml.safe_load(f)
+
+    SPECIAL_DIVIDENDS = info["special_dividends"]
+    NO_SPECIAL_DIVIDENDS = info["no_special_dividends"]
 
 
 class BacktestTimeseries(BacktestRunMixin):
@@ -183,6 +196,7 @@ class BacktestTimeseries(BacktestRunMixin):
             target="processed_option_data", clear_on_exit=True
         )  ## Cache to store processed option data, cleared on exit to avoid polluting the cache with potentially large data that might not be needed in future sessions.
         self.position_data_cache = load_riskmanager_cache(target="position_data")
+        
         self.special_dividends = load_riskmanager_cache(target="special_dividend")
         self.splits = load_riskmanager_cache(target="splits_raw")
         self.adjusted_strike_cache = load_riskmanager_cache(target="adjusted_strike_cache")
@@ -193,6 +207,16 @@ class BacktestTimeseries(BacktestRunMixin):
         self.undl_timeseries_config = UndlTimeseriesConfig()
         self.option_price_config = OptionPriceConfig()
         self.lock = Lock()
+    
+        ## Private attrs
+        self._backup_position_data_cache = load_riskmanager_cache(
+            target="position_data_backup", clear_on_exit=True, create_on_missing=True
+        )  ## Backup cache to store original position data before any adjustments, cleared on exit to avoid polluting the cache.
+        self._loaded_special_dividends = {}
+
+        ## Load special dividends info from yaml file into cache.
+        ## Reloads on initialization to ensure we have the most up-to-date information, and to avoid issues with mutable global state if the module is reloaded during the session. 
+        load_special_divs()
 
     def skip(self, position_id: str, date: Union[datetime, str], column: str = "Midpoint") -> bool:
         """
@@ -213,6 +237,7 @@ class BacktestTimeseries(BacktestRunMixin):
         ## Clear session related caches
         self.session_loaded_option_cache.clear()
         self.position_data_cache.clear()
+        self._backup_position_data_cache.clear()
         self.adjusted_strike_cache.clear()
 
     def set_splits(self, d):
@@ -226,6 +251,52 @@ class BacktestTimeseries(BacktestRunMixin):
                 if compare_dates.inbetween(d[0], self.start_date, self.end_date):
                     splits_dict[k].append(d)
         return splits_dict
+    
+    def get_special_dividends(self, ticker: str) -> List[Dict[str, float]]:
+        """
+        Retrieve special dividend information for a given ticker.
+         - If the ticker is in the no_special_dividends list, returns an empty list.
+         - If the ticker is in the special_dividends list, returns the corresponding dividend information.
+         - If the ticker is not found in either list, raises a ValueError.
+         """
+        if ticker in self._loaded_special_dividends:
+            return self._loaded_special_dividends[ticker]
+        
+        if ticker in NO_SPECIAL_DIVIDENDS:
+            return {}
+        elif ticker in SPECIAL_DIVIDENDS:
+            divs = SPECIAL_DIVIDENDS[ticker]
+            new_fmt = {}
+            for d in divs:
+                new_fmt[to_datetime(d["adjusted_ex_date"])] = d["amount"]
+            return new_fmt
+        else:
+            raise ValueError(
+                f"Ticker {ticker} not found in either special or no special dividends list. Please update the yaml file accordingly."
+            )
+        
+    def get_list_of_splits(self, ticker: str) -> List[Dict[str, float]]:
+        """
+        Retrieve list of splits for a given ticker.
+        """
+        t = self.market_timeseries._get_chain_spot_timeseries(ticker, "1990-01-01")
+        return list((t[t["split_ratio"] != 1]["split_ratio"]).items())
+
+
+    def get_splits(self, ticker: str, bkt_end_date: pd.Timestamp):
+        """
+        Retrieve splits for a given ticker, updating the cache if necessary.
+        """
+        split = self.splits.get(ticker, None)
+        if split is None:
+            split = self.get_list_of_splits(ticker)
+            self.splits[ticker] = {"split": split, "last_updated": pd.Timestamp.now()}
+        else:
+            last_updated = self.splits[ticker].get("last_updated", pd.Timestamp(0))
+            if pd.Timestamp(bkt_end_date) > last_updated:
+                split = self.get_list_of_splits(ticker)
+                self.splits[ticker] = {"split": split, "last_updated": pd.Timestamp.now()}
+        return self.splits[ticker]["split"]
 
     def get_option_data(self, opttick: str) -> pd.DataFrame:
         """
@@ -243,7 +314,11 @@ class BacktestTimeseries(BacktestRunMixin):
         """
         Retrieve position data for a given position ID.
         """
-        return self.position_data_cache.get(position_id, pd.DataFrame())
+        d = self.position_data_cache.get(position_id, pd.DataFrame())
+        if not d.empty:
+            logger.info(f"Position data for {position_id} found in position data cache, returning cached data")
+            d = self._backup_position_data_cache.get(position_id, d)  ## Return the backup data if it exists, otherwise return the original data. This allows us to retain the original position data before any adjustments, while still allowing for adjustments to be made to the position data in the main cache.
+        return d
 
     def get_at_time_option_data(self, opttick: str, date: Union[datetime, str]) -> AtTimeOptionData:
         """
@@ -324,9 +399,10 @@ class BacktestTimeseries(BacktestRunMixin):
         )
 
         ## Check cache first - early return if data exists
-        if position_id in self.position_data_cache:
+        d = self.get_position_data(position_id)
+        if not d.empty and pd.to_datetime(date) in d.index:
             logger.info(f"Position Data for {position_id} already available in cache, returning cached data")
-            return self.position_data_cache[position_id]
+            return d
 
         ## Data not in cache - perform full calculation
         logger.critical(f"Position Data for {position_id} not available, calculating greeks. Load time ~5 minutes")
@@ -403,6 +479,7 @@ class BacktestTimeseries(BacktestRunMixin):
 
         ## Cache the position data
         self.position_data_cache[position_id] = position_data
+        self._backup_position_data_cache[position_id] = position_data.copy()  ## Store a copy of the original position data in the backup cache before any adjustments are made, to ensure we have the original data available for future reference if needed.
 
         return position_data
 
@@ -536,7 +613,9 @@ class BacktestTimeseries(BacktestRunMixin):
 
         ## Check if there's any split/special dividend
         splits = self.splits.get(meta["ticker"], [])
+        splits = self.get_splits(meta["ticker"], bkt_end_date=effective_end)
         dividends = self.special_dividends.get(meta["ticker"], {})
+        dividends = self.get_special_dividends(meta["ticker"])
         to_adjust_split = []
 
         ## To avoid loading multiple data to account for splits everytime, we check if the PM_date range includes the split date

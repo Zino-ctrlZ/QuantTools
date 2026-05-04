@@ -1,0 +1,40 @@
+
+no_special_dividends:
+  - HD
+  - TSLA
+  - NVDA
+  - AAPL
+  - SBUX
+  - META
+  - AMZN
+  - AMD
+  - NFLX
+
+special_dividends:
+  COST:
+    - adjusted_ex_date: "2015-02-04"
+      amount: 5.0
+      payment_date: "2015-02-20"
+    - adjusted_ex_date: "2017-05-10"
+      amount: 7.0
+      payment_date: "2017-05-26"
+    - adjusted_ex_date: "2020-12-10"
+      amount: 10.0
+      payment_date: "2020-12-18"
+    - adjusted_ex_date: "2023-12-28"
+      amount: 15.0
+      payment_date: "2024-01-12"
+  TGT:
+    - adjusted_ex_date: "2007-10-10"
+      amount: 3.0
+      payment_date: "2007-10-31"
+    - adjusted_ex_date: "2009-12-16"
+      amount: 1.0
+      payment_date: "2009-12-28"
+  QQQ:
+    - adjusted_ex_date: "2023-12-27"
+      amount: 0.22
+      payment_date: "2024-01-15"
+    - adjusted_ex_date: "2014-02-27"
+      amount: 0.37
+      payment_date: "2014-03-07"
