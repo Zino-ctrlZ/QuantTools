@@ -11,6 +11,10 @@ from trade import HOLIDAY_SET
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 PANDAS_DATA_HINT = Union[pd.Series, pd.DataFrame]
 
+class EmptyFloat(float):
+    """"""
+    
+
 def _data_structure_sanitize(
     df: Union[pd.Series, pd.DataFrame],
     start: Union[datetime, str],

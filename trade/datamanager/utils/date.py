@@ -4,22 +4,24 @@ from datetime import datetime, date
 from pandas.tseries.offsets import BDay
 from trade.helpers.helper import to_datetime, is_busday, is_USholiday
 from trade.helpers.helper import ny_now
-from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR # noqa
+from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR  # noqa
 from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME
 from trade.helpers.helper_types import DATE_HINT
-from trade.helpers.helper import time_distance_helper # noqa
+from trade.helpers.helper import time_distance_helper  # noqa
 from trade.helpers.helper import CustomCache, generate_option_tick_new
 from trade.datamanager._enums import OptionSpotEndpointSource
 from trade.helpers.helper import is_market_hours_today
-from trade.helpers.helper_types import is_iterable # noqa
+from trade.helpers.helper_types import is_iterable  # noqa
 from trade.helpers.Logging import setup_logger
-from trade.optionlib.utils.format import assert_equal_length # noqa
+from trade.optionlib.utils.format import assert_equal_length  # noqa
 from dbase.DataAPI.ThetaData import list_dates
+from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from pathlib import Path
 import os
 from typing import Tuple, List, Optional, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 from trade import MARKET_CLOSE, MARKET_OPEN
+
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
@@ -28,13 +30,13 @@ PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
 ## This is to avoid calling API all the time
 
 
-
 LIST_DATE_CACHE = CustomCache(
     location=PATH.as_posix(),
     fname="list_date_cache",
     clear_on_exit=False,
     expire_days=365,
 )
+
 
 def _convert_expiration_to_datetime(expiration: Union[str, datetime]) -> datetime:
     """
@@ -46,10 +48,13 @@ def _convert_expiration_to_datetime(expiration: Union[str, datetime]) -> datetim
         A datetime object representing the expiration date.
     """
     if isinstance(expiration, datetime):
-        return expiration.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        return expiration.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
     else:
         return to_datetime(expiration).replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)
-    
+
+
 def _convert_dates_to_datetime(dates: List[Union[str, datetime]]) -> List[datetime]:
     """
     Converts a list of dates to datetime objects. If an element is already a datetime, it is returned as is.
@@ -62,10 +67,13 @@ def _convert_dates_to_datetime(dates: List[Union[str, datetime]]) -> List[dateti
     converted_dates = []
     for d in dates:
         if isinstance(d, datetime):
-            converted_dates.append(d.replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute))  # Set to market open time for accurate T calculation
+            converted_dates.append(
+                d.replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)
+            )  # Set to market open time for accurate T calculation
         else:
             converted_dates.append(to_datetime(d).replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute))
     return converted_dates
+
 
 def _convert_date_to_datetime(date_input: Union[str, datetime]) -> datetime:
     """
@@ -77,9 +85,12 @@ def _convert_date_to_datetime(date_input: Union[str, datetime]) -> datetime:
         A datetime object representing the input date.
     """
     if isinstance(date_input, datetime):
-        return date_input.replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)  # Set to market open time for accurate T calculation
+        return date_input.replace(
+            hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute
+        )  # Set to market open time for accurate T calculation
     else:
         return to_datetime(date_input).replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)
+
 
 def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
     """Synchronizes the date indices of multiple time series."""
@@ -95,8 +106,6 @@ def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
     synced_series = [ts.loc[common_dates] if ts is not None else None for ts in args]
     synced_series = [ts.sort_index() if ts is not None else None for ts in synced_series]
     return synced_series
-
-
 
 
 def _sync_date(
@@ -153,33 +162,41 @@ def _sync_date(
         strike=strike,
     )
 
-    def _get_max_date(requested_end: datetime) -> datetime:
-        """
-        Determines the maximum allowable end date based on requested end date,
-        option expiration, and data source constraints.
+    def _guard_rail_dates(
+        start_date: datetime,
+        end_date: datetime,
+        min_trade_date: datetime,
+        max_trade_date: datetime,
+        dates: Optional[list] = None,
+    ) -> Tuple[datetime, datetime]:
+        """Ensures start_date and end_date are within min_trade_date and max_trade_date."""
+        if start_date < min_trade_date:
+            logger.warning(
+                f"Requested start_date {start_date.date()} is before available data. Adjusting to {min_trade_date.date()}."
+            )
+            start_date = min_trade_date
+        if end_date > max_trade_date:
+            logger.warning(
+                f"Requested end_date {end_date.date()} is after available data. Adjusting to {max_trade_date.date()}."
+            )
+            end_date = max_trade_date
+        if start_date > end_date:
+            start_date = end_date
 
-        Note: We don't really need list of dates. min_date is < requested_date, all dates in between are available
-
-        Args:
-            requested_end: The originally requested end date.
-        """
-        
-        if to_datetime(requested_end) <= to_datetime(expiration):
-            ## EOD report is produced after 6pm,
-            ## so max date is prev bus day as long as it is trading hours
-            if endpoint_source == OptionSpotEndpointSource.EOD:
-                max_allowed = prev_busday if is_market_hrs else today
-            else:
-                max_allowed = today
-
-            ## Get max date within allowed range
-            max_date = to_datetime(min(max_allowed.date(), to_datetime(requested_end).date()))
-
-        ## Else, max date is expiration
-        else:
-            max_date = to_datetime(expiration)
-
-        return max_date
+        ## Check if date range is present in the list of dates, if provided
+        if dates is not None:
+            available_dates = set(to_datetime(dates))
+            if start_date not in available_dates:
+                logger.warning(
+                    f"Adjusted start_date {start_date.date()} is not in available dates. Adjusting to nearest available date."
+                )
+                start_date = min(available_dates, key=lambda d: abs(d - start_date))
+            if end_date not in available_dates:
+                logger.warning(
+                    f"Adjusted end_date {end_date.date()} is not in available dates. Adjusting to nearest available date."
+                )
+                end_date = min(available_dates, key=lambda d: abs(d - end_date))
+        return start_date, end_date
 
     is_market_hrs = is_market_hours_today()
     today = ny_now()
@@ -188,40 +205,82 @@ def _sync_date(
     prev_busday = (today - BDay(1)).to_pydatetime()
     start_date = to_datetime(start_date)
     end_date = to_datetime(end_date)
+    is_expired = timestamp_exp < timestamp_today
+
+    def _compute_max_allowable() -> pd.Timestamp:
+        """Returns the latest date we should allow for this request at runtime."""
+        if not is_expired:
+            if endpoint_source == OptionSpotEndpointSource.EOD:
+                max_allowed_today = prev_busday if is_market_hrs else today
+            else:
+                max_allowed_today = today
+            return min(timestamp_exp, pd.Timestamp(max_allowed_today.date()))
+
+        # For expired contracts, expiration day is the latest safe upper bound
+        # unless we fetched an explicit last-trade date from list_dates below.
+        return timestamp_exp
 
     if opttick in LIST_DATE_CACHE.keys():
         logger.info(f"Using cached date range for {start_date} - {end_date} and option tick {opttick}")
         cached_dates = LIST_DATE_CACHE.get(key=opttick)
-        min_date = cached_dates["min_date"]
-        max_date = cached_dates["max_date"]
+        min_date = to_datetime(cached_dates["min_date"])
+        max_date_raw = cached_dates.get("max_date")
+        max_date = to_datetime(max_date_raw) if max_date_raw is not None else _compute_max_allowable()
 
         start_date = max(min_date, start_date)
         end_date = min(max_date, end_date)
-        return min(start_date, end_date), max(start_date, end_date)
+        return _guard_rail_dates(start_date, end_date, min_date, max_date)
 
     logger.info(f"Fetching date range from Thetadata for {opttick}")
-    dates = list(list_dates(
-        symbol=symbol,
-        exp=expiration,
-        right=right,
-        strike=strike,
-    ))
+    try:
+        dates = list(
+            list_dates(
+                symbol=symbol,
+                exp=expiration,
+                right=right,
+                strike=strike,
+            )
+        )
+    except ThetaDataNotFound:
+        logger.warning(f"ThetaData returned no data for {opttick}. Returning original requested date range.")
+        return to_datetime(start_date), to_datetime(end_date)
 
     if not dates:
-        raise ValueError(f"No trading dates found for {opttick}")
+        logger.warning(f"No trading dates found for {opttick}. Returning original requested date range.")
+        return to_datetime(start_date), to_datetime(end_date)
 
     dates = to_datetime(dates)
+    max_trade_date = pd.Timestamp(max(dates))
+    min_trade_date = pd.Timestamp(min(dates))
 
     ## Adjust start date to min
-    min_date = min(dates)
-    max_date = max(dates)
-    start_date = max(min_date, start_date)
-    end_date = min(_get_max_date(end_date), max_date)
-    max_allowable = min(timestamp_today, timestamp_exp) if endpoint_source == OptionSpotEndpointSource.EOD else timestamp_exp
+    start_date = max(min_trade_date, start_date)
+    logger.info(f"Calculated date range for option spot timeseries: {start_date} to {end_date}")
 
-    LIST_DATE_CACHE.set(key=opttick, value={"min_date": pd.Timestamp(min_date), "max_date": pd.Timestamp(max_allowable)}, expire=None)
+    # This is how far into the future we can get data for.
+    # For non-expired options, max changes with time, so do not persist it.
+    if is_expired:
+        max_allowable = max_trade_date
+        LIST_DATE_CACHE.set(
+            key=opttick,
+            value={
+                "min_date": pd.Timestamp(min_trade_date),
+                "max_date": pd.Timestamp(max_allowable),
+                "range": dates,
+            },
+            expire=None,
+        )
+    else:
+        max_allowable = _compute_max_allowable()
+        LIST_DATE_CACHE.set(
+            key=opttick,
+            value={
+                "min_date": pd.Timestamp(min_trade_date),
+            },
+            expire=None,
+        )
 
-    return to_datetime(min(start_date, end_date)), to_datetime(max(start_date, end_date))
+    return _guard_rail_dates(start_date, end_date, min_trade_date, max_allowable, dates=dates)
 
 
 @dataclass(slots=True)
@@ -277,6 +336,6 @@ def is_available_on_date(date: date) -> bool:
         ## If before min time, return False
         if current_time < MIN_TIME_BEFORE_REAL_TIME:
             return False
-    
+
     ## Else just return trading day status
     return is_trading_day
