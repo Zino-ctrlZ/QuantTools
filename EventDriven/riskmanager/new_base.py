@@ -450,7 +450,7 @@ class RiskManager(BacktestRunMixin):
             return {"result": ResultsEnum.IS_HOLIDAY.value, "data": None}
         
         ## Run through position analyzer first
-        print(f"Running order request through position analyzer: {req}")
+        logger.info(f"Running order request through position analyzer: {req}")
         self.position_analyzer.on_new_order_request(new_request_state=req)
 
         ## Investigate if tick cash is scaled

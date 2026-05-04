@@ -185,7 +185,7 @@ from trade.assets.helpers.utils import swap_ticker
 from trade.datamanager.loaders import load_full_option_data
 
 # from trade.datamanager.vars import get_times_series
-from trade.datamanager._enums import DivType, OptionPricingModel
+from trade.datamanager._enums import DivType, OptionPricingModel # noqa
 from trade.datamanager.utils.date import sync_date_index
 from trade.helpers.helper import generate_option_tick_new, parse_option_tick, CustomCache, change_to_last_busday
 from dbase.DataAPI.ThetaData import retrieve_bulk_open_interest, retrieve_chain_bulk
