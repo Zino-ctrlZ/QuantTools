@@ -143,6 +143,14 @@ def _get_trade_quantity_time_series(
     individual_trades = trade_obj.buy_ledger.ledger + trade_obj.sell_ledger.ledger
     individual_trades_df = pd.DataFrame(individual_trades)
 
+    ## Monitor if this addition is correct
+    individual_trades_df["quantity"] = individual_trades_df.apply(
+        lambda row: (
+            row["quantity"] if row["direction"] == "BUY" else -abs(row["quantity"])
+        ),
+        axis=1,
+    )
+
     ## Format the individual trades DataFrame for analysis
     cols = [
         "datetime",
@@ -190,6 +198,7 @@ def _get_trade_quantity_time_series(
         .sort_index()
         .reset_index()
     )
+    
 
     individual_trades_df["qty_change"] = individual_trades_df.apply(
         lambda row: row["qty_change"] if row["direction"] == "BUY" else -abs(row["qty_change"]), axis=1
