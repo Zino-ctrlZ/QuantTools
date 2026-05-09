@@ -108,6 +108,7 @@ def setup_logger(
     remove_root=True,
     custom_logger_name=None,
     timezone=None,
+    dir: str | Path = None,
 ) -> logging.Logger:
     """
     Set up a logger with console and file handlers, with environment-aware configuration.
@@ -138,7 +139,7 @@ def setup_logger(
         FILE_LOG_LEVEL = 'INFO'
         PROPAGATE_TO_ROOT_LOGGER = 'False'
     """
-    project_root_log_dir = get_logger_base_location()
+    project_root_log_dir = dir or get_logger_base_location()
 
     # If custom logger name is None, use filename:
 
