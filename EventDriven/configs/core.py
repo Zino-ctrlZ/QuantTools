@@ -326,3 +326,13 @@ class ExecutionHandlerConfig(BaseConfigs):
         "randomized"  # Whether to use randomized slippage, fixed slippage, slippage as a percentage of the spread, or no slippage. Default is randomized slippage.
     )
     pct_alpha: float = 0.25  # If using spread_pct slippage model, this is the percentage of the spread to use as slippage. For example, if pct_alpha is 0.25 and the spread is $0.20, then the slippage will be $0.05.
+
+
+@pydantic_dataclass
+class PnlMonitorConfig(BaseCogConfig):
+    """
+    Configuration dataclass for PnLMonitorCog.
+    """
+
+    name: Optional[str] = "PnLMonitorCog"
+    enabled: bool = True

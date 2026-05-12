@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import yaml
 import logging
 import importlib
+from trade.helpers.Logging import setup_logger
 
 if TYPE_CHECKING:
     from EventDriven.configs.core import (
@@ -24,12 +25,15 @@ if TYPE_CHECKING:
         LimitsEnabledConfig,
         PositionAnalyzerConfig,
         PortfolioManagerConfig,
+        LiquidityConfig,
         BacktesterConfig,
         CashAllocatorConfig,
         RiskManagerConfig,
+        MeanReversionSizerConfigs,
+        ExecutionHandlerConfig,
     )
 
-logger = logging.getLogger(__name__)
+logger = setup_logger("EventDriven.configs.export_configs")
 
 # Type variable for generic config types
 T = TypeVar("T", bound=BaseConfigs)
@@ -65,9 +69,17 @@ class ConfigsDict(TypedDict, total=False):
     LimitsEnabledConfig: "LimitsEnabledConfig"
     PositionAnalyzerConfig: "PositionAnalyzerConfig"
     PortfolioManagerConfig: "PortfolioManagerConfig"
+    LiquidityConfig: "LiquidityConfig"
+    LiquidityConfig: "LiquidityConfig"
     BacktesterConfig: "BacktesterConfig"
     CashAllocatorConfig: "CashAllocatorConfig"
     RiskManagerConfig: "RiskManagerConfig"
+    MeanReversionSizerConfigs: "MeanReversionSizerConfigs"
+    ScoringConfigs: "ScoringConfigs"
+    ExecutionHandlerConfig: "ExecutionHandlerConfig"
+    MeanReversionSizerConfigs: "MeanReversionSizerConfigs"
+    ScoringConfigs: "ScoringConfigs"
+    ExecutionHandlerConfig: "ExecutionHandlerConfig"
 
 
 @dataclass
@@ -96,12 +108,20 @@ class RunConfigBundle:
         Args:
             filename (str): The path to the file where configs will be saved.
         """
+        confs = {}
+        for label, cfg in self.configs.items():
+    
+            if not isinstance(cfg, dict):
+                # Convert config objects to dicts for YAML serialization
+                confs[label] = _sanitize_for_yaml(cfg)
+            else:
+                confs[label] = cfg
         data = {
             "run_name": self.run_name,
             "created_at": self.created_at.isoformat()
             if isinstance(self.created_at, datetime)
             else str(self.created_at),
-            "configs": self.configs,
+            "configs": confs,
             "metadata": self.metadata,
         }
         # Use safe_dump to avoid Python object tags
