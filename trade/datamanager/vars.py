@@ -23,6 +23,15 @@ MARKET_CLOSE_TIME = time(16, 0)
 DEFAULT_SCENARIOS = [0.9, 0.95, 1.0, 1.05, 1.1]
 DEFAULT_VOL_SCENARIOS = [-0.02, -0.01, 0.0, 0.01, 0.02]
 
+def get_dm_gen_path(is_live: bool = None) -> Path:
+    from .config import OptionDataConfig
+    if is_live is None:
+        is_live = OptionDataConfig().is_live
+        
+    global DM_GEN_PATH
+    if not DM_GEN_PATH.exists():
+        DM_GEN_PATH.mkdir(parents=True)
+    return DM_GEN_PATH if not is_live else DM_GEN_PATH / "live"
 
 def set_times_series()-> "MarketTimeseries":
     from trade.datamanager.market_data import MarketTimeseries

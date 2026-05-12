@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Optional, Tuple, Union, List
 import pandas as pd
 from trade.helpers.Logging import setup_logger
 from trade.optionlib.assets.dividend import Schedule, ScheduleEntry
-from trade.datamanager.vars import get_times_series, DM_GEN_PATH, load_name
+from trade.datamanager.vars import get_times_series, get_dm_gen_path, load_name
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult
 from trade.datamanager.base import BaseDataManager, CacheSpec
@@ -41,8 +41,8 @@ logger = setup_logger("trade.datamanager.dividend", stream_log_level=get_logging
 TS = get_times_series()
 
 DIV_TEMP_CACHE = CustomCache(
-            location=DM_GEN_PATH.as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
-        )
+    location=get_dm_gen_path().as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
+)
 
 class DividendDataManager(BaseDataManager):
     """Manages dividend data retrieval, caching, and schedule construction for a specific symbol.

@@ -7,7 +7,7 @@ from trade.optionlib.config.defaults import (
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import CustomCache
 from dataclasses import dataclass
-from trade.datamanager.vars import DM_GEN_PATH
+from trade.datamanager.vars import get_dm_gen_path
 from trade.optionlib.assets.dividend import infer_frequency, FREQ_MAP
 from trade.datamanager.utils.logging import get_logging_level, register_to_factor_list
 from trade.datamanager.config import OptionDataConfig
@@ -25,7 +25,7 @@ class SavedDividendsResult:
 
 ## Cache has to be in memory. Incase dividends update on another date
 DIVIDEND_CACHE = CustomCache(
-    location=DM_GEN_PATH, fname="discrete_dividends_timeseries", clear_on_exit=False, expire_days=365
+    location=get_dm_gen_path().as_posix(), fname="discrete_dividends_timeseries", clear_on_exit=False, expire_days=365
 )
 def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.Series:
     """Resample dividend series to daily frequency with forward fill."""

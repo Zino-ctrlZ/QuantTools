@@ -170,6 +170,7 @@ def _sync_date(
         dates: Optional[list] = None,
     ) -> Tuple[datetime, datetime]:
         """Ensures start_date and end_date are within min_trade_date and max_trade_date."""
+    
         if start_date < min_trade_date:
             logger.warning(
                 f"Requested start_date {start_date.date()} is before available data. Adjusting to {min_trade_date.date()}."
@@ -191,7 +192,8 @@ def _sync_date(
                     f"Adjusted start_date {start_date.date()} is not in available dates. Adjusting to nearest available date."
                 )
                 start_date = min(available_dates, key=lambda d: abs(d - start_date))
-            if end_date not in available_dates:
+            end_is_not_today = end_date.date() != ny_now().date()
+            if end_date not in available_dates and end_is_not_today:
                 logger.warning(
                     f"Adjusted end_date {end_date.date()} is not in available dates. Adjusting to nearest available date."
                 )
@@ -214,6 +216,7 @@ def _sync_date(
                 max_allowed_today = prev_busday if is_market_hrs else today
             else:
                 max_allowed_today = today
+
             return min(timestamp_exp, pd.Timestamp(max_allowed_today.date()))
 
         # For expired contracts, expiration day is the latest safe upper bound

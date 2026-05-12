@@ -6,7 +6,7 @@ from trade.datamanager.utils.logging import get_logging_level
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
 from pathlib import Path
-from .vars import DM_GEN_PATH
+from .vars import get_dm_gen_path
 from ._enums import Interval, ArtifactType, SeriesId
 from .utils.enums_utils import construct_cache_key
 logger = setup_logger("trade.datamanager.base", stream_log_level=get_logging_level())
@@ -34,11 +34,15 @@ class CacheSpec:
         clear_on_exit (bool): If True, clears the cache on exit.
     """
 
-    base_dir: Optional[Path] = DM_GEN_PATH.as_posix()
     default_expire_days: Optional[int] = 500
     default_expire_seconds: Optional[int] = None
     cache_fname: Optional[str] = None
     clear_on_exit: bool = False
+
+    @property
+    def base_dir(self) -> Path:
+        """Allows dynamic base directory resolution, e.g., for live vs backtest."""
+        return get_dm_gen_path()
 
 
 class BaseDataManager(ABC):
@@ -133,6 +137,7 @@ class BaseDataManager(ABC):
             clear_on_exit=cls.CACHE_SPEC.clear_on_exit,
         )
         return c
+    
     
     @classmethod
     def clear_all_caches(cls) -> None:

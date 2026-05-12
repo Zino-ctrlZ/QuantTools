@@ -31,6 +31,7 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     model_price: ModelPrice = ModelPrice.MIDPOINT
     filter_out_special_dividends: bool = True
     greeks_to_compute: Union[List[GreekType], GreekType] = GreekType.GREEKS
+    is_live: bool = False
 
 
     def assert_valid(self) -> None:
