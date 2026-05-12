@@ -1,3 +1,68 @@
+"""PnL monitoring cog for profit-locking and risk-off actions.
+
+Provides a position-level monitoring cog that evaluates realized/unrealized
+profit and loss as part of the PositionAnalyzer pipeline, then emits
+actionable opinions (HOLD, CLOSE, ROLL) using rule-based thresholds.
+
+Core Classes:
+    PnLMonitorCog: Applies PnL-driven management rules to open positions.
+
+Core Functions:
+    on_new_order_request: Re-scales requested tick cash when profitable.
+    _analyze_impl: Evaluates per-position PnL percent and produces actions.
+    _get_current_close_open_quantity: Aggregates BUY vs SELL/EXERCISE flow.
+    _has_closed_before: Detects whether a trade has partial close history.
+
+Processing Flow:
+    1. Receive a position analysis context from PositionAnalyzer.
+    2. Compute per-position PnL ratio: pnl / (entry_price * quantity).
+    3. Apply rule set in priority order:
+       - Take-profit partial close when PnL ratio > 50% and quantity > 1.
+       - Roll when PnL ratio > 100% and roll criteria are satisfied.
+       - Optional stop-loss close when PnL ratio <= -70%.
+       - Otherwise HOLD.
+    4. Stamp analysis metadata (date/reason/effective_date) on actions.
+    5. Return CogActions with the resulting opinions.
+
+Risk/Assumptions:
+    - PnL thresholds are static and percentage-based.
+    - Effective dates are delayed by business days using t_plus_n.
+    - Stop-loss branch is disabled by default (enable_stop_loss=False).
+    - Quantity adjustments assume position quantities are integer-like.
+    - Trade history interpretation relies on direction labels:
+      BUY, SELL, EXERCISE.
+
+Rule Summary:
+    Profit lock (partial close):
+        If pnl_ratio > 0.5 and quantity > 1, close approximately half.
+
+    Roll for large gains:
+        If pnl_ratio > 1.0 and either:
+        - quantity == 1, or
+        - the trade has prior close activity and quantity > 1,
+        then emit ROLL.
+
+    Stop-loss (optional):
+        If pnl_ratio <= -0.7 and stop loss is enabled, close fully.
+
+Order Request Tick-Cash Adjustment:
+    During on_new_order_request, when symbol_total_pnl > 0:
+        - Normalize tick_cash to scaled dollars.
+        - Remove embedded pnl component from tick_cash.
+        - Add back 25% of pnl to lock profits while resizing.
+        - Mark is_tick_cash_scaled=True.
+
+Usage:
+    >>> cog = PnLMonitorCog()
+    >>> # Analyzer invokes this internally with PositionAnalysisContext
+    >>> # actions = cog.analyze(context)
+
+Notes:
+    - This cog is opinion-generating; execution remains downstream.
+    - Action reasons and verbose_info are populated for observability.
+    - Configuration defaults come from PnlMonitorConfig.
+"""
+
 from typing import Tuple, Optional
 import math
 import pandas as pd
