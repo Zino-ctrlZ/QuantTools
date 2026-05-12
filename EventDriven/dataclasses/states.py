@@ -57,7 +57,6 @@ class PositionState:
     action: Optional[RMAction] = None
     entry_date: Optional[datetime] = None
     trades: Optional[Trade] = None
-    signal_total_pnl: Optional[float] = None
 
     def __repr__(self):
         return f"PositionState(date={self.last_updated}, trade_id={self.trade_id}, quantity={self.quantity}, pnl={self.pnl}, signal_id={self.signal_id})"

@@ -166,7 +166,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
 
-logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="WARNING")
+logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="INFO")
 logger.info("Changing pools log level to WARNING for market_timeseries module")
 _change_global_stream_level("WARNING")
 SPECIAL_DIVIDENDS: Dict[str, List[Dict[str, Any]]] = {}
@@ -259,6 +259,7 @@ class BacktestTimeseries(BacktestRunMixin):
          - If the ticker is in the special_dividends list, returns the corresponding dividend information.
          - If the ticker is not found in either list, raises a ValueError.
          """
+        load_special_divs()
         if ticker in self._loaded_special_dividends:
             return self._loaded_special_dividends[ticker]
         

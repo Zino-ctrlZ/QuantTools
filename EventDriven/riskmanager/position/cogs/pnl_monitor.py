@@ -1,26 +1,18 @@
 from typing import Tuple, Optional
 import math
 import pandas as pd
-from EventDriven.configs.core import BaseCogConfig
 from EventDriven.dataclasses.states import NewPositionState
 from EventDriven.dataclasses.orders import OrderRequest
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.dataclasses.states import PositionAnalysisContext, CogActions, PositionState
 from EventDriven.riskmanager.actions import CLOSE, ROLL, HOLD
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from EventDriven.configs.core import PnlMonitorConfig
 
 logger = setup_logger("EventDriven.riskmanager.position.cogs.pnl_monitor", stream_log_level="INFO")
 
 
-@pydantic_dataclass
-class PnlMonitorConfig(BaseCogConfig):
-    """
-    Configuration dataclass for PnLMonitorCog.
-    """
 
-    name: Optional[str] = "PnLMonitorCog"
-    enabled: bool = True
 
 
 class PnLMonitorCog(BaseCog):
