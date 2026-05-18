@@ -470,8 +470,9 @@ def populate_cache_with_chain(
 
         if PATCH_TICKERS:
             chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
-            
-        _PERSISTENT_CACHE[key] = chain_clipped  ## Cache the chain data to avoid redundant API calls in the future
+        
+        if (pd.to_datetime(date)).date() != datetime.now().date():
+            _PERSISTENT_CACHE[key] = chain_clipped  ## Cache the chain data to avoid redundant API calls in the future
         chain_clipped.columns = chain_clipped.columns.str.capitalize()
 
     ## Create ID
