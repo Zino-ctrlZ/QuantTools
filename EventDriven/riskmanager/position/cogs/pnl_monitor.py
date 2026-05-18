@@ -77,9 +77,6 @@ from EventDriven.configs.core import PnlMonitorConfig
 logger = setup_logger("EventDriven.riskmanager.position.cogs.pnl_monitor", stream_log_level="INFO")
 
 
-
-
-
 class PnLMonitorCog(BaseCog):
     """PnL-aware position management cog.
 
