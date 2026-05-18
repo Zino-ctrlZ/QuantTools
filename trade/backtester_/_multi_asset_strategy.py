@@ -10,7 +10,8 @@ def _setup_strategy(
     data: PTDataset,
     start_date: str,
     ticker: str,
-    params: Dict[str, Any]
+    params: Dict[str, Any],
+    tplusn: Optional[int] = 0
 ) -> StrategyBase:
     """
     Utility function to initialize a strategy instance with the given parameters.
@@ -31,9 +32,8 @@ def _setup_strategy(
     for key, value in default_params.items():
         if key not in params:
             params[key] = value
-
     return strategy_class(
-        data=data, start_trading_date=start_date, ticker=ticker, **params
+        data=data, start_trading_date=start_date, ticker=ticker, tplusn=tplusn, **params
 )
 
 @dataclass
@@ -153,6 +153,7 @@ class MultiAssetStrategy:
                 data=self.data[ticker],
                 start_date=self.start_date,
                 ticker=ticker,
+                tplusn=self.tplusn,
                 params=ticker_params
             )
             self.current_open_positions[ticker] = False

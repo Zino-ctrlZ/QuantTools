@@ -42,8 +42,6 @@ class Indicator:
             self.values = self.series.to_numpy(copy=False)
 
 
-
-
 @dataclass
 class TradeDecision:
     ok: bool
@@ -66,7 +64,11 @@ class TradeDecision:
                     self.signal_id = SignalID.parse(self.signal_id)
                 except Exception as e:
                     raise ValueError(f"Invalid signal_id string: {self.signal_id}") from e
-            raise TypeError("TradeDecision.signal_id must be of type SignalID, 'N/A', or None. Received type: {}".format(type(self.signal_id)))
+            raise TypeError(
+                "TradeDecision.signal_id must be of type SignalID, 'N/A', or None. Received type: {}".format(
+                    type(self.signal_id)
+                )
+            )
         if self.pos_effect is not None and not isinstance(self.pos_effect, PositionEffect):
             raise TypeError("TradeDecision.pos_effect must be of type PositionEffect or None.")
 
@@ -331,7 +333,7 @@ class StrategyBase(ABC):
         raise AttributeError(
             "position_open is a read-only property. To change position status, use open_action() and close_action() methods which handle state updates and validations."
         )
-    
+
     def additional_on_entry_info(self, *, date: pd.Timestamp = None, index: Optional[int] = None) -> Dict[str, Any]:
         """
         Override this method in your strategy subclass to provide additional information to be stored in PositionInfo when a position is opened.
@@ -342,7 +344,7 @@ class StrategyBase(ABC):
             Dict[str, Any]: A dictionary of additional information to include in PositionInfo. This will be merged with the default fields when a position is opened.
         """
         return {}
-    
+
     def additional_on_exit_info(self, *, date: pd.Timestamp = None, index: Optional[int] = None) -> Dict[str, Any]:
         """
         Override this method in your strategy subclass to provide additional information to be stored or logged when a position is closed.
@@ -353,6 +355,39 @@ class StrategyBase(ABC):
             Dict[str, Any]: A dictionary of additional information to include in logs or records when a position is closed.
         """
         return {}
+
+    def get_bt_params(self) -> Dict[str, Any]:
+        """
+        Return the current backtest parameter values for this strategy instance.
+
+        The returned mapping uses the keys declared on the subclass ``bt_params``
+        contract and resolves each value from ``self`` via ``getattr`` so the result
+        reflects the current instance state. If any declared parameter is missing,
+        this raises an error immediately.
+
+        Returns:
+            Dict[str, Any]: Current backtest parameter values keyed by ``bt_params``.
+
+        Raises:
+            TypeError: If ``bt_params`` is not a dictionary.
+            AttributeError: If any declared backtest parameter is missing on the instance.
+        """
+        bt_params = getattr(type(self), "bt_params", None)
+        if not isinstance(bt_params, dict):
+            raise TypeError(f"{type(self).__name__}.bt_params must be a dict.")
+
+        current_params: Dict[str, Any] = {}
+        missing_keys: List[str] = []
+        for key in bt_params.keys():
+            if not hasattr(self, key):
+                missing_keys.append(key)
+                continue
+            current_params[key] = getattr(self, key)
+
+        if missing_keys:
+            raise AttributeError(f"{type(self).__name__} is missing backtest parameter attribute(s): {missing_keys}.")
+
+        return current_params
 
     def _resolve(self, *, date: pd.Timestamp = None, index: int = None) -> Tuple[int, pd.Timestamp]:
         """
@@ -424,9 +459,9 @@ class StrategyBase(ABC):
             )
 
         self._df.columns = self._df.columns.str.lower()
-        assert set(self._df.columns).issuperset(
-            {"open", "high", "low", "close", "volume"}
-        ), "Data must contain open, high, low, close, volume columns."
+        assert set(self._df.columns).issuperset({"open", "high", "low", "close", "volume"}), (
+            "Data must contain open, high, low, close, volume columns."
+        )
 
     @abstractmethod
     def setup(self) -> None:
@@ -799,7 +834,9 @@ class StrategyBase(ABC):
             self.add_indicator('SMA_20', sma_20, overlay=True, color='blue')
         """
         # assumes you have an Indicator class somewhere
-        self.indicators[name] = Indicator(name=name, series=series, overlay=overlay, color=color, values=series.to_numpy(copy=False))
+        self.indicators[name] = Indicator(
+            name=name, series=series, overlay=overlay, color=color, values=series.to_numpy(copy=False)
+        )
 
     def get_indicator(self, name: str) -> Any:
         """
@@ -924,6 +961,7 @@ class StrategyBase(ABC):
             current_price = float(close[i])
             in_pos_prev = self.position_open
             position_side = self.position_side
+            # print(f"Index: {i}, Date: {ts}, Should Close: {self.should_close(index=i)}, Should Open: {self.should_open(index=i)} ")
 
             # 1) Apply return for the interval prev->current based on prior position state
             if i > 0 and in_pos_prev:
@@ -944,7 +982,16 @@ class StrategyBase(ABC):
                             index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price
                         )
                         entry_price = current_price
-                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq, **self.additional_on_entry_info(index=i)})
+                        trades.append(
+                            {
+                                "date": ts,
+                                "action": "open",
+                                "price": current_price,
+                                "equity": eq,
+                                "signal_id": op.get("signal_id"),
+                                **self.additional_on_entry_info(index=i),
+                            }
+                        )
 
                 elif op.get("action") == "close":
                     ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
@@ -963,6 +1010,7 @@ class StrategyBase(ABC):
                                 "entry_price": entry_price,
                                 "side": position_side,
                                 "position_info": position_info,
+                                "signal_id": position_info.signal_id if position_info else None,
                                 **self.additional_on_exit_info(index=i),
                             }
                         )
@@ -970,6 +1018,7 @@ class StrategyBase(ABC):
 
             # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
             open_decision = self.should_open(index=i)
+            close_decision = self.should_close(index=i)
             if open_decision.ok:
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
                 if tn_int == 0:
@@ -982,7 +1031,16 @@ class StrategyBase(ABC):
                             entry_price=current_price,
                         )
                         entry_price = current_price
-                        trades.append({"date": ts, "action": "open", "price": current_price, "equity": eq, **self.additional_on_entry_info(index=i)})
+                        trades.append(
+                            {
+                                "date": ts,
+                                "action": "open",
+                                "price": current_price,
+                                "equity": eq,
+                                "signal_id": open_decision.signal_id,
+                                **self.additional_on_entry_info(index=i),
+                            }
+                        )
                 else:
                     pending.setdefault(exec_idx, []).append(
                         {
@@ -993,7 +1051,7 @@ class StrategyBase(ABC):
                         }
                     )
 
-            elif self.should_close(index=i):
+            elif close_decision.ok:
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
                 if tn_int == 0:
                     if self.position_open:
@@ -1010,11 +1068,13 @@ class StrategyBase(ABC):
                                 "entry_price": entry_price,
                                 "side": position_side,
                                 "position_info": position_info,
+                                "signal_id": position_info.signal_id if position_info else None,
                                 **self.additional_on_exit_info(index=i),
                             }
                         )
                         self.close_action(index=exec_idx)
                 else:
+                    print(f"Scheduling close at index {exec_idx} for signal at index {i}, date {ts}")
                     pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
             equity[i] = eq
@@ -1037,6 +1097,7 @@ class StrategyBase(ABC):
                         "entry_price": entry_price,
                         "side": self.position_side,
                         "position_info": position_info,
+                        "signal_id": position_info.signal_id if position_info else None,
                         **self.additional_on_exit_info(index=n - 1),
                     }
                 )
@@ -1048,7 +1109,7 @@ class StrategyBase(ABC):
         ## Build trades into a DataFrame for easier analysis (optional)
 
         return trades, equity_series
-    
+
     def _convert_trades_to_df(self, trades: List[Dict[str, Any]]) -> pd.DataFrame:
         """
         Convert the list of trade dictionaries into a pandas DataFrame for easier analysis.
@@ -1060,7 +1121,7 @@ class StrategyBase(ABC):
         """
         if not trades:
             return pd.DataFrame()  # return empty DataFrame if no trades
-        
+
         ## convert list of dicts into list of two sequential dicts for open/close pairs, then build DataFrame
         trade_records = []
         random_date = trades[0]["date"] if trades else None
@@ -1075,6 +1136,7 @@ class StrategyBase(ABC):
                 "entry_equity": open_trade["equity"],
                 "return_pct": None,
                 "side": open_trade.get("side"),
+                "signal_id": open_trade.get("signal_id"),
             }
             if close_trade and close_trade["action"] == "close":
                 record.update(
@@ -1093,7 +1155,6 @@ class StrategyBase(ABC):
                 record.update({f"exit_{k}": close_trade.get(k) for k in exit_info_keys})
             trade_records.append(record)
         return pd.DataFrame(trade_records).set_index("entry_date")
-            
 
     def plot_strategy_indicators(self, log_scale: bool = True, add_signal_marker: bool = True) -> go.Figure:
         """
@@ -1321,9 +1382,9 @@ class ATRTrailingStrategyBase(StrategyBase, ABC):
             average_type=self.average_type,
         )
 
-    def open_action(self, *, signal_id = None, entry_price = None, side = None, date = None, index = None):
+    def open_action(self, *, signal_id=None, entry_price=None, side=None, date=None, index=None):
         idx, _ = self._resolve(date=date, index=index)
-        
+
         if self.is_long:
             self.stop = update_atr_trail_long(
                 close=float(self.close[idx]),
@@ -1335,6 +1396,25 @@ class ATRTrailingStrategyBase(StrategyBase, ABC):
             self.stop = update_atr_trail_short(
                 close=float(self.close[idx]),
                 loss=float(self.loss_series[idx]),
+                prev_trail=self.stop,
+                reset=False,
+            )
+
+    def close_action(self, *, date=None, index=None):
+        self.stop = None
+
+    def is_close_signal(self, *, date=None, index=None) -> bool:
+        if self.is_long:
+            self.stop = update_atr_trail_long(
+                close=float(self.close[index]),
+                loss=float(self.loss_series[index]),
+                prev_trail=self.stop,
+                reset=False,
+            )
+        elif self.is_short:
+            self.stop = update_atr_trail_short(
+                close=float(self.close[index]),
+                loss=float(self.loss_series[index]),
                 prev_trail=self.stop,
                 reset=False,
             )
