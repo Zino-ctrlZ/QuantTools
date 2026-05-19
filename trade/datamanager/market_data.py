@@ -703,7 +703,6 @@ class MarketTimeseries:
         cached_data = self._spot.get(sym)
         if cached_data is None:
             cached_data = self._load_spot_into_cache(sym, start, end)
-
         cached_data, is_partial, missing_start_date, missing_end_date = _data_structure_cache_check_missing(
             cached_data=cached_data,
             key=sym,
