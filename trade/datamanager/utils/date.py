@@ -5,7 +5,7 @@ from pandas.tseries.offsets import BDay
 from trade.helpers.helper import to_datetime, is_busday, is_USholiday
 from trade.helpers.helper import ny_now
 from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR  # noqa
-from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME
+from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME, get_enable_caching
 from trade.helpers.helper_types import DATE_HINT
 from trade.helpers.helper import time_distance_helper  # noqa
 from trade.helpers.helper import CustomCache, generate_option_tick_new
@@ -170,7 +170,7 @@ def _sync_date(
         dates: Optional[list] = None,
     ) -> Tuple[datetime, datetime]:
         """Ensures start_date and end_date are within min_trade_date and max_trade_date."""
-    
+
         if start_date < min_trade_date:
             logger.warning(
                 f"Requested start_date {start_date.date()} is before available data. Adjusting to {min_trade_date.date()}."
@@ -264,24 +264,26 @@ def _sync_date(
     # For non-expired options, max changes with time, so do not persist it.
     if is_expired:
         max_allowable = max_trade_date
-        LIST_DATE_CACHE.set(
-            key=opttick,
-            value={
-                "min_date": pd.Timestamp(min_trade_date),
-                "max_date": pd.Timestamp(max_allowable),
-                "range": dates,
-            },
-            expire=None,
-        )
+        if get_enable_caching():
+            LIST_DATE_CACHE.set(
+                key=opttick,
+                value={
+                    "min_date": pd.Timestamp(min_trade_date),
+                    "max_date": pd.Timestamp(max_allowable),
+                    "range": dates,
+                },
+                expire=None,
+            )
     else:
         max_allowable = _compute_max_allowable()
-        LIST_DATE_CACHE.set(
-            key=opttick,
-            value={
-                "min_date": pd.Timestamp(min_trade_date),
-            },
-            expire=None,
-        )
+        if get_enable_caching():
+            LIST_DATE_CACHE.set(
+                key=opttick,
+                value={
+                    "min_date": pd.Timestamp(min_trade_date),
+                },
+                expire=None,
+            )
 
     return _guard_rail_dates(start_date, end_date, min_trade_date, max_allowable, dates=dates)
 

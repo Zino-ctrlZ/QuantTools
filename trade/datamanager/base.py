@@ -6,9 +6,10 @@ from trade.datamanager.utils.logging import get_logging_level
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
 from pathlib import Path
-from .vars import get_dm_gen_path
+from .vars import get_dm_gen_path, get_enable_caching
 from ._enums import Interval, ArtifactType, SeriesId
 from .utils.enums_utils import construct_cache_key
+
 logger = setup_logger("trade.datamanager.base", stream_log_level=get_logging_level())
 
 # Assumes you already have these (from your cache_key module)
@@ -74,7 +75,7 @@ class BaseDataManager(ABC):
 
         if not isinstance(cache_name, str) or not cache_name.strip():
             raise TypeError(f"{cls.__name__} must define a non-empty class variable CACHE_NAME: str")
-        
+
         if not isinstance(cache_spec, CacheSpec):
             raise TypeError(f"{cls.__name__} must define a class variable CACHE_SPEC of type CacheSpec")
 
@@ -122,14 +123,13 @@ class BaseDataManager(ABC):
         if out > 0:
             logger.info(f"{self.CACHE_NAME} has expired {out} entries")
 
-
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}(symbol={self.symbol}, cache='{self.CACHE_NAME}', all_entries={len(self.cache)})>"
-    
+
     @classmethod
     def get_cache(cls) -> CustomCache:
         """Returns the cache instance."""
-        
+
         c = CustomCache(
             location=cls.CACHE_SPEC.base_dir,
             fname=cls.CACHE_SPEC.cache_fname,
@@ -137,8 +137,7 @@ class BaseDataManager(ABC):
             clear_on_exit=cls.CACHE_SPEC.clear_on_exit,
         )
         return c
-    
-    
+
     @classmethod
     def clear_all_caches(cls) -> None:
         """Clears caches for all registered DataManager subclasses."""
@@ -198,6 +197,9 @@ class BaseDataManager(ABC):
         return self.cache.get(key, default=default)
 
     def set(self, key: str, value: Any, *, expire: Optional[int] = None) -> None:
+        if not get_enable_caching():
+            logger.info(f"Caching disabled. Skipping cache write for key: {key}")
+            return
         if expire is None:
             expire = self.cache_spec.default_expire_seconds
         self.cache.set(key, value, expire=expire)
@@ -224,7 +226,7 @@ class BaseDataManager(ABC):
 
         force=True bypasses cache read, recomputes and overwrites cache.
         """
-        if not force:
+        if get_enable_caching() and not force:
             hit = self.cache.get(key, default=None)
             if hit is not None:
                 return hit  # type: ignore[return-value]

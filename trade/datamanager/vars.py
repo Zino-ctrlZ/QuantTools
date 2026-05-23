@@ -23,6 +23,36 @@ MARKET_CLOSE_TIME = time(16, 0)
 DEFAULT_SCENARIOS = [0.9, 0.95, 1.0, 1.05, 1.1]
 DEFAULT_VOL_SCENARIOS = [-0.02, -0.01, 0.0, 0.01, 0.02]
 
+
+def _parse_bool_env(var_name: str, default: bool = True) -> bool:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+
+    value = raw.strip().lower()
+    if value in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "f", "no", "n", "off"}:
+        return False
+
+    logger.warning(
+        f"Invalid boolean value '{raw}' for env var {var_name}. Falling back to default={default}."
+    )
+    return default
+
+
+ENABLE_CACHING: bool = _parse_bool_env("DATAMANAGER_ENABLE_CACHE", default=True)
+
+
+def get_enable_caching() -> bool:
+    global ENABLE_CACHING
+    return ENABLE_CACHING
+
+
+def set_enable_caching(enabled: bool) -> None:
+    global ENABLE_CACHING
+    ENABLE_CACHING = bool(enabled)
+
 def get_dm_gen_path(is_live: bool = None) -> Path:
     from .config import OptionDataConfig
     if is_live is None:

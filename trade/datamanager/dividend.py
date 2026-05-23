@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Optional, Tuple, Union, List
 import pandas as pd
 from trade.helpers.Logging import setup_logger
 from trade.optionlib.assets.dividend import Schedule, ScheduleEntry
-from trade.datamanager.vars import get_times_series, get_dm_gen_path, load_name
+from trade.datamanager.vars import get_times_series, get_dm_gen_path, load_name, get_enable_caching
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult
 from trade.datamanager.base import BaseDataManager, CacheSpec
@@ -43,6 +43,7 @@ TS = get_times_series()
 DIV_TEMP_CACHE = CustomCache(
     location=get_dm_gen_path().as_posix(), fname="dividend_temp_cache", expire_days=1, clear_on_exit=True
 )
+
 
 class DividendDataManager(BaseDataManager):
     """Manages dividend data retrieval, caching, and schedule construction for a specific symbol.
@@ -109,9 +110,7 @@ class DividendDataManager(BaseDataManager):
             cls.INSTANCES[symbol] = instance
         return cls.INSTANCES[symbol]
 
-    def __init__(
-        self, symbol: str, *, enable_namespacing: bool = False
-    ) -> None:
+    def __init__(self, symbol: str, *, enable_namespacing: bool = False) -> None:
         """Initializes manager for a symbol with cache and temp cache for short-lived data.
 
         Sets up persistent cache for dividend schedules and temporary cache for short-lived
@@ -161,6 +160,10 @@ class DividendDataManager(BaseDataManager):
         ## If discrete dividends, we first check if key exists
         ## If it does, we add to it. Only values <= today.
         ## If it does not, we create new entry
+        if not get_enable_caching():
+            logger.info(f"Caching disabled. Skipping dividend cache write for key: {key}")
+            return
+
         if _type == "discrete":
             existing = self.get(key, default=None)
             today = datetime.today().date()
@@ -209,6 +212,7 @@ class DividendDataManager(BaseDataManager):
         """
         div_history = TS._get_dividend_yield_timeseries(symbol)
         return div_history
+
     ## Discrete dividend schedule retrieval with caching.
     def get_discrete_dividend_schedule(
         self,
@@ -387,20 +391,24 @@ class DividendDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
             maturity=mat_str,
         )
-        cached_series, is_partial, missing_start_date, missing_end_date = _check_cache_for_timeseries_data_structure(self, key, start_str, end_str)
+        cached_series, is_partial, missing_start_date, missing_end_date = _check_cache_for_timeseries_data_structure(
+            self, key, start_str, end_str
+        )
 
         # cached_series = self.get(key, default=None)
         if cached_series is not None and not is_partial:
             logger.info(f"Cache hit for discrete schedule timeseries key: {key}")
             logger.info(f"Cache fully covers requested date range for timeseries. Key: {key}")
             cached_series = cached_series[
-                (cached_series.index >= pd.to_datetime(start_date))
-                & (cached_series.index <= pd.to_datetime(end_date))
+                (cached_series.index >= pd.to_datetime(start_date)) & (cached_series.index <= pd.to_datetime(end_date))
             ]
             return cached_series, key
         else:
-            start_str, end_str = to_datetime(missing_start_date).strftime("%Y-%m-%d"), to_datetime(missing_end_date).strftime("%Y-%m-%d")
-        
+            start_str, end_str = (
+                to_datetime(missing_start_date).strftime("%Y-%m-%d"),
+                to_datetime(missing_end_date).strftime("%Y-%m-%d"),
+            )
+
         # Build from scratch for missing dates
         # Fetch ONCE: all events from start_date to maturity_date
         full_schedule, _ = self.get_discrete_dividend_schedule(
@@ -438,7 +446,9 @@ class DividendDataManager(BaseDataManager):
             merged = pd.concat([cached_series, data])
             data = merged[~merged.index.duplicated(keep="last")]
 
-        data = _data_structure_sanitize(data, start_date, end_date, source_name=f"discrete_schedule_timeseries for {self.symbol}")
+        data = _data_structure_sanitize(
+            data, start_date, end_date, source_name=f"discrete_schedule_timeseries for {self.symbol}"
+        )
 
         _data_structure_cache_it(self, key, data, expire=86400)
         return data, key
@@ -574,7 +584,9 @@ class DividendDataManager(BaseDataManager):
         valuation_date = to_datetime(valuation_date)
 
         if not is_available_on_date(valuation_date):
-            logger.warning(f"Valuation date {valuation_date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}")
+            logger.warning(
+                f"Valuation date {valuation_date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}"
+            )
             if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
                 raise ValueError(f"Valuation date {valuation_date} is not a business day or holiday.")
             if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
@@ -583,7 +595,9 @@ class DividendDataManager(BaseDataManager):
                 ## Which the function would roll back
                 ## But there's a possibility input date is today's date but before market open
                 ## In that case we need to move back one more business day
-                valuation_date = change_to_last_busday(valuation_date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+                valuation_date = change_to_last_busday(
+                    valuation_date - pd.tseries.offsets.BDay(1), time_of_day_aware=False
+                )
             else:
                 result = DividendsResult()
                 dividend = pd.Series(dtype=float)
@@ -597,9 +611,6 @@ class DividendDataManager(BaseDataManager):
                 result.symbol = self.symbol
                 result.fallback_option = fallback_option
                 return result
-            
-
-        
 
         val_str = valuation_date.strftime("%Y-%m-%d") if isinstance(valuation_date, datetime) else valuation_date
         mat_str = maturity_date.strftime("%Y-%m-%d") if isinstance(maturity_date, datetime) else maturity_date
@@ -679,9 +690,8 @@ class DividendDataManager(BaseDataManager):
         )
         result.rt = True
         return result
-        
-    def offload(self, *args: Any, **kwargs: Any) -> None:
 
+    def offload(self, *args: Any, **kwargs: Any) -> None:
         """
         Placeholder for offload logic (not implemented).
 
@@ -697,4 +707,3 @@ class DividendDataManager(BaseDataManager):
             >>> div_mgr.offload()  # No-op
         """
         logger.info(f"No offload logic implemented for {self.CACHE_NAME}")
-

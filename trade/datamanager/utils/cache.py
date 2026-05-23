@@ -7,6 +7,7 @@ from trade import get_pricing_config
 from dataclasses import dataclass
 from .date import _should_save_today, DATE_HINT
 from ..base import BaseDataManager
+from ..vars import get_enable_caching
 from .data_structure import _data_structure_sanitize
 from trade.datamanager.exceptions import EmptyDataException
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
@@ -247,6 +248,10 @@ def _cache_it_timeseries_data_structure(
     checked_missing_dates are merged with any already-stored checked-missing dates on
     the existing cache entry, so coverage knowledge accumulates across writes.
     """
+    if not get_enable_caching():
+        logger.info(f"Caching disabled. Skipping cache write for key: {key}")
+        return
+
     # Extract existing checked-missing dates before unwrapping _CachedData.
     existing_checked_missing: List[DATE_HINT] = []
     if isinstance(existing, _CachedData):
@@ -314,6 +319,10 @@ def _cache_it_timeseries_data_structure(
 
 def _simple_list_cache_it(self: BaseDataManager, key: str, value: List[Any], *, expire: Optional[int] = None):
     """Cache a list of simple values. Will append and keep unique. Also sort"""
+
+    if not get_enable_caching():
+        logger.info(f"Caching disabled. Skipping list cache write for key: {key}")
+        return
 
     if not isinstance(value, list):
         raise TypeError(f"Expected list. Recieved {type(value)}")
