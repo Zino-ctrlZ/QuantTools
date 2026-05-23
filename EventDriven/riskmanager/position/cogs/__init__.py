@@ -10,6 +10,11 @@ Available Cogs:
         - Delta, gamma, vega, theta monitoring
         - Capital allocation management
 
+    VectorizedCog (vectorized.py):
+        - DTE-based roll trigger detection
+        - New position cash validation (informational)
+        - Minimal, stateless position monitoring
+
 Utilities:
     analyze_utils.py:
         - DTE calculation from position IDs
@@ -31,7 +36,7 @@ Design Pattern:
     - Opinion-based recommendation system
 
 Usage:
-    from EventDriven.riskmanager.position.cogs import LimitsAndSizingCog
+    from EventDriven.riskmanager.position.cogs import LimitsAndSizingCog, VectorizedCog
     from EventDriven.riskmanager.position.cogs.analyze_utils import (
         get_dte_and_moneyness_from_trade_id
     )
@@ -40,3 +45,8 @@ See Also:
     - ../base.py: BaseCog abstract class definition
     - ../analyzer.py: Cog orchestration and reconciliation
 """
+
+from EventDriven.riskmanager.position.cogs.vectorized import VectorizedCog
+from EventDriven.configs.core import VectorizedCogConfig
+
+__all__ = ["VectorizedCog", "VectorizedCogConfig"]

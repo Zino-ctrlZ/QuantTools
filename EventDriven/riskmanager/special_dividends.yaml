@@ -9,6 +9,7 @@ no_special_dividends:
   - AMZN
   - AMD
   - NFLX
+  - SPY
 
 special_dividends:
   COST:

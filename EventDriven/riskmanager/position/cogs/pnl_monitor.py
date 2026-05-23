@@ -95,12 +95,18 @@ class PnLMonitorCog(BaseCog):
 
     default_config = PnlMonitorConfig()
 
-    def __init__(self, config: Optional[PnlMonitorConfig] = None):
+    def __init__(
+            self, 
+            config: Optional[PnlMonitorConfig] = None,
+            max_trade_dollar_size: Optional[float] = None,
+        ):
         """Initialize the PnL monitor cog.
 
         Args:
             config: Optional runtime configuration. If not provided, a default
                 `PnlMonitorConfig` is created.
+            max_trade_dollar_size: Optional cap on trade dollar size to prevent excessive allocation when scaling up with profits. If None, no cap is applied.
+            
 
         Notes:
             - `enable_stop_loss` is initialized to ``False`` so the stop-loss
@@ -112,6 +118,7 @@ class PnLMonitorCog(BaseCog):
         super().__init__(config)
         self.config = config
         self.enable_stop_loss = False  # Enable stop loss by default
+        self.max_trade_dollar_size = max_trade_dollar_size
 
     def on_new_position(self, new_position_state: NewPositionState) -> None:
         """Handle a newly created position state.
@@ -153,6 +160,17 @@ class PnLMonitorCog(BaseCog):
 
         ## Scale to dollar amount for easier interpretation
         tick_cash = tick_cash * 100 if not new_request_state.is_tick_cash_scaled else tick_cash
+
+        ## If max_trade_dollar_size is set, cap the tick_cash to prevent excessive allocation
+        if self.max_trade_dollar_size is not None and tick_cash > self.max_trade_dollar_size:
+            logger.info(
+                f"Tick cash of ${tick_cash:.2f} exceeds max_trade_dollar_size of ${self.max_trade_dollar_size:.2f}. Capping tick cash to max_trade_dollar_size."    
+            )
+
+            ## If tick_cash > max_trade_dollar_size, tick_cash = max_trade_dollar_size
+            ## If tick_cash <= max_trade_dollar_size, tick_cash remains unchanged
+            new_request_state.tick_cash = min(tick_cash, self.max_trade_dollar_size)
+            return
 
         ## If have profits, add 25% of the profits to the tick cash to scale up the position and lock in profits.
         if pnl is not None and pnl > 0:

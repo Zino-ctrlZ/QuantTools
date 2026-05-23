@@ -336,3 +336,19 @@ class PnlMonitorConfig(BaseCogConfig):
 
     name: Optional[str] = "PnLMonitorCog"
     enabled: bool = True
+
+
+@pydantic_dataclass
+class VectorizedCogConfig(BaseCogConfig):
+    """
+    Configuration dataclass for VectorizedCog.
+
+    Simple position monitoring cog that:
+    - Validates new positions by cash availability (informational)
+    - Monitors open positions for DTE-based roll triggers
+    """
+
+    name: str = "VectorizedCog"
+    enabled: bool = True
+    dte_limit_enabled: bool = True
+    dte_threshold: int = 30

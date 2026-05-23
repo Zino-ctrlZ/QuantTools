@@ -483,7 +483,7 @@ class RiskManager(BacktestRunMixin):
         ## Process order
 
         if not order_failed(order):
-            print(f"\nOrder Received:\n")
+            print("\nOrder Received:\n")
             pprint(order)
             position_id = order["data"]["trade_id"]
         else:

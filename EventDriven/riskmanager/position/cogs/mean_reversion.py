@@ -1,5 +1,4 @@
 import math
-
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.configs.core import MeanReversionSizerConfigs
 from typing import Optional
