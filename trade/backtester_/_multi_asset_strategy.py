@@ -421,7 +421,7 @@ class MultiAssetStrategy:
         """
         strategy = self.get_strategy(ticker)
         self.current_open_positions[ticker] = False
-        return strategy.close_action(current_date)
+        return strategy.close_action(date = current_date, index = None)
 
     def info_on_date(self, ticker: str, current_date: str) -> Dict[str, Any]:
         """

@@ -230,6 +230,12 @@ class CustomCache(Cache):
             if location
             else Path(os.environ.get("WORK_DIR")) / ".cache" / fname
         )
+
+        # 1.1 If clear_on_exit is True, dir becomes a folder ending with _tmp and each new instance is a randomly generated subfolder within it. 
+        # This is to ensure that multiple instances of CustomCache with clear_on_exit=True do not interfere with each other and can be safely cleared on exit without affecting other caches.
+        if clear_on_exit:
+            dir = dir.with_name(f"{dir.name}_tmp") / shortuuid.random(length=8)
+            
         self.dir = dir
         self.fname = fname
         self.expiry_date = (

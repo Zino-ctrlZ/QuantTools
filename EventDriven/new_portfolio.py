@@ -42,8 +42,10 @@ from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.helper import change_to_last_busday, is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
-from typing import Optional, Union
+from typing import Optional, Union, List
 import plotly
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from EventDriven.dataclasses.states import (
     AtTimePositionData,
     PositionState,
@@ -679,7 +681,7 @@ class OptionSignalPortfolio(Portfolio):
                     direction=signal_event.signal_type,
                     signal_id=signal_event.signal_id,
                     signal_total_pnl=self._get_signal_total_pnl(signal_event.signal_id),
-                    symbol_total_pnl=self._get_symbol_total_pnl(signal_event.symbol)
+                    symbol_total_pnl=self._get_symbol_total_pnl(signal_event.symbol),
                 )
             )
             self.position_cache[cache_key] = position_state
@@ -719,7 +721,7 @@ class OptionSignalPortfolio(Portfolio):
             if trade.signal_id == signal_id:
                 total_pnl = total_pnl + trade.total_pnl
         return total_pnl
-    
+
     def _get_symbol_total_pnl(self, symbol: str):
         """
         Helper function to calculate total PnL for a given symbol across all trades.
@@ -801,7 +803,7 @@ class OptionSignalPortfolio(Portfolio):
         if order_event is not None:
             self.eventScheduler.put(order_event)
 
-    def analyze_positions(self) -> StrategyChangeMeta:
+    def analyze_positions(self, dt: Optional[pd.Timestamp] = None) -> StrategyChangeMeta:
         """
         Analyze the current positions and determine if any need to be rolled
         """
@@ -820,7 +822,7 @@ class OptionSignalPortfolio(Portfolio):
         ## Create Context for current positions
         ## Analyze positions using RiskManager
         ## Extract events from meta changes and schedule them
-        dt = pd.to_datetime(self.eventScheduler.current_date)
+        dt = pd.to_datetime(dt or self.eventScheduler.current_date)
         if self._is_holiday(dt):
             self.logger.warning(f"Market is closed on {dt}, skipping")
             return
@@ -943,7 +945,6 @@ class OptionSignalPortfolio(Portfolio):
             "quantity": quantity,
             "entry_price": entry_price,
             "market_value": close * quantity * 100,
-
         }
         return position
 
@@ -987,7 +988,7 @@ class OptionSignalPortfolio(Portfolio):
                     entry_date=entry_date,
                     trades=trade_obj,
                     signal_total_pnl=self._get_signal_total_pnl(signal_id),
-                    symbol_total_pnl=self._get_symbol_total_pnl(tick)
+                    symbol_total_pnl=self._get_symbol_total_pnl(tick),
                 )
                 positions_states.append(pos_state)
 
@@ -1357,6 +1358,61 @@ class OptionSignalPortfolio(Portfolio):
             position_slice.index = pd.DatetimeIndex(to_datetime(position_slice.index)).normalize()
 
         return position_slice.loc[start_dt.normalize() : end_dt.normalize()]
+
+    def plot_trade_timeseries(
+        self,
+        trade_id: str,
+        y1: str = "s0_close",
+        y2: Optional[str] = "Midpoint",
+        columns: Optional[List[str]] = None,
+        title: Optional[str] = None,
+    ) -> go.Figure:
+        """Plot trade timeseries data with optional dual y-axis.
+
+        Args:
+            trade_id: Trade identifier string (e.g., "&L:TSLA20210115C480").
+            y1: Column name for primary y-axis.
+            y2: Column name for secondary y-axis. If None, only y1 is plotted.
+            columns: Optional list of columns to retrieve from trade timeseries.
+            title: Optional title for the plot.
+
+        Returns:
+            Interactive plotly figure with single or dual y-axis.
+        """
+        trade_df = self.get_trade_timeseries(trade_id)
+        if columns is not None:
+            missing_columns = [col for col in columns if col not in trade_df.columns]
+            if missing_columns:
+                raise ValueError(
+                    f"Columns {missing_columns} not found in trade timeseries. Available: {trade_df.columns.tolist()}"
+                )
+            df = trade_df[columns]
+        else:
+            df = trade_df
+
+        if y1 not in df.columns:
+            raise ValueError(f"Column '{y1}' not found in trade timeseries. Available: {df.columns.tolist()}")
+        if y2 is not None and y2 not in df.columns:
+            raise ValueError(f"Column '{y2}' not found in trade timeseries. Available: {df.columns.tolist()}")
+
+        if title is None:
+            title = f"Trade Timeseries: {trade_id}"
+
+        if y2 is None:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df[y1], name=y1, mode="lines"))
+            fig.update_layout(title=title, xaxis_title="Date", yaxis_title=y1)
+            return fig
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=df.index, y=df[y1], name=y1, mode="lines"), secondary_y=False)
+        fig.add_trace(go.Scatter(x=df.index, y=df[y2], name=y2, mode="lines"), secondary_y=True)
+
+        fig.update_xaxes(title_text="Date")
+        fig.update_yaxes(title_text=y1, secondary_y=False)
+        fig.update_yaxes(title_text=y2, secondary_y=True)
+        fig.update_layout(title=title)
+        return fig
 
     def get_at_time_position_data(self, position_id: TradeID, date=None) -> AtTimePositionData:
         """

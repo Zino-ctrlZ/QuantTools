@@ -90,11 +90,11 @@ def make_bt_wrapper(
             if open_decision.side == 1:
                 if verbose:
                     print("Going LONG")
-                self.buy()
+                self.buy(tag=open_decision.signal_id)
             elif open_decision.side == -1:
                 if verbose:
                     print("Going SHORT")
-                self.sell()
+                self.sell(tag=open_decision.signal_id)
             else:
                 raise ValueError(f"Invalid side in open_decision: {open_decision.side}")
             self.brain.open_action(
@@ -111,7 +111,7 @@ def make_bt_wrapper(
             if verbose:
                 print(f"Closing position on {date} at price {self.data.Close[-1]}")
                 print(f"Info: {self.brain.info_on_date(date=date)}")
-            self.position.close()
+            self.position.close(tag=close_decision.signal_id)
             self.brain.close_action(date=date)
 
     # Create the Strategy subclass dynamically
