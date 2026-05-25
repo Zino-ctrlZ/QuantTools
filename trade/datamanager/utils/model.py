@@ -659,6 +659,11 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         is_rt=is_rt,
         check_fallback_option=is_rt or is_as_of,
     )
+    model_data.rt = is_rt
+    model_data.market_model = load_request.market_model or OptionDataConfig().option_model
+    model_data.vol_model = load_request.vol_model or OptionDataConfig().volatility_model
+    model_data.model_price = load_request.model_price or OptionDataConfig().model_price
+    
     
     ## Log what was loaded only if something was actually loaded
     if load_info:

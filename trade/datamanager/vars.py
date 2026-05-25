@@ -48,10 +48,17 @@ def get_enable_caching() -> bool:
     global ENABLE_CACHING
     return ENABLE_CACHING
 
-
-def set_enable_caching(enabled: bool) -> None:
+def disable_caching() -> None:
     global ENABLE_CACHING
-    ENABLE_CACHING = bool(enabled)
+    ENABLE_CACHING = False
+
+def enable_caching() -> None:
+    global ENABLE_CACHING
+    ENABLE_CACHING = True
+
+def is_caching_enabled() -> bool:
+    global ENABLE_CACHING
+    return ENABLE_CACHING
 
 def get_dm_gen_path(is_live: bool = None) -> Path:
     from .config import OptionDataConfig

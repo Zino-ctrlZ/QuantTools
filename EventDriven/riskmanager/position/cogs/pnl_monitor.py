@@ -72,7 +72,7 @@ from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.dataclasses.states import PositionAnalysisContext, CogActions, PositionState
 from EventDriven.riskmanager.actions import CLOSE, ROLL, HOLD
-from EventDriven.configs.core import PnlMonitorConfig
+from EventDriven.configs.core import PnlMonitorConfig, PnLMonitorConfigConfigurable
 
 logger = setup_logger("EventDriven.riskmanager.position.cogs.pnl_monitor", stream_log_level="INFO")
 
@@ -96,10 +96,10 @@ class PnLMonitorCog(BaseCog):
     default_config = PnlMonitorConfig()
 
     def __init__(
-            self, 
-            config: Optional[PnlMonitorConfig] = None,
-            max_trade_dollar_size: Optional[float] = None
-        ):
+        self,
+        config: Optional[PnlMonitorConfig | PnLMonitorConfigConfigurable] = None,
+        max_trade_dollar_size: Optional[float] = None,
+    ):
         """Initialize the PnL monitor cog.
 
         Args:
@@ -113,11 +113,13 @@ class PnLMonitorCog(BaseCog):
               branch is opt-in.
             - `default_config` remains available for framework-level defaults.
         """
+        assert config is None or isinstance(config, (PnlMonitorConfig, PnLMonitorConfigConfigurable)), (
+            "Config must be of type PnlMonitorConfig or PnLMonitorConfigConfigurable"
+        )
         if config is None:
             config = PnlMonitorConfig()
         super().__init__(config)
-        self.config = config
-        self.enable_stop_loss = False  # Enable stop loss by default
+        self.config: PnlMonitorConfig | PnLMonitorConfigConfigurable = config
         self.max_trade_dollar_size = max_trade_dollar_size
 
     def on_new_position(self, new_position_state: NewPositionState) -> None:
@@ -164,19 +166,21 @@ class PnLMonitorCog(BaseCog):
         ## If max_trade_dollar_size is set, cap the tick_cash to prevent excessive allocation
         if self.max_trade_dollar_size is not None:
             logger.info(
-                f"Max trade dollar size is set to ${self.max_trade_dollar_size:.2f}. Original tick cash: ${tick_cash:.2f}."    
+                f"Max trade dollar size is set to ${self.max_trade_dollar_size:.2f}. Original tick cash: ${tick_cash:.2f}."
             )
 
             ## If tick_cash > max_trade_dollar_size, tick_cash = max_trade_dollar_size
             ## If tick_cash <= max_trade_dollar_size, tick_cash remains unchanged
             new_request_state.tick_cash = min(tick_cash, self.max_trade_dollar_size)
-            new_request_state.is_tick_cash_scaled = True  # Mark as scaled since we're treating it as a dollar amount now
+            new_request_state.is_tick_cash_scaled = (
+                True  # Mark as scaled since we're treating it as a dollar amount now
+            )
             return
 
         ## If have profits, add 25% of the profits to the tick cash to scale up the position and lock in profits.
         if pnl is not None and pnl > 0:
             additional_tick_cash = (
-                pnl * 0.25
+                pnl * self.config.profit_lock_in_pct
             )  ## Add 25% of the profits to the tick cash to scale up the position and lock in profits.
 
             ## Undo pnl from tick cash to avoid double counting, then add the additional tick cash to lock in profits.
@@ -192,8 +196,9 @@ class PnLMonitorCog(BaseCog):
             new_request_state.is_tick_cash_scaled = True
 
         else:
+            pnl_str = f"{pnl:.2f}" if pnl is not None else "None"
             logger.info(
-                f"No profits to lock in for {new_request_state.symbol}. Tick Cash remains at {tick_cash:.2f}. PnL: {pnl:.2f}"
+                f"No profits to lock in for {new_request_state.symbol}. Tick Cash remains at {tick_cash:.2f}. PnL: {pnl_str}"
             )
 
     def _analyze_impl(self, portfolio_context: PositionAnalysisContext) -> CogActions:
@@ -224,9 +229,9 @@ class PnLMonitorCog(BaseCog):
         opinions = []
 
         ## Rules:
-        ## 1. If PnL is greater than 50% of entry price, close half the position if quantity > 1 to lock in profits.
-        ## 2. If quantity is 1 and PnL is greater than 150% of entry price, ROLL the position.
-        ##  2a. If have closed before, and remainding quantity is > 1, ROLL when PnL is greater than 150% of entry price to lock in profits.
+        ## 1. If PnL is greater than lock_in_profit_threshold of entry price, close half the position if quantity > 1 to lock in profits.
+        ## 2. If quantity is 1 and PnL is greater than roll_profit_threshold of entry price, ROLL the position.
+        ##  2a. If have closed before, and remainding quantity is > 1, ROLL when PnL is greater than roll_profit_threshold of entry price to lock in profits.
         positions = portfolio_context.portfolio.positions
         bkt_info = portfolio_context.portfolio_meta
         t_plus_n = bkt_info.t_plus_n
@@ -239,21 +244,21 @@ class PnLMonitorCog(BaseCog):
                 if pos_state.entry_price * pos_state.quantity != 0
                 else 0
             )
-            if pl_pct > 0.5 and pos_state.quantity > 1:
+            if pl_pct > self.config.lock_in_profit_threshold and pos_state.quantity > 1:
                 qdiff = -math.ceil(pos_state.quantity / 2)
-                new_q = pos_state.quantity - qdiff
+                new_q = pos_state.quantity + qdiff
                 logger.info(
                     f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Closing half the position to lock in profits. Quantity change: {qdiff}, New Quantity: {new_q}"
                 )
                 action = CLOSE(trade_id=pos_state.trade_id, action={"quantity_diff": qdiff, "new_quantity": new_q})
                 action.analysis_date = portfolio_context.date
-                action.reason = f"PnL is {pl_pct:.2%} which is greater than 50% of entry price. Closing half the position to lock in profits."
+                action.reason = f"PnL is {pl_pct:.2%} which is greater than {self.config.lock_in_profit_threshold:.2%} of entry price. Closing half the position to lock in profits."
                 action.verbose_info = f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Closing half the position to lock in profits. Quantity change: {qdiff}, New Quantity: {new_q}"
                 action.effective_date = last_updated + t_plus_n_bdays
                 pos_state.action = action
                 opinions.append(pos_state)
 
-            elif pl_pct > 1.0:
+            elif pl_pct > self.config.roll_profit_threshold:
                 if pos_state.quantity == 1 or (
                     self._has_closed_before(pos_state.trade_id, pos_state) and pos_state.quantity > 1
                 ):
@@ -264,14 +269,14 @@ class PnLMonitorCog(BaseCog):
                         trade_id=pos_state.trade_id, action={"quantity_diff": 0, "new_quantity": pos_state.quantity}
                     )
                     action.analysis_date = portfolio_context.date
-                    action.reason = f"PnL is {pl_pct:.2%} which is greater than 150% of entry price. Rolling the position to lock in profits."
+                    action.reason = f"PnL is {pl_pct:.2%} which is greater than {self.config.roll_profit_threshold:.2%} of entry price. Rolling the position to lock in profits."
                     action.verbose_info = f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Rolling the position to lock in profits."
                     action.effective_date = last_updated + t_plus_n_bdays
                     pos_state.action = action
                     opinions.append(pos_state)
 
-            ## Stop loss branch: close <=-70%
-            elif pl_pct <= -0.7 and self.enable_stop_loss:
+            ## Stop loss branch: close <= stop_loss_pct to prevent further losses. This branch is disabled by default and can be enabled by setting enable_stop_loss to True.
+            elif pl_pct <= self.config.stop_loss_pct and self.config.enable_stop_loss:
                 logger.info(
                     f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Closing the position to prevent further losses."
                 )
@@ -279,7 +284,7 @@ class PnLMonitorCog(BaseCog):
                     trade_id=pos_state.trade_id, action={"quantity_diff": -pos_state.quantity, "new_quantity": 0}
                 )
                 action.analysis_date = portfolio_context.date
-                action.reason = f"PnL is {pl_pct:.2%} which is less than or equal to -70% of entry price. Closing the position to prevent further losses."
+                action.reason = f"PnL is {pl_pct:.2%} which is less than or equal to {self.config.stop_loss_pct:.2%} of entry price. Closing the position to prevent further losses."
                 action.verbose_info = f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Closing the position to prevent further losses."
                 action.effective_date = last_updated + t_plus_n_bdays
                 pos_state.action = action
@@ -294,9 +299,7 @@ class PnLMonitorCog(BaseCog):
                 )
                 opinions.append(pos_state)
 
-        return CogActions(
-            opinions=opinions, strategy_id=self.config.run_name, date=portfolio_context.date, source_cog=self.name
-        )
+        return CogActions(opinions=opinions, date=portfolio_context.date, source_cog=self.name)
 
     def _get_current_close_open_quantity(self, pos_state: PositionState) -> Tuple[int, int]:
         """Aggregate opened and closed quantity from trade entries.

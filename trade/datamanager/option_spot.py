@@ -38,6 +38,7 @@ from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 logger = setup_logger("trade.datamanager.option_spot", stream_log_level=get_logging_level())
 
 
+
 class OptionSpotDataManager(BaseDataManager):
     """Manages option spot price retrieval for a specific symbol from Thetadata API.
 
@@ -281,7 +282,7 @@ class OptionSpotDataManager(BaseDataManager):
         """
         if endpoint_source is None:
             endpoint_source = self.CONFIG.option_spot_endpoint_source
-
+        
         result = OptionSpotResult()
         result.symbol = self.symbol
         result.endpoint_source = endpoint_source
@@ -368,6 +369,10 @@ class OptionSpotDataManager(BaseDataManager):
             fetched=fetched_data,
             valid_start=start_date,
             valid_end=end_date,
+            symbol=self.symbol,
+            strike=float(strike),
+            right=right,
+            expiration=expiration,
         )
         logger.info(
             f"Option spot date classification for key {key}: "
@@ -390,6 +395,7 @@ class OptionSpotDataManager(BaseDataManager):
         # If the requested window has only checked-missing dates, add placeholder
         # NaN rows so sanitization and later cache hits can shape the output range.
         if classification.checked_missing_dates:
+            print(f"Adding placeholder rows for {len(classification.checked_missing_dates)} checked-missing dates for key {key}.")
             checked_missing_idx = pd.DatetimeIndex(to_datetime(classification.checked_missing_dates))
             checked_missing_idx = default_timestamp(checked_missing_idx)
 

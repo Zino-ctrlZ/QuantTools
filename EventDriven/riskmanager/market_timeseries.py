@@ -735,6 +735,7 @@ class BacktestTimeseries(BacktestRunMixin):
             Obviously, this might not be the case if the option was alive for ~5 years or more. But most options are not alive for that long.
         """
         key = (opttick, to_datetime(check_date).strftime("%Y-%m-%d"))
+        all_optticks = []
         if key in self.session_loaded_option_cache:
             logger.info(
                 f"Option data for {opttick} on {check_date} already generated in session, returning cached data"
@@ -798,6 +799,9 @@ class BacktestTimeseries(BacktestRunMixin):
             self.session_loaded_option_cache[key] = (
                 data  ## Cache the loaded data for the session to avoid re-loading it if the same option and date is requested again during the session
             )
+            self._option_data_sanity_check(
+                data=data, associated_optticks={opttick}, check_date=check_date
+            )
             return data
 
         # If there are splits, we need to load the data for each tick after adjusting strikes
@@ -855,10 +859,12 @@ class BacktestTimeseries(BacktestRunMixin):
                         adj_data[cols] /= factor
 
                 segments.append(adj_data)
+                all_optticks.append(adj_opttick)
 
         base_data = self.load_position_data(opttick).copy()
         base_data["adj_strike"] = meta["strike"]  ## Original strike
         base_data["factor"] = 1.0
+        all_optticks.append(opttick)
 
         first_event_date = to_adjust_split[0][0] if to_adjust_split else self.start_date
         if compare_dates.is_before(check_date, first_event_date):
@@ -880,7 +886,35 @@ class BacktestTimeseries(BacktestRunMixin):
             start_date=window_start,
             end_date=window_end,
         )
+        
+
         self.session_loaded_option_cache[key] = (
             final_data  ## Cache the generated data for the session to avoid re-generating it if the same option and date is requested again during the session
         )
+        self._option_data_sanity_check(
+            data=final_data, associated_optticks=set(all_optticks), check_date=check_date
+        )  ## Perform sanity check to ensure the generated option data includes the check date for all associated option ticks, and if not, clear the relevant cache entries to maintain cache integrity.
         return final_data
+    
+    def _option_data_sanity_check(
+            self,
+            data: pd.DataFrame,
+            associated_optticks: set[str],
+            check_date: Union[datetime, str],
+    ) -> None:
+        """Perform sanity checks on the option data for the associated option ticks."""
+        if check_date not in data.index:
+            logger.warning(f"Check date {check_date} not found in option data index for associated ticks: {associated_optticks}")
+            
+            ## Delete the cached data for the associated option ticks.
+            for opttick in associated_optticks:
+                if opttick in self.options_cache:
+                    logger.warning(f"Deleting cached option data for {opttick} due to missing check date {check_date}")
+                    self.options_cache.pop(opttick, None)
+                session_key = (opttick, to_datetime(check_date).strftime("%Y-%m-%d"))
+                if session_key in self.session_loaded_option_cache:
+                    logger.warning(f"Deleting cached session option data for {opttick} on {check_date} due to missing check date in options cache")
+                    self.session_loaded_option_cache.pop(session_key, None)
+            
+            ## Finally, raise an error to indicate the issue with the option data for the associated ticks.
+            raise ValueError(f"Check date {check_date} not found in option data index for associated ticks: {associated_optticks}. Cached data for these ticks has been deleted to maintain cache integrity.")

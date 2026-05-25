@@ -554,8 +554,8 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
         right=option_meta["put_call"],
         start_date=start,
         end_date=end,
-        dividend_type=DivType.CONTINUOUS,
-        market_model=OptionPricingModel.BSM,
+        # dividend_type=DivType.DISCRETE,
+        # market_model=OptionPricingModel.BINOMIAL,
     )
     logger.info(f"Data loading for {opttick} took {time.time() - start_time:.2f} seconds")
 
@@ -571,12 +571,12 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     ## set names properly
     start_time = time.time()
     s.name = "s"
-    y.name = "y"
+    # y.name = "y"
     r.name = "r"
     vol.name = "vol"
     data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
     data.columns = data.columns.str.capitalize()
-    data = data.join(s).join(y).join(r).join(vol)
+    data = data.join(s).join(r).join(vol)#.join(y)
     logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
     processed_option_data[opttick] = data
     return data

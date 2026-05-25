@@ -104,6 +104,12 @@ class VectorizedCog(BaseCog):
                 f"Cost=${position_cost:.2f}, Available=${tick_cash:.2f}, "
                 f"Quantity={quantity}, Option Price=${option_price:.4f}"
             )
+            if can_afford:
+                logger.debug(f"Position {order['data']['trade_id']} passed cash validation. Setting quantity to 1")
+                order["data"]["quantity"] = 1  # Enforce quantity of 1 for new positions in this cog
+            else:
+                logger.warning(f"Position {order['data']['trade_id']} failed cash validation. Quantity remains {quantity}")
+
         except Exception as e:
             logger.warning(f"Error during cash validation for new position: {e}")
 

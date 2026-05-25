@@ -606,6 +606,9 @@ class ModelResultPack(Result):
     price: Optional[ModelPrice] = None
     rt: Optional[bool] = False
     on_date: Optional[bool] = False
+    market_model: Optional[OptionPricingModel] = None
+    vol_model: Optional[VolatilityModel] = None
+    fallback_option: Optional[RealTimeFallbackOption] = None
 
     ## Diagnostic Info
     time_to_load: Optional[Dict[str, float]] = None

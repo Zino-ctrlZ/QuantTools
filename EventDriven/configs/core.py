@@ -337,6 +337,62 @@ class PnlMonitorConfig(BaseCogConfig):
     name: Optional[str] = "PnLMonitorCog"
     enabled: bool = True
 
+    @property
+    def enable_stop_loss(self) -> bool:
+        """
+        Enable dynamic stop loss based on position characteristics or market conditions. This property can be used to determine whether to apply stop loss logic in the PnLMonitorCog. For example, you might want to enable stop loss for certain high-risk positions or during volatile market conditions, while keeping it disabled for more stable positions or in calmer markets. The actual logic for determining when to enable stop loss would depend on your specific risk management strategy and could involve factors such as volatility, position size, time to expiration, or other relevant metrics.
+        """
+        # Placeholder logic for dynamic stop loss enabling - this can be replaced with actual conditions based on market data or position characteristics
+        return False
+
+    @property
+    def roll_profit_threshold(self) -> float:
+        """
+        Dynamic property to determine the maximum PnL percentage threshold for rolling positions to lock in profits.
+        The idea is that if a position has achieved a certain percentage gain relative to its entry price, it may be prudent to roll the position to lock in those profits and potentially free up capital for new trades.
+        This threshold can help prevent giving back gains in volatile markets while still allowing for significant profit capture.
+        Note: This is a simplified example and should be tested and adjusted based on historical performance and risk tolerance.
+        """
+        return 1.0  # For example, this could represent a 100% gain relative to entry price as a threshold for rolling to lock in profits.
+
+    @property
+    def lock_in_profit_threshold(self) -> float:
+        """
+        Threshold to determine when to close a portion of the position to lock in profits. For example, if set to 0.5, it would trigger when the position has achieved a 50% gain relative to its entry price, prompting the closure of half the position to secure profits while allowing the rest to run.
+        """
+        return 0.5
+
+    @property
+    def stop_loss_pct(self) -> float:
+        """
+        Threshold to determine the stop loss percentage for exiting positions to prevent further losses. For example, if set to -0.7, it would trigger when the position has incurred a 70% loss relative to its entry price, prompting the closure of the position to limit further losses.
+        """
+        return -0.7
+
+    @property
+    def profit_lock_in_pct(self):
+        """
+        This controls the amount of profit locked to be added to cash used in next trade.
+        For example, if a position is closed with a 50% gain and profit_lock_in_pct is 0.5, then an additional 25% of the entry price (which is 50% of the gain)
+        would be added to the cash available for the next trade. This allows for a portion of the profits to be reinvested while still locking in gains.
+        """
+        return 0.25
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class PnLMonitorConfigConfigurable(BaseCogConfig):
+    """
+    Configurable version of PnLMonitorConfig that allows dynamic adjustment of thresholds.
+    """
+
+    roll_profit_threshold: float = 1.0  # Default to 100% gain threshold for rolling to lock in profits
+    stop_loss_pct: float = -0.7  # Default to 70% loss threshold for exiting positions
+    profit_lock_in_pct: float = 0.25  # Default to adding 25% of the gain back into cash for next trade
+    lock_in_profit_threshold: float = (
+        0.5  # Default to 50% gain threshold for closing half the position to lock in profits
+    )
+    enable_stop_loss: bool = False  # Default to having stop loss disabled, can be enabled based on position characteristics or market conditions
+
 
 @pydantic_dataclass
 class VectorizedCogConfig(BaseCogConfig):
@@ -352,3 +408,22 @@ class VectorizedCogConfig(BaseCogConfig):
     enabled: bool = True
     dte_limit_enabled: bool = True
     dte_threshold: int = 30
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class PlainSizingCogConfig(BaseCogConfig):
+    """Configuration dataclass for PlainSizingCog.
+
+    Simple sizing cog that:
+    - Sizes new positions using default_delta_limit
+    - Applies a one-contract affordability fallback when quantity is zero
+    - Monitors open positions for DTE-based roll triggers
+    - Skips checks for strategies matching excluded slug tokens
+    """
+
+    name: str = "PlainSizingCog"
+    enabled: bool = True
+    sizing_lev: float = 1.0
+    dte_limit_enabled: bool = True
+    dte_threshold: int = 30
+    exclude_strategy_slug_tokens: List[str] = Field(default_factory=list)

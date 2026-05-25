@@ -381,7 +381,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
                 # Recompute quantity downward if cost exceeds available cash
                 unit_cost = price + self.commission_rate
                 logger.info(
-                    f"Unit cost: {unit_cost}, Cash available: {order_event.cash}, Direction: {order_event.direction}, Signal ID: {order_event.signal_id}"
+                    f"Unit cost: {unit_cost}, Cash available: {order_event.cash}, Direction: {order_event.direction}, Signal ID: {order_event.signal_id}, slippage_pct: {slippage_pct:.4f}, slippage_value: {slippage_pct_value:.4f}"
                 )
                 if order_event.direction == "BUY":
                     max_affordable_quantity = math.floor(order_event.cash / unit_cost)
@@ -398,7 +398,7 @@ class SimulatedExecutionHandler(ExecutionHandler):
                         quantity -= 1
                         total_cost = quantity * price + self.commission_rate
                     logger.info(
-                        f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {order_event.signal_id}, Total Cost: {quantity * price + self.commission_rate}, Cash: {order_event.cash}"
+                        f"Max affordable quantity: {max_affordable_quantity}, Raw quantity: {raw_quantity}, Final quantity: {quantity}, Signal ID: {order_event.signal_id}, Total Cost: {quantity * price + self.commission_rate}, Cash: {order_event.cash}, slippage_pct: {slippage_pct:.4f}, slippage_value: {slippage_pct_value:.4f}"
                     )
 
                 elif order_event.direction == "SELL":
