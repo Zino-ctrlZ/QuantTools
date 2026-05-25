@@ -5,6 +5,16 @@ This is a quantitative trading system focused on options pricing and risk manage
 
 ## Code Style & Standards
 
+### Commit Requests (Always-On)
+- Every time the user asks for a commit, first generate a commit strategy.
+- Separate changes into the most relevant concerns before committing.
+- For each planned commit, state:
+    - What will be committed (files/hunks grouped by concern).
+    - The commit message.
+- Keep unrelated concerns in separate commits.
+- Use the commit strategy skill for detailed grouping and message rules:
+    - `.github/skills/commit-strategy/SKILL.md`
+
 ### Type Hints
 - Always use complete type hints for all function parameters and return values
 - Use `Union[datetime, str]` for date parameters that accept multiple formats
@@ -40,6 +50,19 @@ date_obj = to_datetime(datetime.now())
 - Use Google-style docstrings for all classes and methods
 - Include Args, Returns, Raises, and Examples sections
 - Examples should be executable and demonstrate real-world usage
+
+### Strict Docstring Policy (Always-On)
+- These rules are mandatory for every Python file that is created or edited.
+- Follow PEP 257 conventions for all docstrings.
+- Use Google-style docstring sections.
+- Every module must have a module-level docstring as the first statement.
+- Every class must have a class docstring.
+- Every function and method must have a docstring, including `__init__` and private helpers.
+- Every docstring must include a concise summary line.
+- Add `Args`, `Returns`, and `Raises` sections when applicable.
+- Include an `Examples` section with executable usage when practical.
+- Keep docstrings factual and behavior-focused; avoid placeholder text.
+- When updating code, also update stale docstrings in the same edited scope.
 
 ### Module-Level Docstring Format
 - All Python modules must start with a module docstring as the very first statement.

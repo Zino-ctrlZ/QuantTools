@@ -111,7 +111,7 @@ def make_bt_wrapper(
             if verbose:
                 print(f"Closing position on {date} at price {self.data.Close[-1]}")
                 print(f"Info: {self.brain.info_on_date(date=date)}")
-            self.position.close(tag=close_decision.signal_id)
+            self.position.close()
             self.brain.close_action(date=date)
 
     # Create the Strategy subclass dynamically

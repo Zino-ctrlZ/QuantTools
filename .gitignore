@@ -191,6 +191,9 @@ EventDriven/Testing/text.txt
 ## Only relevant for me since I do the scheduling
 trade/helpers/*vol_resolve*.json
 
+## Irrelavant misc files
+trade/optionlib/model_issue_notes.txt
+
 ## Pickle files
 *.pkl
 \qtenv
