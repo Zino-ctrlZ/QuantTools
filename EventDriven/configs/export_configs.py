@@ -31,6 +31,10 @@ if TYPE_CHECKING:
         RiskManagerConfig,
         MeanReversionSizerConfigs,
         ExecutionHandlerConfig,
+        PnlMonitorConfig,
+        PnLMonitorConfigConfigurable,
+        VectorizedCogConfig,
+        PlainSizingCogConfig,
     )
 
 logger = setup_logger("EventDriven.configs.export_configs")
@@ -70,16 +74,15 @@ class ConfigsDict(TypedDict, total=False):
     PositionAnalyzerConfig: "PositionAnalyzerConfig"
     PortfolioManagerConfig: "PortfolioManagerConfig"
     LiquidityConfig: "LiquidityConfig"
-    LiquidityConfig: "LiquidityConfig"
     BacktesterConfig: "BacktesterConfig"
     CashAllocatorConfig: "CashAllocatorConfig"
     RiskManagerConfig: "RiskManagerConfig"
     MeanReversionSizerConfigs: "MeanReversionSizerConfigs"
-    ScoringConfigs: "ScoringConfigs"
     ExecutionHandlerConfig: "ExecutionHandlerConfig"
-    MeanReversionSizerConfigs: "MeanReversionSizerConfigs"
-    ScoringConfigs: "ScoringConfigs"
-    ExecutionHandlerConfig: "ExecutionHandlerConfig"
+    PnlMonitorConfig: "PnlMonitorConfig"
+    PnLMonitorConfigConfigurable: "PnLMonitorConfigConfigurable"
+    VectorizedCogConfig: "VectorizedCogConfig"
+    PlainSizingCogConfig: "PlainSizingCogConfig"
 
 
 @dataclass
@@ -110,7 +113,6 @@ class RunConfigBundle:
         """
         confs = {}
         for label, cfg in self.configs.items():
-    
             if not isinstance(cfg, dict):
                 # Convert config objects to dicts for YAML serialization
                 confs[label] = _sanitize_for_yaml(cfg)

@@ -384,7 +384,8 @@ class PnLMonitorConfigConfigurable(BaseCogConfig):
     """
     Configurable version of PnLMonitorConfig that allows dynamic adjustment of thresholds.
     """
-
+    name: str = "PnLMonitorCog"
+    enabled: bool = True
     roll_profit_threshold: float = 1.0  # Default to 100% gain threshold for rolling to lock in profits
     stop_loss_pct: float = -0.7  # Default to 70% loss threshold for exiting positions
     profit_lock_in_pct: float = 0.25  # Default to adding 25% of the gain back into cash for next trade

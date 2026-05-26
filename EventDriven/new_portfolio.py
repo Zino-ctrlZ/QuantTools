@@ -18,6 +18,7 @@ from EventDriven.types import (
     EventTypes,
     FillDirection,
     ResultsEnum,
+    SignalID,
     SignalTypes,
     OrderData,
     Order,
@@ -120,14 +121,16 @@ class OptionSignalPortfolio(Portfolio):
         "ExitQuantity",
         "ClosedQuantity",
         "OpenQuantity",
+        "TotalEntryCost",
+        "TotalExitCost",
     ]
 
     # (column_to_average, column_used_as_weight)
     _WEIGHTED_COLS: list[tuple[str, str]] = [
         ("EntryPrice", "EntryQuantity"),
         ("ExitPrice", "ExitQuantity"),
-        ("TotalEntryCost", "EntryQuantity"),
-        ("TotalExitCost", "ExitQuantity"),
+        # ("TotalEntryCost", "EntryQuantity"),
+        # ("TotalExitCost", "ExitQuantity"),
     ]
 
     def __init__(
@@ -1131,9 +1134,13 @@ class OptionSignalPortfolio(Portfolio):
                         entry_price=entry_price,
                     )
                     # strategy_position = self.eq_strategy.get_strategy(ticker=fill_event.symbol)
+                    parsed_signal_id = SignalID.parse(fill_event.signal_id)
                     self.eq_strategy.open_action(
                         ticker=fill_event.symbol,
-                        current_date=fill_event.datetime,
+
+                        ## Current date should be signal entry date, so it stays te same even for a roll
+                        ## Therefore, we parse signal_id, add t_plus_n business days to the entry date and use that as the current date for the strategy. 
+                        current_date=parsed_signal_id["date"] + pd.tseries.offsets.BDay(self.t_plus_n),
                         signal_id=fill_event.signal_id,
                         side=1 if fill_event.direction == "BUY" else -1,
                         entry_price=entry_price,

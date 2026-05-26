@@ -263,7 +263,7 @@ class PnLMonitorCog(BaseCog):
                     self._has_closed_before(pos_state.trade_id, pos_state) and pos_state.quantity > 1
                 ):
                     logger.info(
-                        f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. Rolling the position to lock in profits."
+                        f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%} which is greater than {self.config.roll_profit_threshold:.2%} of entry price. Rolling the position to lock in profits."
                     )
                     action = ROLL(
                         trade_id=pos_state.trade_id, action={"quantity_diff": 0, "new_quantity": pos_state.quantity}
@@ -291,7 +291,7 @@ class PnLMonitorCog(BaseCog):
                 opinions.append(pos_state)
 
             else:
-                logger.info(f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. No action taken.")
+                logger.info(f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%}. No action taken. PnL is less than both lock-in threshold of {self.config.lock_in_profit_threshold:.2%} and roll threshold of {self.config.roll_profit_threshold:.2%}, and stop-loss condition is not met.")
                 pos_state.action = HOLD(trade_id=pos_state.trade_id)
                 pos_state.action.reason = f"PnL is {pl_pct:.2%}. No action taken."
                 pos_state.action.verbose_info = (

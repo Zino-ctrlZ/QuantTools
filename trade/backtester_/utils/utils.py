@@ -1,6 +1,6 @@
-from typing import Union, Dict, Optional, List, Callable
 from itertools import product
 from collections.abc import Callable as callable_func
+from typing import Union, Dict, Optional, List, Callable, TYPE_CHECKING
 import random
 import inspect
 from typing import Union, Dict, Optional, List, Callable
@@ -21,6 +21,9 @@ import random
 import inspect
 from trade._multiprocessing import ensure_global_start_method, PathosPool
 import threading
+if TYPE_CHECKING:
+    from trade.backtester_.backtester_ import PTBacktester
+
 
 
 
