@@ -2,7 +2,7 @@ import logging
 
 from git import List
 from trade.helpers.Logging import setup_logger, find_loggers_by_pattern, change_logger_stream_level
-LOGGING_LEVEL = "DEBUG"
+LOGGING_LEVEL = "WARNING"
 logger = setup_logger("trade.datamanager.utils", stream_log_level=LOGGING_LEVEL)
 
 FACTOR_DMS = {

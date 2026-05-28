@@ -473,7 +473,14 @@ class OptionSignalPortfolio(Portfolio):
             # meaningful even when the group is not fully closed.
             total_entry_cost = row.get("TotalEntryCost", 0)
             closed_pnl = row.get("ClosedPnL", 0)
-            row["ReturnPct"] = (closed_pnl / total_entry_cost) if total_entry_cost > 0 else 0
+            if group_key == "SignalID":
+                initial_entry_cost = grp[grp["EntryTime"] == row["EntryTime"]]["TotalEntryCost"].iloc[0]
+                max_total_entry_cost = grp["TotalEntryCost"].max()
+                row["ReturnPct"] = (closed_pnl / max_total_entry_cost) if initial_entry_cost > 0 else 0
+                row["InitialEntryReturnPct"] = (closed_pnl / initial_entry_cost) if initial_entry_cost > 0 else 0
+                row["CampaignReturnPct"] = (closed_pnl / total_entry_cost) if total_entry_cost > 0 else 0
+            else:
+                row["ReturnPct"] = (closed_pnl / total_entry_cost) if total_entry_cost > 0 else 0
 
             if is_fully_closed:
                 # Quantity as net open (should be 0 for a fully closed group)
