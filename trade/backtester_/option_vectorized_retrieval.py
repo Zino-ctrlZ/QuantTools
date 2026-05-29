@@ -606,7 +606,7 @@ class OptionVectorizedRetriever:
     ) -> Tuple[pd.DataFrame, Optional[str]]:
         """Normalize chain DataFrame into ranking columns used by selector."""
         frame = pd.DataFrame(chain).copy()
-        strike_col = self._find_col(frame.columns.tolist(), ["strike", "Strike"]) 
+        strike_col = self._find_col(frame.columns.tolist(), ["strike", "Strike"])
         right_col = self._find_col(frame.columns.tolist(), ["right", "Right", "put_call", "putcall", "option_type"])
         exp_col = self._find_col(frame.columns.tolist(), ["expiration", "Expiration", "exp", "expiry"])
         if strike_col is None or right_col is None or exp_col is None:
