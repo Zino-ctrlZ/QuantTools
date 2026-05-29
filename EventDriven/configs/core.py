@@ -370,7 +370,7 @@ class PnlMonitorConfig(BaseCogConfig):
         return -0.7
 
     @property
-    def profit_lock_in_pct(self):
+    def profit_lock_in_pct(self) -> float:
         """
         This controls the amount of profit locked to be added to cash used in next trade.
         For example, if a position is closed with a 50% gain and profit_lock_in_pct is 0.5, then an additional 25% of the entry price (which is 50% of the gain)
@@ -378,21 +378,98 @@ class PnlMonitorConfig(BaseCogConfig):
         """
         return 0.25
 
+    @property
+    def stop_loss_cash_threshold(self) -> Optional[float]:
+        """
+        This is the cash-based stop loss. It looks at signal-level PnL and determines if the loss exceeds a certain threshold
+        """
+        return None
+
+    @property
+    def max_trade_dollar_size(self) -> Optional[float]:
+        """
+        This is a dynamic property that can be used to set a maximum dollar size for trades based on current market conditions or portfolio risk. For example, during periods of high volatility, you might want to reduce the maximum trade size to limit potential losses, while in calmer markets, you could allow for larger trade sizes to capitalize on opportunities. The actual logic for determining the max trade dollar size would depend on your specific risk management strategy and could involve factors such as volatility, available capital, or recent performance.
+        """
+        return None
+
+    @property
+    def profit_lock_in_lvl(self) -> int:
+        """
+        This is a dynamic property that determines the level of profit lock-in based on the current PnL of the position. For example, if the position has achieved a significant gain, you might want to set a higher profit lock-in level to secure more of those gains, while for smaller gains, you could set a lower level to allow for more potential upside. The actual logic for determining the profit lock-in level would depend on your specific risk management strategy and could involve factors such as the percentage gain, volatility, or time to expiration.
+
+        profit lock pct is the amount of tick cash pnl to add to the cash available for the next trade.
+        For example, cash could start out with $1000, pnl of $200, and profit_lock_in_pct of 0.25. Then, $50 (which is 25% of the $200 gain) would be added to the cash available for the next trade, resulting in $1050 available for the next trade.
+
+
+        1: Enable for only tick cash
+        2: Enable for both tick cash & max trade dollar size
+        """
+        return 1
+
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class PnLMonitorConfigConfigurable(BaseCogConfig):
     """
     Configurable version of PnLMonitorConfig that allows dynamic adjustment of thresholds.
     """
+
     name: str = "PnLMonitorCog"
     enabled: bool = True
     roll_profit_threshold: float = 1.0  # Default to 100% gain threshold for rolling to lock in profits
-    stop_loss_pct: float = -0.7  # Default to 70% loss threshold for exiting positions
+    stop_loss_pct: Optional[float] = -0.7  # Default to 70% loss threshold for exiting positions
     profit_lock_in_pct: float = 0.25  # Default to adding 25% of the gain back into cash for next trade
     lock_in_profit_threshold: float = (
         0.5  # Default to 50% gain threshold for closing half the position to lock in profits
     )
     enable_stop_loss: bool = False  # Default to having stop loss disabled, can be enabled based on position characteristics or market conditions
+    stop_loss_cash_threshold: Optional[float] = None  # Optional cash-based stop loss threshold
+    max_trade_dollar_size: Optional[float] = (
+        None  # Optional dynamic property for maximum trade dollar size based on market conditions or portfolio risk
+    )
+    profit_lock_in_lvl: int = 1  # Default to enabling profit lock-in for tick cash only
+
+    def __post_init__(self, ctx=None):
+        super().__post_init__(ctx)
+        if self.profit_lock_in_lvl not in (1, 2):
+            raise ValueError(
+                "profit_lock_in_lvl must be either 1 (tick cash only) or 2 (tick cash and max trade dollar size)"
+            )
+
+        if self.roll_profit_threshold <= 0:
+            raise ValueError("roll_profit_threshold must be > 0")
+
+        if self.lock_in_profit_threshold <= 0:
+            raise ValueError("lock_in_profit_threshold must be > 0")
+
+        if not 0 <= self.profit_lock_in_pct <= 1:
+            raise ValueError("profit_lock_in_pct must be between 0 and 1 inclusive")
+
+        if self.max_trade_dollar_size is not None:
+            if self.max_trade_dollar_size <= 0:
+                raise ValueError("max_trade_dollar_size must be a positive number if set")
+
+        if self.profit_lock_in_lvl == 2 and self.max_trade_dollar_size is None:
+            raise ValueError(
+                "profit_lock_in_lvl is set to 2 (tick cash and max trade dollar size) but max_trade_dollar_size is not set. Please set max_trade_dollar_size to a positive number."
+            )
+
+        if self.stop_loss_pct is not None and self.stop_loss_pct >= 0:
+            raise ValueError("stop_loss_pct must be negative when provided")
+
+        if self.stop_loss_cash_threshold is not None and self.stop_loss_cash_threshold >= 0:
+            raise ValueError("stop_loss_cash_threshold must be negative when provided")
+
+        if self.enable_stop_loss:
+            both_none = self.stop_loss_pct is None and self.stop_loss_cash_threshold is None
+            both_set = self.stop_loss_pct is not None and self.stop_loss_cash_threshold is not None
+            if both_none:
+                raise ValueError(
+                    "At least one of stop_loss_pct or stop_loss_cash_threshold must be set when enable_stop_loss is True"
+                )
+            if both_set:
+                raise ValueError(
+                    "Only one of stop_loss_pct or stop_loss_cash_threshold can be set when enable_stop_loss is True"
+                )
 
 
 @pydantic_dataclass

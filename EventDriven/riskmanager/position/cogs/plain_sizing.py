@@ -100,10 +100,7 @@ class PlainSizingCog(BaseCog):
             )
             return
         else:
-            logger.info(
-                f"Applying plain sizing for signal {order.signal_id}. "
-                f"Trade ID: {order['data']['trade_id']}"
-            )
+            logger.info(f"Applying plain sizing for signal {order.signal_id}. Trade ID: {order['data']['trade_id']}")
 
         undl_data = state.undl_at_time_data
         option_chain = state.at_time_data
@@ -124,6 +121,22 @@ class PlainSizingCog(BaseCog):
             option_price_at_time=opt_price,
             delta=delta,
             delta_limit=limit,
+        )
+        logger.info(
+            "Plain sizing calculated values for trade %s | signal %s | cash_available=%s | "
+            "tick_cash=%s | tick_cash_scaled=%s | underlier_price=%s | option_price=%s | "
+            "option_delta=%s | sizing_lev=%s | delta_limit=%s | quantity=%s",
+            order["data"]["trade_id"],
+            order["signal_id"],
+            cash_available,
+            request.tick_cash,
+            request.is_tick_cash_scaled,
+            chain_spot,
+            opt_price,
+            delta,
+            self.config.sizing_lev,
+            limit,
+            q,
         )
 
         if q == 0 and cash_available >= opt_price * 100:
@@ -155,6 +168,7 @@ class PlainSizingCog(BaseCog):
             delta_lmt=limit,
             new_quantity=q,
         )
+        logger.info(f"Storing plain sizing metadata for trade_id {order['data']['trade_id']}: {metadata}")
         self.position_metadata[order["data"]["trade_id"]] = metadata
 
     def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:

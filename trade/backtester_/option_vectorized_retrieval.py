@@ -52,7 +52,6 @@ from dbase.DataAPI.ThetaData import retrieve_chain_bulk, retrieve_eod_ohlc
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from trade.datamanager.market_data import get_timeseries_obj
 from trade.helpers.helper import to_datetime
-from trade.datamanager.option_spot import OptionSpotDataManager
 
 
 DateLike = Union[datetime, str]
@@ -566,22 +565,15 @@ class OptionVectorizedRetriever:
         end_str = to_datetime(signal.end_date).strftime("%Y-%m-%d")
 
         try:
-            # ohlc = retrieve_eod_ohlc(
-            #     symbol=contract.ticker,
-            #     start_date=start_str,
-            #     end_date=end_str,
-            #     strike=contract.strike,
-            #     exp=contract.expiration,
-            #     right=contract.right,
-            #     print_url=self.print_url,
-            # )
-            ohlc = OptionSpotDataManager(symbol=contract.ticker).get_option_spot_timeseries(
+            ohlc = retrieve_eod_ohlc(
+                symbol=contract.ticker,
                 start_date=start_str,
                 end_date=end_str,
                 strike=contract.strike,
-                expiration=contract.expiration,
+                exp=contract.expiration,
                 right=contract.right,
-            ).timeseries
+                print_url=self.print_url,
+            )
         except Exception as exc:
             return pd.DataFrame(), UnmatchedSignal(
                 signal_id=signal.signal_id,
