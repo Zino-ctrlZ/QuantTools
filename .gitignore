@@ -202,6 +202,7 @@ trade/optionlib/model_issue_notes.txt
 EventDriven/notebooks/riskmanager_streamline/
 EventDriven/tests.py
 trade/assets/notebooks
+EventDriven/riskmanager/notebooks/large_unexplained_pnl_trades.csv
 
 
 # ignore all notebooks

@@ -159,22 +159,20 @@ def buyNhold(port_stats: dict) -> float:
 
 
 def cagr(equity_timeseries: pd.DataFrame) -> float:
-    """
-    Parameters:
-    equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
+    ts = equity_timeseries.sort_index()
 
-
-    Returns:
-    float: Returns average annualize retruns for the portfolio. Cumulative Annual Growth Rate
-    """
-    ts = equity_timeseries
     begin_val = ts["Total"].iloc[0]
     end_val = ts["Total"].iloc[-1]
+
     if isinstance(ts.index, pd.DatetimeIndex):
-        days = (ts.index.max() - ts.index.min()).days
-    elif isinstance(ts.index, pd.RangeIndex):
-        days = ts.index.max() - ts.index.min()
-    return ((end_val / begin_val) ** (252 / days) - 1) * 100
+        elapsed_years = (ts.index[-1] - ts.index[0]).days / 365.25
+    else:
+        raise TypeError("CAGR requires a DatetimeIndex")
+
+    if elapsed_years <= 0:
+        raise ValueError("Need at least two distinct timestamps")
+
+    return ((end_val / begin_val) ** (1 / elapsed_years) - 1) * 100
 
 
 def vol_annualized(

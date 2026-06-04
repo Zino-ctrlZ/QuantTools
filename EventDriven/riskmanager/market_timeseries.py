@@ -539,7 +539,7 @@ class BacktestTimeseries(BacktestRunMixin):
             return d
 
         ## Data not in cache - perform full calculation
-        logger.critical(f"Position Data for {position_id} not available, calculating greeks. Load time ~5 minutes")
+        logger.info(f"Position Data for {position_id} not available, calculating greeks. Load time ~5 minutes")
 
         ## Initialize the Long and Short Lists
         long = []

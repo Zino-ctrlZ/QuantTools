@@ -72,7 +72,9 @@ class VectorizedCog(BaseCog):
         """
         if config is None:
             config = VectorizedCogConfig()
+        
         super().__init__(config)
+        self.config: VectorizedCogConfig = config
 
     def on_new_position(self, new_pos_state: NewPositionState) -> None:
         """
@@ -187,7 +189,7 @@ class VectorizedCog(BaseCog):
 
             except Exception as e:
                 logger.warning(f"Error calculating DTE for position {pos_state.trade_id}: {e}. Skipping roll check.")
-                logger.warning(f"Stack trace: ", exc_info=True)
+                logger.warning("Stack trace: ", exc_info=True)
                 continue
 
         logger.info(
