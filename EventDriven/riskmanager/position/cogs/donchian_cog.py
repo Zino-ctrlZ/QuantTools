@@ -25,9 +25,7 @@ from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from dataclasses import dataclass
 import pandas as pd
-from EventDriven.configs.base import pydantic_dataclass
-from EventDriven.configs.core import BaseCogConfig
-from pydantic import ConfigDict
+from EventDriven.configs.core import DonchianMomentumCogConfig
 from EventDriven.dataclasses.limits import PositionLimits
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.actions import ROLL, Changes
@@ -36,18 +34,6 @@ from .analyze_utils import get_dte_and_moneyness_from_trade_id
 logger = setup_logger("EventDriven.riskmanager.position.cogs.donchian_cog")
 
 
-@pydantic_dataclass(
-    config=ConfigDict(arbitrary_types_allowed=True),
-)
-class DonchianMomentumCogConfig(BaseCogConfig):
-    """Configuration for DonchianMomentumCog."""
-
-    name: str = "DonchianMomentumCog"
-    sizing_lev: int = 1
-    min_scale: float = 0.75
-    max_scale: float = 2.0
-    dte_limit_enabled: bool = True
-    dte_threshold: int = 15
 
 
 @dataclass

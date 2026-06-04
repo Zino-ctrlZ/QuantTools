@@ -505,3 +505,17 @@ class PlainSizingCogConfig(BaseCogConfig):
     dte_limit_enabled: bool = True
     dte_threshold: int = 30
     exclude_strategy_slug_tokens: List[str] = Field(default_factory=list)
+
+
+@pydantic_dataclass(
+    config=ConfigDict(arbitrary_types_allowed=True),
+)
+class DonchianMomentumCogConfig(BaseCogConfig):
+    """Configuration for DonchianMomentumCog."""
+
+    name: str = "DonchianMomentumCog"
+    sizing_lev: int = 1
+    min_scale: float = 0.75
+    max_scale: float = 2.0
+    dte_limit_enabled: bool = True
+    dte_threshold: int = 15
