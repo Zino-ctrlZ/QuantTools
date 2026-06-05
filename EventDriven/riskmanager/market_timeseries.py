@@ -153,7 +153,13 @@ from EventDriven.types import BacktestRunMixin
 from trade.helpers.decorators import timeit
 from trade.helpers.threads import runThreads  # noqa
 from trade.helpers.pools import runProcesses  # noqa
-from trade.helpers.helper import compare_dates, parse_option_tick, generate_option_tick_new, to_datetime
+from trade.helpers.helper import (
+    change_to_last_busday, # noqa
+    compare_dates,
+    parse_option_tick,
+    generate_option_tick_new,
+    to_datetime,
+)
 from EventDriven.configs.core import SkipCalcConfig, UndlTimeseriesConfig, OptionPriceConfig
 from trade.assets.rates import get_risk_free_rate_helper_v2
 from threading import Lock
@@ -534,7 +540,7 @@ class BacktestTimeseries(BacktestRunMixin):
 
         ## Check cache first - early return if data exists
         d = self.get_position_data(position_id)
-        if not d.empty and pd.to_datetime(date) in d.index:
+        if not d.empty and self._check_date_present_in_index(d, date):
             logger.info(f"Position Data for {position_id} already available in cache, returning cached data")
             return d
 
@@ -896,6 +902,25 @@ class BacktestTimeseries(BacktestRunMixin):
         )  ## Perform sanity check to ensure the generated option data includes the check date for all associated option ticks, and if not, clear the relevant cache entries to maintain cache integrity.
         return final_data
     
+    def _check_date_present_in_index(
+        self,
+        data: pd.DataFrame,
+        check_date: Union[datetime, str],
+    ) -> bool:
+        """Return True when option data has a row for the requested check date."""
+        if data is None or data.empty:
+            return False
+
+        check_ts = to_datetime(check_date)
+        if check_ts in data.index:
+            return True
+
+        resolved = to_datetime(check_date).date()
+        if resolved in data.index:
+            return True
+
+        return (data.index.date == check_ts.date()).any()
+
     def _option_data_sanity_check(
             self,
             data: pd.DataFrame,
@@ -903,7 +928,7 @@ class BacktestTimeseries(BacktestRunMixin):
             check_date: Union[datetime, str],
     ) -> None:
         """Perform sanity checks on the option data for the associated option ticks."""
-        if check_date not in data.index:
+        if not self._check_date_present_in_index(data, check_date):
             logger.warning(f"Check date {check_date} not found in option data index for associated ticks: {associated_optticks}")
             
             ## Delete the cached data for the associated option ticks.

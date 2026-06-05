@@ -73,6 +73,6 @@ def runThreads(
         shutdown_event = True
         raise
     except Exception as e:
-        logger.error("Error occurred: ", e)
+        logger.error("Error occurred: %s", e)
         raise
     return results if block else results

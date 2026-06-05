@@ -395,7 +395,11 @@ class OptionSpotDataManager(BaseDataManager):
         # If the requested window has only checked-missing dates, add placeholder
         # NaN rows so sanitization and later cache hits can shape the output range.
         if classification.checked_missing_dates:
-            print(f"Adding placeholder rows for {len(classification.checked_missing_dates)} checked-missing dates for key {key}.")
+            logger.info(
+                "Adding placeholder rows for %s checked-missing dates for key %s.",
+                len(classification.checked_missing_dates),
+                key,
+            )
             checked_missing_idx = pd.DatetimeIndex(to_datetime(classification.checked_missing_dates))
             checked_missing_idx = default_timestamp(checked_missing_idx)
 
