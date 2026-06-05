@@ -222,9 +222,13 @@ from trade.helpers.Logging import setup_logger
 logger = setup_logger("EventDriven.riskmanager.position.live_cogs.limits")
 
 
-def enable_storing_to_db(enable: bool = True):
+def enable_storing_to_db(*args, **kwargs):
     """Utility to enable or disable database storage of limits globally for testing."""
-    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = enable
+    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = True
+
+def disable_storing_to_db(*args, **kwargs):
+    """Utility to disable database storage of limits globally for testing."""
+    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = False
 
 
 def reset_storing_to_db():
