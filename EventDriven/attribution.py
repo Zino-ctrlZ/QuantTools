@@ -90,13 +90,15 @@ class QuantityTimeSeries(FrozenValidated):
             raise ValueError("daily_qty, quantity_change, and exec_price must have the same index")
 
         if self.commission is None:
-            self.commission = pd.Series(0, index=self.daily_qty.index)
+            object.__setattr__(self, "commission", pd.Series(0, index=self.daily_qty.index))
         if self.slippage is None:
-            self.slippage = pd.Series(0, index=self.daily_qty.index)
+            object.__setattr__(self, "slippage", pd.Series(0, index=self.daily_qty.index))
         if self.trade_entry is None:
-            self.trade_entry = self.daily_qty.index.min()
+            object.__setattr__(self, "trade_entry", self.daily_qty.index.min())
         if self.trade_exit is None:
-            self.trade_exit = self.daily_qty.index.max()
+            object.__setattr__(self, "trade_exit", self.daily_qty.index.max())
+
+        super().__post_init__()
 
     def __repr__(self) -> str:
         return f"QuantityTimeSeries(tick={self.tick}, trade_id={self.trade_id})"

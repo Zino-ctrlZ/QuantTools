@@ -221,24 +221,6 @@ class OptionSignalBacktest(BacktestRunMixin):
                 raise ValueError("Trades DataFrame cannot be None or empty when not using an equity strategy.")
             self.__init__with_trades(trades, initial_capital, symbol_list, end_date=end_date)
 
-        @property
-        def eq_strategy(self) -> Optional[MultiAssetStrategy]:
-            """Return equity strategy and keep dependent components synchronized."""
-            return self._eq_strategy
-
-        @eq_strategy.setter
-        def eq_strategy(self, strategy: Optional[MultiAssetStrategy]) -> None:
-            """Set equity strategy and propagate it to risk manager and portfolio if initialized."""
-            self._eq_strategy = strategy
-            self.is_eq_strategy = strategy is not None
-
-            if hasattr(self, "risk_manager") and self.risk_manager is not None:
-                self.risk_manager.eq_strategy = strategy
-
-            if hasattr(self, "portfolio") and self.portfolio is not None:
-                self.portfolio.eq_strategy = strategy
-                self.portfolio.using_eq_strategy = strategy is not None
-
     def __init__with_equity_strategy(
         self,
         eq_strategy: MultiAssetStrategy,
@@ -340,6 +322,24 @@ class OptionSignalBacktest(BacktestRunMixin):
     @property
     def logger(self):
         return LOGGER
+
+    @property
+    def eq_strategy(self) -> Optional[MultiAssetStrategy]:
+        """Return equity strategy and keep dependent components synchronized."""
+        return self._eq_strategy
+
+    @eq_strategy.setter
+    def eq_strategy(self, strategy: Optional[MultiAssetStrategy]) -> None:
+        """Set equity strategy and propagate it to risk manager and portfolio if initialized."""
+        self._eq_strategy = strategy
+        self.is_eq_strategy = strategy is not None
+
+        if hasattr(self, "risk_manager") and self.risk_manager is not None:
+            self.risk_manager.eq_strategy = strategy
+
+        if hasattr(self, "portfolio") and self.portfolio is not None:
+            self.portfolio.eq_strategy = strategy
+            self.portfolio.using_eq_strategy = strategy is not None
 
     def __construct_data(self, trades: pd.DataFrame, initial_capital: int, symbol_list: list) -> None:
         ## Date range setup
@@ -623,10 +623,7 @@ class OptionSignalBacktest(BacktestRunMixin):
         """
         return timeseries of portfolio positions
         """
-        pos_arr = []
-        pos_df = pd.DataFrame(pos_arr)
-        pos_df.set_index("datetime", inplace=True)
-        return pos_df
+        return self.portfolio.get_all_positions()
 
     def store_event(self, event: Event):
         """
