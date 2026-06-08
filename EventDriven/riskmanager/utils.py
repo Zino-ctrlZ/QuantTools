@@ -431,12 +431,32 @@ def populate_cache_with_chain(
     print_url=True,
     add_greeks=False,
 ):
+    """Fetch option chain data with datamanager-aligned today caching rules.
+
+    Historical chains are cached and reused. Today's chain reloads on each call until
+    ``_should_save_today`` indicates EOD data is stable (same rule as datamanager cache).
+
+    Args:
+        tick: Underlying ticker symbol.
+        date: Chain valuation date.
+        chain_spot: Optional spot price for moneyness filtering.
+        print_url: Unused; retained for call-site compatibility.
+        add_greeks: Unused; retained for call-site compatibility.
+
+    Returns:
+        Chain DataFrame with opttick, chain_id, dte, and placeholder greek columns.
     """
-    Populate the cache with chain data.
-    """
-    key = (tick, pd.to_datetime(date, format="%Y-%m-%d").strftime("%Y-%m-%d"))
-    if key in get_persistent_cache():
-        chain_clipped = get_persistent_cache()[key]
+    from datetime import date as date_cls
+    from trade.datamanager.utils.date import _should_save_today
+
+    date_str = pd.to_datetime(date, format="%Y-%m-%d").strftime("%Y-%m-%d")
+    key = (tick, date_str)
+    chain_date = pd.to_datetime(date_str).date()
+    should_use_cache = chain_date < date_cls.today() or _should_save_today(max_date=chain_date)
+    cache = get_persistent_cache()
+
+    if should_use_cache and key in cache:
+        chain_clipped = cache[key].copy()
         chain_clipped.columns = chain_clipped.columns.str.capitalize()
         chain_clipped.rename(columns={"Opttick": "opttick"}, inplace=True)
         drops = ["Datetime", "Dte", "Moneyness"]
@@ -445,6 +465,9 @@ def populate_cache_with_chain(
                 chain_clipped.drop(columns=col, inplace=True)
 
     else:
+        if not should_use_cache and key in cache:
+            del cache[key]
+
         chain = retrieve_chain_bulk(symbol=tick, start_date=date, end_date=date, end_time="16:00", option_type="C", print_url=False, exp = None)
         logger.info(f"Retrieved chain for {tick} on {date}")
 
@@ -471,8 +494,8 @@ def populate_cache_with_chain(
         if PATCH_TICKERS:
             chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
         
-        if (pd.to_datetime(date)).date() != datetime.now().date():
-            _PERSISTENT_CACHE[key] = chain_clipped  ## Cache the chain data to avoid redundant API calls in the future
+        if should_use_cache:
+            cache[key] = chain_clipped.copy()
         chain_clipped.columns = chain_clipped.columns.str.capitalize()
 
     ## Create ID
