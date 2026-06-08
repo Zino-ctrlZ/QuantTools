@@ -1,7 +1,12 @@
-from trade.datamanager.config import OptionDataConfig, OptionSpotEndpointSource
+"""Runtime helpers for toggling datamanager option spot endpoint sources."""
+
 from typing import Optional
+
+from trade.datamanager.config import OptionDataConfig, OptionSpotEndpointSource
+from trade.datamanager.utils.logging import get_logging_level
 from trade.helpers.Logging import setup_logger
-logger = setup_logger("trade.datamanager.utils.helpers", stream_log_level="WARNING")
+
+logger = setup_logger("trade.datamanager.utils.helpers", stream_log_level=get_logging_level())
 __PREVIOUS_OPTION_SPOT_ENDPOINT_SOURCE: Optional[OptionSpotEndpointSource] = None
 
 def enable_quotes() -> None:
