@@ -87,11 +87,19 @@ def send_log_to_disk() -> None:
     if not _LOG_TO_DISK_BUCKET:
         logger.info("No logs to write to disk.")
         return
+
     log_path = DM_GEN_PATH / "dm_runtime_logs.csv"
+    DM_GEN_PATH.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(_LOG_TO_DISK_BUCKET)
-    if log_path.exists():
-        df_existing = pd.read_csv(log_path)
-        df = pd.concat([df_existing, df], ignore_index=True)
+
+    if log_path.exists() and log_path.stat().st_size > 0:
+        try:
+            df_existing = pd.read_csv(log_path)
+            if not df_existing.empty:
+                df = pd.concat([df_existing, df], ignore_index=True)
+        except pd.errors.EmptyDataError:
+            logger.warning("Existing runtime log file %s is empty; overwriting.", log_path)
+
     df.to_csv(log_path, index=False)
     logger.info(f"Wrote {_LOG_TO_DISK_BUCKET.__len__()} log entries to disk at {log_path}.")
     _LOG_TO_DISK_BUCKET.clear()

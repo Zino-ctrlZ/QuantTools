@@ -213,9 +213,10 @@ from trade.datamanager.utils.cache import (
     _simple_extract_from_cache,  # noqa
 )
 from trade import SIGNALS_TO_RUN
+from trade.datamanager.utils.logging import get_logging_level
 
 
-logger = setup_logger("trade.datamanager.market_data", stream_log_level="INFO")
+logger = setup_logger("trade.datamanager.market_data", stream_log_level=get_logging_level())
 
 ## TODO: This var is from optionlib. Once ready, import from there.
 ## TODO: Implement interval handling to have multiple intervals

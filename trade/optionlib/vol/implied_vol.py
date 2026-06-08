@@ -579,8 +579,7 @@ def _estimate_crr_cached(
         bounds=(0.001, 5.0),  # Reasonable bounds for volatility
         method="bounded",
     )
-
-    return result.x if result.success else None
+    return result.x if result.success else np.nan
 
 
 def estimate_crr_implied_volatility(
