@@ -18,22 +18,23 @@ Running Todo:
     ☐ Aggregator should take trades & equity data only
     ✔ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it) @done(26-02-17 07:17)
     ☐ Switch to TimeseriesDataManager for pnl attribution
-    ☐ Discontinue all use of module_test.raw_code.DataManagers
+    ✔ Discontinue all use of module_test.raw_code.DataManagers @done(26-06-07 21:25)
         1. Option.py
         2. xmultiply_attr.py
+    ☐ Discontinue xmultiply_attr.py
     ✔ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed. @done(26-02-17 07:19)
     ☐ Move all vol and pricing logic to use the new OptLib
         ☐ Eg FillOptimizer
     ✔ Ensure MarketTimeseries is not cutting out dividends or split factors for real time @done(26-02-17 07:19)
     ✔ Ensure make position id & signal id comes from one place (Signal id from strategy base, position id from create order) @done(26-02-17 07:20)
-    ☐ Update get_risk_free_rate_helper to use RatesDataManager
+    ✔ Update get_risk_free_rate_helper to use RatesDataManager @done(26-06-07 21:28)
     ☐ Look into alternatives for backfilling dividends with 0.0 in get_timeseries
     ☐ Move strategy files to db.
     ✔ Set evb default market_model = bsm, div = continuous for speed. Disable logging. @done(26-02-17 07:20)
     ☐ Replace populate_chain_cache with ChainDataManager which caches none-today data and reloads today data on each call.
-    ☐ Remind zino about table diffing
+    ✔ Remind zino about table diffing @done(26-06-07 21:28)
     ✔ Update info in config dictionary in order picker to reflect new changes (eg min_total_price) @done(26-02-17 07:21)
-    ☐ streamline all evb stream logging level as done in trade.datamanager
+    ✔ streamline all evb stream logging level as done in trade.datamanager @done(26-06-07 21:28)
     ☐ Normalize everywhere to use the following for position:
         - fyi: This includes: events, signals, positions, etc. Anywhere we need to represent a position, we should use this format to avoid confusion and ensure consistency across the codebase.
         - Side int: 1 for long, -1 for short
@@ -41,6 +42,8 @@ Running Todo:
         - Position effect: "open" or "close"
         - It should all come from eventdriven.types.position
     ☐ Clean up old todos in the codebase and move any relevant ones to this todo list.
+    ☐ Revisit Binomial Vol Model estimation logic.
+    ☐ Run an analysis on greek estimation accuracy.
     
 
 Todo before going back to backtesting:
@@ -48,8 +51,8 @@ Todo before going back to backtesting:
     ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14)
     ✔ Clean up evb order getter + preset orders (speed up essentially) @done(26-02-11 21:44)
     ✔ Push config change to db (changed min_total_price to 0.5 from 0.95) @done(26-02-13 09:42)
-    ☐ Move emefiele reports to the reports channel
-    ☐ Populate get_strategy_instance with has_position (Optional)
+    ✔ Move emefiele reports to the reports channel @done(26-06-07 21:24)
+    ✔ Populate get_strategy_instance with has_position (Optional) @done(26-06-07 21:24)
     ✔ Cache checker should use date range info, with missing dates info saved @done(26-02-14 18:47)
         ✔ All ts loaders should return the data @done(26-02-15 21:28)
         ✔ Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups @done(26-02-15 21:28)
