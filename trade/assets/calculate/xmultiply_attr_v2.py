@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 from pandas.tseries.offsets import BDay
 import pandas as pd
 from pydantic import validate_call, ConfigDict # noqa
@@ -15,12 +15,9 @@ from trade.helpers.helper import (
 )
 from trade.helpers.Logging import setup_logger
 from trade.helpers.decorators import log_time # noqa
-from module_test.raw_code.DataManagers.DataManagers import OptionDataManager, set_skip_mysql_query
 from trade.datamanager.timeseries import TimeseriesDataManager  # noqa
 from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 
-##TODO: Take this out once DataManagers has been optimized
-set_skip_mysql_query(True)
 logger = setup_logger("trade.assets.calculate.xmultiply_attr")
 
 
@@ -172,22 +169,23 @@ def load_option_pnl_data(
     yesterday: datetime,
     today: datetime,
     *,
-    dm: OptionDataManager = None,
     opttick: str = None,
     payload: Optional[OptionPnlPayload] = None,
+    **kwargs: Any,
 ) -> OptionPnlPayload:
     """
     Load option data for a given option data manager between yesterday and today.
     Args:
-        dm (OptionDataManager): The option data manager to load data from.
+        yesterday (datetime): The start date for the data.
+        today (datetime): The end date for the data.
         opttick (str): The option ticker symbol.
         payload (Optional[OptionPnlPayload]): Optional payload containing any subset
             of expected fields. Provided fields are validated; missing fields are loaded.
-        yesterday (datetime): The start date for the data.
-        today (datetime): The end date for the data.
+        **kwargs: Any additional keyword arguments.
     Returns:
         OptionPnlPayload: The loaded option data.
     """
+    dm = kwargs.get("dm", None)
     if dm is None and opttick is None and payload is None:
         raise ValueError("One of 'opttick' or 'payload' must be provided.")
     if dm is not None:

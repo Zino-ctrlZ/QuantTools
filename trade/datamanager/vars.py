@@ -23,7 +23,6 @@ MARKET_CLOSE_TIME = time(16, 0)
 DEFAULT_SCENARIOS = [0.9, 0.95, 1.0, 1.05, 1.1]
 DEFAULT_VOL_SCENARIOS = [-0.02, -0.01, 0.0, 0.01, 0.02]
 
-
 def _parse_bool_env(var_name: str, default: bool = True) -> bool:
     raw = os.getenv(var_name)
     if raw is None:
