@@ -122,9 +122,6 @@ class PositionInfo:
         ## If any of the fields are set, they must all be set (for simplicity of logic elsewhere)
         fields = [self.entry_date, self.entry_price, self.side, self.signal_id]
         if any(f is not None for f in fields) and not all(f is not None for f in fields):
-            print(
-                f"PositionInfo initialization warning: some fields are set but not all. entry_date: {self.entry_date}, entry_price: {self.entry_price}, side: {self.side}, signal_id: {self.signal_id}"
-            )
             raise ValueError("If any of entry_date, entry_price, side, or signal_id is set, they must all be set.")
 
     def __bool__(self):
@@ -961,7 +958,6 @@ class StrategyBase(ABC):
             current_price = float(close[i])
             in_pos_prev = self.position_open
             position_side = self.position_side
-            # print(f"Index: {i}, Date: {ts}, Should Close: {self.should_close(index=i)}, Should Open: {self.should_open(index=i)} ")
 
             # 1) Apply return for the interval prev->current based on prior position state
             if i > 0 and in_pos_prev:
@@ -1074,7 +1070,6 @@ class StrategyBase(ABC):
                         )
                         self.close_action(index=exec_idx)
                 else:
-                    print(f"Scheduling close at index {exec_idx} for signal at index {i}, date {ts}")
                     pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
             equity[i] = eq
