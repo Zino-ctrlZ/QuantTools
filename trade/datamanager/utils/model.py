@@ -10,6 +10,7 @@ from trade.datamanager.result import (
     OptionSpotResult,
     GreekResultSet,
 )
+import os
 from trade.datamanager._enums import ModelPrice, SeriesId
 from trade.datamanager.requests import LoadRequest
 from trade.datamanager.utils.date import DateRangePacket
@@ -23,6 +24,11 @@ from trade.datamanager.vars import add_to_log_bucket
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
+def _get_print_diagnostics() -> bool:
+    """
+    Gets the print diagnostics flag from the environment variable.
+    """
+    return os.environ.get("PRINT_DIAGNOSTICS", "False").lower() == "true"
 
 def log_model_load_info(
     log_info: dict,
@@ -384,7 +390,6 @@ def assert_synchronized_model(
             f"Non-empty series: {[k for k,v in series_map.items() if isinstance(v,(pd.Series,pd.DataFrame)) and not v.empty]}"
         )
 
-
 def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     """
     Loads model data based on the provided load request.
@@ -434,7 +439,11 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_request.greek_timeseries,
         load_request.option_spot_timeseries,
     )
-
+    if _get_print_diagnostics():
+        print(f"Paramerters for request:")
+        for k, v in load_request.__dict__.items():
+            print(f"{k}: {v}")
+        print("\n")
     model_data = ModelResultPack()
 
     # Load BSM-specific data
