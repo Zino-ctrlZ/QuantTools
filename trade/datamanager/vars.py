@@ -69,17 +69,16 @@ def get_dm_gen_path(is_live: bool = None) -> Path:
         DM_GEN_PATH.mkdir(parents=True)
     return DM_GEN_PATH if not is_live else DM_GEN_PATH / "live"
 
-def set_times_series()-> "MarketTimeseries":
+def set_times_series(reload: bool = False)-> "MarketTimeseries":
     from trade.datamanager.market_data import MarketTimeseries
     global TS
-    TS = MarketTimeseries(_end=datetime.now(), _start=OPTION_TIMESERIES_START_DATE)
+    if TS is None or reload:
+        TS = MarketTimeseries(_end=datetime.now(), _start=OPTION_TIMESERIES_START_DATE)
     return TS
 
-def get_times_series() -> "MarketTimeseries":
+def get_times_series(reload: bool = False) -> "MarketTimeseries":
     global TS
-    if TS is None:
-        set_times_series()
-    return TS
+    return set_times_series(reload=reload)
 
 def send_log_to_disk() -> None:
     global _LOG_TO_DISK_BUCKET
