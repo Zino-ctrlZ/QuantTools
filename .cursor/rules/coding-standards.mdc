@@ -56,3 +56,19 @@ Mandatory for every Python file created or edited. Follow PEP 257 and Google-sty
 - Use pydantic `@dataclass` for strict validation (`from pydantic.dataclasses import dataclass as pydantic_dataclass`).
 - Result classes inherit from base `Result`.
 - Use `frozen=True, slots=True` for immutable configs (e.g., `CacheSpec`).
+
+## Intentional simplifications
+
+When shipping a deliberate shortcut (naive algorithm, global lock, deferred edge case), mark it with a `# ponytail:` comment on the same line or the line above:
+
+- Name the **ceiling** (what breaks or degrades at scale).
+- Name the **upgrade path** (what to do when the ceiling is hit).
+
+Examples:
+
+```python
+# ponytail: global lock; per-account locks if order throughput becomes bottleneck
+# ponytail: O(n) scan; index lookup when n > 10k rows
+```
+
+Do not use `ponytail:` for missing docstrings, type hints, or trust-boundary validation — those stay mandatory.
