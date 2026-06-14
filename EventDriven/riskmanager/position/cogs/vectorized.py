@@ -1,0 +1,199 @@
+"""VectorizedCog: Lightweight position monitoring and validation cog.
+
+Provides minimal, stateless position analysis focusing on:
+  1. New position validation: Cash availability check (informational)
+  2. Ongoing position analysis: DTE-based roll triggers
+
+Core Class:
+    VectorizedCog: Enforces DTE-based rolling and validates new positions
+
+Configuration:
+    VectorizedCogConfig: Controls dte_limit_enabled and dte_threshold
+
+Processing Flow:
+    on_new_position():
+        - Called after position created
+        - Validates cash sufficient for position quantity
+        - Logs result (informational only; position already committed)
+
+    _analyze_impl():
+        - Iterates open positions
+        - Computes DTE using get_dte_and_moneyness_from_trade_id()
+        - Emits ROLL opinion if dte_limit_enabled and dte < dte_threshold
+        - Returns CogActions with roll recommendations
+
+DTE Calculation:
+    Uses analyze_utils.get_dte_and_moneyness_from_trade_id():
+    - Parses trade_id via parse_position_id()
+    - Extracts exp_date from all legs
+    - Calculates: (exp_date - check_date).days
+    - Returns minimum DTE across legs
+
+Usage:
+    >>> config = VectorizedCogConfig(dte_threshold=30)
+    >>> cog = VectorizedCog(config=config)
+    >>> analyzer.add_cog(cog)
+
+Design:
+    - Minimal logic: Single responsibility (DTE monitoring)
+    - Stateless: No position tracking or metadata storage
+    - Reusable: Works alongside other cogs (LimitsAndSizingCog, PnLMonitorCog)
+    - Extensible: Name "Vectorized" signals future batch/SIMD optimizations
+"""
+
+import pandas as pd
+from typing import Optional
+from EventDriven.riskmanager.position.base import BaseCog
+from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisContext, CogActions
+from EventDriven.riskmanager.actions import ROLL, Changes
+from EventDriven.configs.core import VectorizedCogConfig
+from .analyze_utils import get_dte_and_moneyness_from_trade_id
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.riskmanager.position.cogs.vectorized", stream_log_level="INFO")
+
+
+class VectorizedCog(BaseCog):
+    """
+    Lightweight position cog for DTE-based rolling and new position validation.
+
+    This cog enforces a single roll criterion: if a position's days-to-expiration
+    falls below a configurable threshold, emit a ROLL opinion. Additionally, it
+    provides an informational hook on new position creation to log cash validation.
+    """
+
+    default_config = VectorizedCogConfig()
+
+    def __init__(self, config: Optional[VectorizedCogConfig] = None):
+        """Initialize the VectorizedCog.
+
+        Args:
+            config: Optional runtime configuration. Defaults to VectorizedCogConfig().
+        """
+        if config is None:
+            config = VectorizedCogConfig()
+        
+        super().__init__(config)
+        self.config: VectorizedCogConfig = config
+
+    def on_new_position(self, new_pos_state: NewPositionState) -> None:
+        """
+        Hook called when a new position is detected (post-creation).
+
+        Validates that available cash is sufficient for the position quantity.
+        This is informational only—position creation is already committed by RiskManager.
+
+        Args:
+            new_pos_state: The new position state after creation.
+
+        Returns:
+            None (no modifications; hook is logging-only).
+        """
+        try:
+            order = new_pos_state.order
+            request = new_pos_state.request
+            option_price = new_pos_state.at_time_data.get_price()
+            quantity = order["data"]["quantity"]
+            tick_cash = request.tick_cash
+
+            position_cost = quantity * option_price * 100  # Option contracts are $100 notional per contract
+            can_afford = tick_cash >= position_cost
+
+            status = "SUFFICIENT" if can_afford else "INSUFFICIENT"
+            logger.info(
+                f"New position {order['data']['trade_id']}: "
+                f"Cash validation: {status}. "
+                f"Cost=${position_cost:.2f}, Available=${tick_cash:.2f}, "
+                f"Quantity={quantity}, Option Price=${option_price:.4f}"
+            )
+            if can_afford:
+                logger.debug(f"Position {order['data']['trade_id']} passed cash validation. Setting quantity to 1")
+                order["data"]["quantity"] = 1  # Enforce quantity of 1 for new positions in this cog
+            else:
+                logger.warning(f"Position {order['data']['trade_id']} failed cash validation. Quantity remains {quantity}")
+
+        except Exception as e:
+            logger.warning(f"Error during cash validation for new position: {e}")
+
+    def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
+        """
+        Analyze open positions for DTE-based roll triggers.
+
+        Process:
+            1. Iterate over all open positions in portfolio
+            2. Calculate DTE using get_dte_and_moneyness_from_trade_id()
+            3. If dte_limit_enabled and dte < dte_threshold:
+               - Create ROLL opinion with reason
+            4. Return aggregated CogActions
+
+        Args:
+            context: Portfolio snapshot with positions, date, and backtest parameters.
+
+        Returns:
+            CogActions: Opinions generated by this cog (roll recommendations).
+        """
+        opinions = []
+
+        if not self.config.dte_limit_enabled:
+            logger.debug("DTE limit disabled; no roll checks performed")
+            return CogActions(date=context.date, source_cog=self.name, opinions=opinions)
+
+        positions = context.portfolio.positions
+        portfolio_meta = context.portfolio_meta
+        last_updated = context.portfolio.last_updated
+        t_plus_n = portfolio_meta.t_plus_n
+        t_plus_n_bdays = pd.offsets.BusinessDay(max(t_plus_n, 1))
+        backtest_start = portfolio_meta.start_date
+
+        for pos_state in positions:
+            try:
+                # Calculate DTE using exact same method as limits cog
+                dte, _ = get_dte_and_moneyness_from_trade_id(
+                    trade_id=pos_state.trade_id,
+                    check_date=pos_state.last_updated,
+                    check_price=pos_state.current_underlier_data.chain_spot["close"],
+                    start=backtest_start,
+                    is_backtest=portfolio_meta.is_backtest,
+                )
+
+                qty = pos_state.quantity
+
+                # Check roll threshold
+                if dte < self.config.dte_threshold:
+                    logger.info(
+                        f"Position {pos_state.trade_id}: DTE {dte} below threshold {self.config.dte_threshold}. "
+                        f"Recommending ROLL."
+                    )
+
+                    action = ROLL(
+                        trade_id=pos_state.trade_id,
+                        action=Changes(quantity_diff=0, new_quantity=qty),
+                    )
+                    action.reason = (
+                        f"DTE {dte} below threshold {self.config.dte_threshold}. Rolling to extend duration."
+                    )
+                    action.analysis_date = last_updated
+                    action.effective_date = last_updated + t_plus_n_bdays
+
+                    # Create opinion for this position
+                    action.verbose_info = (
+                            f"Analysis: {action.analysis_date} | Effective: {action.effective_date} | "
+                            f"Trade: {pos_state.trade_id} | DTE: {dte} | Threshold: {self.config.dte_threshold}"
+                        )
+                    pos_state.action = action
+                    opinions.append(pos_state)
+                else:
+                    logger.debug(
+                        f"Position {pos_state.trade_id}: DTE {dte} >= threshold {self.config.dte_threshold}. No action."
+                    )
+
+            except Exception as e:
+                logger.warning(f"Error calculating DTE for position {pos_state.trade_id}: {e}. Skipping roll check.")
+                logger.warning("Stack trace: ", exc_info=True)
+                continue
+
+        logger.info(
+            f"VectorizedCog analysis complete. {len(opinions)} roll opinion(s) generated for {len(positions)} position(s)."
+        )
+
+        return CogActions(date=context.date, source_cog=self.name, opinions=opinions)

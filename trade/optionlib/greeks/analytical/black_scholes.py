@@ -1,8 +1,5 @@
 from datetime import datetime
-import numpy as np
-from typing import List, Union
-from scipy.stats import norm
-from ...config.defaults import DAILY_BASIS
+from typing import List
 from ...core.black_scholes_math import (
     black_scholes_analytic_greeks_vectorized,
 )

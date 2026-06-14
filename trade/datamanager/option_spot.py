@@ -26,14 +26,18 @@ from trade.datamanager.result import OptionSpotResult
 from trade.datamanager._enums import ArtifactType, Interval, ModelPrice, SeriesId, OptionSpotEndpointSource
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
+from trade.datamanager.utils.classification import classify_option_spot_dates
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date, is_available_on_date
 from trade.datamanager.utils.logging import get_logging_level
 from dbase.DataAPI.ThetaData import retrieve_eod_ohlc, quote_to_eod_patch, retrieve_quote_rt
+from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
 logger = setup_logger("trade.datamanager.option_spot", stream_log_level=get_logging_level())
+
+
 
 class OptionSpotDataManager(BaseDataManager):
     """Manages option spot price retrieval for a specific symbol from Thetadata API.
@@ -105,7 +109,7 @@ class OptionSpotDataManager(BaseDataManager):
         strike: Optional[float] = None,
         expiration: Optional[Union[datetime, str]] = None,
         right: Optional[str] = None,
-        endpoint_source: Optional[OptionSpotEndpointSource] = OptionSpotEndpointSource.EOD
+        endpoint_source: Optional[OptionSpotEndpointSource] = OptionSpotEndpointSource.EOD,
     ) -> Tuple[DATE_HINT, DATE_HINT]:
         """Synchronizes requested dates with available data range from Thetadata.
 
@@ -145,9 +149,9 @@ class OptionSpotDataManager(BaseDataManager):
             strike=strike,
             expiration=expiration,
             right=right,
-            endpoint_source=endpoint_source
+            endpoint_source=endpoint_source,
         )
-    
+
     def get_option_spot(
         self,
         date: Union[datetime, str],
@@ -278,7 +282,7 @@ class OptionSpotDataManager(BaseDataManager):
         """
         if endpoint_source is None:
             endpoint_source = self.CONFIG.option_spot_endpoint_source
-
+        
         result = OptionSpotResult()
         result.symbol = self.symbol
         result.endpoint_source = endpoint_source
@@ -287,7 +291,6 @@ class OptionSpotDataManager(BaseDataManager):
         result.expiration = to_datetime(expiration) if expiration is not None else None
         result.rt = False
         result.model_price = model_price or self.CONFIG.model_price
-
 
         strike, right, symbol, expiration = _handle_opttick_param(
             strike=strike,
@@ -356,15 +359,75 @@ class OptionSpotDataManager(BaseDataManager):
             right=right,
         )
 
+        # Ensure a DatetimeIndex even when the API returned an empty DataFrame.
+        if fetched_data.empty and not isinstance(fetched_data.index, pd.DatetimeIndex):
+            fetched_data.index = pd.DatetimeIndex([])
+
+        # Classify what the API returned: observed rows vs confirmed-missing dates.
+        # start_date/end_date are already sync'd to the valid window by _sync_date.
+        classification = classify_option_spot_dates(
+            fetched=fetched_data,
+            valid_start=start_date,
+            valid_end=end_date,
+            symbol=self.symbol,
+            strike=float(strike),
+            right=right,
+            expiration=expiration,
+        )
+        logger.info(
+            f"Option spot date classification for key {key}: "
+            f"{len(classification.observed_dates)} observed, "
+            f"{len(classification.checked_missing_dates)} checked-missing."
+        )
+
+        # Keep only rows that had at least one real value.
+        if not fetched_data.empty:
+            fetched_data = fetched_data.loc[fetched_data.index.isin(classification.observed_dates)]
+
         # Merge with cached data if partial
         if cached_data is not None and is_partial:
             merged = pd.concat([cached_data, fetched_data])
             fetched_data = merged[~merged.index.duplicated(keep="last")]
 
-        fetched_data.index = default_timestamp(fetched_data.index)
+        if not fetched_data.empty:
+            fetched_data.index = default_timestamp(fetched_data.index)
 
-        # Cache the fetched data
-        _data_structure_cache_it(self, key, fetched_data)
+        # If the requested window has only checked-missing dates, add placeholder
+        # NaN rows so sanitization and later cache hits can shape the output range.
+        if classification.checked_missing_dates:
+            logger.info(
+                "Adding placeholder rows for %s checked-missing dates for key %s.",
+                len(classification.checked_missing_dates),
+                key,
+            )
+            checked_missing_idx = pd.DatetimeIndex(to_datetime(classification.checked_missing_dates))
+            checked_missing_idx = default_timestamp(checked_missing_idx)
+
+            has_requested_rows = False
+            if not fetched_data.empty:
+                has_requested_rows = fetched_data.index.isin(checked_missing_idx).any()
+
+            if not has_requested_rows:
+                placeholder_cols = (
+                    fetched_data.columns.tolist()
+                    if isinstance(fetched_data, pd.DataFrame) and len(fetched_data.columns) > 0
+                    else ["open", "high", "low", "close", "volume", "count"]
+                )
+                placeholder_df = pd.DataFrame(index=checked_missing_idx, columns=placeholder_cols, dtype=float)
+
+                if fetched_data.empty:
+                    fetched_data = placeholder_df
+                else:
+                    merged = pd.concat([fetched_data, placeholder_df])
+                    fetched_data = merged[~merged.index.duplicated(keep="last")].sort_index()
+
+        # Cache both real rows and checked-missing coverage.
+        _data_structure_cache_it(
+            self,
+            key,
+            fetched_data,
+            checked_missing_dates=classification.checked_missing_dates,
+        )
 
         # Sanitize before returning
         fetched_data = _data_structure_sanitize(
@@ -426,30 +489,36 @@ class OptionSpotDataManager(BaseDataManager):
             - Quote endpoint useful when EOD data not yet available
         """
         # In a real implementation, this method would make HTTP requests to Thetadata's API.
-        if endpoint_source == OptionSpotEndpointSource.EOD:
-            return retrieve_eod_ohlc(
-                symbol=self.symbol,
-                start_date=start_date,
-                end_date=end_date,
-                strike=float(strike),
-                exp=expiration,
-                right=right,
+        try:
+            if endpoint_source == OptionSpotEndpointSource.EOD:
+                return retrieve_eod_ohlc(
+                    symbol=self.symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    strike=float(strike),
+                    exp=expiration,
+                    right=right,
+                )
+            else:
+                logger.info(
+                    f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
+                )
+                return quote_to_eod_patch(
+                    symbol=self.symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    strike=float(strike),
+                    exp=expiration,
+                    right=right,
+                    ohlc_format=True,
+                )
+        except ThetaDataNotFound:
+            logger.warning(
+                f"ThetaData returned no data for {self.symbol} {strike}{right} exp={expiration} "
+                f"from {start_date} to {end_date}. Returning empty DataFrame."
             )
+            return pd.DataFrame()
 
-        else:
-            logger.info(
-                f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
-            )
-        return quote_to_eod_patch(
-            symbol=self.symbol,
-            start_date=start_date,
-            end_date=end_date,
-            strike=float(strike),
-            exp=expiration,
-            right=right,
-            ohlc_format=True,
-        )
-    
     def rt(
         self,
         strike: float,
@@ -470,13 +539,11 @@ class OptionSpotDataManager(BaseDataManager):
         Returns:
             OptionSpotResult containing daily_option_spot DataFrame with OHLC data,
             plus metadata (key, endpoint_source).
-    """
+        """
         as_of = datetime.now().date()
         if not is_available_on_date(as_of):
             as_of = change_to_last_busday(as_of - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-            logger.info(
-                f"Real-time data not available for {self.symbol} on {as_of}. Market may be closed."
-            )
+            logger.info(f"Real-time data not available for {self.symbol} on {as_of}. Market may be closed.")
             res = self.get_option_spot(
                 strike=strike,
                 right=right,
@@ -497,8 +564,8 @@ class OptionSpotDataManager(BaseDataManager):
         result.daily_option_spot = rt
         result.key = self.make_key(
             symbol=self.symbol,
-            time = datetime.now().time(),
-            date = datetime.now(),
+            time=datetime.now().time(),
+            date=datetime.now(),
             artifact_type=ArtifactType.OPTION_SPOT,
             series_id=SeriesId.AT_TIME,
             endpoint_source=OptionSpotEndpointSource.QUOTE,
@@ -510,4 +577,3 @@ class OptionSpotDataManager(BaseDataManager):
         result.endpoint_source = OptionSpotEndpointSource.QUOTE
         result.rt = True
         return result
-    

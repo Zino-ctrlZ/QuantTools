@@ -1,4 +1,3 @@
-
 from EventDriven.configs.base import BaseConfigs
 from collections.abc import Mapping
 from typing import Any, Iterable, Tuple, Dict, TypeVar, TypedDict, TYPE_CHECKING
@@ -7,16 +6,17 @@ from dataclasses import dataclass, field
 import yaml
 import logging
 import importlib
+from trade.helpers.Logging import setup_logger
 
 if TYPE_CHECKING:
     from EventDriven.configs.core import (
         ChainConfig,
         OrderSchemaConfigs,
         OrderPickerConfig,
+        ScoringConfigs,
         BaseSizerConfigs,
         DefaultSizerConfigs,
         ZscoreSizerConfigs,
-        OrderResolutionConfig,
         UndlTimeseriesConfig,
         OptionPriceConfig,
         SkipCalcConfig,
@@ -25,15 +25,22 @@ if TYPE_CHECKING:
         LimitsEnabledConfig,
         PositionAnalyzerConfig,
         PortfolioManagerConfig,
+        LiquidityConfig,
         BacktesterConfig,
         CashAllocatorConfig,
         RiskManagerConfig,
+        MeanReversionSizerConfigs,
+        ExecutionHandlerConfig,
+        PnlMonitorConfig,
+        PnLMonitorConfigConfigurable,
+        VectorizedCogConfig,
+        PlainSizingCogConfig,
     )
 
-logger = logging.getLogger(__name__)
+logger = setup_logger("EventDriven.configs.export_configs")
 
 # Type variable for generic config types
-T = TypeVar('T', bound=BaseConfigs)
+T = TypeVar("T", bound=BaseConfigs)
 
 
 # TypedDict for all config types from core.py
@@ -42,37 +49,46 @@ T = TypeVar('T', bound=BaseConfigs)
 class ConfigsDict(TypedDict, total=False):
     """
     Type hints for all available config classes.
-    
+
     Keys are config class names (without _1, _2 suffixes).
     Values are the actual config instances.
-    
+
     Example:
         bundle.configs["ChainConfig"]  # Type: ChainConfig
         bundle.get("PortfolioManagerConfig")  # Type: PortfolioManagerConfig
     """
-    ChainConfig: 'ChainConfig'
-    OrderSchemaConfigs: 'OrderSchemaConfigs'
-    OrderPickerConfig: 'OrderPickerConfig'
-    BaseSizerConfigs: 'BaseSizerConfigs'
-    DefaultSizerConfigs: 'DefaultSizerConfigs'
-    ZscoreSizerConfigs: 'ZscoreSizerConfigs'
-    OrderResolutionConfig: 'OrderResolutionConfig'
-    UndlTimeseriesConfig: 'UndlTimeseriesConfig'
-    OptionPriceConfig: 'OptionPriceConfig'
-    SkipCalcConfig: 'SkipCalcConfig'
-    BaseCogConfig: 'BaseCogConfig'
-    StrategyLimitsEnabled: 'StrategyLimitsEnabled'
-    LimitsEnabledConfig: 'LimitsEnabledConfig'
-    PositionAnalyzerConfig: 'PositionAnalyzerConfig'
-    PortfolioManagerConfig: 'PortfolioManagerConfig'
-    BacktesterConfig: 'BacktesterConfig'
-    CashAllocatorConfig: 'CashAllocatorConfig'
-    RiskManagerConfig: 'RiskManagerConfig'
+
+    ChainConfig: "ChainConfig"
+    OrderSchemaConfigs: "OrderSchemaConfigs"
+    OrderPickerConfig: "OrderPickerConfig"
+    ScoringConfigs: "ScoringConfigs"
+    BaseSizerConfigs: "BaseSizerConfigs"
+    DefaultSizerConfigs: "DefaultSizerConfigs"
+    ZscoreSizerConfigs: "ZscoreSizerConfigs"
+    UndlTimeseriesConfig: "UndlTimeseriesConfig"
+    OptionPriceConfig: "OptionPriceConfig"
+    SkipCalcConfig: "SkipCalcConfig"
+    BaseCogConfig: "BaseCogConfig"
+    StrategyLimitsEnabled: "StrategyLimitsEnabled"
+    LimitsEnabledConfig: "LimitsEnabledConfig"
+    PositionAnalyzerConfig: "PositionAnalyzerConfig"
+    PortfolioManagerConfig: "PortfolioManagerConfig"
+    LiquidityConfig: "LiquidityConfig"
+    BacktesterConfig: "BacktesterConfig"
+    CashAllocatorConfig: "CashAllocatorConfig"
+    RiskManagerConfig: "RiskManagerConfig"
+    MeanReversionSizerConfigs: "MeanReversionSizerConfigs"
+    ExecutionHandlerConfig: "ExecutionHandlerConfig"
+    PnlMonitorConfig: "PnlMonitorConfig"
+    PnLMonitorConfigConfigurable: "PnLMonitorConfigConfigurable"
+    VectorizedCogConfig: "VectorizedCogConfig"
+    PlainSizingCogConfig: "PlainSizingCogConfig"
 
 
 @dataclass
 class ConfigLocation:
     """Metadata about where a config lives in the object graph."""
+
     label: str
     config_class: str
     path: str
@@ -88,32 +104,40 @@ class RunConfigBundle:
     configs: ConfigsDict  # Using TypedDict for specific type hints
     metadata: dict[str, dict] = field(default_factory=dict)  # Stores path info per config
 
-    
     def save_to_yaml(self, filename: str):
         """
         Save the configs and metadata to a YAML file.
-        
+
         Args:
             filename (str): The path to the file where configs will be saved.
         """
+        confs = {}
+        for label, cfg in self.configs.items():
+            if not isinstance(cfg, dict):
+                # Convert config objects to dicts for YAML serialization
+                confs[label] = _sanitize_for_yaml(cfg)
+            else:
+                confs[label] = cfg
         data = {
-            'run_name': self.run_name,
-            'created_at': self.created_at.isoformat() if isinstance(self.created_at, datetime) else str(self.created_at),
-            'configs': self.configs,
-            'metadata': self.metadata
+            "run_name": self.run_name,
+            "created_at": self.created_at.isoformat()
+            if isinstance(self.created_at, datetime)
+            else str(self.created_at),
+            "configs": confs,
+            "metadata": self.metadata,
         }
         # Use safe_dump to avoid Python object tags
         with open(filename, "w") as f:
             yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
-    
+
     @classmethod
-    def load_from_yaml(cls, filename: str = None, data = None) -> 'RunConfigBundle':
+    def load_from_yaml(cls, filename: str = None, data=None) -> "RunConfigBundle":
         """
         Load a config bundle from a YAML file.
-        
+
         Args:
             filename (str): The path to the YAML file.
-            
+
         Returns:
             RunConfigBundle: The loaded config bundle.
         """
@@ -122,8 +146,8 @@ class RunConfigBundle:
             with open(filename, "r") as f:
                 data = yaml.safe_load(f)
 
-        confs = data.get('configs', {})
-        
+        confs = data.get("configs", {})
+
         conf_bund_cls: ConfigsDict = {}  # type: ignore
         for label in confs.keys():
             # Extract class name without _1, _2 suffixes
@@ -132,24 +156,26 @@ class RunConfigBundle:
             conf_cls = getattr(cls_module, conf_name)
             # Store with just the class name (no _1 suffix)
             conf_bund_cls[conf_name] = conf_cls(**confs[label])  # type: ignore
-        
-        ret =  cls(
-            run_name=data.get('run_name', ''),
-            created_at=datetime.fromisoformat(data['created_at']) if isinstance(data.get('created_at'), str) else data.get('created_at', datetime.now()),
+
+        ret = cls(
+            run_name=data.get("run_name", ""),
+            created_at=datetime.fromisoformat(data["created_at"])
+            if isinstance(data.get("created_at"), str)
+            else data.get("created_at", datetime.now()),
             configs=conf_bund_cls,
-            metadata=data.get('metadata', {})
+            metadata=data.get("metadata", {}),
         )
         return ret
-    
+
     def apply_to(self, root: Any, strict: bool = True, verify_paths: bool = True) -> Dict[str, str]:
         """
         Apply this bundle's configs to an object.
-        
+
         Args:
             root: The root object to apply configs to
             strict: If True, raise errors on mismatches
             verify_paths: If True, verify config paths match metadata
-            
+
         Returns:
             Dict mapping labels to their applied paths
         """
@@ -158,30 +184,32 @@ class RunConfigBundle:
     def get(self, label: str) -> BaseConfigs:
         """
         Get a config by label with proper type hints.
-        
+
         Since configs are stored by class name (without _1 suffix),
-        access them directly: bundle.get("ChainConfig") 
-        
+        access them directly: bundle.get("ChainConfig")
+
         Args:
             label: The config class name (e.g., "ChainConfig", not "ChainConfig_1")
-            
+
         Returns:
             The config instance with proper type hint from ConfigsDict
-            
+
         Example:
             >>> chain_config = bundle.get("ChainConfig")  # Returns ChainConfig instance
             >>> pm_config = bundle.get("PortfolioManagerConfig")
         """
         if label not in self.configs:
             raise KeyError(f"Config with label '{label}' not found. Available: {list(self.configs.keys())}")
-        
+
         return self.configs[label]  # type: ignore
 
     def __repr__(self):
         return f"RunConfigBundle(run_name={self.run_name!r}, created_at={self.created_at!r}, configs={list(self.configs.keys())})"
 
 
-def collect_run_configs(root: Any, debug: bool = False, include_metadata: bool = False) -> Dict[str, BaseConfigs] | Tuple[Dict[str, BaseConfigs], Dict[str, ConfigLocation]]:
+def collect_run_configs(
+    root: Any, debug: bool = False, include_metadata: bool = False
+) -> Dict[str, BaseConfigs] | Tuple[Dict[str, BaseConfigs], Dict[str, ConfigLocation]]:
     """
     Return a dict of {label: config_instance} for all *unique*
     BaseConfigs instances under `root`.
@@ -189,12 +217,12 @@ def collect_run_configs(root: Any, debug: bool = False, include_metadata: bool =
     - Dedupes by object id globally in this call
     - Keeps *all* instances for a given class
     - Label format: "<ClassName>_<i>" where i is per-class index
-    
+
     Args:
         root: The root object to collect configs from
         debug: If True, print debug info
         include_metadata: If True, return (configs, metadata) tuple
-        
+
     Returns:
         Dict of {label: config} or tuple of (configs, metadata)
     """
@@ -214,7 +242,7 @@ def collect_run_configs(root: Any, debug: bool = False, include_metadata: bool =
         label = f"{cls_name}_{counts[cls_name]}"
 
         # Parse path to extract parent and attribute
-        parts = path.rsplit('.', 1)
+        parts = path.rsplit(".", 1)
         parent_path = parts[0] if len(parts) > 1 else "root"
         attr_name = parts[1] if len(parts) > 1 else path
 
@@ -225,7 +253,7 @@ def collect_run_configs(root: Any, debug: bool = False, include_metadata: bool =
             path=path,
             parent_path=parent_path,
             attribute_name=attr_name,
-            object_id=cfg_id
+            object_id=cfg_id,
         )
         metadata[label] = location
 
@@ -247,27 +275,27 @@ def _sanitize_for_yaml(obj: Any) -> Any:
     """
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
-    
-    if isinstance(obj, (datetime, )):
+
+    if isinstance(obj, (datetime,)):
         return obj.isoformat()
-    
+
     if isinstance(obj, dict):
         return {k: _sanitize_for_yaml(v) for k, v in obj.items()}
-    
+
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_yaml(item) for item in obj]
-    
+
     if isinstance(obj, BaseConfigs):
         # Recursively sanitize config objects
-        return {k: _sanitize_for_yaml(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
-    
+        return {k: _sanitize_for_yaml(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+
     # For other objects, try to convert to dict or return string representation
-    if hasattr(obj, '__dict__'):
+    if hasattr(obj, "__dict__"):
         try:
-            return {k: _sanitize_for_yaml(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
+            return {k: _sanitize_for_yaml(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
         except Exception:
             return str(obj)
-    
+
     return str(obj)
 
 
@@ -291,23 +319,18 @@ def export_run_configs(root: Any, debug: bool = False, remove_underscore: bool =
         # exported[label] = _sanitize_for_yaml(dict(cfg.__dict__))
         exported[new_label] = cfg
         if run_name is None and hasattr(exported[new_label], "run_name"):
-            run_name = getattr(exported[new_label], "run_name") # noqa
-        
+            run_name = getattr(exported[new_label], "run_name")  # noqa
+
         # Store metadata as dict (for YAML serialization)
         loc = metadata_objs[label]
         metadata_dict[new_label] = {
-            'config_class': loc.config_class,
-            'path': loc.path,
-            'parent_path': loc.parent_path,
-            'attribute_name': loc.attribute_name
+            "config_class": loc.config_class,
+            "path": loc.path,
+            "parent_path": loc.parent_path,
+            "attribute_name": loc.attribute_name,
         }
-    
-    return RunConfigBundle(
-        run_name=run_name, 
-        created_at=datetime.now(), 
-        configs=exported,
-        metadata=metadata_dict
-    )
+
+    return RunConfigBundle(run_name=run_name, created_at=datetime.now(), configs=exported, metadata=metadata_dict)
 
 
 # def walk_configs(root: Any, _seen=None):
@@ -350,6 +373,7 @@ def export_run_configs(root: Any, debug: bool = False, remove_underscore: bool =
 
 #     for v in attrs.values():
 #         yield from walk_configs(v, _seen)
+
 
 def walk_configs(root: Any, _seen=None, _path: str = "root") -> Iterable[Tuple[BaseConfigs, str]]:
     """
@@ -443,42 +467,42 @@ def apply_run_configs(
     configs: Dict[str, dict],
     metadata: Dict[str, dict] = None,
     strict: bool = True,
-    verify_paths: bool = True
+    verify_paths: bool = True,
 ) -> Dict[str, str]:
     """
     Apply configs (as dicts from YAML) back to the object graph with validation.
-    
+
     This is Strategy #1: Path-based verification.
-    
+
     Args:
         root: The root object (e.g., OptionSignalBacktest instance)
         configs: Dict of {label: config_dict} from YAML/export
         metadata: Dict of {label: metadata_dict} with path info
         strict: If True, raise error if config not found
         verify_paths: If True, verify paths match metadata
-        
+
     Returns:
         Dict mapping labels to their paths in the object graph
-        
+
     Raises:
         ValueError: If config not found or type mismatch
         TypeError: If config type doesn't match expected type
-        
+
     Example:
         >>> # Export configs
         >>> bundle = export_run_configs(backtest)
         >>> bundle.save_to_yaml('my_configs.yaml')
-        >>> 
+        >>>
         >>> # Later, load and apply
         >>> bundle = RunConfigBundle.load_from_yaml('my_configs.yaml')
         >>> bundle.apply_to(new_backtest)
     """
     # Collect current config locations
     current_configs, current_metadata = collect_run_configs(root, debug=False, include_metadata=True)
-    
+
     applied = {}
     errors = []
-    
+
     for label, config_dict in configs.items():
         # Check if this config exists in current object
         if label not in current_configs:
@@ -487,15 +511,15 @@ def apply_run_configs(
                 raise ValueError(msg)
             errors.append(msg)
             continue
-        
+
         current_config = current_configs[label]
         current_loc = current_metadata[label]
-        
+
         # Verify config class matches (using metadata if available)
         if metadata and label in metadata:
-            expected_class = metadata[label].get('config_class')
+            expected_class = metadata[label].get("config_class")
             actual_class = current_loc.config_class
-            
+
             if expected_class != actual_class:
                 msg = (
                     f"Config class mismatch for {label}:\n"
@@ -507,12 +531,12 @@ def apply_run_configs(
                     raise TypeError(msg)
                 errors.append(msg)
                 continue
-            
+
             # Verify path matches (if requested)
             if verify_paths:
-                expected_path = metadata[label].get('path')
+                expected_path = metadata[label].get("path")
                 actual_path = current_loc.path
-                
+
                 if expected_path != actual_path:
                     msg = (
                         f"Config path mismatch for {label}:\n"
@@ -524,10 +548,10 @@ def apply_run_configs(
                     if strict:
                         raise ValueError(msg)
                     errors.append(msg)
-        
+
         # Apply config by updating attributes
         for field_name, field_value in config_dict.items():
-            if not field_name.startswith('_'):  # Skip private fields
+            if not field_name.startswith("_"):  # Skip private fields
                 try:
                     setattr(current_config, field_name, field_value)
                 except Exception as e:
@@ -535,77 +559,76 @@ def apply_run_configs(
                     if strict:
                         raise ValueError(msg) from e
                     errors.append(msg)
-        
+
         applied[label] = current_loc.path
-    
+
     if errors and not strict:
         logger.warning(f"Applied configs with {len(errors)} warnings:\n" + "\n".join(f"  - {e}" for e in errors))
-    
+
     return applied
 
 
 def validate_config_placement(root: Any, raise_on_error: bool = False) -> list[str]:
     """
     Validate that all configs are correctly placed and typed.
-    
+
     This is Strategy #4: Validation function.
-    
+
     Args:
         root: The root object to validate
         raise_on_error: If True, raise ValueError on first error
-        
+
     Returns:
         List of validation errors (empty if all valid)
-        
+
     Example:
         >>> errors = validate_config_placement(backtest)
         >>> if errors:
         ...     print("Validation errors:", errors)
     """
     errors = []
-    
+
     # Define expected config types for known attributes
     EXPECTED_CONFIGS = {
-        'OptionSignalBacktest': {
-            'config': 'BacktesterConfig',
+        "OptionSignalBacktest": {
+            "config": "BacktesterConfig",
         },
-        'OptionSignalPortfolio': {
-            'config': 'PortfolioManagerConfig',
-            'cash_allocator_config': 'CashAllocatorConfig',
+        "OptionSignalPortfolio": {
+            "config": "PortfolioManagerConfig",
+            "cash_allocator_config": "CashAllocatorConfig",
         },
-        'RiskManager': {
-            'config': 'RiskManagerConfig',
+        "RiskManager": {
+            "config": "RiskManagerConfig",
         },
-        'OrderPicker': {
-            'config': 'OrderPickerConfig',
-            'order_schema_configs': 'OrderSchemaConfigs',
-            'chain_config': 'ChainConfig',
+        "OrderPicker": {
+            "_order_picker_config": "OrderPickerConfig",
+            "_scoring_config": "ScoringConfigs",
         },
-        'PositionAnalyzer': {
-            'config': 'PositionAnalyzerConfig',
+        "PositionAnalyzer": {
+            "config": "PositionAnalyzerConfig",
         },
-        'LimitsAndSizingCog': {
-            'config': 'LimitsAndSizingConfig',
-            'sizer_configs': ('DefaultSizerConfigs', 'ZscoreSizerConfigs'),  # Can be either
-            'limits_enabled_config': 'LimitsEnabledConfig',
+        "LimitsAndSizingCog": {
+            "config": "LimitsAndSizingConfig",
+            "sizer_configs": ("DefaultSizerConfigs", "ZscoreSizerConfigs"),  # Can be either
+            "limits_enabled_config": "LimitsEnabledConfig",
         },
     }
-    
+
     def check_object(obj, path="root", _seen=None):
         if _seen is None:
             _seen = set()
-        
+
         obj_id = id(obj)
         if obj_id in _seen:
             return
         _seen.add(obj_id)
-        
+
         obj_type = type(obj).__name__
-        
+
         # Check if this object type has expected configs
         if obj_type in EXPECTED_CONFIGS:
             expected = EXPECTED_CONFIGS[obj_type]
-            
+
             for attr_name, expected_type in expected.items():
                 if not hasattr(obj, attr_name):
                     error_msg = f"{path}: Missing required config attribute '{attr_name}'"
@@ -613,51 +636,45 @@ def validate_config_placement(root: Any, raise_on_error: bool = False) -> list[s
                     if raise_on_error:
                         raise ValueError(error_msg)
                     continue
-                
+
                 attr_value = getattr(obj, attr_name)
                 if attr_value is None:
                     continue  # Allow None values
-                
+
                 actual_type_name = type(attr_value).__name__
-                
+
                 # Handle multiple allowed types
                 if isinstance(expected_type, tuple):
                     if actual_type_name not in expected_type:
-                        error_msg = (
-                            f"{path}.{attr_name}: Expected one of {expected_type}, "
-                            f"got {actual_type_name}"
-                        )
+                        error_msg = f"{path}.{attr_name}: Expected one of {expected_type}, got {actual_type_name}"
                         errors.append(error_msg)
                         if raise_on_error:
                             raise TypeError(error_msg)
                 else:
                     if actual_type_name != expected_type:
-                        error_msg = (
-                            f"{path}.{attr_name}: Expected {expected_type}, "
-                            f"got {actual_type_name}"
-                        )
+                        error_msg = f"{path}.{attr_name}: Expected {expected_type}, got {actual_type_name}"
                         errors.append(error_msg)
                         if raise_on_error:
                             raise TypeError(error_msg)
-        
+
         # Recurse into nested objects (avoid infinite loops)
         try:
             attrs = vars(obj)
         except TypeError:
             return
-        
+
         for attr_name, attr_value in attrs.items():
-            if attr_name.startswith('_') or attr_name == 'logger':
+            if attr_name.startswith("_") or attr_name == "logger":
                 continue
-            
+
             child_path = f"{path}.{attr_name}"
-            
+
             if isinstance(attr_value, BaseConfigs):
                 # Configs themselves might contain configs
                 check_object(attr_value, child_path, _seen)
-            elif hasattr(attr_value, '__dict__') and not isinstance(attr_value, (str, int, float, list, dict, tuple)):
+            elif hasattr(attr_value, "__dict__") and not isinstance(attr_value, (str, int, float, list, dict, tuple)):
                 check_object(attr_value, child_path, _seen)
-    
+
     check_object(root)
     return errors
 
@@ -668,11 +685,11 @@ def apply_and_validate_configs(
     metadata: Dict[str, dict] = None,
     strict: bool = True,
     verify_paths: bool = True,
-    validate_after: bool = True
+    validate_after: bool = True,
 ) -> Dict[str, str]:
     """
     Apply configs with full safety checks (Strategies 1 + 4 combined).
-    
+
     Args:
         root: The root object to apply configs to
         configs: Dict of {label: config_dict}
@@ -680,34 +697,28 @@ def apply_and_validate_configs(
         strict: If True, raise errors on mismatches
         verify_paths: If True, verify paths match metadata
         validate_after: If True, run validation after applying
-        
+
     Returns:
         Dict mapping labels to their paths
-        
+
     Raises:
         ValueError: If validation fails
-        
+
     Example:
         >>> # Load from YAML
         >>> bundle = RunConfigBundle.load_from_yaml('configs.yaml')
-        >>> 
+        >>>
         >>> # Apply with full validation
         >>> results = apply_and_validate_configs(
-        ...     backtest, 
-        ...     bundle.configs, 
+        ...     backtest,
+        ...     bundle.configs,
         ...     bundle.metadata
         ... )
         >>> print(f"Applied {len(results)} configs successfully")
     """
     # Apply configs with path verification
-    results = apply_run_configs(
-        root, 
-        configs, 
-        metadata=metadata,
-        strict=strict, 
-        verify_paths=verify_paths
-    )
-    
+    results = apply_run_configs(root, configs, metadata=metadata, strict=strict, verify_paths=verify_paths)
+
     # Validate placement
     if validate_after:
         errors = validate_config_placement(root, raise_on_error=strict)
@@ -717,6 +728,5 @@ def apply_and_validate_configs(
                 raise ValueError(error_msg)
             else:
                 logger.warning(error_msg)
-    
-    return results
 
+    return results

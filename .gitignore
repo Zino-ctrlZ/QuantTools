@@ -191,6 +191,9 @@ EventDriven/Testing/text.txt
 ## Only relevant for me since I do the scheduling
 trade/helpers/*vol_resolve*.json
 
+## Irrelavant misc files
+trade/optionlib/model_issue_notes.txt
+
 ## Pickle files
 *.pkl
 \qtenv
@@ -199,6 +202,7 @@ trade/helpers/*vol_resolve*.json
 EventDriven/notebooks/riskmanager_streamline/
 EventDriven/tests.py
 trade/assets/notebooks
+EventDriven/riskmanager/notebooks/large_unexplained_pnl_trades.csv
 
 
 # ignore all notebooks
@@ -207,3 +211,13 @@ trade/assets/notebooks
 # allow notebooks in any demo folder (demo or demos)
 !**/demo/**/*.ipynb
 !**/demos/**/*.ipynb
+
+# Local decommission staging (keep out of remote)
+.decomission/
+.decommission/
+EventDriven/riskmanager/.decomission/
+EventDriven/riskmanager/.decommission/
+
+# Local debug folders (keep out of remote)
+debug/
+**/debug/

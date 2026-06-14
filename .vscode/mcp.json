@@ -1,0 +1,46 @@
+{
+  "servers": {
+    "mysqlReadonly": {
+      "type": "stdio",
+      "command": "/usr/local/opt/node@20/bin/node",
+      "args": [
+        "/Users/chiemelienwanisobi/cloned_repos/mcp-server-mysql/dist/index.js"
+      ],
+      "env": {
+        "MYSQL_HOST": "${input:mysql-host}",
+        "MYSQL_PORT": "${input:mysql-port}",
+        "MYSQL_USER": "${input:mysql-user}",
+        "MYSQL_PASS": "${input:mysql-pass}",
+        "ALLOW_INSERT_OPERATION": "false",
+        "ALLOW_UPDATE_OPERATION": "false",
+        "ALLOW_DELETE_OPERATION": "false",
+        "ALLOW_DDL_OPERATION": "false",
+        "ENABLE_LOGGING": "false"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "mysql-host",
+      "description": "MySQL host (e.g. localhost or db.example.com)"
+    },
+    {
+      "type": "promptString",
+      "id": "mysql-port",
+      "description": "MySQL port",
+      "default": "3306"
+    },
+    {
+      "type": "promptString",
+      "id": "mysql-user",
+      "description": "MySQL read-only username"
+    },
+    {
+      "type": "promptString",
+      "id": "mysql-pass",
+      "description": "MySQL read-only password",
+      "password": true
+    }
+  ]
+}

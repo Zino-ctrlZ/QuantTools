@@ -1,0 +1,284 @@
+         6223 function calls in 10.050 seconds
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.001    0.001   10.050   10.050 /Users/chiemelienwanisobi/cloned_repos/QuantTools/EventDriven/Testing/concurency_test.py:35(test_runProcesses)
+        3    0.002    0.001   10.047    3.349 /Users/chiemelienwanisobi/cloned_repos/QuantTools/trade/helpers/pools.py:13(runProcesses)
+        6    0.000    0.000    9.666    1.611 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:659(join)
+        3    0.000    0.000    9.651    3.217 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:237(join)
+       60    9.596    0.160    9.596    0.160 {method 'acquire' of '_thread.lock' objects}
+       27    0.000    0.000    9.591    0.355 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1087(join)
+       27    0.000    0.000    9.591    0.355 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1125(_wait_for_tstate_lock)
+        4    0.003    0.001    0.326    0.082 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:183(__init__)
+        4    0.000    0.000    0.293    0.073 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:305(_repopulate_pool)
+        4    0.008    0.002    0.292    0.073 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:314(_repopulate_pool_static)
+       32    0.005    0.000    0.268    0.008 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:110(start)
+       32    0.005    0.000    0.261    0.008 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:278(_Popen)
+        3    0.003    0.001    0.259    0.086 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:211(restart)
+       32    0.002    0.000    0.253    0.008 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:15(__init__)
+       32    0.007    0.000    0.248    0.008 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:62(_launch)
+       32    0.232    0.007    0.235    0.007 {built-in method posix.fork}
+        3    0.001    0.000    0.095    0.032 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:88(__init__)
+        6    0.000    0.000    0.094    0.016 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:128(_serve)
+      192    0.003    0.000    0.074    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:24(poll)
+       48    0.000    0.000    0.074    0.002 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:142(join)
+       48    0.000    0.000    0.074    0.002 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:36(wait)
+      144    0.071    0.000    0.071    0.000 {built-in method posix.waitpid}
+       13    0.000    0.000    0.044    0.003 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:372(put)
+        6    0.000    0.000    0.039    0.006 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:647(close)
+        3    0.000    0.000    0.037    0.012 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:225(close)
+       13    0.000    0.000    0.034    0.003 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:185(send_bytes)
+       13    0.000    0.000    0.034    0.003 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:409(_send_bytes)
+       13    0.000    0.000    0.033    0.003 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:384(_send)
+       13    0.033    0.003    0.033    0.003 {built-in method posix.write}
+       12    0.001    0.000    0.018    0.002 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:110(SimpleQueue)
+        4    0.000    0.000    0.018    0.004 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:345(_setup_queues)
+       32    0.001    0.000    0.016    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:179(Process)
+        4    0.000    0.000    0.016    0.004 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:139(_clear)
+        3    0.000    0.000    0.015    0.005 <frozen importlib._bootstrap>:1165(_find_and_load)
+        3    0.000    0.000    0.015    0.005 <frozen importlib._bootstrap>:1120(_find_and_load_unlocked)
+       32    0.011    0.000    0.015    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:80(__init__)
+        3    0.000    0.000    0.014    0.005 <frozen importlib._bootstrap>:666(_load_unlocked)
+        3    0.000    0.000    0.014    0.005 <frozen importlib._bootstrap_external>:934(exec_module)
+        3    0.000    0.000    0.013    0.004 <frozen importlib._bootstrap_external>:1007(get_code)
+        3    0.000    0.000    0.012    0.004 <frozen importlib._bootstrap_external>:1127(get_data)
+       12    0.000    0.000    0.012    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:342(__init__)
+        3    0.012    0.004    0.012    0.004 {built-in method io.open_code}
+       24    0.000    0.000    0.012    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:65(Lock)
+       13    0.001    0.000    0.009    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/reduction.py:51(dumps)
+       12    0.000    0.000    0.008    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:945(start)
+       27    0.000    0.000    0.007    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:205(__call__)
+        3    0.000    0.000    0.007    0.002 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:680(_terminate_pool)
+       12    0.000    0.000    0.006    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:611(wait)
+       12    0.000    0.000    0.006    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:295(wait)
+       13    0.000    0.000    0.006    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/_dill.py:418(dump)
+       13    0.000    0.000    0.005    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:476(dump)
+       36    0.005    0.000    0.005    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:186(__init__)
+       13    0.001    0.000    0.004    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/_dill.py:367(save)
+       12    0.002    0.000    0.004    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:856(__init__)
+       13    0.000    0.000    0.004    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:535(save)
+       24    0.000    0.000    0.004    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:174(__init__)
+       24    0.001    0.000    0.004    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:56(__init__)
+       55    0.003    0.000    0.003    0.000 {built-in method builtins.getattr}
+       13    0.001    0.000    0.003    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/reduction.py:41(__init__)
+        3    0.001    0.000    0.003    0.001 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/multiprocessing.py:156(imap)
+       32    0.001    0.000    0.002    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/logging/__init__.py:237(_releaseLock)
+       32    0.001    0.000    0.002    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:433(_flush_std_streams)
+       80    0.000    0.000    0.002    0.000 {method 'join' of 'str' objects}
+       32    0.001    0.000    0.002    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:61(_cleanup)
+       24    0.000    0.000    0.002    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:127(_make_name)
+      119    0.000    0.000    0.002    0.000 {built-in method builtins.next}
+       24    0.001    0.000    0.002    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/tempfile.py:154(__next__)
+       64    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:94(<genexpr>)
+       45    0.001    0.000    0.001    0.000 {method 'copy' of 'dict' objects}
+       12    0.000    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:562(__init__)
+       12    0.001    0.000    0.001    0.000 {built-in method _thread.start_new_thread}
+       44    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/_weakrefset.py:85(add)
+       76    0.001    0.000    0.001    0.000 {built-in method posix.pipe}
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap>:1054(_find_spec)
+       13    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/_dill.py:351(__init__)
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:1499(find_spec)
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:1467(_get_spec)
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:1607(find_spec)
+       15    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:243(__init__)
+       32    0.001    0.000    0.001    0.000 {method 'release' of '_thread.RLock' objects}
+       64    0.001    0.000    0.001    0.000 {method 'flush' of '_io.TextIOWrapper' objects}
+       72    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:853(next)
+       78    0.001    0.000    0.001    0.000 <frozen importlib._bootstrap>:405(parent)
+        9    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:140(_path_stat)
+        9    0.001    0.000    0.001    0.000 {built-in method posix.stat}
+        3    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/warnings.py:467(__enter__)
+      130    0.001    0.000    0.001    0.000 {built-in method posix.close}
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:159(_path_isfile)
+        3    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap_external>:150(_path_is_mode_type)
+       24    0.000    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:171(register_after_fork)
+        3    0.000    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:396(imap)
+       13    0.001    0.000    0.001    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:409(__init__)
+        6    0.000    0.000    0.001    0.000 <frozen importlib._bootstrap>:233(_call_with_frames_removed)
+        3    0.000    0.000    0.001    0.000 {built-in method builtins.exec}
+       32    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/logging/__init__.py:228(_acquireLock)
+       64    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:189(name)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:727(_compile_bytecode)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/random.py:480(choices)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/weakref.py:164(__setitem__)
+        3    0.000    0.000    0.000    0.000 {built-in method marshal.loads}
+       76    0.000    0.000    0.000    0.000 {method 'add' of 'set' objects}
+       33    0.000    0.000    0.000    0.000 {built-in method _thread.allocate_lock}
+       13    0.000    0.000    0.000    0.000 {method 'update' of 'dict' objects}
+       12    0.000    0.000    0.000    0.000 {built-in method builtins.__build_class__}
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:839(__init__)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:1(<module>)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:103(__exit__)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:811(_newname)
+       26    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:217(commit_frame)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:535(Pipe)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:212(end_framing)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1324(_make_invoke_excepthook)
+       13    0.000    0.000    0.000    0.000 {method '__exit__' of '_multiprocessing.SemLock' objects}
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:463(close_fds)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/logger.py:127(trace_setup)
+       32    0.000    0.000    0.000    0.000 {method 'acquire' of '_thread.RLock' objects}
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/random.py:493(<listcomp>)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/weakref.py:347(__new__)
+       48    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1453(current_thread)
+       18    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/weakref.py:105(remove)
+        4    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:279(_get_sentinels)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:100(__enter__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:566(module_from_spec)
+       84    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:271(__enter__)
+      223    0.000    0.000    0.000    0.000 {built-in method posix.getpid}
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/tempfile.py:143(rng)
+       18    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:134(__del__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:493(_init_module_attrs)
+       32    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:193(name)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:153(is_alive)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:1(<module>)
+        6    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:41(cpu_count)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/helpers/mp_helper.py:13(starargs)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1206(daemon)
+        3    0.000    0.000    0.000    0.000 {method 'read' of '_io.BufferedReader' objects}
+       33    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/_weakrefset.py:39(_remove)
+        3    0.000    0.000    0.000    0.000 {method '__exit__' of '_io._IOBase' objects}
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:671(_help_stuff_finish)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1051(_stop)
+        6    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:437(cache_from_source)
+       32    0.000    0.000    0.000    0.000 {method 'replace' of 'str' objects}
+       32    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:205(daemon)
+        6    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:392(cached)
+       13    0.000    0.000    0.000    0.000 {method '__enter__' of '_multiprocessing.SemLock' objects}
+       92    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:48(debug)
+       84    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:274(__exit__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:567(_get_cached)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:224(exitcode)
+       26    0.000    0.000    0.000    0.000 {built-in method _struct.pack}
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1221(daemon)
+      105    0.000    0.000    0.000    0.000 {method 'discard' of 'set' objects}
+       35    0.000    0.000    0.000    0.000 {method 'append' of 'list' objects}
+       39    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:241(write)
+       93    0.000    0.000    0.000    0.000 {method 'rpartition' of 'str' objects}
+       18    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:379(_close)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:169(__enter__)
+       18    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:126(_path_join)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/weakref.py:352(__init__)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/random.py:119(__init__)
+      128    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:99(_check_closed)
+        3    0.000    0.000    0.000    0.000 {method 'put' of '_queue.SimpleQueue' objects}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/random.py:128(seed)
+        6    0.000    0.000    0.000    0.000 {built-in method posix.cpu_count}
+       88    0.000    0.000    0.000    0.000 {built-in method builtins.len}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:1(<module>)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:1602(_get_spec)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:205(__init__)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:121(__init__)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:740(save_none)
+       18    0.000    0.000    0.000    0.000 {built-in method _weakref._remove_dead_weakref}
+       55    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
+        1    0.000    0.000    0.000    0.000 {function Random.seed at 0x10b9e1800}
+       73    0.000    0.000    0.000    0.000 {method 'get' of 'dict' objects}
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/warnings.py:441(__init__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:179(_get_module_lock)
+        6    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:132(_path_split)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/_dill.py:2180(is_dill)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:1146(path_stats)
+       84    0.000    0.000    0.000    0.000 {method '__enter__' of '_thread.lock' objects}
+      192    0.000    0.000    0.000    0.000 {built-in method math.floor}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:642(_classify_pyc)
+       18    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:128(<listcomp>)
+       36    0.000    0.000    0.000    0.000 {built-in method builtins.hasattr}
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:286(_is_owned)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:96(_make_methods)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:778(spec_from_file_location)
+       54    0.000    0.000    0.000    0.000 {built-in method _thread.get_ident}
+       52    0.000    0.000    0.000    0.000 {method 'write' of '_io.BytesIO' objects}
+      192    0.000    0.000    0.000    0.000 {method 'random' of '_random.Random' objects}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:173(__exit__)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:283(_acquire_restore)
+       26    0.000    0.000    0.000    0.000 {method 'getbuffer' of '_io.BytesIO' objects}
+       12    0.000    0.000    0.000    0.000 {method '__exit__' of '_thread.RLock' objects}
+       51    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:575(is_set)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:146(_check_writable)
+        7    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:1207(_handle_fromlist)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:125(release)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:209(start_framing)
+       12    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:280(_release_save)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/pathos/abstract_launcher.py:144(__imap)
+       90    0.000    0.000    0.000    0.000 {method '__exit__' of '_thread.lock' objects}
+        6    0.000    0.000    0.000    0.000 {built-in method builtins.max}
+        3    0.000    0.000    0.000    0.000 {method 'acquire' of '_multiprocessing.SemLock' objects}
+       32    0.000    0.000    0.000    0.000 {built-in method posix.waitstatus_to_exitcode}
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/dill/_dill.py:316(get)
+       37    0.000    0.000    0.000    0.000 {built-in method builtins.id}
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/warnings.py:488(__exit__)
+        9    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:84(_unpack_uint32)
+       24    0.000    0.000    0.000    0.000 {built-in method __new__ of type object at 0x10b4b9898}
+        4    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:157(__init__)
+       21    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:244(_verbose_message)
+       51    0.000    0.000    0.000    0.000 {method 'pop' of 'dict' objects}
+       72    0.000    0.000    0.000    0.000 {method 'popleft' of 'collections.deque' objects}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:71(__init__)
+        4    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:237(get_context)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:100(acquire)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:675(_validate_timestamp_pyc)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:38(Queue)
+       27    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/util.py:44(sub_debug)
+       12    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:134(<genexpr>)
+       24    0.000    0.000    0.000    0.000 {method 'release' of '_thread.lock' objects}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:48(_new_module)
+       36    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:187(get_context)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:198(cb)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/popen_fork.py:12(Popen)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:920(find_spec)
+       39    0.000    0.000    0.000    0.000 {method 'tell' of '_io.BytesIO' objects}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:376(Barrier)
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/pickle.py:605(persistent_id)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/process.py:37(current_process)
+       12    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:1030(__exit__)
+       24    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/context.py:197(get_start_method)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:334(Event)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:340(SimpleQueue)
+       42    0.000    0.000    0.000    0.000 {method 'rstrip' of 'str' objects}
+       13    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/connection.py:138(_check_closed)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:748(find_spec)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:52(SemLock)
+        3    0.000    0.000    0.000    0.000 {built-in method builtins.setattr}
+       12    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:1026(__enter__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:599(_check_name_wrapper)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:67(_relax_case)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/_distutils_hack/__init__.py:102(find_spec)
+        3    0.000    0.000    0.000    0.000 {method 'pop' of 'list' objects}
+       18    0.000    0.000    0.000    0.000 {built-in method _imp.acquire_lock}
+        6    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/threading.py:1192(is_alive)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:351(_check_running)
+       12    0.000    0.000    0.000    0.000 {method 'append' of 'collections.deque' objects}
+        6    0.000    0.000    0.000    0.000 {method 'startswith' of 'str' objects}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:180(_path_isabs)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:357(__init__)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:266(__del__)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:1424(_path_importer_cache)
+       18    0.000    0.000    0.000    0.000 {built-in method _imp.release_lock}
+        6    0.000    0.000    0.000    0.000 {method 'rfind' of 'str' objects}
+        6    0.000    0.000    0.000    0.000 {built-in method _warnings._filters_mutated}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:136(Semaphore)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:1097(__init__)
+        3    0.000    0.000    0.000    0.000 {built-in method _imp.is_builtin}
+        9    0.000    0.000    0.000    0.000 {built-in method from_bytes}
+       12    0.000    0.000    0.000    0.000 {method 'locked' of '_thread.lock' objects}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:223(Condition)
+        9    0.000    0.000    0.000    0.000 {built-in method posix.fspath}
+        3    0.000    0.000    0.000    0.000 {built-in method _imp.find_frozen}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:165(__init__)
+        3    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/pool.py:850(__iter__)
+        3    0.000    0.000    0.000    0.000 {method 'endswith' of 'str' objects}
+        3    0.000    0.000    0.000    0.000 {built-in method _imp._fix_co_filename}
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/queues.py:297(JoinableQueue)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        2    0.000    0.000    0.000    0.000 {method 'setter' of 'property' objects}
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:931(create_module)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap>:413(has_location)
+        3    0.000    0.000    0.000    0.000 <frozen importlib._bootstrap_external>:1122(get_filename)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:155(BoundedSemaphore)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:172(Lock)
+        1    0.000    0.000    0.000    0.000 /Users/chiemelienwanisobi/miniconda3/envs/openbb/lib/python3.11/site-packages/multiprocess/synchronize.py:197(RLock)
+
+

@@ -9,24 +9,34 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "editor.formatOnSave": false,
-    
-    // Ruff: Linting only (style, code quality)
-    "ruff.enable": true,
-    "ruff.lint.enable": true,
-    
-    // Disable pylint (redundant with ruff)
-    "python.linting.pylintEnabled": false,
-    "python.linting.enabled": true,
-    
-    // Keep Pylance: REQUIRED for IntelliSense and semantic highlighting
-    "python.languageServer": "Pylance",
+    "python.terminal.useEnvFile": true,
+
+    // --- Cursor: Cursor Pyright ---
+    // "python.languageServer": "None" disables MS Pylance/Jedi so Cursor Pyright runs.
+    // In VS Code: override to "Pylance" or "Default" in User settings if IntelliSense is missing.
+    "python.languageServer": "None",
+
+    // 1:1 with python.analysis.* (same values as Pylance block below)
+    "cursorpyright.analysis.useLibraryCodeForTypes": true,
+    "cursorpyright.analysis.typeCheckingMode": "off",
+    "cursorpyright.analysis.diagnosticMode": "openFilesOnly",
+    "cursorpyright.analysis.autoImportCompletions": true,
+
+    // Pylance-only — no cursorpyright.analysis.* key exists:
+    //   indexing, includeAliasesFromUserFiles, userFileIndexingLimit, packageIndexDepths
+
+    // Optional Cursor Pyright extras (no python.analysis.* twin in your config)
+    "cursorpyright.analysis.autoSearchPaths": true,
+
+    // --- VS Code: Pylance (python.analysis.*) ---
     "python.analysis.useLibraryCodeForTypes": true,
     "python.analysis.typeCheckingMode": "off",
-    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.diagnosticMode": "openFilesOnly",
     "python.analysis.indexing": true,
     "python.analysis.autoImportCompletions": true,
     "python.analysis.includeAliasesFromUserFiles": true,
     "python.analysis.userFileIndexingLimit": 5000,
+    "editor.colorDecorators": true,
     "python.analysis.packageIndexDepths": [
         {
             "name": "pydantic",
@@ -34,12 +44,22 @@
             "includeAllSymbols": true
         }
     ],
+
+    // Ruff: Linting only (style, code quality)
+    "ruff.enable": true,
+    "ruff.lint.enable": true,
+
+    // Disable pylint (redundant with ruff)
+    "python.linting.pylintEnabled": false,
+    "python.linting.enabled": true,
+
+    "jupytextSync.pythonExecutable": "/Users/chiemelienwanisobi/miniconda3/envs/openbb_new_use/bin/python",
+
     "python-envs.pythonProjects": [
         {
-            "path": "",
+            "path": ".",
             "envManager": "ms-python.python:conda",
             "packageManager": "ms-python.python:conda"
         }
     ]
-
 }

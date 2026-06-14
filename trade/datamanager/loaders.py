@@ -217,6 +217,6 @@ def load_full_option_data(
         greek_timeseries=greek_timeseries,
         rates_timeseries=rates_timeseries,
     )
-
+    
     data_packet = _load_model_data_timeseries(request)
     return data_packet

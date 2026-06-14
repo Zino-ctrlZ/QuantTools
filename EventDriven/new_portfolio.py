@@ -5,6 +5,7 @@
 # - Position Management: Rolling Options, Hedging, Position sizing
 # -
 
+from ast import Dict
 from copy import deepcopy
 import logging
 from abc import ABCMeta, abstractmethod
@@ -12,12 +13,22 @@ import pandas as pd
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.eventScheduler import EventScheduler
 from EventDriven.trade import Trade
-from EventDriven.types import EventTypes, FillDirection, ResultsEnum, SignalTypes, OrderData
+from EventDriven.types import (
+    AggregationLevel,
+    EventTypes,
+    FillDirection,
+    ResultsEnum,
+    SignalID,
+    SignalTypes,
+    OrderData,
+    Order,
+    TradeID,
+)
 from EventDriven.riskmanager.new_base import RiskManager, order_failed
 from EventDriven.riskmanager.utils import parse_position_id
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import to_datetime
-from trade.assets import Stock
+from trade.assets.Stock import Stock
 from EventDriven.event import (
     ExerciseEvent,  # noqa
     FillEvent,
@@ -32,16 +43,24 @@ from EventDriven.data import HistoricTradeDataHandler
 from trade.helpers.helper import change_to_last_busday, is_USholiday
 from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.backtester_.utils.utils import plot_portfolio
-from typing import Optional
+from typing import Optional, Union, List
 import plotly
-from EventDriven.dataclasses.states import PositionState, PortfolioMetaInfo, PortfolioState, PositionAnalysisContext
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from EventDriven.dataclasses.states import (
+    AtTimePositionData,
+    PositionState,
+    PortfolioMetaInfo,
+    PortfolioState,
+    PositionAnalysisContext,
+)
 from EventDriven.dataclasses.states import StrategyChangeMeta
 from EventDriven.configs.core import PortfolioManagerConfig, CashAllocatorConfig
 from EventDriven.portfolio_utils import extract_events
-from EventDriven.exceptions import BacktestNotImplementedError
+from EventDriven.exceptions import BacktestNotImplementedError, EVBacktestError
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 
-LOGGER = setup_logger("OptionSignalPortfolio", stream_log_level=logging.INFO)
+LOGGER = setup_logger("EventDriven.new_portfolio", stream_log_level=logging.WARNING)
 
 
 class Portfolio(AggregatorParent):
@@ -80,6 +99,39 @@ class OptionSignalPortfolio(Portfolio):
     weight_map: dict
     initial_capital: int
     """
+
+    # ------------------------------------------------------------------
+    # Class-level aggregation spec constants
+    # ------------------------------------------------------------------
+
+    _ADDITIVE_COLS: list[str] = [
+        "EntryCommission",
+        "ExitCommission",
+        "EntrySlippage",
+        "ExitSlippage",
+        "EntryAuxilaryCost",
+        "ExitAuxilaryCost",
+        "TotalCommission",
+        "TotalSlippage",
+        "TotalAuxilaryCost",
+        "ClosedPnL",
+        "UnrealizedPnL",
+        "PnL",
+        "EntryQuantity",
+        "ExitQuantity",
+        "ClosedQuantity",
+        "OpenQuantity",
+        "TotalEntryCost",
+        "TotalExitCost",
+    ]
+
+    # (column_to_average, column_used_as_weight)
+    _WEIGHTED_COLS: list[tuple[str, str]] = [
+        ("EntryPrice", "EntryQuantity"),
+        ("ExitPrice", "ExitQuantity"),
+        # ("TotalEntryCost", "EntryQuantity"),
+        # ("TotalExitCost", "ExitQuantity"),
+    ]
 
     def __init__(
         self,
@@ -146,8 +198,7 @@ class OptionSignalPortfolio(Portfolio):
         self.underlier_list_data = {}
         self.unprocessed_signals = []
         self.allow_multiple_trades = True  # allow multiple trades for the same signal_id
-        self.__equity = None
-        self.__transactions = []
+
         # call internal functions to construct key portfolio data
         self.__construct_all_positions()
         self.__construct_current_positions()
@@ -167,6 +218,11 @@ class OptionSignalPortfolio(Portfolio):
         self.is_backtest = True  ## Move to config?
         self.eq_strategy = eq_strategy
         self.using_eq_strategy = eq_strategy is not None
+
+        ## Hidden attributes
+        self.__position_entry_dates = {}
+        self.__equity = None
+        self.__transactions = []
 
     def _is_holiday(self, dt):
         """
@@ -238,6 +294,7 @@ class OptionSignalPortfolio(Portfolio):
 
     def __construct_max_contract_price(self):
         # Try config-driven buckets first; fallback to legacy behavior
+        ## TODO: Decommision this method. Rely solely on cash allocator config for max contract price.
         if self.cash_allocator_config is not None:
             try:
                 max_cash_map = self.cash_allocator_config.build_max_cash_map(
@@ -294,13 +351,15 @@ class OptionSignalPortfolio(Portfolio):
         equity_curve["commission"] = -equity_curve["commission"]
         equity_curve["total"] = equity_curve.sum(axis=1)  ##NOTE: Temp fix till calcs work
         equity_curve.rename(columns={"total": "Total"}, inplace=True)
+        equity_curve.index = pd.to_datetime(equity_curve.index)
         self.__equity = equity_curve
         return self.__equity
 
     @property
     def trades(self):
-        """
-        Returns a DataFrame of trades executed in the portfolio.
+        """Returns a DataFrame of trades aggregated at BY_TRADE_SIGNAL granularity (default).
+
+        For other aggregation levels call aggregate_trades(level=...) directly.
         """
         if self.trades_df is not None:
             return self.trades_df
@@ -308,9 +367,139 @@ class OptionSignalPortfolio(Portfolio):
         self.trades_df = self.aggregate_trades()
         return self.trades_df
 
-    def aggregate_trades(self):
-        trades_data = [self.trades_map[trade_id].stats for trade_id in self.trades_map.keys()]
-        return pd.concat(trades_data, ignore_index=True) if trades_data else None
+    def aggregate_trades(
+        self,
+        level: Union[AggregationLevel, str] = AggregationLevel.BY_TRADE_SIGNAL,
+    ) -> Optional[pd.DataFrame]:
+        """Returns a DataFrame of trade statistics aggregated at the requested granularity.
+
+        Args:
+            level: Aggregation granularity. Accepts an AggregationLevel enum value or its
+                string equivalent (e.g. ``"by_signal"``). Defaults to BY_TRADE_SIGNAL.
+
+        Returns:
+            DataFrame with one row per group at the requested level, or None when no trades
+            have been recorded yet.
+        """
+        if isinstance(level, str):
+            level = AggregationLevel(level)
+
+        trades_data = [trade.stats for trade in self.trades_map.values()]
+        if not trades_data:
+            return None
+
+        base = pd.concat(trades_data, ignore_index=True)
+
+        if level == AggregationLevel.BY_TRADE_SIGNAL:
+            return base
+
+        return self._aggregate_by_level(base, level)
+
+    # ------------------------------------------------------------------
+    # Internal trade aggregation helpers
+    # ------------------------------------------------------------------
+
+    def _weighted_mean(self, df: pd.DataFrame, value_col: str, weight_col: str) -> float:
+        """Weighted average of value_col weighted by weight_col; returns 0 on zero-weight groups."""
+        weights = df[weight_col].fillna(0)
+        total_weight = weights.sum()
+        if total_weight == 0:
+            return 0.0
+        return (df[value_col].fillna(0) * weights).sum() / total_weight
+
+    def _aggregate_by_level(
+        self,
+        base: pd.DataFrame,
+        level: AggregationLevel,
+    ) -> pd.DataFrame:
+        """Performs multi-row aggregation over *base* for the given *level*.
+
+        Fully closed groups (every row has a non-null ExitTime) are fully aggregated.
+        Not-fully-closed groups mirror the open-trade NaN behaviour from Trade.aggregate(),
+        with ClosedPnL and ReturnPct as the only exceptions — those are always populated
+        from whatever portion of the group has already been closed.
+        """
+        group_key = "SignalID" if level == AggregationLevel.BY_SIGNAL else "TradeID"
+        other_id = "TradeID" if level == AggregationLevel.BY_SIGNAL else "SignalID"
+
+        # Columns to null for groups that are not fully closed.
+        # ClosedPnL and ReturnPct are intentionally excluded — they are always populated.
+        _NULL_WHEN_OPEN: set[str] = {
+            "ExitPrice",
+            "TotalExitCost",
+            "ExitCommission",
+            "ExitSlippage",
+            "ExitAuxilaryCost",
+            "ExitQuantity",
+            "ClosedQuantity",
+            "TotalCommission",
+            "TotalSlippage",
+            "TotalAuxilaryCost",
+            "Duration",
+            "UnrealizedPnL",
+            "PnL",
+            "Quantity",
+        }
+
+        rows = []
+        for group_val, grp in base.groupby(group_key, sort=False):
+            row: dict = {group_key: group_val}
+
+            # Other ID: preserve single value or mark as MIXED
+            other_vals = grp[other_id].dropna().unique().tolist()
+            row[other_id] = other_vals[0] if len(other_vals) == 1 else "MIXED"
+
+            # Ticker: preserve single value or mark as MULTI
+            tickers = grp["Ticker"].dropna().unique().tolist()
+            row["Ticker"] = tickers[0] if len(tickers) == 1 else "MULTI"
+
+            # Time boundaries
+            row["EntryTime"] = grp["EntryTime"].dropna().min()
+            exit_times = grp["ExitTime"].dropna()
+            is_fully_closed = len(exit_times) == len(grp)
+            row["ExitTime"] = exit_times.max() if is_fully_closed else None
+
+            # Additive columns — always sum; open-group nulls applied below
+            for col in self._ADDITIVE_COLS:
+                if col in grp.columns:
+                    row[col] = grp[col].fillna(0).sum()
+
+            # Weighted-average price / cost columns — always compute; open-group nulls applied below
+            for val_col, wt_col in self._WEIGHTED_COLS:
+                if val_col in grp.columns and wt_col in grp.columns:
+                    row[val_col] = self._weighted_mean(grp, val_col, wt_col)
+
+            # ReturnPct: always derived from ClosedPnL / TotalEntryCost so it is
+            # meaningful even when the group is not fully closed.
+            total_entry_cost = row.get("TotalEntryCost", 0)
+            closed_pnl = row.get("ClosedPnL", 0)
+            if group_key == "SignalID":
+                initial_entry_cost = grp[grp["EntryTime"] == row["EntryTime"]]["TotalEntryCost"].iloc[0]
+                max_total_entry_cost = grp["TotalEntryCost"].max()
+                row["ReturnPct"] = (closed_pnl / max_total_entry_cost) if initial_entry_cost > 0 else 0
+                row["InitialEntryReturnPct"] = (closed_pnl / initial_entry_cost) if initial_entry_cost > 0 else 0
+                row["CampaignReturnPct"] = (closed_pnl / total_entry_cost) if total_entry_cost > 0 else 0
+            else:
+                row["ReturnPct"] = (closed_pnl / total_entry_cost) if total_entry_cost > 0 else 0
+
+            if is_fully_closed:
+                # Quantity as net open (should be 0 for a fully closed group)
+                entry_qty = row.get("EntryQuantity", 0)
+                exit_qty = row.get("ExitQuantity", 0)
+                row["Quantity"] = entry_qty - exit_qty
+
+                # Duration from earliest entry to latest exit
+                entry_dt = row["EntryTime"]
+                exit_dt = row["ExitTime"]
+                row["Duration"] = (exit_dt - entry_dt).days if (exit_dt is not None and entry_dt is not None) else None
+            else:
+                # Null exit-side and derived combined columns; keep ClosedPnL + ReturnPct
+                for col in _NULL_WHEN_OPEN:
+                    row[col] = None
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
 
     @property
     def _trades(self):
@@ -333,12 +522,14 @@ class OptionSignalPortfolio(Portfolio):
     def buyNhold(self):
         stock_ts = pd.DataFrame()
         for stock in self.symbol_list:
-            stock_ts[stock] = (
-                self.underlier_list_data.get(stock, self.__get_underlier_data(stock)).spot(
-                    ts=True, ts_start=self.dates_(), ts_end=self.dates_(start=False)
-                )["close"]
-                * self.__weight_map[stock]
+            data = (
+                self.risk_manager.market_data.market_timeseries.get_timeseries(
+                    sym=stock, factor="spot", start_date=self.start_date, end_date=self.eventScheduler.end_date
+                )
+                .spot["close"]
+                .rename(stock)
             )
+            stock_ts = pd.concat([stock_ts, data], axis=1)
 
         stock_ts["Total"] = stock_ts.sum(axis=1)
         self.stock_equity = stock_ts
@@ -353,11 +544,12 @@ class OptionSignalPortfolio(Portfolio):
         symbol = signal_event.symbol
         signal_type = signal_event.signal_type
         order_type = "MKT"
+        order = None
 
         if signal_type != "CLOSE":  # generate order for LONG or SHORT
             order = self.create_order(signal_event, order_type)
             self.order_cache["OPEN"].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
-            return order
+
         elif signal_type == "CLOSE":
             ## Check if we have signal_id in current positions. If not, log warning and skip.
             if signal_event.signal_id not in self.current_positions[symbol]:
@@ -382,10 +574,10 @@ class OptionSignalPortfolio(Portfolio):
                 )
                 return None
 
-            ## Prepare order details
+            ## Prepare order details. Will leave close price and spread to be handled at the end of this if statment
             position = current_position["position"]
             self.logger.info(f"Selling contract for {symbol} at {signal_event.datetime} Position: {current_position}")
-            position["close"] = self.calculate_close_on_position(position)
+            # position["close"] = self.calculate_close_on_position(position)
 
             ## Access skip from risk_manager market data
             skip = self.risk_manager.market_data.skip(position_id=position["trade_id"], date=signal_event.datetime)
@@ -426,9 +618,21 @@ class OptionSignalPortfolio(Portfolio):
                 parent_event=signal_event,
             )
             self.order_cache["CLOSE"].setdefault(signal_event.datetime, {})[signal_event.symbol] = order
-            return order
 
-        return None
+        ## Update order with at-time data for execution handler to use for slippage calculations and order generation logic.
+        if order is not None:
+            at_time_data = self.get_at_time_position_data(
+                position_id=order.position["trade_id"], date=signal_event.datetime
+            )
+            spread = at_time_data.get_spread()
+            close = at_time_data.get_price()
+            self.logger.info(
+                f"Generated order for {symbol} at {signal_event.datetime} with spread {spread} and position {order.position if order is not None else None}"
+            )
+            order.position["spread"] = spread
+            order.position["close"] = close
+
+        return order
 
     def resolve_order_result(self, position_result, signal):
         """
@@ -452,11 +656,23 @@ class OptionSignalPortfolio(Portfolio):
         date_str = signal_event.datetime.strftime("%Y-%m-%d")
         position_type = "c" if signal_event.signal_type == "LONG" else "p"
         cash_at_hand = self.__normalize_dollar_amount_to_decimal(self.allocated_cash_map[signal_event.symbol] * 1)
+
+        ## TODO: Decommision self.__max_contract_price and rely solely on cash allocator config for max contract price.
+
+        ## Determine max contract price based on cash allocator config or default to 50% of allocated cash
+        max_contract_dict = (
+            self.cash_allocator_config.build_max_cash_map(weights=self.__weight_map, cash=self.initial_capital)
+            if self.cash_allocator_config is not None
+            else {}
+        )
+
+        ## If max_contract_price is not set or is greater than cash at hand, use cash at hand as max contract price
         max_contract_price = (
-            self.__max_contract_price[signal_event.symbol]
+            max_contract_dict.get(signal_event.symbol)
             if signal_event.max_contract_price is None
             else signal_event.max_contract_price
         )
+
         max_contract_price = max_contract_price if max_contract_price <= cash_at_hand else cash_at_hand
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.info(
@@ -474,6 +690,8 @@ class OptionSignalPortfolio(Portfolio):
                     tick_cash=cash_at_hand,
                     direction=signal_event.signal_type,
                     signal_id=signal_event.signal_id,
+                    signal_total_pnl=self._get_signal_total_pnl(signal_event.signal_id),
+                    symbol_total_pnl=self._get_symbol_total_pnl(signal_event.symbol),
                 )
             )
             self.position_cache[cache_key] = position_state
@@ -486,7 +704,7 @@ class OptionSignalPortfolio(Portfolio):
             self.logger.warning(f"Order failed to be created for signal: {signal_event}, Order: {order}")
             self.position_cache.pop(cache_key, None)
             self.position_cache.pop(signal_event.signal_id, None)
-            self._process_failed_order(signal_event)
+            self._process_failed_order(signal_event, order_result=order)
             return None
 
         return OrderEvent(
@@ -501,21 +719,54 @@ class OptionSignalPortfolio(Portfolio):
             parent_event=signal_event,
         )
 
-    def _process_failed_order(self, signal_event: SignalEvent):
+    def _get_signal_total_pnl(self, signal_id: str):
+        """
+        Helper function to calculate total PnL for a given signal_id across all trades.
+        """
+        total_pnl = 0.0
+        tm: Dict[TradeID, Trade] = self.trades_map
+        for trade in tm.values():
+            trade: Trade
+            trade.update_pnls()  # ensure pnl is updated before accessing
+            if trade.signal_id == signal_id:
+                total_pnl = total_pnl + trade.total_pnl
+        return total_pnl
+
+    def _get_symbol_total_pnl(self, symbol: str):
+        """
+        Helper function to calculate total PnL for a given symbol across all trades.
+        """
+        total_pnl = 0.0
+        tm: Dict[TradeID, Trade] = self.trades_map
+        for trade in tm.values():
+            trade: Trade
+            trade.update_pnls()  # ensure pnl is updated before accessing
+            if trade.symbol == symbol:
+                total_pnl = total_pnl + trade.total_pnl
+        return total_pnl
+
+    def _process_failed_order(self, signal_event: SignalEvent, order_result: Order = None):
         """
         Process a failed order by either rolling it forward or logging it.
         """
+        reason = "Order failed"
         if self.config.roll_failed_orders:
             next_trading_day = signal_event.datetime + pd.offsets.BusinessDay(1)
             self.logger.critical(f"Rolling failed signal {signal_event} to next trading day {next_trading_day}")
             self._roll_signal_to_next_day(signal_event)
+            reason += " and rolling forward as per config"
         else:
             self.logger.critical(
                 f"Failed to process signal for {signal_event.signal_id} on {signal_event.datetime}, not rolling forward as per config."
             )
-            unprocess_dict = signal_event.__dict__
-            unprocess_dict["reason"] = "Order failed and rolling is disabled"
-            self.unprocessed_signals.append(unprocess_dict)
+
+        ## Log unprocessed signal for analysis
+        unprocess_dict = signal_event.__dict__
+        unprocess_dict["reason"] = reason
+        unprocess_dict["result_message"] = "Order failed"
+        if order_result is not None:
+            unprocess_dict["order_result"] = order_result
+        self.unprocessed_signals.append(unprocess_dict)
 
     def _roll_signal_to_next_day(self, signal_event: SignalEvent):
         """
@@ -562,7 +813,7 @@ class OptionSignalPortfolio(Portfolio):
         if order_event is not None:
             self.eventScheduler.put(order_event)
 
-    def analyze_positions(self) -> StrategyChangeMeta:
+    def analyze_positions(self, dt: Optional[pd.Timestamp] = None) -> StrategyChangeMeta:
         """
         Analyze the current positions and determine if any need to be rolled
         """
@@ -581,7 +832,7 @@ class OptionSignalPortfolio(Portfolio):
         ## Create Context for current positions
         ## Analyze positions using RiskManager
         ## Extract events from meta changes and schedule them
-        dt = pd.to_datetime(self.eventScheduler.current_date)
+        dt = pd.to_datetime(dt or self.eventScheduler.current_date)
         if self._is_holiday(dt):
             self.logger.warning(f"Market is closed on {dt}, skipping")
             return
@@ -607,6 +858,11 @@ class OptionSignalPortfolio(Portfolio):
         """
         Analyze the multi-asset strategy and generate signals if necessary
         """
+
+        if self.eq_strategy.tplusn != self.t_plus_n:
+            raise EVBacktestError(
+                f"tplusn value of the equity strategy does not match the backtest configuration. eq_strategy.tplusn: {self.eq_strategy.tplusn}, config.t_plus_n: {self.t_plus_n}"
+            )
         if self.eq_strategy is None:
             return
         dt = to_datetime(dt or self.eventScheduler.current_date)
@@ -621,6 +877,10 @@ class OptionSignalPortfolio(Portfolio):
         )
         opens = signals.open_signals
         closes = signals.close_signals
+        if not opens:
+            self.logger.info(f"No open signals generated for multi-asset strategy on {dt}")
+        if not closes:
+            self.logger.info(f"No close signals generated for multi-asset strategy on {dt}")
         for ticker, signal in opens.items():
             if signal.signal_id is None:
                 raise ValueError(
@@ -651,6 +911,21 @@ class OptionSignalPortfolio(Portfolio):
                 parent_event=None,
             )
             self.eventScheduler.schedule_event(exec_date, signal_event)
+
+    def _get_entry_date_for_position(self, trade_id: str, signal_id: str) -> Optional[pd.Timestamp]:
+        """
+        Get the entry date for a position based on the trade_id and signal_id
+        """
+        key = (str(trade_id), str(signal_id))
+        if key in self.__position_entry_dates:
+            return self.__position_entry_dates[key]
+        trade_obj = self._get_trade_object(trade_id, signal_id)
+        if trade_obj is not None:
+            entry_time_str = trade_obj.stats["EntryTime"].values[0]
+            entry_date = pd.to_datetime(entry_time_str, format="%Y-%m-%d")
+            self.__position_entry_dates[key] = entry_date
+            return entry_date
+        return None
 
     @staticmethod
     def _construct_position(
@@ -696,6 +971,8 @@ class OptionSignalPortfolio(Portfolio):
         positions_states = []
         for tick, pos_pack in positions.items():
             for signal_id, position in pos_pack.items():
+                trade_obj = self._get_trade_object(position["position"]["trade_id"], signal_id)
+                entry_date = self._get_entry_date_for_position(position["position"]["trade_id"], signal_id)
                 trade_id = position["position"]["trade_id"]
                 qty = position["quantity"]
                 entry_price = position["entry_price"] / qty
@@ -718,6 +995,10 @@ class OptionSignalPortfolio(Portfolio):
                     current_underlier_data=current_underlier_data,
                     pnl=pnl,
                     last_updated=date,
+                    entry_date=entry_date,
+                    trades=trade_obj,
+                    signal_total_pnl=self._get_signal_total_pnl(signal_id),
+                    symbol_total_pnl=self._get_symbol_total_pnl(tick),
                 )
                 positions_states.append(pos_state)
 
@@ -803,6 +1084,15 @@ class OptionSignalPortfolio(Portfolio):
         """
         return price * 100
 
+    def _get_trade_object(self, trade_id: str, signal_id: str) -> Trade:
+        return self.trades_map.get(self._get_trade_key(trade_id, signal_id))
+
+    def _get_trade_key(self, trade_id: str, signal_id: str) -> tuple:
+        return (str(trade_id), str(signal_id))
+
+    def _set_trade_object(self, trade_id: str, signal_id: str, trade: Trade):
+        self.trades_map[self._get_trade_key(str(trade_id), str(signal_id))] = trade
+
     def update_positions_on_fill(self, fill_event: FillEvent):
         """
         Takes a FilltEvent object and updates the current positions in the portfolio
@@ -813,14 +1103,15 @@ class OptionSignalPortfolio(Portfolio):
         """
         # Check whether the fill is a buy or sell
         new_position_data = {}
-
-        if fill_event.position["trade_id"] not in self.trades_map:
-            self.trades_map[fill_event.position["trade_id"]] = Trade(
-                fill_event.position["trade_id"], fill_event.symbol, fill_event.signal_id
-            )
-            self.trades_map[fill_event.position["trade_id"]].update(fill_event)
+        trade_map_key = self._get_trade_key(fill_event.position["trade_id"], fill_event.signal_id)  # noqa
+        trade_id = fill_event.position["trade_id"]
+        symbol = fill_event.symbol
+        if trade_map_key not in self.trades_map:
+            trade_obj = Trade(trade_id, symbol, fill_event.signal_id)
+            self._set_trade_object(trade_id, fill_event.signal_id, trade_obj)
+            self._get_trade_object(trade_id, fill_event.signal_id).update(fill_event)
         else:
-            self.trades_map[fill_event.position["trade_id"]].update(fill_event)
+            self._get_trade_object(trade_id, fill_event.signal_id).update(fill_event)
 
         if fill_event.direction == "BUY":
             if fill_event.position is not None:
@@ -850,9 +1141,13 @@ class OptionSignalPortfolio(Portfolio):
                         entry_price=entry_price,
                     )
                     # strategy_position = self.eq_strategy.get_strategy(ticker=fill_event.symbol)
+                    parsed_signal_id = SignalID.parse(fill_event.signal_id)
                     self.eq_strategy.open_action(
                         ticker=fill_event.symbol,
-                        current_date=fill_event.datetime,
+
+                        ## Current date should be signal entry date, so it stays te same even for a roll
+                        ## Therefore, we parse signal_id, add t_plus_n business days to the entry date and use that as the current date for the strategy. 
+                        current_date=parsed_signal_id["date"] + pd.tseries.offsets.BDay(self.t_plus_n),
                         signal_id=fill_event.signal_id,
                         side=1 if fill_event.direction == "BUY" else -1,
                         entry_price=entry_price,
@@ -944,14 +1239,21 @@ class OptionSignalPortfolio(Portfolio):
             current_cash[sym] = self.allocated_cash_map[sym]  # update current cash for the symbol
             remove_signals = []
             for signal_id in self.current_positions[sym]:
-                current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]["position"])
+                trade_id = self.current_positions[sym][signal_id]["position"]["trade_id"]
+                at_time_position_data = self.get_at_time_position_data(position_id=trade_id, date=current_date)
+                spread = at_time_position_data.get_spread()
+                # current_close = self.calculate_close_on_position(self.current_positions[sym][signal_id]["position"])
+                current_close = at_time_position_data.get_price()
                 market_value = self.__normalize_dollar_amount(
                     self.current_positions[sym][signal_id]["quantity"] * current_close
                 )
-
-                self.trades_map[self.current_positions[sym][signal_id]["position"]["trade_id"]].update_current_price(
+                current_position = self.current_positions[sym][signal_id]
+                current_position["position"]["spread"] = spread
+                current_trade_id = current_position["position"]["trade_id"]
+                current_trade = self._get_trade_object(current_trade_id, signal_id)
+                current_trade.update_current_price(
                     self.__normalize_dollar_amount(current_close)
-                )  # update current price on trade
+                )  ## Update current price on trade object for PnL calculations in risk manager analysis. This is important to have accurate and up to date price information on the trade object for the position analysis and risk management decisions.
 
                 self.current_positions[sym][signal_id]["position"]["close"] = (
                     current_close  ##Update close price for every iteration
@@ -998,14 +1300,141 @@ class OptionSignalPortfolio(Portfolio):
                 if roll_event is not None:
                     self.execute_roll_buy(roll_event)
 
-    def calculate_close_on_position(self, position) -> float:
+    def calculate_close_on_position(self, position, date=None) -> float:
         """
         Calculate the close price on a position
         the close price is the difference between the long and short legs of the position
         """
         return self.risk_manager.market_data.get_at_time_position_data(
-            position["trade_id"], self.eventScheduler.current_date
+            position["trade_id"], date or self.eventScheduler.current_date
         ).get_price()
+
+    def calculate_spread_on_position(self, position_id: TradeID, date=None) -> float:
+        """
+        Calculate the spread on a position
+        the spread is the difference between the bid and ask price of the position
+        """
+        return self.risk_manager.market_data.get_at_time_position_data(
+            position_id=position_id, date=date or self.eventScheduler.current_date
+        ).get_spread()
+
+    def get_trade_timeseries(self, trade_id: str, signal_id: Optional[str] = None) -> pd.DataFrame:
+        """Return position timeseries for a trade, bounded by entry and exit dates.
+
+        If ``signal_id`` is omitted, it is inferred from aggregated trade rows for the
+        provided ``trade_id``. If inference is ambiguous, a ValueError is raised.
+        If the trade has no exit date, the backtest end date is used.
+        """
+        # Use normalized trade rows as the single source of entry/exit bounds.
+        trades_df = self.aggregate_trades(level=AggregationLevel.BY_TRADE_SIGNAL)
+        if trades_df is None or trades_df.empty:
+            raise ValueError("No trades available in portfolio")
+
+        trade_rows = trades_df[trades_df["TradeID"] == trade_id]
+        if trade_rows.empty:
+            raise ValueError(f"TradeID {trade_id} not found in portfolio trades")
+
+        # If signal_id is omitted, it must resolve to exactly one candidate.
+        if signal_id is None:
+            signal_ids = trade_rows["SignalID"].dropna().unique().tolist()
+            if len(signal_ids) != 1:
+                raise ValueError(
+                    f"signal_id cannot be inferred for trade_id {trade_id}; multiple signal_ids found: {signal_ids}"
+                )
+            signal_id = signal_ids[0]
+
+        trade_rows = trade_rows[trade_rows["SignalID"] == signal_id]
+        if trade_rows.empty:
+            raise ValueError(f"TradeID {trade_id} with signal_id {signal_id} not found in portfolio trades")
+
+        row = trade_rows.iloc[0]
+        entry_time = row.get("EntryTime")
+        if pd.isna(entry_time):
+            raise ValueError(f"TradeID {trade_id} with signal_id {signal_id} has no entry time")
+
+        # Open trades are sliced through configured backtest end date.
+        exit_time = row.get("ExitTime")
+        if pd.isna(exit_time):
+            exit_time = self.eventScheduler.end_date
+
+        start_dt = pd.Timestamp(to_datetime(entry_time))
+        end_dt = pd.Timestamp(to_datetime(exit_time))
+
+        position_data = self.risk_manager.market_data.get_position_data(position_id=trade_id)
+        if position_data.empty:
+            return position_data
+
+        # Normalize index to daily keys before date-window slicing.
+        position_slice = position_data.copy()
+        if isinstance(position_slice.index, pd.DatetimeIndex):
+            position_slice.index = position_slice.index.normalize()
+        else:
+            position_slice.index = pd.DatetimeIndex(to_datetime(position_slice.index)).normalize()
+
+        return position_slice.loc[start_dt.normalize() : end_dt.normalize()]
+
+    def plot_trade_timeseries(
+        self,
+        trade_id: str,
+        y1: str = "s0_close",
+        y2: Optional[str] = "Midpoint",
+        columns: Optional[List[str]] = None,
+        title: Optional[str] = None,
+    ) -> go.Figure:
+        """Plot trade timeseries data with optional dual y-axis.
+
+        Args:
+            trade_id: Trade identifier string (e.g., "&L:TSLA20210115C480").
+            y1: Column name for primary y-axis.
+            y2: Column name for secondary y-axis. If None, only y1 is plotted.
+            columns: Optional list of columns to retrieve from trade timeseries.
+            title: Optional title for the plot.
+
+        Returns:
+            Interactive plotly figure with single or dual y-axis.
+        """
+        trade_df = self.get_trade_timeseries(trade_id)
+        if columns is not None:
+            missing_columns = [col for col in columns if col not in trade_df.columns]
+            if missing_columns:
+                raise ValueError(
+                    f"Columns {missing_columns} not found in trade timeseries. Available: {trade_df.columns.tolist()}"
+                )
+            df = trade_df[columns]
+        else:
+            df = trade_df
+
+        if y1 not in df.columns:
+            raise ValueError(f"Column '{y1}' not found in trade timeseries. Available: {df.columns.tolist()}")
+        if y2 is not None and y2 not in df.columns:
+            raise ValueError(f"Column '{y2}' not found in trade timeseries. Available: {df.columns.tolist()}")
+
+        if title is None:
+            title = f"Trade Timeseries: {trade_id}"
+
+        if y2 is None:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df[y1], name=y1, mode="lines"))
+            fig.update_layout(title=title, xaxis_title="Date", yaxis_title=y1)
+            return fig
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=df.index, y=df[y1], name=y1, mode="lines"), secondary_y=False)
+        fig.add_trace(go.Scatter(x=df.index, y=df[y2], name=y2, mode="lines"), secondary_y=True)
+
+        fig.update_xaxes(title_text="Date")
+        fig.update_yaxes(title_text=y1, secondary_y=False)
+        fig.update_yaxes(title_text=y2, secondary_y=True)
+        fig.update_layout(title=title)
+        return fig
+
+    def get_at_time_position_data(self, position_id: TradeID, date=None) -> AtTimePositionData:
+        """
+        Get the position data at a given time
+        """
+        return self.risk_manager.market_data.get_at_time_position_data(
+            position_id=position_id, date=date or self.eventScheduler.current_date
+        )
 
     # Getters
     def get_weighted_holdings(self) -> pd.DataFrame:
@@ -1111,3 +1540,9 @@ class OptionSignalPortfolio(Portfolio):
         tr["Size"] = tr["Quantity"]
 
         return plot_portfolio(tr, eq, dd, _bnch, plot_bnchmk=plot_bnchmk, return_plot=return_plot, **kwargs)
+
+    def get_strategy_class(self) -> Optional[MultiAssetStrategy]:
+        """
+        Returns the multi-asset strategy class if it exists, else returns None
+        """
+        return self.eq_strategy.strategy_class if self.eq_strategy is not None else None

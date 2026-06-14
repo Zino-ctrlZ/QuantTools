@@ -1,6 +1,6 @@
 import pandas as pd
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 from trade.optionlib.config.types import DivType
 from ._enums import (
     GreekType, 
@@ -25,6 +25,7 @@ class Result:
     model_input_keys: Optional[Dict[str, Any]] = None
     rt: Optional[bool] = False
     fallback_option: Optional[RealTimeFallbackOption] = None
+    timeseries: Optional[Union[pd.Series, pd.DataFrame]] = None
 
     def __post_init__(self):
         """Simple formatting"""
@@ -605,6 +606,9 @@ class ModelResultPack(Result):
     price: Optional[ModelPrice] = None
     rt: Optional[bool] = False
     on_date: Optional[bool] = False
+    market_model: Optional[OptionPricingModel] = None
+    vol_model: Optional[VolatilityModel] = None
+    fallback_option: Optional[RealTimeFallbackOption] = None
 
     ## Diagnostic Info
     time_to_load: Optional[Dict[str, float]] = None

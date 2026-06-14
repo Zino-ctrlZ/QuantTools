@@ -6,7 +6,7 @@
 
 import sys
 import os
-from trade.helpers.helper import copy_doc_from,filter_inf,filter_zeros
+from trade.helpers.helper import copy_doc_from, filter_inf, filter_zeros
 from trade.assets.Stock import Stock
 from abc import ABC, abstractmethod
 import plotly.io as pio
@@ -24,6 +24,7 @@ import numpy as np
 from backtesting import Backtest
 import pandas as pd
 
+
 def pf_value_ts(port_stats: dict, cash: Union[dict, int, float]) -> pd.DataFrame:
     """
     Parameters:
@@ -35,12 +36,12 @@ def pf_value_ts(port_stats: dict, cash: Union[dict, int, float]) -> pd.DataFrame
     """
 
     PortStats = port_stats
-    date_range = pd.date_range(start=dates_(True), end=dates_(False), freq='B')
+    date_range = pd.date_range(start=dates_(True), end=dates_(False), freq="B")
     start = dates_(True)
     end = dates_(False)
     port_equity_data = pd.DataFrame(index=date_range)
     for tick, data in PortStats.items():
-        equity_curve = data['_equity_curve']['Equity']
+        equity_curve = data["_equity_curve"]["Equity"].copy(deep=True)
         if isinstance(cash, dict):
             cash = cash[tick]
         elif isinstance(cash, int) or isinstance(cash, float):
@@ -49,23 +50,23 @@ def pf_value_ts(port_stats: dict, cash: Union[dict, int, float]) -> pd.DataFrame
         equity_curve.name = tick
         tick_start = min(equity_curve.index)
         if tick_start > start:
-            temp = pd.DataFrame(index=pd.date_range(
-                start=start, end=equity_curve.index.min(), freq='B'))
+            temp = pd.DataFrame(
+                index=pd.date_range(start=start, end=equity_curve.index.min(), freq="B")
+            )
             temp[tick] = cash
             equity_curve = pd.concat([equity_curve, temp], axis=0)
 
         port_equity_data = port_equity_data.join(equity_curve)
 
-    port_equity_data = port_equity_data.dropna(how='all')
-    port_equity_data = port_equity_data.fillna(method='ffill')
-    port_equity_data['Total'] = port_equity_data.sum(axis=1)
+    port_equity_data = port_equity_data.dropna(how="all")
+    port_equity_data = port_equity_data.fillna(method="ffill")
+    port_equity_data["Total"] = port_equity_data.sum(axis=1)
     port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
     return port_equity_data
 
 
 def short_returns(t0, t1):
-    return 1 - (t1/t0)
-
+    return 1 - (t1 / t0)
 
 
 def dates_(port_stats: dict, start: bool = True) -> pd.Timestamp:
@@ -85,14 +86,16 @@ def dates_(port_stats: dict, start: bool = True) -> pd.Timestamp:
     end_list = []
     duration_list = []
     for tick, data in port_stats.items():
-        start_list.append(data['Start'])
-        end_list.append(data['End'])
-        duration_list.append(data['Duration'])
+        start_list.append(data["Start"])
+        end_list.append(data["End"])
+        duration_list.append(data["Duration"])
 
     return min(start_list) if start else max(end_list)
 
 
-def peak_value_func(equity_timeseries: pd.DataFrame, value: bool = True) -> Union[float, Dict]:
+def peak_value_func(
+    equity_timeseries: pd.DataFrame, value: bool = True
+) -> Union[float, Dict]:
     """
     Returns the peak value of the portfolio and has the option to return corresponding date
 
@@ -105,8 +108,8 @@ def peak_value_func(equity_timeseries: pd.DataFrame, value: bool = True) -> Unio
 
     """
     ts = equity_timeseries
-    peak_value = ts['Total'].max()
-    peak_date = ts[ts['Total'] == peak_value].index[0]
+    peak_value = ts["Total"].max()
+    peak_date = ts[ts["Total"] == peak_value].index[0]
     peak_dict = {peak_date: round(peak_value, 2)}
     return peak_value if value else peak_dict
 
@@ -122,11 +125,11 @@ def final_value_func(equity_timeseries: pd.DataFrame) -> float:
 
     """
     ts = equity_timeseries
-    final_val = round(ts['Total'][-1], 2)
+    final_val = round(ts["Total"][-1], 2)
     return final_val
 
 
-def rtrn(equity_timeseries: pd.DataFrame, use_col = 'Total', long = True) -> float:
+def rtrn(equity_timeseries: pd.DataFrame, use_col="Total", long=True) -> float:
     """
     Parameters:
 
@@ -136,8 +139,12 @@ def rtrn(equity_timeseries: pd.DataFrame, use_col = 'Total', long = True) -> flo
     float: Returns returns of portfolio from initial date to final date
     """
     ts = equity_timeseries
-    rtrn = (ts[use_col][-1]/ts[use_col][0])-1 if long else 1 - (ts[use_col][-1]/ts[use_col][0])
-    return rtrn*100
+    rtrn = (
+        (ts[use_col][-1] / ts[use_col][0]) - 1
+        if long
+        else 1 - (ts[use_col][-1] / ts[use_col][0])
+    )
+    return rtrn * 100
 
 
 def buyNhold(port_stats: dict) -> float:
@@ -145,36 +152,38 @@ def buyNhold(port_stats: dict) -> float:
     initial_val = np.ones(len(PortStats)).sum()
     return_vals = np.zeros(len(PortStats))
     for i, (k, v) in enumerate(PortStats.items()):
-        rtrn = v['Buy & Hold Return [%]']/100
-        return_vals[i] = (1+rtrn)
-    bNh_rtrn = round(((return_vals.sum()/initial_val)-1)*100, 2)
+        rtrn = v["Buy & Hold Return [%]"] / 100
+        return_vals[i] = 1 + rtrn
+    bNh_rtrn = round(((return_vals.sum() / initial_val) - 1) * 100, 2)
     return bNh_rtrn
 
 
 def cagr(equity_timeseries: pd.DataFrame) -> float:
-    """
-    Parameters:
-    equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
+    ts = equity_timeseries.sort_index()
 
+    begin_val = ts["Total"].iloc[0]
+    end_val = ts["Total"].iloc[-1]
 
-    Returns:
-    float: Returns average annualize retruns for the portfolio. Cumulative Annual Growth Rate
-    """
-    ts = equity_timeseries
-    begin_val = ts['Total'].iloc[0]
-    end_val = ts['Total'].iloc[-1]
     if isinstance(ts.index, pd.DatetimeIndex):
-        days = (ts.index.max() - ts.index.min()).days
-    elif isinstance(ts.index, pd.RangeIndex):
-        days = (ts.index.max() - ts.index.min())
-    return ((end_val/begin_val)**(365/days) - 1)*100
+        elapsed_years = (ts.index[-1] - ts.index[0]).days / 365.25
+    else:
+        raise TypeError("CAGR requires a DatetimeIndex")
+
+    if elapsed_years <= 0:
+        raise ValueError("Need at least two distinct timestamps")
+
+    return ((end_val / begin_val) ** (1 / elapsed_years) - 1) * 100
 
 
-def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = False, MAR: Optional[Union[int, float]] = 0) -> float:
+def vol_annualized(
+    equity_timeseries: pd.DataFrame,
+    downside: Optional[bool] = False,
+    MAR: Optional[Union[int, float]] = 0,
+) -> float:
     """
     Returns the annualized volatility of the portfolio, which is calculated from the Portfolio Timeseries Value
 
-    Parameters: 
+    Parameters:
     equity_timeseries (pd.DataFrame): Timeseries of the periodic equity values
     downside (Optional[bool]): False for regular volatility, True to calculate downside volatility
     MAR (Optional[Union[int, float]]): Minimum Acceptable Return
@@ -186,17 +195,22 @@ def vol_annualized(equity_timeseries: pd.DataFrame, downside: Optional[bool] = F
     annual_trading_days = 365
     ts_date_width = (ts.index.to_series().diff()).dt.days.mean()
     if not downside:
-        return round(np.std(filter_zeros(ts['Total']).pct_change(), ddof=1) * np.sqrt(annual_trading_days/ts_date_width) * 100, 6)
+        return round(
+            np.std(filter_zeros(ts["Total"]).pct_change(), ddof=1)
+            * np.sqrt(annual_trading_days / ts_date_width)
+            * 100,
+            6,
+        )
     else:
         if not MAR:
             MAR = 0
 
-        ts = ts['Total'].pct_change() - MAR
+        ts = ts["Total"].pct_change() - MAR
         ts_d = ts[ts < 0]
         return round(np.std(ts_d, ddof=1) * np.sqrt(252) * 100, 6)
 
 
-def daily_rtrns(equity_timeseries: pd.DataFrame, long = True) -> pd.Series:
+def daily_rtrns(equity_timeseries: pd.DataFrame, long=True) -> pd.Series:
     """
     Parameters:
     equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
@@ -204,14 +218,16 @@ def daily_rtrns(equity_timeseries: pd.DataFrame, long = True) -> pd.Series:
     Returns:
     pd.Series: Utility method. Returns timeseries of daily portfolio returns
     """
-    ts = filter_zeros(equity_timeseries['Total']).pct_change()
+    ts = filter_zeros(equity_timeseries["Total"]).pct_change()
     return ts if long else -ts
 
 
-def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long = True) -> float:
+def sharpe(
+    equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long=True
+) -> float:
     """
     Returns the Sharpe ratio of the portfolio
-    Parameters: 
+    Parameters:
     risk_free_rate (float): A single value representing the risk free rate. This should be an annualized value
     equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
 
@@ -222,19 +238,23 @@ def sharpe(equity_timeseries: pd.DataFrame, risk_free_rate: float = 0.055, long 
     # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
     annual_trading_days = 365
     ts_date_width = (equity_timeseries.index.to_series().diff()).dt.days.mean()
-    annual_period = annual_trading_days/ts_date_width
+    annual_period = annual_trading_days / ts_date_width
     equity_timeseries = filter_zeros(equity_timeseries)
-    daily_rfrate = (1+risk_free_rate)**(1/252) - 1
-    annualized_vol = vol_annualized(equity_timeseries)/100
-    excess_retrns = np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate)*annual_period
-    return excess_retrns/annualized_vol
+    daily_rfrate = (1 + risk_free_rate) ** (1 / 252) - 1
+    annualized_vol = vol_annualized(equity_timeseries) / 100
+    excess_retrns = (
+        np.mean(daily_rtrns(equity_timeseries, long) - daily_rfrate) * annual_period
+    )
+    return excess_retrns / annualized_vol
 
 
-def sortino(equity_timeseries: pd.DataFrame, risk_free_rate: float, MAR: Optional[float] = None) -> float:
+def sortino(
+    equity_timeseries: pd.DataFrame, risk_free_rate: float, MAR: Optional[float] = None
+) -> float:
     """
     Returns the Sortino ratio of the portfolio
 
-    Parameters: 
+    Parameters:
     risk_free_rate (float): A single value representing the risk free rate. This should be an annualized value
     MAR: Minimum Acceptable Return. A Value to compare with returns to ascertain true downside returns. Eg can be inflation rate, to show that real returns can be negative even though nominal is positive
     equity_timeseries (pd.DataFrame): Timeseries of the periodic equity values
@@ -245,14 +265,16 @@ def sortino(equity_timeseries: pd.DataFrame, risk_free_rate: float, MAR: Optiona
 
     # ANNUALIZED MEAN EXCESS RETURN / ANNUALIZED VOLATILITY
     if not MAR:
-        MAR = (1+risk_free_rate)**(1/252) - 1
-    daily_rfrate = (1+risk_free_rate)**(1/252) - 1
-    annualized_vol = vol_annualized(equity_timeseries, True, MAR)/100
-    excess_retrns = np.mean(daily_rtrns(equity_timeseries) - daily_rfrate)*252
-    return excess_retrns/annualized_vol
+        MAR = (1 + risk_free_rate) ** (1 / 252) - 1
+    daily_rfrate = (1 + risk_free_rate) ** (1 / 252) - 1
+    annualized_vol = vol_annualized(equity_timeseries, True, MAR) / 100
+    excess_retrns = np.mean(daily_rtrns(equity_timeseries) - daily_rfrate) * 252
+    return excess_retrns / annualized_vol
 
 
-def dd(equity_timeseries: pd.DataFrame, full: bool = False) -> Union[pd.DataFrame, pd.Series]:
+def dd(
+    equity_timeseries: pd.DataFrame, full: bool = False
+) -> Union[pd.DataFrame, pd.Series]:
     """
     Returns portfolio DrawDrown timeseires
 
@@ -262,13 +284,13 @@ def dd(equity_timeseries: pd.DataFrame, full: bool = False) -> Union[pd.DataFram
     """
     ts = equity_timeseries
     data = pd.DataFrame()
-    data['Total'] = ts['Total']
-    data['Running_max'] = data.Total.cummax()
-    data['dd'] = (data.Total/data.Running_max)-1
+    data["Total"] = ts["Total"]
+    data["Running_max"] = data.Total.cummax()
+    data["dd"] = (data.Total / data.Running_max) - 1
     if full:
         return data
     else:
-        return data['dd']
+        return data["dd"]
 
 
 def mdd(equity_timeseries: pd.DataFrame) -> float:
@@ -279,7 +301,7 @@ def mdd(equity_timeseries: pd.DataFrame) -> float:
     Returns Max Drawdown
     """
     dd_ = dd(equity_timeseries)
-    return dd_.min()*100
+    return dd_.min() * 100
 
 
 def calmar(equity_timeseries: pd.DataFrame) -> float:
@@ -290,7 +312,7 @@ def calmar(equity_timeseries: pd.DataFrame) -> float:
 
     Returns calmar Ratio
     """
-    return abs(cagr(equity_timeseries)/mdd(equity_timeseries))
+    return abs(cagr(equity_timeseries) / mdd(equity_timeseries))
 
 
 def avg_dd_percent(equity_timeseries: pd.DataFrame) -> float:
@@ -300,7 +322,7 @@ def avg_dd_percent(equity_timeseries: pd.DataFrame) -> float:
 
     Returns avg Drawdown %
     """
-    return round(dd(equity_timeseries).mean()*100, 6)
+    return round(dd(equity_timeseries).mean() * 100, 6)
 
 
 def mdd_value(equity_timeseries: pd.DataFrame) -> float:
@@ -311,7 +333,7 @@ def mdd_value(equity_timeseries: pd.DataFrame) -> float:
     Returns Maximum Drawdown value
     """
     dd_ = dd(equity_timeseries, True)
-    return round((dd_['Total'] - dd_['Running_max']).min(), 2)
+    return round((dd_["Total"] - dd_["Running_max"]).min(), 2)
 
 
 def mdd_duration(equity_timeseries: pd.DataFrame, full: bool = False) -> pd.Timedelta:
@@ -326,12 +348,13 @@ def mdd_duration(equity_timeseries: pd.DataFrame, full: bool = False) -> pd.Time
     maximum drawdown duration
     """
     from datetime import timedelta
+
     dd_ = dd(equity_timeseries, True)
 
     for i, (index, row) in enumerate(dd_.iterrows()):
-        total, running_max, date = row['Total'], row['Running_max'], index
-        running_max_date = dd_[dd_['Total'] == running_max].index[0]
-        dd_.at[index, 'timedelta'] = (date - running_max_date)
+        total, running_max, date = row["Total"], row["Running_max"], index
+        running_max_date = dd_[dd_["Total"] == running_max].index[0]
+        dd_.at[index, "timedelta"] = date - running_max_date
 
     if full:
         return dd_
@@ -358,10 +381,10 @@ def trades(port_stats) -> pd.DataFrame:
     """
     trades_df = pd.DataFrame()
     for k, v in port_stats.items():
-        holder = v['_trades']
-        holder['Ticker'] = k
+        holder = v["_trades"].copy(deep=True)
+        holder["Ticker"] = k
         trades_df = pd.concat([trades_df, holder])
-    return trades_df.sort_values(['EntryTime', 'ExitTime']).reset_index(drop = True)
+    return trades_df.sort_values(["EntryTime", "ExitTime"]).reset_index(drop=True)
 
 
 def numOfTrades(trades_df) -> int:
@@ -378,7 +401,7 @@ def winRate(trades_df: pd.DataFrame) -> float:
     trades_df (pd.DataFrame): DataFrame Contatining Trades
     """
     trades_ = trades_df
-    return round(((trades_.ReturnPct > 0).sum()/(trades_.ReturnPct).count())*100, 2)
+    return round(((trades_.ReturnPct > 0).sum() / (trades_.ReturnPct).count()) * 100, 2)
 
 
 def lossRate(trades_df: pd.DataFrame) -> float:
@@ -395,27 +418,62 @@ def avgPnL(trades_df: pd.DataFrame, Type_: str, value=True) -> float:
 
     trades_df (pd.DataFrame): DataFrame Contatining Trades & PnL or ReturnPct column
     Type_ (str): 'W', 'L', 'A'. Win, Loss or All
-    value (bool): True to return 
+    value (bool): True to return
     """
 
-    assert Type_.upper() in [
-        'W', 'L', 'A'],  f"Invalid Type_: '{Type_}'. Must be 'L', 'W' or 'A."
-    assert 'PnL' in trades_df.columns or 'ReturnPct' in trades_df.columns, f"Please pass a dataframe holding trades and ensure it has either 'PnL' or 'ReturnPct' in the columns. Current Columns {trades_df.columns}"
+    assert Type_.upper() in ["W", "L", "A"], (
+        f"Invalid Type_: '{Type_}'. Must be 'L', 'W' or 'A."
+    )
+    assert "PnL" in trades_df.columns or "ReturnPct" in trades_df.columns, (
+        f"Please pass a dataframe holding trades and ensure it has either 'PnL' or 'ReturnPct' in the columns. Current Columns {trades_df.columns}"
+    )
     trades_ = trades_df
     PnL = (trades_.PnL if value else trades_.ReturnPct).astype(float)
-    WPnL = PnL[PnL > 0] if Type_.upper() == 'W' else PnL[PnL <=
-                                                         0] if Type_.upper() == 'L' else PnL
+    WPnL = (
+        PnL[PnL > 0]
+        if Type_.upper() == "W"
+        else PnL[PnL <= 0]
+        if Type_.upper() == "L"
+        else PnL
+    )
 
     return WPnL.mean() * 100 if not WPnL.empty else 0
 
 
 def bestTrade(trades_df: pd.DataFrame) -> float:
 
-    return trades_df.ReturnPct.max()*100
+    return trades_df.ReturnPct.max() * 100
 
 
 def worstTrade(trades_df) -> float:
-    return trades_df.ReturnPct.min()*100
+    return trades_df.ReturnPct.min() * 100
+
+
+def trade_percentile(trades_df: pd.DataFrame, percentile: float) -> float:
+    """
+    Returns the PnL or ReturnPct value at a given percentile. Eg: 5th percentile would give the value at which 5% of the trades are worse than that value
+
+    Parameters:
+    trades_df (pd.DataFrame): DataFrame Contatining Trades & PnL or ReturnPct column
+    percentile (float): A value between 0 and 100 representing the desired percentile
+
+    Returns:
+    float: Corresponding PnL or ReturnPct value at the given percentile
+    """
+    if trades_df.empty:
+        return 0.0
+    assert "PnL" in trades_df.columns or "ReturnPct" in trades_df.columns, (
+        f"Please pass a dataframe holding trades and ensure it has either 'PnL' or 'ReturnPct' in the columns. Current Columns {trades_df.columns}"
+    )
+    assert 0 <= percentile <= 100, (
+        f"Percentile must be between 0 and 100. Current Value: {percentile}"
+    )
+    return trades_df.ReturnPct.quantile(percentile / 100) * 100 if "ReturnPct" in trades_df.columns else np.nan
+    # return (
+    #     np.percentile(trades_df.ReturnPct, percentile) * 100
+    #     if "ReturnPct" in trades_df.columns
+    #     else np.percentile(trades_df.PnL, percentile)
+    # )
 
 
 def profitFactor(trades_df: pd.DataFrame) -> float:
@@ -426,9 +484,9 @@ def profitFactor(trades_df: pd.DataFrame) -> float:
     Returns the profit factor of the strategy. Synonymous to R/R
     """
     tr = trades_df
-    tot_loss = tr[tr['ReturnPct'] <= 0]['PnL'].sum()
-    tot_gain = tr[tr['ReturnPct'] > 0]['PnL'].sum()
-    return round(abs(tot_gain/tot_loss), 6)
+    tot_loss = tr[tr["ReturnPct"] <= 0]["PnL"].sum()
+    tot_gain = tr[tr["ReturnPct"] > 0]["PnL"].sum()
+    return round(abs(tot_gain / tot_loss), 6)
 
 
 def Expectancy(trades_df: pd.DataFrame, cash_expectancy: bool = False) -> float:
@@ -436,14 +494,18 @@ def Expectancy(trades_df: pd.DataFrame, cash_expectancy: bool = False) -> float:
     Returns the expected %pnl based on portfolio data
     """
     tr = trades_df
-    avg_win_pnl = avgPnL(tr, 'W', True)
+    avg_win_pnl = avgPnL(tr, "W", True)
     avg_win_rate = winRate(tr)
     avg_loss_rate = lossRate(tr)
-    avg_loss_pnl = avgPnL(tr, 'L', True)
+    avg_loss_pnl = avgPnL(tr, "L", True)
     if cash_expectancy:
-        return ((avg_win_pnl * (avg_win_rate/100)) + (avg_loss_pnl * (avg_loss_rate/100)))
+        return (avg_win_pnl * (avg_win_rate / 100)) + (
+            avg_loss_pnl * (avg_loss_rate / 100)
+        )
     else:
-        return (avgPnL(tr, 'W', False) * (winRate(tr)/100)) + (avgPnL(tr, 'L', False) * (lossRate(tr)/100))
+        return (avgPnL(tr, "W", False) * (winRate(tr) / 100)) + (
+            avgPnL(tr, "L", False) * (lossRate(tr) / 100)
+        )
 
 
 def SQN(trades_df: pd.DataFrame) -> float:
@@ -454,7 +516,9 @@ def SQN(trades_df: pd.DataFrame) -> float:
     System Quality Number. Used to guage how good a system is
     """
     trades_ = trades_df
-    return ((trades_.ReturnPct.mean() * np.sqrt(len(trades_)))/np.std(trades_.ReturnPct))
+    return (trades_.ReturnPct.mean() * np.sqrt(len(trades_))) / np.std(
+        trades_.ReturnPct
+    )
 
 
 def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> float:
@@ -466,18 +530,18 @@ def ExposureDays(equity_timeseries: pd.DataFrame, trades_df: pd.DataFrame) -> fl
 
     Returns the percent of days the portfolio had exposure
     """
-    time_in = pd.DataFrame(index=equity_timeseries.index)
-    time_in['position'] = 0
-    tr = trades_df
-    tr.dropna(subset=['EntryTime', 'ExitTime'], inplace=True)
+    time_in = pd.DataFrame(index=equity_timeseries.copy(deep=True).index)
+    time_in["position"] = 0
+    tr = trades_df.copy(deep=True)
+    tr = tr.dropna(subset=["EntryTime", "ExitTime"])
     for index, row in tr.iterrows():
-        entry = pd.to_datetime(row['EntryTime']).date()
-        exit_ = pd.to_datetime(row['ExitTime']).date()
-        time_in['position'].loc[(time_in.index.date >= entry)
-                                & (time_in.index.date <= exit_)] = 1
+        entry = pd.to_datetime(row["EntryTime"]).date()
+        exit_ = pd.to_datetime(row["ExitTime"]).date()
+        time_in.loc[
+            (time_in.index.date >= entry) & (time_in.index.date <= exit_), "position"
+        ] = 1
 
-
-    return round((time_in['position'] == 1).sum()/len(time_in)*100, 2)
+    return round((time_in["position"] == 1).sum() / len(time_in) * 100, 2)
 
 
 def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
@@ -488,26 +552,30 @@ def yearly_retrns(equity_timeseries: pd.DataFrame) -> dict:
 
     Returns yearly returns as a dict
     """
-
-    ts = equity_timeseries
-    ts['Year'] = ts.index.year
-    ts.drop_duplicates(inplace=True)
+    ts = equity_timeseries.copy(deep=True)
+    ts["Year"] = ts.index.year
+    ## dropping duplicate years if there are multiple
+    ts = ts[~ts.index.duplicated(keep="first")]
     unq_year = ts.Year.unique()
     rtrn_d = {}
     for year in unq_year:
-        data = ts[ts['Year'] == year].sort_index()
-        ret = ((data.loc[data.index.max(), 'Total'] /
-               data.loc[data.index.min(), 'Total'])-1)*100
+        data = ts[ts["Year"] == year].sort_index()
+        ret = (
+            (data.loc[data.index.max(), "Total"] / data.loc[data.index.min(), "Total"])
+            - 1
+        ) * 100
         rtrn_d[year] = ret
     return rtrn_d
 
 
-def holding_period(trades_df: pd.DataFrame, aggfunc: Callable, Type_: str = 'W') -> pd.Timedelta:
-    """ 
+def holding_period(
+    trades_df: pd.DataFrame, aggfunc: Callable, Type_: str = "W"
+) -> pd.Timedelta:
+    """
     Returns the average or max holding period of the portfolio based on Trades data
 
     Parameters:
-    aggfunc (Callable): A callable that performs an arithmetic calculation. Eg: Mean, Median, Mode, Max, Min 
+    aggfunc (Callable): A callable that performs an arithmetic calculation. Eg: Mean, Median, Mode, Max, Min
     trades_df (pd.DataFrame): DataFrame Contatining Trades & PnL or ReturnPct column
 
     Type_ (float): Which holding period are we looking for. Available options are
@@ -519,23 +587,25 @@ def holding_period(trades_df: pd.DataFrame, aggfunc: Callable, Type_: str = 'W')
     Returns:
     pd.Timedelta: Corresponding Value
     """
-    assert aggfunc.__name__.lower() in ['amax',
-        'mean', 'max'], f"Function of type '{aggfunc.__name__}' cannot be used for this method. Please use a mean or max function"
-    assert Type_.upper() in [
-        'A', 'W', 'L'], f"Invalid type: {Type_}. Must be 'L', 'W' or 'A."
+    assert aggfunc.__name__.lower() in ["amax", "mean", "max"], (
+        f"Function of type '{aggfunc.__name__}' cannot be used for this method. Please use a mean or max function"
+    )
+    assert Type_.upper() in ["A", "W", "L"], (
+        f"Invalid type: {Type_}. Must be 'L', 'W' or 'A."
+    )
     # assert aggfunc.upper() in ['A', 'M'], f"Invalid type: {aggfunc}. Must be 'M' for Max or 'A' for Avg."
     trades_ = trades_df
-    if Type_.upper() == 'W':
-        trades_ = trades_[trades_['ReturnPct'] > 0]
-    elif Type_.upper() == 'L':
-        trades_ = trades_[trades_['ReturnPct'] <= 0]
+    if Type_.upper() == "W":
+        trades_ = trades_[trades_["ReturnPct"] > 0]
+    elif Type_.upper() == "L":
+        trades_ = trades_[trades_["ReturnPct"] <= 0]
 
     # return trades_.Duration.mean() if aggfunc.upper() == 'A' else trades_.Duration.max()
     return aggfunc(trades_.Duration)
 
 
-def streak(trades_df: pd.DataFrame, Type_: str = 'W') -> int:
-    """ 
+def streak(trades_df: pd.DataFrame, Type_: str = "W") -> int:
+    """
     Returns the Losing/Winning Streak based on Trades data
 
     Parameters:
@@ -549,18 +619,15 @@ def streak(trades_df: pd.DataFrame, Type_: str = 'W') -> int:
     Returns:
     int: Corresponding Value
     """
-    assert Type_.upper() in [
-        'L', 'W'], f"Invalid type: {Type_}. Must be 'L' or 'W'."
-    t = trades_df
-    t['Is_Loss'] = int
-    t['Is_Loss'] = t['ReturnPct'] <= 0 if Type_.upper() == 'L' else t['ReturnPct'] > 0
-    t['Loss_Streak'] = (t['Is_Loss'] != t['Is_Loss'].shift()).cumsum()
-    streak_lengths = t.groupby('Loss_Streak')['Is_Loss'].sum()
-    return streak_lengths[t.groupby('Loss_Streak')['Is_Loss'].first()].max()
+    assert Type_.upper() in ["L", "W"], f"Invalid type: {Type_}. Must be 'L' or 'W'."
+    t = trades_df.copy(deep=True)
+    t["Is_Loss"] = t["ReturnPct"] <= 0 if Type_.upper() == "L" else t["ReturnPct"] > 0
+    t["Loss_Streak"] = (t["Is_Loss"] != t["Is_Loss"].shift()).cumsum()
+    streak_lengths = t.groupby("Loss_Streak")["Is_Loss"].sum()
+    return streak_lengths[t.groupby("Loss_Streak")["Is_Loss"].first()].max()
 
 
 class AggregatorParent(ABC):
-
     def __init__(self):
         self._equity = None
         self.__port_stats = None
@@ -569,15 +636,24 @@ class AggregatorParent(ABC):
     @copy_doc_from(dates_)
     def dates_(self, start: bool):
         try:
-            overwrite = pd.to_datetime(getattr(self, 'start_overwrite')).date()
+            overwrite = pd.to_datetime(getattr(self, "start_overwrite")).date()
         except AttributeError:
             overwrite = None
 
-        if overwrite:
-            return overwrite if start else dates_(self.get_port_stats(), start).date()
-        else:
-            return dates_(self.get_port_stats(), start).date() if start else dates_(self.get_port_stats(), start).date()
+        port_stats = self.get_port_stats()
+        if port_stats is None:
+            raise NotImplementedError(
+                "Subclasses must implement the dates_ method when port_stats is not available."
+            )
 
+        if overwrite:
+            return overwrite if start else dates_(port_stats, start).date()
+        else:
+            return (
+                dates_(port_stats, start).date()
+                if start
+                else dates_(port_stats, start).date()
+            )
 
     @abstractmethod
     def get_port_stats(self):
@@ -616,11 +692,16 @@ class AggregatorParent(ABC):
         Returns:
         float: Returns returns of portfolio from initial date to final date
         """
-        assert self._equity is not None, f'Portfolio Equity is empty'
+        assert self._equity is not None, f"Portfolio Equity is empty"
         return rtrn(self._equity)
 
     def buyNhold(self) -> float:
-        return buyNhold(self.get_port_stats())
+        port_stats = self.get_port_stats()
+        if port_stats is None:
+            raise NotImplementedError(
+                "Subclasses must implement the buyNhold method when port_stats is not available."
+            )
+        return buyNhold(port_stats)
 
     def cagr(self) -> float:
         """
@@ -629,11 +710,13 @@ class AggregatorParent(ABC):
         """
         return cagr(self._equity)
 
-    def vol_annualized(self, downside: Optional[bool] = False, MAR: Optional[Union[int, float]] = 0) -> float:
+    def vol_annualized(
+        self, downside: Optional[bool] = False, MAR: Optional[Union[int, float]] = 0
+    ) -> float:
         """
         Returns the annualized volatility of the portfolio, which is calculated from the Portfolio Timeseries Value
 
-        Parameters: 
+        Parameters:
         downside (Optional[bool]): False for regular volatility, True to calculate downside volatility
         MAR (Optional[Union[int, float]]): Minimum Acceptable Return
 
@@ -654,7 +737,7 @@ class AggregatorParent(ABC):
     def sharpe(self, risk_free_rate: float = 0.055) -> float:
         """
         Returns the Sharpe ratio of the portfolio
-        Parameters: 
+        Parameters:
         risk_free_rate (float): A single value representing the risk free rate. This should be an annualized value
         equity_timeseries (pd.DataFrame): This is the timeseries of the periodic equity values
 
@@ -669,7 +752,7 @@ class AggregatorParent(ABC):
         """
         Returns the Sortino ratio of the portfolio
 
-        Parameters: 
+        Parameters:
         risk_free_rate (float): A single value representing the risk free rate. This should be an annualized value
         MAR: Minimum Acceptable Return. A Value to compare with returns to ascertain true downside returns. Eg can be inflation rate, to show that real returns can be negative even though nominal is positive
 
@@ -728,6 +811,7 @@ class AggregatorParent(ABC):
         maximum drawdown duration
         """
         from datetime import timedelta
+
         return mdd_duration(self._equity, full)
 
     def avg_dd_duration(self) -> pd.Timedelta:
@@ -741,7 +825,12 @@ class AggregatorParent(ABC):
         Returns a dataframe containing all trades taken
 
         """
-        return trades(self.get_port_stats())
+        port_stats = self.get_port_stats()
+        if port_stats is None:
+            raise NotImplementedError(
+                "Subclasses must implement the trades method when port_stats is not available."
+            )
+        return trades(port_stats)
 
     def numOfTrades(self) -> int:
         """
@@ -755,12 +844,24 @@ class AggregatorParent(ABC):
     def lossRate(self) -> float:
         return round((100 - winRate(self._trades)), 2)
 
+    def trade_percentile(self, percentile: float) -> float:
+        """
+        Returns the PnL or ReturnPct value at a given percentile. Eg: 5th percentile would give the value at which 5% of the trades are worse than that value
+
+        Parameters:
+        percentile (float): A value between 0 and 100 representing the desired percentile
+
+        Returns:
+        float: Corresponding PnL or ReturnPct value at the given percentile
+        """
+        return trade_percentile(self._trades, percentile)
+
     def avgPnL(self, Type_: str, value=True) -> float:
         """
         params:
 
         Type_ (str): 'W', 'L', 'A'. Win, Loss or All
-        value (bool): True to return 
+        value (bool): True to return
         """
         return avgPnL(self._trades, Type_, value)
 
@@ -792,8 +893,8 @@ class AggregatorParent(ABC):
         #     total_cash = cash
         # else:
         #     raise TypeError(f"Cash attribute must be of type dict, int or float. Current type is {type(cash)}")
-        
-        pct_expectancy = Expectancy(self._trades, cash_expectancy = False)
+
+        pct_expectancy = Expectancy(self._trades, cash_expectancy=False)
         return pct_expectancy
 
     def SQN(self) -> float:
@@ -816,12 +917,12 @@ class AggregatorParent(ABC):
 
         return yearly_retrns(self._equity)
 
-    def holding_period(self, aggfunc: Callable, Type_: str = 'W') -> pd.Timedelta:
-        """ 
+    def holding_period(self, aggfunc: Callable, Type_: str = "W") -> pd.Timedelta:
+        """
         Returns the average or max holding period of the portfolio based on Trades data
 
         Parameters:
-        aggfunc (Callable): A callable that performs an arithmetic calculation. Eg: Mean, Median, Mode, Max, Min 
+        aggfunc (Callable): A callable that performs an arithmetic calculation. Eg: Mean, Median, Mode, Max, Min
 
         Type_ (float): Which holding period are we looking for. Available options are
             'W': For winning holding period
@@ -835,8 +936,8 @@ class AggregatorParent(ABC):
 
         return holding_period(self._trades, aggfunc, Type_)
 
-    def streak(self, Type_: str = 'W') -> int:
-        """ 
+    def streak(self, Type_: str = "W") -> int:
+        """
         Returns the Losing/Winning Streak based on Trades data
 
         Parameters:
@@ -849,11 +950,23 @@ class AggregatorParent(ABC):
         """
         return streak(self._trades, Type_)
 
-## FIXME: This is ridiculously slow.
-    def aggregate(self,
-                  risk_free_rate: float = 0.0,
-                  MAR: float = 0) -> pd.Series:
-        """ 
+    def get_strategy_class(self):
+        port_stats = self.get_port_stats()
+        if port_stats is None:
+            raise NotImplementedError(
+                "Subclasses must implement the get_strategy_class method when port_stats is not available."
+            )
+        try:
+            strategy = list(port_stats.values())[0]["_strategy"]
+            return strategy
+        except AttributeError:
+            raise AttributeError(
+                "Port Stats must have a '_strategy' key to obtain strategy class. Please ensure your backtesting implementation includes this in the port stats output."
+            )
+
+    ## FIXME: This is ridiculously slow.
+    def aggregate(self, risk_free_rate: float = 0.0, MAR: float = 0) -> pd.Series:
+        """
 
         Returns aggregated Data for the Porftolio
 
@@ -864,107 +977,117 @@ class AggregatorParent(ABC):
         Returns:
         int: Corresponding Value
         """
-        assert self.get_port_stats(), f"Run Portfolio Backtest before aggregating"
+        is_run = self._equity is not None and self._trades is not None
+        if not is_run:
+            raise Exception(
+                "Portfolio must be run before aggregation. Please run the backtest before calling aggregate."
+            )
+        # assert port_stats, "Run Portfolio Backtest before aggregating"
         MAR = 0.0 if not MAR else MAR
-        
+
         ## Extending to ensure useability in other places. It was originally designed for PTBacktest,
         ## But can be used in other places
 
         ## Re-implement dates_. This is very specific to PTBacktest
 
+        assert isinstance(MAR, float), (
+            f"Recieved MAR of type {type(MAR)} instead of Type float"
+        )
 
-        assert isinstance(
-            MAR, float), f"Recieved MAR of type {type(MAR)} instead of Type float"
-        
-        try:
-            start_overwrite = getattr(self, 'start_overwrite')
-        except AttributeError:
-            start_overwrite = None
+        start_overwrite = getattr(self, "start_overwrite", None)
+        strategy = self.get_strategy_class()
 
         try:
-            strategy = list(self.get_port_stats().values())[0]['_strategy']
-        except AttributeError:
-            strategy = None
-
-        try: 
             equity = self.pf_value_ts()
         except AttributeError:
             equity = self._equity
         except Exception:
-            raise Exception('Either implement pf_value_ts method or self._equity')
-
+            raise Exception("Either implement pf_value_ts method or self._equity")
         try:
             ## Function call for trades
             trades = self.trades()
-        except TypeError:
-            ## If trades is not implemented, we can use the self._trades attribute
-            trades = self._trades
         except Exception:
-            raise Exception('Either implement trades method or self._trades')
+            ## If trades is not implemented, we can use the self._trades attribute
+            try:
+                trades = self._trades
+            except Exception:
+                raise Exception("Either implement trades method or self._trades")
 
         try:
             tickers = [dataset.name for dataset in self.datasets]
         except AttributeError:
             tickers = self.symbol_list
         except Exception:
-            raise Exception('Either implement datasets attribute with PTDataset or self.symbol_list')
+            raise Exception(
+                "Either implement datasets attribute with PTDataset or self.symbol_list"
+            )
 
         rtrn_ = self.rtrn()
-        series1 = pd.Series({
-            'Start': start_overwrite if start_overwrite else self.dates_(True),
-            'End': self.dates_(False),
-            'Duration': self.dates_(False) - self.dates_(True),
-            'Exposure Time [%]': self.ExposureDays(),
-            'Equity Final [$]': self.final_value_func(),
-            'Equity Peak [$]': self.peak_value_func(),
-            'Return [%]': rtrn_,
-            'Buy & Hold Return [%]': self.buyNhold(),
-            'Median Daily Return [%]': f"{self.daily_rtrns().median(): .4%}",
-            'VaR 95% [%]': f"{self.daily_rtrns().quantile(0.05): .2%}",
-            'VaR 05% [%]': f"{self.daily_rtrns().quantile(0.95): .2%}",
-            'CAGR [%]':  self.cagr(),
-            'Volatility Ann. [%]': self.vol_annualized(),
-            'Sharpe Ratio': self.sharpe(risk_free_rate),
-            'Sortino Ratio': self.sortino(risk_free_rate, MAR),
-            'Skew': self._equity.Total.pct_change().skew(),
-            'Log Return Skew': np.log(self._equity.Total/self._equity.Total.shift(1)).skew(),
-            'Calmar Ratio': self.calmar(),
-            'Max. Drawdown [%]': self.mdd(),
-            'Max. Drawdown Value [$]': self.mdd_value(),
-            'Avg. Drawdown [%]': self.avg_dd_percent(),
-            'Max. Drawdown Duration': self.mdd_duration(),
-            'Avg Dradown Duration': self.avg_dd_duration(),
-            '# Trades': self.numOfTrades(),
-            'Win Rate [%]': self.winRate(),
-            'Lose Rate [%]': self.lossRate(),
-            'Avg. Trade [%]': self.avgPnL('A', False),
-            'Avg. Winning Trade [%]': self.avgPnL('W', False),
-            'Avg. Losing Trade [%]': self.avgPnL('L', False),
-            'Best Trade [%]': self.bestTrade(),
-            'Worst Trade [%]': self.worstTrade(),
-            'Avg Trade Duration': self.holding_period(np.mean, 'A'),
-            'Avg Win Trade Duration': self.holding_period(np.mean, 'W'),
-            'Avg Lose Duration': self.holding_period(np.mean, 'L'),
-            'Max Trade Duration': self.holding_period(np.max, 'A'),
-            'Max Win Trade Duration': self.holding_period(np.max, 'W'),
-            'Max Lose Duration': self.holding_period(np.max, 'L'),
-            'Profit Factor': self.profitFactor(),
-            'Expectancy [%]': self.Expectancy(),
-            'SQN': self.SQN()
-
-        })
+        series1 = pd.Series(
+            {
+                "Start": start_overwrite if start_overwrite else self.dates_(True),
+                "End": self.dates_(False),
+                "Duration": self.dates_(False) - self.dates_(True),
+                "Exposure Time [%]": self.ExposureDays(),
+                "Equity Final [$]": self.final_value_func(),
+                "Equity Peak [$]": self.peak_value_func(),
+                "Return [%]": rtrn_,
+                "Buy & Hold Return [%]": self.buyNhold(),
+                "Median Daily Return [%]": f"{self.daily_rtrns().median(): .4%}",
+                "VaR 95% [%]": f"{self.daily_rtrns().quantile(0.05): .2%}",
+                "VaR 05% [%]": f"{self.daily_rtrns().quantile(0.95): .2%}",
+                "CAGR [%]": self.cagr(),
+                "Volatility Ann. [%]": self.vol_annualized(),
+                "Sharpe Ratio": self.sharpe(risk_free_rate),
+                "Sortino Ratio": self.sortino(risk_free_rate, MAR),
+                "Skew": self._equity.Total.pct_change().skew(),
+                "Log Return Skew": np.log(
+                    self._equity.Total / self._equity.Total.shift(1)
+                ).skew(),
+                "Calmar Ratio": self.calmar(),
+                "Max. Drawdown [%]": self.mdd(),
+                "Max. Drawdown Value [$]": self.mdd_value(),
+                "Avg. Drawdown [%]": self.avg_dd_percent(),
+                "Max. Drawdown Duration": self.mdd_duration(),
+                "Avg Dradown Duration": self.avg_dd_duration(),
+                "# Trades": self.numOfTrades(),
+                "Win Rate [%]": self.winRate(),
+                "Lose Rate [%]": self.lossRate(),
+                "Avg. Trade [%]": self.avgPnL("A", False),
+                "Avg. Winning Trade [%]": self.avgPnL("W", False),
+                "Avg. Losing Trade [%]": self.avgPnL("L", False),
+                "Best Trade [%]": self.bestTrade(),
+                "Worst Trade [%]": self.worstTrade(),
+                "5th Percentile Trade [%]": self.trade_percentile(5),
+                "25th Percentile Trade [%]": self.trade_percentile(25),
+                "50th Percentile Trade [%]": self.trade_percentile(50),
+                "75th Percentile Trade [%]": self.trade_percentile(75),
+                "95th Percentile Trade [%]": self.trade_percentile(95),
+                "Avg Trade Duration": self.holding_period(np.mean, "A"),
+                "Avg Win Trade Duration": self.holding_period(np.mean, "W"),
+                "Avg Lose Duration": self.holding_period(np.mean, "L"),
+                "Max Trade Duration": self.holding_period(np.max, "A"),
+                "Max Win Trade Duration": self.holding_period(np.max, "W"),
+                "Max Lose Duration": self.holding_period(np.max, "L"),
+                "Profit Factor": self.profitFactor(),
+                "Expectancy [%]": self.Expectancy(),
+                "SQN": self.SQN(),
+            }
+        )
 
         rtrn_dict = self.yearly_retrns()
         rtrn_series = pd.Series(
-            {f"{year} Return [%]": value for year, value in rtrn_dict.items()})
+            {f"{year} Return [%]": value for year, value in rtrn_dict.items()}
+        )
 
-        series3 = pd.Series({
-            'Winning Streak': self.streak('W'),
-            'Losing Streak': self.streak('L'),
-            '_strategy': strategy,
-            'equity_curve': equity,
-            '_trades': trades,
-            '_tickers': tickers
-
-        })
+        series3 = pd.Series(
+            {
+                "Winning Streak": self.streak("W"),
+                "Losing Streak": self.streak("L"),
+                "_strategy": strategy,
+                "equity_curve": equity,
+                "_trades": trades,
+                "_tickers": tickers,
+            }
+        )
         return pd.concat([series1, rtrn_series, series3])

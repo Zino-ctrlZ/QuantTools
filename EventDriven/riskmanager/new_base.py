@@ -194,8 +194,9 @@ from .utils import (
 )
 from EventDriven._vars import get_use_temp_cache
 from trade.helpers.helper import CustomCache, is_USholiday
+import numpy as np
 import pandas as pd
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.picker.order_picker import OrderPicker, order_failed
@@ -204,14 +205,16 @@ from EventDriven.riskmanager.position.analyzer import PositionAnalyzer
 from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisContext, StrategyChangeMeta
-from EventDriven.types import ResultsEnum, Order
+from EventDriven.types import ResultsEnum, Order, BacktestRunMixin
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
+from EventDriven.liquidity import LiquidityPolicy
+from pprint import pprint
 
 logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
 
 
-class RiskManager:
+class RiskManager(BacktestRunMixin):
     """
     Manages portfolio risk and executes options trading strategies with position sizing and Greek-based limits.
 
@@ -280,17 +283,14 @@ class RiskManager:
         - Loads configuration from RiskManagerConfig with overrides from kwargs
         - Sets up caching infrastructure for market data and position analytics
         """
-        ## For testing override the passed args
-        # bkt_start = '2025-01-01'
-        # bkt_end = '2025-06-30'
-        # symbol_list = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'JNJ', 'V', 'WMT']
-
         ## Backtest Window
         self.start_date = bkt_start
         self.end_date = bkt_end
 
         ## Configs
         self.config = RiskManagerConfig()
+        self.liquidity_policy = kwargs.pop("liquidity_policy", None) or LiquidityPolicy()
+        self._eq_strategy = None
 
         ## Get start and end dates for timeseries loading
         start, end = get_timeseries_start_end()
@@ -314,7 +314,8 @@ class RiskManager:
         ## Initialize on disk caches. These will be cleared on exit.
 
         ##Order Cache
-        self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
+        # self.order_cache = load_riskmanager_cache(target="order_cache", create_on_missing=True, clear_on_exit=True)
+        self.order_cache = {}
         if len(self.order_cache.values()) > 0:
             logger.info(f"Order cache loaded with {len(self.order_cache.values())} orders")
 
@@ -332,6 +333,25 @@ class RiskManager:
         if len(self.order_request_cache.values()) > 0:
             logger.info(f"Order request cache loaded with {len(self.order_request_cache.values())} requests")
 
+    @property
+    def eq_strategy(self):
+        """Return equity strategy reference used by this risk manager."""
+        return self._eq_strategy
+
+    @eq_strategy.setter
+    def eq_strategy(self, value) -> None:
+        """Set equity strategy reference used by this risk manager."""
+        self._eq_strategy = value
+
+    def pre_run_setup(self):
+        """
+        Pre-run setup for RiskManager. This method is called before the backtest run starts and is responsible for any necessary initialization or setup steps that need to be performed before processing orders and analyzing positions.
+        """
+        self.market_data.pre_run_setup()
+        self.analysis_cache.clear()
+        self.order_cache.clear()
+        self.order_request_cache.clear()
+
     def clear_caches(self):
         """
         Clears all caches used by the RiskManager.
@@ -342,6 +362,72 @@ class RiskManager:
             get_persistent_cache().clear()  ## Ensures any caching with `.memoize` is cleared as well.
         else:
             logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
+
+    def _liquity_multiplier(self, pct_ratio: float, good: Optional[float] = None, bad: Optional[float] = None) -> float:
+        """
+        Calculate a liquidity multiplier based on the bid-ask spread percentage.
+
+        Parameters
+        ----------
+        pct_ratio : float
+            The percentage ratio of the bid-ask spread to the mid price.
+        good : float, optional
+            The multiplier value when the spread is very good (default is 1.0).
+        bad : float, optional
+            The multiplier value when the spread is very bad (default is 0.5).
+
+        Returns
+        -------
+        float
+            A liquidity multiplier between `bad` and `good` based on the `pct_ratio`.
+
+        Notes
+        -----
+        - The function uses an exponential decay to assign higher multipliers to better spreads.
+        - If `good` and `bad` are not provided, it defaults to a range of [0.5, 1.0].
+        - The `pct_ratio` is expected to be a positive value representing the spread as a percentage of the mid price.
+        """
+        if good is None:
+            good = self.order_picker._scoring_config.target_spread_pct
+        if bad is None:
+            bad = self.order_picker._scoring_config.pct_spread_max
+
+        if pct_ratio <= good:
+            return 1.0
+        elif pct_ratio >= bad:
+            return 0.25
+        else:
+            x = (pct_ratio - good) / (bad - good)  # Normalize to [0, 1]
+            decay = np.exp(-5 * x)  # Exponential decay factor
+            multiplier = round(0.25 + 0.75 * decay, 4)  # Scale to [0.25, 1.0]
+            return multiplier
+
+    def _quantiy_liquidity_adjustment(self, quantity: int, pct_ratio: float) -> int:
+        """
+        Adjust the order quantity based on the liquidity of the option, as measured by the bid-ask spread percentage.
+
+        Parameters
+        ----------
+        quantity : int
+            The original order quantity before adjustment.
+        pct_ratio : float
+            The percentage ratio of the bid-ask spread to the mid price.
+
+        Returns
+        -------
+        int
+            The adjusted order quantity after applying the liquidity multiplier.
+
+        Notes
+        -----
+        - The function calculates a liquidity multiplier using `_liquity_multiplier` and applies it to the original quantity.
+        - The resulting quantity is rounded to the nearest integer and cannot be negative.
+        - This adjustment helps to reduce position size for options with poor liquidity (wide spreads).
+        """
+        multiplier = self._liquity_multiplier(pct_ratio)
+        adjusted_quantity = int(round(quantity * multiplier))
+        q = max(adjusted_quantity, 1)  # Ensure quantity is at least 1
+        return q
 
     def get_order(self, req: OrderRequest) -> NewPositionState:
         """
@@ -362,6 +448,10 @@ class RiskManager:
         if is_USholiday(req.date):
             logger.info(f"Date {req.date} is a US Holiday, skipping order generation")
             return {"result": ResultsEnum.IS_HOLIDAY.value, "data": None}
+        
+        ## Run through position analyzer first
+        logger.info(f"Running order request through position analyzer: {req}")
+        self.position_analyzer.on_new_order_request(new_request_state=req)
 
         ## Investigate if tick cash is scaled
         if not req.is_tick_cash_scaled:
@@ -378,6 +468,9 @@ class RiskManager:
         ## Update request with data
         req.spot = spot
         req.chain_spot = chain_spot
+        req.delta_lmt = self.position_analyzer.get_delta_limit(
+            tick_cash=req.tick_cash, chain_spot=chain_spot, date=req.date, ticker=req.symbol
+        )
 
         ## Get order
         print(f"Generating order for request: {req}")
@@ -390,7 +483,8 @@ class RiskManager:
         ## Process order
 
         if not order_failed(order):
-            print(f"\nOrder Received: {order}\n")
+            print("\nOrder Received:\n")
+            pprint(order)
             position_id = order["data"]["trade_id"]
         else:
             print(f"\nOrder Failed: {order}\n")
@@ -449,6 +543,12 @@ class RiskManager:
 
         order = updated_pos_state.order.to_dict()
 
+        ## Level 1 liquidity measure: quantity haircut by spread_pct_ratio
+        if not order_failed(order) and q > 0 and self.liquidity_policy.enabled(1):
+            pct_ratio = updated_pos_state.order["metrics"]["spread_pct_ratio"]
+            q = self._quantiy_liquidity_adjustment(q, pct_ratio)
+            updated_pos_state.order.data["quantity"] = q
+            logger.info(f"Order quantity after liquidity adjustment: {q} for position ID: {position_id}")
         return updated_pos_state
 
     def analyze_position(self, context: PositionAnalysisContext) -> StrategyChangeMeta:
@@ -467,6 +567,40 @@ class RiskManager:
             dt = pd.to_datetime(context.date).strftime("%Y-%m-%d")
             self.analysis_cache[dt] = analysis
         return analysis
+
+    def get_position_analysis_df(self) -> pd.DataFrame:
+        """Build a flat DataFrame from the position analysis cache.
+
+        Returns:
+            pd.DataFrame: One row per (date, position) with columns:
+                ``date``, ``trade_id``, ``signal_id``, ``underlier_tick``,
+                ``entry_price``, ``pnl``, ``last_updated``,
+                ``action_name``, ``action_reason``, plus any key/value pairs
+                from ``action.action`` dict (e.g. ``quantity_diff``,
+                ``new_quantity``).
+        """
+        rows = []
+        for date_key, meta in self.analysis_cache.items():
+            for pos_state in meta.actionables:
+                action = pos_state.action
+                row = {
+                    "date": date_key,
+                    "trade_id": pos_state.trade_id,
+                    "signal_id": pos_state.signal_id,
+                    "underlier_tick": pos_state.underlier_tick,
+                    "entry_price": pos_state.entry_price,
+                    "current_quantity": pos_state.quantity,
+                    "pnl": pos_state.pnl,
+                    "last_updated": pos_state.last_updated,
+                    "action_name": action.name if action is not None else None,
+                    "action_reason": action.reason if action is not None else None,
+                    "entry_date": pos_state.entry_date,
+                }
+                action_dict = (action.action if action is not None else None) or {}
+                if isinstance(action_dict, dict):
+                    row.update(action_dict)
+                rows.append(row)
+        return pd.DataFrame(rows)
 
     def append_option_data(
         self,

@@ -56,6 +56,7 @@ from trade.datamanager.result import (
     SpotResult,
     DividendsResult,
 )
+from trade.datamanager.utils.cache import MARKET_OPEN, MARKET_CLOSE # noqa
 from trade.datamanager.utils.vol_helpers import (
     _prepare_time_to_expiration,
     _handle_cache_for_vol,
@@ -74,7 +75,9 @@ from trade.datamanager.utils.date import is_available_on_date, sync_date_index
 from trade.datamanager.utils.logging import get_logging_level
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
 
+
 logger = setup_logger("trade.datamanager.vol", stream_log_level=get_logging_level())
+
 
 class VolDataManager(BaseDataManager):
     """Manager for computing and caching implied volatilities from option market prices.
@@ -281,9 +284,11 @@ class VolDataManager(BaseDataManager):
         rates = r.daily_risk_free_rates
         option_spot = market_price.price
         forward, rates, option_spot = sync_date_index(forward, rates, option_spot)
+        expiration_ts = to_datetime(expiration)
+        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
 
         # Use utility: Prepare T
-        T = _prepare_time_to_expiration(forward.index, expiration)
+        T = _prepare_time_to_expiration(forward.index, expiration_ts)
 
         # Calculate IV
         iv_timeseries = vector_bsm_iv_estimation(
@@ -434,7 +439,9 @@ class VolDataManager(BaseDataManager):
         )
 
         # Use utility: Prepare T
-        T = _prepare_time_to_expiration(option_spot.index, expiration)
+        expiration_ts = to_datetime(expiration)
+        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        T = _prepare_time_to_expiration(option_spot.index, expiration_ts)
 
         # Calculate IV
         iv_timeseries = vector_crr_iv_estimation(
@@ -597,10 +604,12 @@ class VolDataManager(BaseDataManager):
             dividends_ts = [()] * len(spot)
 
         # Price with CRR using American IVs in European mode
+        expiration_ts = to_datetime(expiration)
+        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
         european_crr_price = vector_crr_binomial_pricing(
             S0=spot.values,
             K=[strike] * len(spot),
-            T=_prepare_time_to_expiration(spot.index, expiration),
+            T=_prepare_time_to_expiration(spot.index, expiration_ts),
             r=rates.values,
             sigma=crr_american_iv.values,
             dividend_yield=dividend_yield.values,
@@ -615,7 +624,7 @@ class VolDataManager(BaseDataManager):
         european_equiv_iv = vector_bsm_iv_estimation(
             F=forward.values,
             K=[strike] * len(spot),
-            T=_prepare_time_to_expiration(spot.index, expiration),
+            T=_prepare_time_to_expiration(spot.index, expiration_ts),
             r=rates.values,
             market_price=european_crr_price,
             right=[right.lower()] * len(spot),

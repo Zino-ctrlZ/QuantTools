@@ -4,7 +4,7 @@ from typing import Optional, Union
 import pandas as pd
 from trade.datamanager.result import SpotResult, ForwardResult, DividendsResult, RatesResult, OptionSpotResult, VolatilityResult, GreekResultSet
 from trade.datamanager._enums import ModelPrice, OptionSpotEndpointSource, SeriesId, VolatilityModel, OptionPricingModel, RealTimeFallbackOption
-from trade.helpers.helper import get_missing_dates
+from trade.helpers.helper import get_missing_dates, to_datetime
 from trade.optionlib.config.types import DivType
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, register_to_factor_list
@@ -65,27 +65,48 @@ class LoadRequest:
         ## Validation
 
         ## Dates:
+
+        ## If rt is True, set on_date to True and as_of to the current date.
         if self.rt:
             self.on_date = True
             self.as_of = datetime.now().date()
 
+        ## If all dates are provided, raise an error. Either start_date and end_date or as_of must be provided.
         if all(date is not None for date in [self.start_date, self.end_date, self.as_of]):
             raise ValueError("Only pass start_date and end_date or as_of, not both.")
         
+        ## If no dates are provided, raise an error. Either start_date and end_date or as_of must be provided.
         if all(date is None for date in [self.start_date, self.end_date, self.as_of]):
             raise ValueError("Either start_date and end_date or as_of must be provided.")
         
+        ## If start_date and end_date are provided, check if start_date is earlier than end_date.
         if self.start_date is not None and self.end_date is not None:
             if pd.to_datetime(self.start_date) > pd.to_datetime(self.end_date):
                 raise ValueError("start_date must be earlier than or equal to end_date.")
             
+            ## If start_date and end_date are the same date, set as_of to the start_date and set start_date and end_date to None and set on_date to True.
+            if to_datetime(self.start_date).date() == to_datetime(self.end_date).date():
+                self.as_of = to_datetime(self.start_date)
+                self.start_date = None
+                self.end_date = None
+                self.on_date = True
+                logger.info(f"Setting as_of to {self.as_of} because start_date and end_date are the same date.")
+
+        
+        ## If as_of is provided, set start_date and end_date to the as_of date and set on_date to True.
         if self.as_of is not None:
             if self.start_date is not None or self.end_date is not None:
                 raise ValueError("If as_of is provided, start_date and end_date must be None.")
+
             self.as_of = pd.to_datetime(self.as_of)
             self.start_date = self.as_of
             self.end_date = self.as_of
             self.on_date = True
+            
+            ## If rt is not True and the as_of date is the current date, set rt to True.
+            if not self.rt and self.as_of.date() == datetime.now().date():
+                self.rt = True
+                logger.info(f"Setting rt to True because as_of date is the current date.")
 
         ## Option parameters
         option_params = [self.expiration, self.strike, self.right]

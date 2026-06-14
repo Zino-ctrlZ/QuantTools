@@ -287,10 +287,10 @@ def intrinsic_check(F, K, T, r, sigma, market_price, option_type) -> bool:
     df = np.exp(-r * T)
 
     if option_type == "c":
-        intrinsic_value = df * max(F - K, 0.0)
+        intrinsic_value = df * max(F - K, 0.0) * 0.95 # Adding a 5% buffer to intrinsic value for calls
         upper_bound = df * F
     else:
-        intrinsic_value = df * max(K - F, 0.0)
+        intrinsic_value = df * max(K - F, 0.0) * 0.95 # Adding a 5% buffer to intrinsic value for puts
         upper_bound = df * K
 
     # Lower bound (intrinsic) violation
@@ -454,7 +454,8 @@ def vector_vol_estimation(
                     arg = arg.tolist()
                     continue
                 raise ValueError(f"args must be a list, tuple, or numpy array. Recieved {type(arg)}.")
-        list_input = list(zip(*args))  # Transpose args to create list of tuples
+        # Transpose args to create list of tuples
+        list_input = list(zip(*args))  # noqa
 
     if len(list_input) == 0:
         return []
@@ -578,8 +579,7 @@ def _estimate_crr_cached(
         bounds=(0.001, 5.0),  # Reasonable bounds for volatility
         method="bounded",
     )
-
-    return result.x if result.success else None
+    return result.x if result.success else np.nan
 
 
 def estimate_crr_implied_volatility(

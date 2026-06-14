@@ -7,8 +7,9 @@ from numba import njit
 from numba import types
 from numba.typed import List as _List
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import Scalar
+from trade.helpers.helper import Scalar, to_datetime
 from trade.helpers.threads import runThreads
+from trade import MARKET_CLOSE
 from ..utils.format import assert_equal_length
 from ..config.defaults import DAILY_BASIS
 from ..assets.forward import time_distance_helper
@@ -433,7 +434,9 @@ class BinomialBase(ABC):
         self.option_type = option_type
         self.start_date = start_date
         self.valuation_date = valuation_date
-        self.T = time_distance_helper(end=self.expiration, start=self.valuation_date or datetime.now())
+        expiration_dt = to_datetime(expiration)
+        expiration_dt = expiration_dt.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        self.T = time_distance_helper(end=expiration_dt, start=self.valuation_date or datetime.now())
         self.american = american
         self.dt = self.T / self.N
         self.priced = False

@@ -40,6 +40,14 @@ class AtTimeBaseData:
             return self.midpoint
         else:
             raise ValueError(f"Invalid use_price value: {self.use_price}")
+    
+    def get_spread(self) -> numbers.Number:
+        """
+        Get the spread based on the bid and ask prices.
+        """
+        if self.bid <= 0 or self.ask <= 0 or self.ask < self.bid:
+            return 0.0  # Invalid spread
+        return self.ask - self.bid
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True, frozen=True)

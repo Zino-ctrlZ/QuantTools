@@ -83,11 +83,11 @@ class OptionPnlPayload:
     """
     opttick: str
     date: datetime
-    vol: pd.DataFrame | pd.Series
-    spot: pd.DataFrame | pd.Series
-    greeks: pd.DataFrame
-    asset_payload: SymbolPayload
-    rates_payload: SymbolPayload
+    vol: Optional[pd.DataFrame | pd.Series] = None
+    spot: Optional[pd.DataFrame | pd.Series] = None
+    greeks: Optional[pd.DataFrame] = None
+    asset_payload: Optional[SymbolPayload] = None
+    rates_payload: Optional[SymbolPayload] = None
     attribution_model: AttributionModel = AttributionModel.UNDEFINED
     dod_change: Optional[pd.DataFrame] = Field(default_factory=pd.DataFrame)
     attribution: Optional[pd.DataFrame] = Field(default_factory=pd.DataFrame)

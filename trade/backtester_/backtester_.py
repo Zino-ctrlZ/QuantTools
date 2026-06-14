@@ -11,7 +11,7 @@ from ._strategy_patch import has_signal_collection, collect_signals_decorator, S
 from .data import PTDataset # noqa: F401
 from ._helper import make_bt_wrapper # noqa: F401
 from ._strategy import StrategyBase
-logger = setup_logger('trade.backtester_.backtester_', stream_log_level="DEBUG")
+logger = setup_logger('trade.backtester_.backtester_', stream_log_level="WARNING")
 
 ## TODO: Include Benchmark DD in Portfolio Plot
 ## FIX: After optimization, reset strategy settings to default. Currently, it is not resetting
@@ -89,6 +89,11 @@ class PTBacktester(AggregatorParent):
             This is useful for when you have a strategy that starts at a certain date, which is greater than the earliest date in the dataset.
             Typically to allow buffer to calculate indicators.
         **kwargs: Additional keyword arguments to be passed to the Backtest class in backtesting.py
+            which include: `trade_on_close` (bool): Whether to trade on close or not. Currently, PTBacktester only supports trade_on_close=True. trade_on_close=False is not supported.
+                            `finalize_trades` (bool): Whether to finalize trades or not. This is useful for when you want to keep trades open after the backtest is done. Defaults to True.
+                            `verbose` (bool): Whether to print verbose logs during strategy setup. Defaults to False.
+                            `plot_indicators` (bool): Whether to plot indicators in the backtest plot. Defaults to True.
+                            `commission` (float): Commission to be passed to the Backtest class in backtesting.py. Defaults to 0.0.
 
         Returns:
         None
@@ -98,17 +103,20 @@ class PTBacktester(AggregatorParent):
         - _runIndex: Index of the ticker in the dataset list
             
         """
+        if kwargs.pop("reset", True):
+            for dataset in datalist:
+                dataset.reset()
         trade_on_close = kwargs.pop("trade_on_close", True)
         finalize_trades = kwargs.pop("finalize_trades", True)
         if not trade_on_close:
             raise ValueError("PTBacktester currently only supports trade_on_close=True. trade_on_close=False is not supported.")
         else:
             logger.info(f"PTBacktester initialized with trade_on_close={trade_on_close}, finalize_trades={finalize_trades}")
-        self.datasets = []
+        self.datasets: List[PTDataset] = []
         self.__strategy = deepcopy((_setup_strategy(strategy, 
                                                     start_date=start_overwrite, 
-                                                    verbose=kwargs.get('verbose', False), 
-                                                    plot_indicators=kwargs.get('plot_indicators', True))))
+                                                    verbose=kwargs.pop('verbose', False), 
+                                                    plot_indicators=kwargs.pop('plot_indicators', True))))
         self.__port_stats = None
         self._trades = None
         self._equity = None
@@ -161,7 +169,7 @@ class PTBacktester(AggregatorParent):
                     raise ValueError(f'For datasets settings, please assign a dictionary containing parameters as key and values, got {type(param_setting)}')    
                 dataset_obj = [x for x in datalist if x.name == name][0]
                 dataset_obj.param_settings = param_setting
-            except:
+            except: # noqa
                 ## Use default settings as settings in not given names
                 dataset_obj.param_settings = default_setting
                 no_settings_names.append(name)
@@ -190,7 +198,7 @@ class PTBacktester(AggregatorParent):
         """
         results = []
         for i, d in enumerate(self.datasets):
-            d.backtest._strategy._name = d.name
+            d.backtest._strategy._name = d.name            
             d.backtest._strategy._runIndex = i
             if d.param_settings:
                 # if d.param_settings:
@@ -205,11 +213,11 @@ class PTBacktester(AggregatorParent):
             self.reset_settings() if d.param_settings else None
             try:
                 del d.backtest._strategy._name
-            except: 
+            except: # noqa
                 pass
             try:
                 del d.backtest._strategy._runIndex
-            except:
+            except: # noqa
                 pass
             results.append(stats)
         self.__port_stats = {d.name: results[i] for i, d in enumerate(self.datasets)}
@@ -228,37 +236,28 @@ class PTBacktester(AggregatorParent):
         """
         Returns Timeseries of periodic portfolio value
         """
-        PortStats = self.__port_stats
-        if self.start_overwrite:
-            start = pd.to_datetime(self.start_overwrite).date()
-        date_range = pd.date_range(start= self.dates_(True), end = self.dates_(False), freq = 'B')
-        start = self.dates_(True)
-        _ = self.dates_(False)
-        port_equity_data = pd.DataFrame(index = date_range)
-        for tick, data in PortStats.items():
-            equity_curve = data['_equity_curve']['Equity']
-            if isinstance(self.cash, dict):
-                cash = self.cash[tick]
-            elif isinstance(self.cash, int) or isinstance(self.cash, float):
-                cash = self.cash
-            
-            equity_curve.name = tick
-            tick_start = min(equity_curve.index)
-            if tick_start > pd.Timestamp(start):
-                temp = pd.DataFrame(index = pd.date_range(start = start, end =equity_curve.index.min(), freq = 'B' ))
-                temp[tick] = cash
-                equity_curve = pd.concat([equity_curve, temp], axis = 0)
         
-            port_equity_data = port_equity_data.join(equity_curve)
+        ## Initialize empty dataframe to hold equity curves for each ticker.
+        eq = pd.DataFrame()
 
-        port_equity_data = port_equity_data.dropna(how = 'all')
-        port_equity_data = port_equity_data.fillna(method = 'ffill')
-        port_equity_data['Total'] = port_equity_data.sum(axis = 1)
-        port_equity_data.index = pd.DatetimeIndex(port_equity_data.index)
+        ## If cash is a single value, we create a dictionary with the same cash for each ticker to fill in missing values in the equity curve
+        if isinstance(self.cash, (float, int)):
+            cash_per_asset = {tick: self.cash for tick in self.get_port_stats().keys()}
+
+        ## Loop through each ticker's stats, extract the equity curve, and fill in missing values with the initial cash
+        for tick, stats in self.get_port_stats().items():
+            eq[tick] = stats["_equity_curve"]["Equity"]
+
+            ## If cash is a dict, we use the specific cash for that ticker to fill in missing values. If not, we use the single cash value for all tickers.
+            if tick not in cash_per_asset:
+                raise ValueError(f"Cash value for ticker {tick} not found in cash_per_asset. Please provide a cash value for this ticker.")
+            eq[tick].fillna(cash_per_asset[tick], inplace=True)
+        eq["Total"] = eq.sum(axis=1)
+        eq.index = pd.to_datetime(eq.index)
         if self.start_overwrite:
-            port_equity_data = port_equity_data[port_equity_data.index.date >= pd.to_datetime(self.start_overwrite).date()]
-        port_equity_data = port_equity_data[~port_equity_data.index.duplicated(keep = 'first')]
-        return port_equity_data
+            eq = eq[eq.index.date >= pd.to_datetime(self.start_overwrite).date()]
+
+        return eq
     
     def __trades(self):
         return self.trades()
@@ -399,12 +398,21 @@ class PTBacktester(AggregatorParent):
         default_params = {}
         for param in param_kwargs.keys():
             default_params[param] = getattr(self.strategy, param)
+
             
         ## Loop through each datasets backtest, optimize & append to optimized dataframe
         for dataset in self.datasets:
             name = dataset.name
+
+            # If the dataset has specific settings for the strategy, we set the strategy settings.
+            if dataset.param_settings:
+                print(f"Optimizing for dataset: {name} with settings: {dataset.param_settings}")
+                for setting, value in dataset.param_settings.items():
+                    setattr(self.strategy, setting, value)
             ## Make sure strategy name is set for each optimize run
             dataset.backtest._strategy._name = name
+
+
             
             if return_heatmap:
                 opt, hm = dataset.backtest.optimize(**param_kwargs, **kwargs)

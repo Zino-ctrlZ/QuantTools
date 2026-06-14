@@ -303,7 +303,7 @@ def greek_check(greek_value: float, greek_threshold: float, qty: int = 1, greate
         if greek_value == 0:
             logger.critical("Greek value is zero, cannot compute required quantity. Returning False and 0.")
             return False, 0
-        required_qty = max(int(abs(greek_threshold) // abs(per_greek)), 1)
+        required_qty = max(int(abs(greek_threshold) // abs(per_greek)), 0)
         quantity_diff = abs(qty) - abs(required_qty)
         return _bool, quantity_diff
     else:
@@ -342,7 +342,7 @@ def analyze_position(
         if dte - t_plus_n <= 0:  # Inline the check for performance
             action = EXERCISE(trade_id=trade_id, action=Changes(quantity_diff=qty, new_quantity=0))
             action.reason = f"position is expiring (DTE: {dte} <= {t_plus_n})"
-            logger.debug(f"EXERCISE action for {trade_id} due to expiration.")
+            logger.debug(f"EXERCISE action for {trade_id} due to expiration. DTE: {dte}, threshold: {t_plus_n}")
             return action
 
     ## P2: ROLL Checks (second priority - return immediately if triggered)
@@ -351,16 +351,16 @@ def analyze_position(
         if dte < dte_limit:  # Inline the check for performance
             action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
             action.reason = f"not enough DTE ({dte} < {dte_limit})"
-            logger.debug(f"ROLL action for {trade_id} due to DTE check.")
+            logger.debug(f"ROLL action for {trade_id} due to DTE check. DTE: {dte}, threshold: {dte_limit}")
             return action
 
     # Moneyness Check
     if strategy_enabled_actions.moneyness:
         if any(abs(m) > abs(moneyness_limit) for m in moneyness_list):  # Inline the check
-            m = min(moneyness_list, key=abs)
+            m = max(moneyness_list, key=abs)
             action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
             action.reason = f"position is too ITM ({m} exceeds {moneyness_limit})"
-            logger.debug(f"ROLL action for {trade_id} due to moneyness check.")
+            logger.debug(f"ROLL action for {trade_id} due to moneyness check. Moneyness values: {moneyness_list}, threshold: {moneyness_limit}")
             return action
 
     ## P3: ADJUST Checks (lowest actionable priority)
@@ -408,13 +408,16 @@ def analyze_position(
 
                 ## IF new quantity is positive, create ADJUST action
                 if new_qty > 0:
+                    logger.info(f"Calculated new quantity for {trade_id} after adjusting for {greek} breach: {new_qty}")
                     max_adjust_action = ADJUST(
                         trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=qty + q_diff)
                     )
                     max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v})"
                 
-                ## IF new quantity is zero, create ROLL action instead. To avoid complete close.
+                ## If we have 1 qty, _greek_check always returns True and q_diff == 0. We want to roll instead of adjusting to zero, so create ROLL action instead of ADJUST when q_diff == 0
+                # elif q_diff == 0 and qty == 1:
                 elif new_qty == 0:
+                    logger.info(f"Calculated new quantity for {trade_id} is zero after adjusting for {greek} breach. Creating ROLL action instead to avoid closing position.")
                     max_adjust_action = ROLL(
                         trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=0)
                     )

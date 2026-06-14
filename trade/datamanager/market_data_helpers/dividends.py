@@ -2,15 +2,16 @@ from datetime import datetime, timedelta
 from openbb import obb
 import pandas as pd
 from trade.optionlib.config.defaults import (
-    OPTION_TIMESERIES_START_DATE, # noqa
+    OPTION_TIMESERIES_START_DATE,  # noqa
 )
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import CustomCache
 from dataclasses import dataclass
-from trade.datamanager.vars import DM_GEN_PATH
+from trade.datamanager.vars import get_dm_gen_path, get_enable_caching
 from trade.optionlib.assets.dividend import infer_frequency, FREQ_MAP
 from trade.datamanager.utils.logging import get_logging_level, register_to_factor_list
 from trade.datamanager.config import OptionDataConfig
+
 logger = setup_logger("trade.datamanager.market_data_helpers.dividends", stream_log_level=get_logging_level())
 register_to_factor_list("trade.datamanager.market_data_helpers.dividends")
 
@@ -25,8 +26,10 @@ class SavedDividendsResult:
 
 ## Cache has to be in memory. Incase dividends update on another date
 DIVIDEND_CACHE = CustomCache(
-    location=DM_GEN_PATH, fname="discrete_dividends_timeseries", clear_on_exit=False, expire_days=365
+    location=get_dm_gen_path().as_posix(), fname="discrete_dividends_timeseries", clear_on_exit=False, expire_days=365
 )
+
+
 def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.Series:
     """Resample dividend series to daily frequency with forward fill."""
 
@@ -57,10 +60,14 @@ def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.S
     resampled.index = pd.to_datetime(resampled.index, format="%Y-%m-%d")
     resampled.name = "dividend_amount"
     resampled.index.name = "datetime"
-    resampled.sort_index(inplace=True)  
+    resampled.sort_index(inplace=True)
     return resampled
 
-def get_div_schedule(ticker: str):
+
+def get_div_schedule(
+    ticker: str,
+    filter_specials: bool = None,
+) -> pd.Series:
     """
     Fetch the dividend schedule for a given ticker.
     If the ticker is not in the cache, it fetches the data from yfinance and caches it.
@@ -77,15 +84,16 @@ def get_div_schedule(ticker: str):
     ## 4. Return the dividend schedule DataFrame
 
     # Check if ticker is in cache
-    filter_specials = OptionDataConfig().filter_out_special_dividends
-    key = (ticker, filter_specials)
-    if key not in DIVIDEND_CACHE:
+    if filter_specials is None:
+        filter_specials = OptionDataConfig().filter_out_special_dividends
+
+    def _fetch_from_source() -> SavedDividendsResult:
         try:
             div_history = obb.equity.fundamental.dividends(symbol=ticker, provider="yfinance").to_df()
             div_history.set_index("ex_dividend_date", inplace=True)
             div_history["amount"] = div_history["amount"].astype(float)
             div_history.index = pd.to_datetime(div_history.index)
-            dividends_data = SavedDividendsResult(
+            return SavedDividendsResult(
                 symbol=ticker,
                 historicals=div_history["amount"],
                 resampled_timeseries=None,
@@ -95,12 +103,18 @@ def get_div_schedule(ticker: str):
             div_history = pd.DataFrame(
                 {"amount": [0]}, index=pd.bdate_range(start="2001-01-01", end=datetime.now(), freq="1Q")
             )
-            dividends_data = SavedDividendsResult(
+            return SavedDividendsResult(
                 symbol=ticker,
                 historicals=div_history["amount"],
                 resampled_timeseries=None,
                 last_updated=datetime.now(),
             )
+
+    key = (ticker, filter_specials)
+    if not get_enable_caching():
+        dividends_data = _fetch_from_source()
+    elif key not in DIVIDEND_CACHE:
+        dividends_data = _fetch_from_source()
         DIVIDEND_CACHE[key] = dividends_data
 
     else:
@@ -109,13 +123,14 @@ def get_div_schedule(ticker: str):
         # Check if we need to refresh (if last_updated > 7 days)
         if (datetime.now() - dividends_data.last_updated).days > 7:
             del DIVIDEND_CACHE[key]
-            return get_div_schedule(ticker)
+            return get_div_schedule(ticker, filter_specials=filter_specials)
 
     # Filter out dividends >= 7.5
     if filter_specials:
         dividends_data.historicals = dividends_data.historicals[dividends_data.historicals < 7.5]
 
     return dividends_data.historicals.sort_index()
+
 
 def get_daily_dividends_timeseries(ticker, start, end):
     """

@@ -8,6 +8,7 @@ import os
 import yaml
 from trade.helpers.helper import CustomCache
 from trade.helpers.Logging import setup_logger
+from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 logger = setup_logger('EventDriven._vars')
 
 CONTRACT_MULTIPLIER = 100
@@ -32,7 +33,6 @@ BASE = Path(os.environ["WORK_DIR"]) / ".riskmanager_cache"  ## Main Cache for Ri
 HOME_BASE = Path(os.environ["WORK_DIR"]) / ".cache"
 BASE.mkdir(exist_ok=True)
 
-OPTION_TIMESERIES_START_DATE: str|datetime = '2017-01-01'
 Y1_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=1)).strftime('%Y-%m-%d')
 Y2_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=2)).strftime('%Y-%m-%d')
 Y3_LAGGED_START_DATE: str|datetime = (pd.to_datetime(OPTION_TIMESERIES_START_DATE) - relativedelta(years=3)).strftime('%Y-%m-%d')
@@ -77,25 +77,26 @@ def load_riskmanager_cache(target: str = None,
     """ 
     Load the risk manager cache based on the USE_TEMP_CACHE setting.
     """
+    size_limit = kwargs.get("size_limit", 2**31) # Default to 2gb if not provided
     if get_use_temp_cache():
         logger.info("Using Temporary Cache for RiskManager")        
-        spot_timeseries = CustomCache(BASE/"temp", fname = "rm_spot_timeseries", expire_days=100)
-        chain_spot_timeseries = CustomCache(BASE/"temp", fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
-        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", clear_on_exit=True)
-        position_data = CustomCache(BASE/"temp", fname = "rm_position_data", clear_on_exit=True)
-        dividend_timeseries = CustomCache(BASE/"temp", fname = "rm_dividend_timeseries", expire_days=100)
-        adjusted_strike_cache = CustomCache(BASE/"temp", fname = "rm_adjusted_strike_cache", expire_days=100)
+        spot_timeseries = CustomCache(BASE/"temp", fname = "rm_spot_timeseries", expire_days=100, size_limit=size_limit)
+        chain_spot_timeseries = CustomCache(BASE/"temp", fname = "rm_chain_spot_timeseries", expire_days=100, size_limit=size_limit) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE/"temp", fname = "rm_processed_option_data", clear_on_exit=True, size_limit=size_limit)
+        position_data = CustomCache(BASE/"temp", fname = "rm_position_data", clear_on_exit=True, size_limit=size_limit)
+        dividend_timeseries = CustomCache(BASE/"temp", fname = "rm_dividend_timeseries", expire_days=100, size_limit=size_limit)
+        adjusted_strike_cache = CustomCache(BASE/"temp", fname = "rm_adjusted_strike_cache", expire_days=100, size_limit=size_limit)
     else:
-        spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100)
-        chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100) ## This is used for pricing, to account option strikes for splits
-        processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100)
-        position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True)
-        dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100)
-        adjusted_strike_cache = CustomCache(BASE, fname = "rm_adjusted_strike_cache", expire_days=100)
+        spot_timeseries = CustomCache(BASE, fname = "rm_spot_timeseries", expire_days=100, size_limit=size_limit)
+        chain_spot_timeseries = CustomCache(BASE, fname = "rm_chain_spot_timeseries", expire_days=100, size_limit=size_limit) ## This is used for pricing, to account option strikes for splits
+        processed_option_data = CustomCache(BASE, fname = "rm_processed_option_data", expire_days=100, size_limit=size_limit)
+        position_data = CustomCache(BASE, fname = "rm_position_data", clear_on_exit=True, size_limit=size_limit)
+        dividend_timeseries = CustomCache(BASE, fname = "rm_dividend_timeseries", expire_days=100, size_limit=size_limit)
+        adjusted_strike_cache = CustomCache(BASE, fname = "rm_adjusted_strike_cache", expire_days=100, size_limit=size_limit)
     
     ## Not dependent on USE_TEMP_CACHE, so always use the persistent cache.
-    splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000)
-    special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000) ## Special dividend cache for handling special dividends
+    splits_raw =CustomCache(HOME_BASE, fname = "split_names_dates", expire_days = 1000, size_limit=size_limit) ## Cache for raw splits data to handle splits adjustments, separate from dividend_timeseries which is used for dividend adjustments. This allows us to keep a long history of splits data without bloating the dividend cache which is more frequently accessed and updated.
+    special_dividend = CustomCache(HOME_BASE, fname = 'special_dividend', expire_days=1000, size_limit=size_limit) ## Special dividend cache for handling special dividends
     special_dividend['COST'] = {
         '2020-12-01': 10,
         '2023-12-27': 15
@@ -123,8 +124,11 @@ def load_riskmanager_cache(target: str = None,
             case _:
                 if create_on_missing:
                     logger.warning(f"Creating new cache for unknown target: {target}")
-                    clear_on_exit = kwargs.get('clear_on_exit', True)
-                    return CustomCache(BASE, fname = f"extra_{target}", clear_on_exit=clear_on_exit)
+                    ## Always clear when using temp cache. If not user must explicitly set clear_on_exit
+                    clear_on_exit = True if get_use_temp_cache() else kwargs.get("clear_on_exit", True)
+                    base = BASE / "temp" if get_use_temp_cache() else BASE
+
+                    return CustomCache(base, fname = f"extra_{target}", clear_on_exit=clear_on_exit, size_limit=size_limit)
                 raise ValueError(f"Unknown target: {target}")   
             
     return (spot_timeseries, 

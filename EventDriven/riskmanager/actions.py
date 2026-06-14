@@ -76,6 +76,9 @@ Notes:
 from datetime import datetime
 from EventDriven.types import EventTypes
 from typing_extensions import TypedDict, Union
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.riskmanager.actions")
 
 
 class Changes(TypedDict):
@@ -142,7 +145,7 @@ class ADJUST(RMAction):
         self.reason = None
 
     def __repr__(self):
-        return f'ADJUST({self.trade_id}, Quantity Change: {self.action["quantity_diff"]}), Reason: {self.reason})'
+        return f"ADJUST({self.trade_id}, Quantity Change: {self.action['quantity_diff']}), Reason: {self.reason})"
 
 
 class EXERCISE(RMAction):

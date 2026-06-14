@@ -1,5 +1,6 @@
 import pandas as pd
-
+from backtesting import Backtest
+from typing import Optional
 class PTDataset:
     """
     Custom dataset holding ticker name, ticker timeseries & backtest object from backtesting.py
@@ -14,13 +15,20 @@ class PTDataset:
         self.__param_settings = param_settings  ## Making param_settings private
         self.name = name
         self.data = data
-        self.backtest = None
+        self.backtest: Optional[Backtest] = None
+        self.data.columns = self.data.columns.str.capitalize()  # Ensure columns are capitalized
+
 
     def __repr__(self):
         return f"PTDataset({self.name})"
 
     def __str__(self):
         return f"PTDataset({self.name})"
+    
+    def reset(self):
+        """Reset the dataset's backtest to None"""
+        self.backtest = None
+        self.param_settings = None
 
     @property
     def param_settings(self):
@@ -30,4 +38,6 @@ class PTDataset:
     @param_settings.setter
     def param_settings(self, value: dict):
         """Setter for param_settings with type checking"""
+        if not isinstance(value, (dict, type(None))):
+            raise TypeError("param_settings must be a dictionary or None")
         self.__param_settings = value

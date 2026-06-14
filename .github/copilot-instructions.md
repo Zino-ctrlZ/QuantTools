@@ -5,6 +5,16 @@ This is a quantitative trading system focused on options pricing and risk manage
 
 ## Code Style & Standards
 
+### Commit Requests (Always-On)
+- Every time the user asks for a commit, first generate a commit strategy.
+- Separate changes into the most relevant concerns before committing.
+- For each planned commit, state:
+    - What will be committed (files/hunks grouped by concern).
+    - The commit message.
+- Keep unrelated concerns in separate commits.
+- Use the commit strategy skill for detailed grouping and message rules:
+    - `.github/skills/commit-strategy/SKILL.md`
+
 ### Type Hints
 - Always use complete type hints for all function parameters and return values
 - Use `Union[datetime, str]` for date parameters that accept multiple formats
@@ -40,6 +50,67 @@ date_obj = to_datetime(datetime.now())
 - Use Google-style docstrings for all classes and methods
 - Include Args, Returns, Raises, and Examples sections
 - Examples should be executable and demonstrate real-world usage
+
+### Strict Docstring Policy (Always-On)
+- These rules are mandatory for every Python file that is created or edited.
+- Follow PEP 257 conventions for all docstrings.
+- Use Google-style docstring sections.
+- Every module must have a module-level docstring as the first statement.
+- Every class must have a class docstring.
+- Every function and method must have a docstring, including `__init__` and private helpers.
+- Every docstring must include a concise summary line.
+- Add `Args`, `Returns`, and `Raises` sections when applicable.
+- Include an `Examples` section with executable usage when practical.
+- Keep docstrings factual and behavior-focused; avoid placeholder text.
+- When updating code, also update stale docstrings in the same edited scope.
+
+### Module-Level Docstring Format
+- All Python modules must start with a module docstring as the very first statement.
+- Use this schema for module docstrings:
+    1) First line: one-sentence summary title ending with a period.
+    2) Blank line.
+    3) One short overview paragraph (2-4 lines) describing scope and purpose.
+    4) Blank line.
+    5) Structured sections for module schema using heading labels with trailing colons.
+- Preferred section labels (choose those that apply):
+    - Core Classes:
+    - Core Dataclasses:
+    - Core Functions:
+    - Processing Flow:
+    - Risk/Assumptions:
+    - Caching Strategy:
+    - Usage:
+- Keep section content concise and domain-specific.
+- For Usage, use a short executable doctest-style snippet when practical.
+
+**Module docstring example:**
+```python
+"""Position attribution workflows for EventDriven backtests.
+
+Provides quantity normalization, option attribution loading, and position-level
+PnL decomposition with trade-aware adjustments (fills, commission, and slippage).
+
+Core Dataclasses:
+        QuantityTimeSeries: Daily quantity state and execution metadata.
+        BacktestPositionAttribution: Attribution output for a single trade.
+
+Core Functions:
+        create_position_attribution: Loads and combines leg-level attribution.
+        compute_position_attribution: Applies quantity and trade adjustments.
+        compute_backtest_position_attribution: End-to-end portfolio integration.
+
+Processing Flow:
+        1. Build trade quantity time series from ledgers.
+        2. Load/aggregate raw leg attribution by date.
+        3. Scale by quantity and apply open/close trade adjustments.
+        4. Return normalized attribution components.
+
+Usage:
+        >>> analyzer = PositionAttributionAnalyzer(portfolio)
+        >>> result = analyzer.analyze_trade(trade_id)
+        >>> daily_attr = result.attribution
+"""
+```
 
 **Example:**
 ```python

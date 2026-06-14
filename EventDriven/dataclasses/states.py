@@ -2,6 +2,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict, Field
 from typing import Optional, List
 from datetime import datetime
+from EventDriven.trade import Trade
 from trade.datamanager.market_data import AtIndexResult
 from EventDriven.types import Order
 from EventDriven.dataclasses.orders import OrderRequest
@@ -51,7 +52,11 @@ class PositionState:
     current_underlier_data: AtIndexResult
     pnl: float
     last_updated: datetime
+    signal_total_pnl: Optional[float] = None
+    symbol_total_pnl: Optional[float] = None
     action: Optional[RMAction] = None
+    entry_date: Optional[datetime] = None
+    trades: Optional[Trade] = None
 
     def __repr__(self):
         return f"PositionState(date={self.last_updated}, trade_id={self.trade_id}, quantity={self.quantity}, pnl={self.pnl}, signal_id={self.signal_id})"

@@ -139,5 +139,5 @@ class FiniteGreeksEstimator:
     def all_second_order(self) -> Dict[str, float]:
         return {
             'gamma': self.second_order('S'),
-            'volga': self.second_order('sigma') * 0.0001,
+            'volga': self.second_order('sigma') * 0.01,
         }

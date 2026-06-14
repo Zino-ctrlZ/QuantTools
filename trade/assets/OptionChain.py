@@ -1,25 +1,25 @@
 import time
-start_time = time.time() 
+
+start_time = time.time()
 import os, sys
 from trade.models.VolSurface import SurfaceLab
 from dbase.database.SQLHelpers import DatabaseAdapter
-from trade.helpers.helper import (change_to_last_busday, 
-                                  is_busday, 
-                                  is_USholiday,
-                                  IV_handler, 
-                                  implied_volatility, 
-                                  time_distance_helper, 
-                                  generate_option_tick, 
-                                  generate_option_tick_new,
-                                  setup_logger,
-                                  binomial_implied_vol)
+from trade.helpers.helper import (
+    change_to_last_busday,
+    is_busday,
+    is_USholiday,
+    IV_handler,
+    implied_volatility,
+    time_distance_helper,
+    generate_option_tick,
+    generate_option_tick_new,
+    setup_logger,
+    binomial_implied_vol,
+)
 
 from trade.helpers.Context import Context
-from trade.assets.rates import get_risk_free_rate_helper
-from dbase.DataAPI.ThetaData import (retrieve_quote_rt, 
-                                     retrieve_eod_ohlc,
-                                     retrieve_quote, 
-                                     list_contracts)
+from trade.assets.rates import get_risk_free_rate_helper_v2
+from dbase.DataAPI.ThetaData import retrieve_quote_rt, retrieve_eod_ohlc, retrieve_quote, list_contracts
 
 from dbase.database.SQLHelpers import store_SQL_data_Insert_Ignore
 from trade._multiprocessing import ensure_global_start_method, PathosPool
@@ -31,7 +31,8 @@ from threading import Thread
 from trade.helpers.decorators import log_time, log_error, log_error_with_stack
 from trade.helpers.helper_types import OptionModelAttributes
 import pandas as pd
-logger = setup_logger('OptionChain')
+
+logger = setup_logger("OptionChain")
 
 
 ## To-Do: LQD is not being retrieved. Throwing error on 2024-12-06
@@ -43,97 +44,93 @@ shutdown_event = False
 def shutdown(pool):
     global shutdown_event
     shutdown_event = True
-    logger.info('shutdown_event set')
+    logger.info("shutdown_event set")
     pool.terminate()
 
 
-def get_set(
-        ticker,
-        date,
-        exp, 
-        right,
-        strike,
-        spot,
-        r,
-        q
-) -> dict:
+def get_set(ticker, date, exp, right, strike, spot, r, q) -> dict:
     try:
-        price = retrieve_quote(ticker, date, exp, right, date, strike, start_time = '9:00')['Midpoint'][-1] #To-do: Handle None values
-        vol = IV_handler(S = spot, K = strike, t = time_distance_helper(end = exp, start = date), r = r, flag = right.lower(), price = price, q = q)
+        price = retrieve_quote(ticker, date, exp, right, date, strike, start_time="9:00")["Midpoint"][
+            -1
+        ]  # To-do: Handle None values
+        vol = IV_handler(
+            S=spot, K=strike, t=time_distance_helper(end=exp, start=date), r=r, flag=right.lower(), price=price, q=q
+        )
     except Exception as e:
-        logger.error(f'Error in get_set: {e}', exc_info=True)
+        logger.error(f"Error in get_set: {e}", exc_info=True)
         raise e
-    return {'price': price, 'vol': vol}
+    return {"price": price, "vol": vol}
+
 
 def get_df_set(split_df, id):
     if len(split_df) == 0:
         return pd.DataFrame()
-    split_df[['expiration', 'build_date']] = split_df[['expiration', 'build_date']].astype(str)
+    split_df[["expiration", "build_date"]] = split_df[["expiration", "build_date"]].astype(str)
 
-    split_df[['price', 'vol']] = split_df.apply(lambda x: get_set(x['ticker'], x['build_date'], x['expiration'], x['right'], x['strike'], x['Spot'], x['r'], x['q']), axis = 1, result_type = 'expand')
+    split_df[["price", "vol"]] = split_df.apply(
+        lambda x: get_set(
+            x["ticker"], x["build_date"], x["expiration"], x["right"], x["strike"], x["Spot"], x["r"], x["q"]
+        ),
+        axis=1,
+        result_type="expand",
+    )
     return split_df
+
 
 def produce_chain_values(chain, date, ticker, stock):
     results = []
-    global shutdown_event # To-do: Why after shut down event set in some situations, it is not being reset?
+    global shutdown_event  # To-do: Why after shut down event set in some situations, it is not being reset?
     shudown_event = False
     stk = stock
-    spot = list(stk.spot(spot_type = OptionModelAttributes.spot_type.value).values())[0]
+    spot = list(stk.spot(spot_type=OptionModelAttributes.spot_type.value).values())[0]
     q = stk.div_yield()
     rf_rate = stk.rf_rate
-    chain['Spot'] = spot
-    chain['r'] = rf_rate
-    chain['q'] = q
-    chain['build_date'] = date
-    chain['ticker'] = ticker
-    
+    chain["Spot"] = spot
+    chain["r"] = rf_rate
+    chain["q"] = q
+    chain["build_date"] = date
+    chain["ticker"] = ticker
+
     workers = 25
     split_data = np.array_split(chain.reset_index(), workers)
 
-
-    #Multiprocessing to speed up chain retrieval
+    # Multiprocessing to speed up chain retrieval
     ensure_global_start_method()
-    pool = PathosPool(nodes = workers)
+    pool = PathosPool(nodes=workers)
     pool.restart()
     try:
         for result in pool.imap(get_df_set, split_data, [i for i in range(workers)]):
             results.append(result)
             if shutdown_event:
                 break
-            
-        
+
     except KeyboardInterrupt:
-        logger.error('Interrupted by Keyboard')
+        logger.error("Interrupted by Keyboard")
         shutdown(pool)
-        
 
     except Exception as e:
-        logger.error('Exception:', e)
+        logger.error("Exception:", e)
         shutdown(pool)
-        
 
     finally:
         pool.close()
         pool.join()
-    
+
     if len(results) == 0:
         return None
 
     return pd.concat(results)
 
 
-
-
-
 class OptionChain:
     """
-    Class responsible for creating option chains for a given stock. 
+    Class responsible for creating option chains for a given stock.
     Expected behavior is to return the chain, corresponding vol, price and in select instances, Volatility surface
     """
 
-    def __init__(self, ticker, build_date, stock, dumas_width = 0.75, **kwargs) -> None:
+    def __init__(self, ticker, build_date, stock, dumas_width=0.75, **kwargs) -> None:
         self.ticker = ticker.upper()
-        logger.info(f'Creating OptionChain for {self.ticker}, on {build_date}')
+        logger.info(f"Creating OptionChain for {self.ticker}, on {build_date}")
         self.build_date = build_date
         self.chain = None
         self.lab = None
@@ -144,10 +141,9 @@ class OptionChain:
         self.kwargs = kwargs
         self.__initiate_chain()
 
-
     def __repr__(self) -> str:
         return f"OptionChain({self.ticker}, {self.build_date})"
-    
+
     def __str__(self) -> str:
         return f"OptionChain({self.ticker}, {self.build_date})"
 
@@ -158,30 +154,28 @@ class OptionChain:
         WHERE ticker = '{self.ticker}' 
         AND build_date = '{self.build_date}'"""
 
-        chain = self.dbAdapter.query_database('vol_surface', 'option_chain',query)
+        chain = self.dbAdapter.query_database("vol_surface", "option_chain", query)
         if not chain.empty:
             self.chain = chain
             self.__option_chain_bool()
-            return 
-        
+            return
 
-        chain =  self.__option_chain_bool()
+        chain = self.__option_chain_bool()
         chain_new = produce_chain_values(chain, self.build_date, self.ticker, self.stock)
         self.chain = chain_new
         self.save_thread = None
-        self.save_thread = Thread(target = self._save_chain)
+        self.save_thread = Thread(target=self._save_chain)
         self.save_thread.start()
         return chain_new
 
     @log_error_with_stack(logger, False)
-    def get_chain(self, return_values = False):
+    def get_chain(self, return_values=False):
         if return_values:
             return self.chain
-        
+
         else:
             return self.simple_chain
 
-    
     @log_error_with_stack(logger, False)
     def __option_chain_bool(self):
 
@@ -189,38 +183,39 @@ class OptionChain:
         date = self.build_date
 
         contracts = list_contracts(self.ticker, date)
-        contracts.expiration = pd.to_datetime(contracts.expiration, format='%Y%m%d')
+        contracts.expiration = pd.to_datetime(contracts.expiration, format="%Y%m%d")
 
         ## Producing the DTE for the contracts
-        contracts['DTE'] = (contracts['expiration'] - pd.to_datetime(date)).dt.days
-        contracts_v2 = contracts.pivot_table(index=['expiration', 'DTE','strike','right'],values = 'root', aggfunc='count')
-        
+        contracts["DTE"] = (contracts["expiration"] - pd.to_datetime(date)).dt.days
+        contracts_v2 = contracts.pivot_table(
+            index=["expiration", "DTE", "strike", "right"], values="root", aggfunc="count"
+        )
+
         ## Formatting the pivot table
-        contracts_v2.fillna(0, inplace = True)
-        contracts_v2.where(contracts_v2 == 1, False, inplace = True)
-        contracts_v2.where(contracts_v2 == 0, True, inplace = True)
+        contracts_v2.fillna(0, inplace=True)
+        contracts_v2.where(contracts_v2 == 1, False, inplace=True)
+        contracts_v2.where(contracts_v2 == 0, True, inplace=True)
         self.simple_chain = contracts_v2
         return contracts_v2
-    
-   
+
     @log_error_with_stack(logger, False)
     def initiate_lab(self):
-        force_build = self.kwargs.get('force_build', False)
+        force_build = self.kwargs.get("force_build", False)
         if self.chain is None:
             self.chain = self.get_chain(True)
-        self.lab = SurfaceLab(self.ticker, self.build_date, self.chain.copy(),self.dumas_width, force_build = force_build)
+        self.lab = SurfaceLab(
+            self.ticker, self.build_date, self.chain.copy(), self.dumas_width, force_build=force_build
+        )
 
-    
     @log_error_with_stack(logger, False)
     def _save_chain(self):
         if self.chain is None:
             self.get_chain(True)
         chain = self.chain.copy()
-        chain.drop(columns = ['root'], inplace = True)
-        chain['moneyness'] = chain['strike'] / chain['Spot']
-        chain['option_tick'] = chain.apply(lambda x: generate_option_tick_new(x['ticker'],x['right'], x['expiration'],  x['strike']), axis = 1)
-        chain['build_date'] = self.build_date
-        self.dbAdapter.save_to_database(chain, 'vol_surface', 'option_chain')
-
-
-
+        chain.drop(columns=["root"], inplace=True)
+        chain["moneyness"] = chain["strike"] / chain["Spot"]
+        chain["option_tick"] = chain.apply(
+            lambda x: generate_option_tick_new(x["ticker"], x["right"], x["expiration"], x["strike"]), axis=1
+        )
+        chain["build_date"] = self.build_date
+        self.dbAdapter.save_to_database(chain, "vol_surface", "option_chain")

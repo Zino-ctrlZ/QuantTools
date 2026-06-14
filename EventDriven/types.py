@@ -3,29 +3,61 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 from EventDriven.helpers import parse_signal_id, generate_signal_id, parse_position_id
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.types")
+
+
+class OptionFloat(float):
+    """Custom float type for option-related values to allow for future extensions or validations."""
+
+    def __new__(cls, value):
+        return super().__new__(cls, value)
+
+    def __init__(self, value, dollar_normalized=False):
+        super().__init__()
+        self.dollar_normalized = dollar_normalized
 
 
 class Metrics(TypedDict):
-    spread_pct_ratio: float
-    spread_oi: float
+    spread_pct_ratio: Optional[float]
+    spread_oi: Optional[float]
+    min_dte: Optional[int]
+    max_dte: Optional[int]
+    min_moneyness: Optional[float]
+    max_moneyness: Optional[float]
+
+
+class Scores(TypedDict):
+    moneyness_score: Optional[float]
+    dte_score: Optional[float]
+    mid_score: Optional[float]
+    pct_spread_score: Optional[float]
+    oi_score: Optional[float]
+    theta_burden_score: Optional[float]
 
 
 class SignalID(str):
     """Unique identifier for a trading signal.
 
     Format:
-        {TICKER}{YYYYMMDD}{SIGNAL_TYPE}
+        {TICKER}{YYYYMMDD}{SIGNAL_TYPE}(::_{STRATEGY_SLUG}) (optional strategy slug prefix)
     """
 
-    __slots__ = ("ticker", "date", "direction")
+    __slots__ = ("ticker", "date", "direction", "strategy_slug")
 
     def __new__(cls, signal_id: str) -> "SignalID":
         return super().__new__(cls, signal_id)
 
     def __init__(self, signal_id: str) -> None:
+        if "::" in signal_id:
+            strategy_slug, signal_id = signal_id.split("::", 1)  # Remove strategy slug if present
+            self.strategy_slug = strategy_slug
+        else:
+            self.strategy_slug = None
         parsed = parse_signal_id(signal_id)
         self.ticker = parsed["ticker"]
         self.date = parsed["date"]
@@ -35,13 +67,15 @@ class SignalID(str):
         return parse_signal_id(self)
 
     @staticmethod
-    def generate(underlier: str, date: pd.Timestamp, signal_type: str) -> "SignalID":
+    def generate(underlier: str, date: pd.Timestamp, signal_type: str, strategy_slug: str = None) -> "SignalID":
         signal_id = generate_signal_id(underlier, date, signal_type)
+        if strategy_slug:
+            signal_id = strategy_slug + "::" + signal_id
         return SignalID(signal_id)
 
     def __repr__(self) -> str:
         return f"SignalID({str(self)})"
-    
+
     def __str__(self):
         return super().__str__()
 
@@ -63,7 +97,7 @@ class TradeID(str):
 
     def __repr__(self) -> str:
         return f"TradeID({str(self)})"
-    
+
     def __str__(self):
         return super().__str__()
 
@@ -83,6 +117,7 @@ class OrderDict(TypedDict):
     date: date
     data: OrderDataDict
     metrics: Metrics | None
+    scores: Scores | None
 
 
 class PositionsDict(TypedDict):
@@ -144,6 +179,20 @@ class FillDirection(Enum):
     BUY = "BUY"
     SELL = "SELL"
     EXERCISE = "EXERCISE"
+
+
+class AggregationLevel(Enum):
+    """Aggregation granularity for portfolio trade reporting.
+
+    Values:
+        BY_TRADE_SIGNAL: One row per (TradeID, SignalID) pair. Default behaviour.
+        BY_SIGNAL: One row per SignalID, collapsing all TradeIDs under that signal.
+        BY_TRADE: One row per TradeID, collapsing all SignalIDs under that trade.
+    """
+
+    BY_TRADE_SIGNAL = "by_trade_signal"
+    BY_SIGNAL = "by_signal"
+    BY_TRADE = "by_trade"
 
 
 class PositionAdjustmentReason(Enum):
@@ -267,6 +316,7 @@ class Order:
     date: date
     data: OrderData
     metrics: Metrics = None
+    scores: Scores = None
 
     def __getitem__(self, key):
         """Get item like a dict, dict[key]"""
@@ -278,7 +328,7 @@ class Order:
 
     def __repr__(self):
         """String representation of Order"""
-        return f"Order(signal_id={self.signal_id}), data={self.data}, result={self.result}, metrics={self.metrics})"
+        return f"Order(signal_id={self.signal_id}), data={self.data}, result={self.result}, metrics={self.metrics}, scores={self.scores})"
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get item like a dict, dict.get()"""
@@ -310,6 +360,7 @@ class Order:
             date=self.date,
             data=data_dict,
             metrics=self.metrics,
+            scores=self.scores,
         )
 
         # Return the main dictionary
@@ -321,15 +372,35 @@ class Order:
         # Extract the nested data dict
         data_dict = d["data"]
         metrics = d.get("metrics", None)
+        scores = d.get("scores", None)
 
         # Convert nested data dict to OrderData object
         if data_dict is None:
             data_dict = {"trade_id": None, "long": None, "short": None, "close": None, "quantity": None}
 
         if metrics is not None:
-            d["metrics"] = Metrics(spread_pct_ratio=metrics["spread_pct_ratio"], spread_oi=metrics["spread_oi"])
+            d["metrics"] = Metrics(
+                spread_pct_ratio=metrics["spread_pct_ratio"],
+                spread_oi=metrics["spread_oi"],
+                min_dte=metrics.get("min_dte", None),
+                max_dte=metrics.get("max_dte", None),
+                min_moneyness=metrics.get("min_moneyness", None),
+                max_moneyness=metrics.get("max_moneyness", None),
+            )
         else:
             d["metrics"] = None
+
+        if scores is not None:
+            d["scores"] = Scores(
+                moneyness_score=scores.get("moneyness_score", None),
+                dte_score=scores.get("dte_score", None),
+                mid_score=scores.get("mid_score", None),
+                pct_spread_score=scores.get("pct_spread_score", None),
+                oi_score=scores.get("oi_score", None),
+                theta_burden_score=scores.get("theta_burden_score", None),
+            )
+        else:
+            d["scores"] = None
 
         order_data = OrderData(
             trade_id=data_dict["trade_id"],
@@ -349,4 +420,23 @@ class Order:
             date=date,
             data=order_data,
             metrics=d["metrics"],
+            scores=d["scores"],
         )
+
+
+class BacktestRunMixin:
+    """
+    Mixin class to provide common functionality for backtest run objects.
+
+    This class can be inherited by any backtest run implementation to ensure
+    consistent handling of trade updates and stats management across different
+    backtesting frameworks or implementations.
+    """
+
+    def pre_run_setup(self):
+        """Initialize the classes behavior before the backtest run starts."""
+        pass
+    
+    def post_run_cleanup(self):
+        """Clean up any resources or perform finalization after the backtest run ends."""
+        pass

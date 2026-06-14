@@ -149,7 +149,7 @@ from trade.helpers.Logging import setup_logger
 from dbase.database.SQLHelpers import DatabaseAdapter, dynamic_batch_update, get_engine
 from EventDriven.riskmanager.position.cogs.vars import MEASURES_SET
 
-logger = setup_logger("algo.positions.limits.save_utils")
+logger = setup_logger("EventDriven.riskmanager.position.live_cogs.save_utils")
 LIMITS_DF = None
 _ACCESS_COUNTER = 0
 db = DatabaseAdapter()
@@ -422,7 +422,7 @@ def save_limits_from_backtester(bkt: OptionSignalBacktest, date: datetime = None
 
 
 ## LOADERS
-def get_position_limit(trade_id: str, strategy_name: str, signal_id: str, risk_measure: str) -> tuple:
+def get_position_limit(trade_id: str, strategy_name: str, signal_id: str, risk_measure: str) -> tuple[datetime, float]:
     df = get_limits_data()
     assert risk_measure in MEASURES_SET, f"risk_measure must be one of {MEASURES_SET}"
     row = df[
@@ -435,5 +435,8 @@ def get_position_limit(trade_id: str, strategy_name: str, signal_id: str, risk_m
         logger.error(
             f"No limit found for trade_id={trade_id}, strategy_name={strategy_name}, signal_id={signal_id}, risk_measure={risk_measure}"
         )
-        return None
-    return row["date"].values[0], float(row["value"].values[0])
+        return None, None
+    return (
+        row["date"].values[0],
+        float(row["value"].values[0])
+    ) 

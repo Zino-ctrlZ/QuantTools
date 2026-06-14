@@ -1,6 +1,6 @@
 from pydantic.dataclasses import dataclass
 from pydantic import ConfigDict
-from typing import Union, Literal
+from typing import Optional, Union, Literal
 from datetime import datetime, date
 import numbers
 
@@ -23,3 +23,7 @@ class OrderRequest:
     spot: numbers.Number = None
     chain_spot: numbers.Number = None
     is_tick_cash_scaled: bool = False
+    delta_lmt: Optional[numbers.Number] = None
+    signal_total_pnl: Optional[numbers.Number] = None
+    symbol_total_pnl: Optional[numbers.Number] = None
+

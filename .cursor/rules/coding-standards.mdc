@@ -1,0 +1,58 @@
+---
+description: Project coding standards — commits, type hints, dates, docstrings, naming, dataclasses
+alwaysApply: true
+---
+
+# Coding Standards
+
+## Commit Requests (Always-On)
+
+When the user asks for a commit:
+
+- Generate a commit strategy first; separate changes by concern before committing.
+- For each planned commit, state what will be committed (files/hunks) and the commit message.
+- Keep unrelated concerns in separate commits.
+- Only commit when explicitly requested; never commit proactively.
+- Follow the detailed workflow in `.cursor/skills/commit-strategy/SKILL.md`.
+
+## Type Hints
+
+- Use complete type hints for all function parameters and return values.
+- Use `Union[datetime, str]` for date parameters that accept multiple formats.
+- Use `Optional[T]` for nullable parameters.
+- Import from `typing`: `Optional, Union, List, Dict, Tuple, ClassVar`.
+
+## Date/Time Conversion
+
+- **Always use `to_datetime` from `trade.helpers.helper`** — never `datetime.strptime()` or `pd.to_datetime()` directly.
+- Import: `from trade.helpers.helper import to_datetime`
+- Handles single values and iterables; tries `%Y-%m-%d` first, then lets pandas guess; supports optional `format`.
+
+## Docstrings (Always-On for Python)
+
+Mandatory for every Python file created or edited. Follow PEP 257 and Google-style sections.
+
+- Every module, class, function, and method (including `__init__` and private helpers) must have a docstring with a concise summary line.
+- Add `Args`, `Returns`, and `Raises` when applicable; include `Examples` with executable usage when practical.
+- Keep docstrings factual; update stale docstrings in the same edited scope.
+- For detailed templates, use `.github/skills/docstring-standards/SKILL.md`.
+
+### Module-Level Docstring Format
+
+1. One-sentence summary ending with a period.
+2. Blank line, then a 2–4 line overview paragraph.
+3. Blank line, then structured sections with trailing colons: Core Classes, Core Dataclasses, Core Functions, Processing Flow, Risk/Assumptions, Caching Strategy, Usage (as applicable).
+4. Usage section: short doctest-style snippet when practical.
+
+## Naming Conventions
+
+- **Classes:** Managers end with `Manager`; results end with `Result`; configs end with `Config`.
+- **Methods:** `get_*` for retrieval; `_load_*` for private loading; `_compute_*` for calculations.
+- **Variables:** `_str` suffix for string dates (`start_str`); `_dt` suffix for date objects (`start_dt`).
+
+## Dataclasses
+
+- Prefer `@dataclass` for data containers.
+- Use pydantic `@dataclass` for strict validation (`from pydantic.dataclasses import dataclass as pydantic_dataclass`).
+- Result classes inherit from base `Result`.
+- Use `frozen=True, slots=True` for immutable configs (e.g., `CacheSpec`).

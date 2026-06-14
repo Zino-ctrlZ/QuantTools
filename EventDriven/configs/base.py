@@ -4,7 +4,9 @@ from typing import Any, Callable, ClassVar
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass as _pydantic_dataclass
 from typing_extensions import dataclass_transform
-from trade.helpers.helper_types import validate_inputs
+from trade.helpers.helper_types import (
+    DataclassAssignmentValidationMixin,
+)
 from weakref import WeakSet
 from EventDriven.exceptions import BacktestConfigAttributeError
 
@@ -21,7 +23,7 @@ def pydantic_dataclass(*args: Any, **kwargs: Any) -> Callable[..., Any]:
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True), kw_only=True)
-class BaseConfigs:
+class BaseConfigs(DataclassAssignmentValidationMixin):
     """Base configuration class for all modules."""
 
     _registry: ClassVar[WeakSet[type]] = WeakSet()
@@ -41,17 +43,7 @@ class BaseConfigs:
         return getattr(self, key)
 
     def __post_init__(self, ctx=None):
-        pass
-
-    def validate_inputs(self):
-        """Validate configuration inputs based on type hints."""
-        validate_inputs(self)
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-
-        ## Validate inputs after setting attribute
-        self.validate_inputs()
+        super().__post_init__(ctx)
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -133,7 +125,7 @@ Configuration Descriptions for {self.__class__.__name__}:
             return
         for config_cls in cls._registry:
             class_desc = get_config_class_description(config_cls.__name__)
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"Configuration Class: {config_cls.__name__}")
             if class_desc:
                 print(f"Description: {class_desc}")
@@ -150,7 +142,7 @@ class _CustomFrozenBaseConfigs(BaseConfigs):
     def __setattr__(self, name, value):
         allow_name_changes = ["run_name"]
         if name in allow_name_changes:
-            logger.warning(f"Attempting to set attribute '{name}' to '{value}' in {self.__class__.__name__}...")
+            logger.info(f"Attempting to set attribute '{name}' to '{value}' in {self.__class__.__name__}...")
             super().__setattr__(name, value)
             return
         if name in self.__dict__:

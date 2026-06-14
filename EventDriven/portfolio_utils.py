@@ -4,6 +4,9 @@ from EventDriven.riskmanager.utils import parse_signal_id
 from EventDriven.types import PositionsDict, EventTypes
 from EventDriven.dataclasses.states import PositionState
 from EventDriven.exceptions import BacktestNotImplementedError
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger("EventDriven.portfolio_utils")
 
 ORDER_TYPES = [
     EventTypes.OPEN,
@@ -22,6 +25,7 @@ DO_NOTHING_EVENT_TYPES = [
 NOT_IMPLEMENTED_EVENT_TYPES = [
     EventTypes.EXERCISE,
 ]
+
 
 def extract_events(
     actionables: List[PositionState], current_positions: Dict[str, Dict[str, PositionsDict]]
