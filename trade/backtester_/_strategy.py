@@ -977,8 +977,9 @@ class StrategyBase(ABC):
         Note:
             - Strategy state is automatically reset after simulation
             - Trades execute on close prices
-            - Equity compounds bar-to-bar with ``1 + side * bar_return`` while a
-              position is open from the prior bar
+            - Equity adds daily mark-to-market P&L on 1x notional sized to equity at
+              each open: ``eq += (eq_at_open / entry_price) * side * (close_t - close_{t-1})``
+              while in a position from the prior bar
             - Initial equity is 1.0 (100%)
         """
         n = self._n
@@ -991,6 +992,7 @@ class StrategyBase(ABC):
         equity[0] = 1.0
 
         eq = 1.0
+        trade_entry_equity: Optional[float] = None
 
         # pending executions: map execution_index -> list of ops ("open"/"close")
         pending: Dict[int, List[Dict[str, Any]]] = {}
@@ -1001,13 +1003,15 @@ class StrategyBase(ABC):
             current_price = float(close[i])
             in_pos_prev = self.position_open
 
-            # 1) Compound bar return when position was open at the prior bar close
-            if i > 0 and in_pos_prev:
+            # 1) Daily MTM on fixed size (1x equity at open) when in position from prior bar
+            if i > 0 and in_pos_prev and trade_entry_equity is not None:
                 prev_price = float(close[i - 1])
-                side = self.position_side
-                if prev_price != 0.0 and side is not None:
-                    bar_ret = (current_price / prev_price) - 1.0
-                    eq *= 1.0 + float(side) * bar_ret
+                position_info = self.position_info
+                entry_price = position_info.entry_price if position_info else None
+                side = position_info.side if position_info else None
+                if entry_price is not None and side is not None and float(entry_price) != 0.0:
+                    position_size = float(trade_entry_equity) / float(entry_price)
+                    eq += position_size * float(side) * (current_price - prev_price)
 
             # 2) First, process any scheduled executions for this index
             for op in pending.pop(i, []):
@@ -1017,6 +1021,7 @@ class StrategyBase(ABC):
 
                     # only open if not already in a position
                     if not self.position_open and enforce_open:
+                        trade_entry_equity = eq
                         self.open_action(
                             index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price
                         )
@@ -1042,6 +1047,7 @@ class StrategyBase(ABC):
                             equity=eq,
                             index=i,
                         )
+                        trade_entry_equity = None
 
             # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
             open_decision = self.should_open(index=i)
@@ -1051,6 +1057,7 @@ class StrategyBase(ABC):
                 if tn_int == 0:
                     # immediate execution
                     if not self.position_open:
+                        trade_entry_equity = eq
                         self.open_action(
                             index=exec_idx,
                             side=open_decision.side,
@@ -1088,6 +1095,7 @@ class StrategyBase(ABC):
                             equity=eq,
                             index=exec_idx,
                         )
+                        trade_entry_equity = None
                 else:
                     pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
@@ -1105,6 +1113,7 @@ class StrategyBase(ABC):
                     equity=eq,
                     index=n - 1,
                 )
+                trade_entry_equity = None
 
         self.reset_strategy_state()
         equity_series = pd.Series(equity, index=dates, name="equity")

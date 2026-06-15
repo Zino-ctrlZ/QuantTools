@@ -97,18 +97,37 @@ class TestStrategySimulate(unittest.TestCase):
         self.assertAlmostEqual(close_trade["return_pct"], 0.2)
         self.assertEqual(close_trade["side"], SideInt.SELL)
 
-    def test_short_multi_bar_compounds_bar_by_bar(self) -> None:
-        """Short 100 -> 90 -> 80 should compound to 22.22%, not inverse-ratio 25%."""
+    def test_short_multi_bar_matches_entry_to_exit_return(self) -> None:
+        """Short 100 -> 90 -> 80: fixed-size daily MTM should total +20%, matching return_pct."""
         data = _make_dataset([100.0, 90.0, 80.0])
         strategy = _ScriptedStrategy(data, open_at=0, close_at=2, side=SideInt.SELL)
 
         trades, equity = strategy.simulate()
 
-        expected_equity = 1.1 * (10.0 / 9.0)
-        self.assertAlmostEqual(equity.iloc[-1], expected_equity)
+        self.assertAlmostEqual(equity.iloc[1], 1.1)
+        self.assertAlmostEqual(equity.iloc[-1], 1.2)
 
         close_trade = next(trade for trade in trades if trade["action"] == "close")
         self.assertAlmostEqual(close_trade["return_pct"], 0.2)
+
+    def test_long_multi_bar_down_path_matches_entry_to_exit_return(self) -> None:
+        """Long 100 -> 90 -> 80: fixed-size daily MTM should total -20%, matching return_pct."""
+        data = _make_dataset([100.0, 90.0, 80.0])
+        strategy = _ScriptedStrategy(
+            data,
+            open_at=0,
+            close_at=2,
+            side=SideInt.BUY,
+            signal_id_str="test::USO20200101LONG",
+        )
+
+        trades, equity = strategy.simulate()
+
+        self.assertAlmostEqual(equity.iloc[1], 0.9)
+        self.assertAlmostEqual(equity.iloc[-1], 0.8)
+
+        close_trade = next(trade for trade in trades if trade["action"] == "close")
+        self.assertAlmostEqual(close_trade["return_pct"], -0.2)
 
     def test_long_multi_bar_matches_simple_return(self) -> None:
         """Long path compounding should match simple entry-to-exit return."""
@@ -126,6 +145,65 @@ class TestStrategySimulate(unittest.TestCase):
         self.assertAlmostEqual(equity.iloc[-1], 1.2)
         close_trade = next(trade for trade in trades if trade["action"] == "close")
         self.assertAlmostEqual(close_trade["return_pct"], 0.2)
+
+
+class _TwoTradeScriptedStrategy(StrategyBase):
+    """Open/close on two fixed legs for sequential sizing tests."""
+
+    bt_params = {}
+
+    def __init__(self, data: PTDataset, *, side: SideInt) -> None:
+        self._trade_side = side
+        self._signal_id = SignalID("test::USO20200101LONG")
+        super().__init__(data, tplusn=0)
+
+    def setup(self) -> None:
+        """No indicators required for scripted tests."""
+
+    def is_open_signal(self, *, date: pd.Timestamp = None, index: int = None) -> bool:
+        idx, _ = self._resolve(date=date, index=index)
+        return idx in (0, 2)
+
+    def is_close_signal(self, *, date: pd.Timestamp = None, index: int = None) -> bool:
+        idx, _ = self._resolve(date=date, index=index)
+        return idx in (1, 3)
+
+    def should_open(self, *, date: pd.Timestamp = None, index: int = None) -> TradeDecision:
+        if not self.should_trade(date=date, index=index):
+            return TradeDecision(ok=False, side=0)
+        if not self.is_open_signal(date=date, index=index) or self.position_open:
+            return TradeDecision(ok=False, side=0)
+        return TradeDecision(
+            ok=True,
+            side=int(self._trade_side),
+            pos_effect=PositionEffect.OPEN,
+            signal_id=self._signal_id,
+        )
+
+    def should_close(self, *, date: pd.Timestamp = None, index: int = None) -> TradeDecision:
+        if not self.position_open or not self.is_close_signal(date=date, index=index):
+            return TradeDecision(ok=False, side=0)
+        return TradeDecision(
+            ok=True,
+            side=int(self._trade_side),
+            pos_effect=PositionEffect.CLOSE,
+            signal_id="N/A",
+        )
+
+
+class TestStrategySimulateSequentialSizing(unittest.TestCase):
+    """Validate per-trade notional scales with equity available at each open."""
+
+    def test_two_losing_long_legs_scale_with_remaining_equity(self) -> None:
+        """Two 50% losing long legs should compound to 0.25, not go negative."""
+        data = _make_dataset([100.0, 50.0, 100.0, 50.0])
+        strategy = _TwoTradeScriptedStrategy(data, side=SideInt.BUY)
+
+        _, equity = strategy.simulate()
+
+        self.assertAlmostEqual(equity.iloc[1], 0.5)
+        self.assertAlmostEqual(equity.iloc[-1], 0.25)
+        self.assertGreaterEqual(equity.min(), 0.0)
 
 
 if __name__ == "__main__":
