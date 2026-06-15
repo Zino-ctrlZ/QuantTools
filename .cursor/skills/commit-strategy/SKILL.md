@@ -2,8 +2,9 @@
 name: commit-strategy
 description: >-
   Plans and executes git commits with concern-based grouping, pre-commit scan,
-  and safe git workflow. Use when the user asks to commit, create commits, propose
-  a commit plan, stage changes, or review changes for commit.
+  quality gate, and safe git workflow. Use when the user asks to commit, create
+  commits, propose a commit plan, stage changes, or review changes for commit.
+  Blocks commit and push when scan findings exist until the prompter advises next steps.
 ---
 
 # Commit Strategy
@@ -50,7 +51,36 @@ Scan changed files only:
 - Debug artifacts (`print`, `pdb`, local paths)
 - Secrets and credential files — warn and **exclude** from commit
 
-### 3. Group by Concern
+Record every finding with file and line when possible. Use `"none"` only when a category has zero findings.
+
+### 3. Quality Gate (mandatory — blocks commit and push)
+
+After the scan, check whether **any** category has findings other than `"none"`.
+
+**If findings exist:**
+
+1. **Stop.** Do not stage, commit, or push.
+2. Present the full pre-commit scan (step 5 template, section **0**).
+3. Ask the prompter what to do next. Offer explicit options:
+   - **Fix** — resolve findings, then re-run inspect + scan
+   - **Exclude** — leave specific files/hunks unstaged; re-present strategy
+   - **Commit anyway** — proceed with commits only; still hold push unless separately approved
+   - **Push anyway** — commit and push with findings acknowledged (requires explicit override)
+   - **Abort** — do nothing further
+
+**Proceed to commit only when:**
+
+- All scan categories are `"none"`, **or**
+- The prompter explicitly resolves each finding category (fix, exclude, or commit anyway)
+
+**Proceed to push only when:**
+
+- All scan categories are `"none"`, **or**
+- The prompter explicitly says to push despite findings (note deferred items in the final summary)
+
+Never treat "commit and push" as implicit permission to skip the gate when findings exist.
+
+### 4. Group by Concern
 
 - One concern per commit: feature, bugfix, refactor, docs, tests, config, tooling
 - Split by subsystem when changes are independent
@@ -59,7 +89,7 @@ Scan changed files only:
 - Order commits: base/refactor first, then dependent changes
 - No empty commits — if nothing to commit, say so and stop
 
-### 4. Present Strategy (before executing)
+### 5. Present Strategy (before executing)
 
 Use this template:
 
@@ -68,7 +98,10 @@ Use this template:
 - Logic failures: \<findings or "none"\>
 - Misspellings: \<findings or "none"\>
 - Commented-out code blocks: \<findings or "none"\>
+- Debug artifacts: \<findings or "none"\>
 - Excluded files: \<files left unstaged, with reason\>
+
+**Gate status:** \<BLOCKED — awaiting prompter \| CLEAR — no findings \| OVERRIDDEN — prompter approved proceed\>
 
 **N. Commit N**
 - Scope: \<files/hunks\>
@@ -76,7 +109,9 @@ Use this template:
 - Why: \<brief grouping rationale\>
 - Message: \<commit message\>
 
-### 5. Execute (only after explicit user approval)
+If gate status is **BLOCKED**, stop after section **0** and the commit plan preview. Do not execute until the prompter responds.
+
+### 6. Execute (only after gate is CLEAR or OVERRIDDEN)
 
 For each planned commit, sequentially:
 
@@ -94,6 +129,12 @@ EOF
 3. Run `git status` to verify
 4. Repeat for remaining commits; final `git status` when done
 
+### 7. Push (only after gate allows it)
+
+- Push only when explicitly requested by the prompter.
+- Re-check gate status before pushing: if findings were deferred and the prompter did not say "push anyway", **do not push**.
+- After push, note any deferred findings still open in the working tree or last commits.
+
 ## Commit Message Rules
 
 - Imperative mood; concise subject (~50–72 chars)
@@ -106,7 +147,7 @@ EOF
 - Never update git config
 - Never `--no-verify`, `--no-gpg-sign`, force push, or hard reset unless user explicitly asks
 - Never force push to `main`/`master` — warn if requested
-- Never push unless explicitly asked
+- Never push unless explicitly asked **and** the quality gate allows it (see step 3)
 - Never use interactive git (`-i` flags)
 - **Amend only if all apply:** user requested amend (or hook auto-modified files after your successful commit); HEAD was created by you this session; commit not pushed
 - If commit fails or hook rejects: fix and create a **new** commit — do not amend
