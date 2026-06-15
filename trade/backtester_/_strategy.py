@@ -903,6 +903,49 @@ class StrategyBase(ABC):
         """
         self.position_info = PositionInfo()
 
+    def _record_close_trade(
+        self,
+        *,
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        exit_price: float,
+        equity: float,
+        index: int,
+    ) -> None:
+        """Append a close trade from live ``position_info`` and clear position state.
+
+        Args:
+            trades: Trade log mutated in place.
+            ts: Execution timestamp.
+            exit_price: Exit price for the close.
+            equity: Equity after bar return, before state reset.
+            index: Bar index passed to ``close_action``.
+        """
+        position_info = self.position_info
+        entry_price = position_info.entry_price if position_info else None
+        side = position_info.side if position_info else None
+
+        if entry_price is not None and side is not None and float(entry_price) != 0.0:
+            return_pct = ((exit_price - float(entry_price)) / float(entry_price)) * float(side)
+        else:
+            return_pct = 0.0
+
+        trades.append(
+            {
+                "date": ts,
+                "action": "close",
+                "price": exit_price,
+                "equity": equity,
+                "return_pct": return_pct,
+                "entry_price": entry_price,
+                "side": side,
+                "position_info": position_info,
+                "signal_id": position_info.signal_id if position_info else None,
+                **self.additional_on_exit_info(index=index),
+            }
+        )
+        self.close_action(index=index)
+
     def simulate(
         self, finalize: bool = True, enforce_open_on_signal: bool = False, enforce_close_on_signal: bool = False
     ) -> Tuple[List[Dict[str, Any]], pd.Series]:
@@ -934,7 +977,8 @@ class StrategyBase(ABC):
         Note:
             - Strategy state is automatically reset after simulation
             - Trades execute on close prices
-            - Returns are calculated bar-to-bar when position is open
+            - Equity compounds bar-to-bar with ``1 + side * bar_return`` while a
+              position is open from the prior bar
             - Initial equity is 1.0 (100%)
         """
         n = self._n
@@ -945,7 +989,6 @@ class StrategyBase(ABC):
         trades: List[Dict[str, Any]] = []
         equity = np.empty(n, dtype=float)
         equity[0] = 1.0
-        entry_price: Optional[float] = None
 
         eq = 1.0
 
@@ -957,14 +1000,14 @@ class StrategyBase(ABC):
             ts = dates[i]
             current_price = float(close[i])
             in_pos_prev = self.position_open
-            position_side = self.position_side
 
-            # 1) Apply return for the interval prev->current based on prior position state
+            # 1) Compound bar return when position was open at the prior bar close
             if i > 0 and in_pos_prev:
                 prev_price = float(close[i - 1])
-                if prev_price != 0.0:
-                    ratio = current_price / prev_price
-                    eq *= ratio**position_side  # adjust for short/long
+                side = self.position_side
+                if prev_price != 0.0 and side is not None:
+                    bar_ret = (current_price / prev_price) - 1.0
+                    eq *= 1.0 + float(side) * bar_ret
 
             # 2) First, process any scheduled executions for this index
             for op in pending.pop(i, []):
@@ -977,7 +1020,6 @@ class StrategyBase(ABC):
                         self.open_action(
                             index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price
                         )
-                        entry_price = current_price
                         trades.append(
                             {
                                 "date": ts,
@@ -993,24 +1035,13 @@ class StrategyBase(ABC):
                     ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
                     enforce_close = self.should_close(index=i).ok if enforce_close_on_signal else True
                     if self.position_open and enforce_close:
-                        position_info = self.position_info
-                        return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
-                        return_pct *= position_side
-                        trades.append(
-                            {
-                                "date": ts,
-                                "action": "close",
-                                "price": current_price,
-                                "equity": eq,
-                                "return_pct": return_pct,
-                                "entry_price": entry_price,
-                                "side": position_side,
-                                "position_info": position_info,
-                                "signal_id": position_info.signal_id if position_info else None,
-                                **self.additional_on_exit_info(index=i),
-                            }
+                        self._record_close_trade(
+                            trades=trades,
+                            ts=ts,
+                            exit_price=current_price,
+                            equity=eq,
+                            index=i,
                         )
-                        self.close_action(index=i)
 
             # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
             open_decision = self.should_open(index=i)
@@ -1026,7 +1057,6 @@ class StrategyBase(ABC):
                             signal_id=open_decision.signal_id,
                             entry_price=current_price,
                         )
-                        entry_price = current_price
                         trades.append(
                             {
                                 "date": ts,
@@ -1051,24 +1081,13 @@ class StrategyBase(ABC):
                 exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
                 if tn_int == 0:
                     if self.position_open:
-                        position_info = self.position_info
-                        return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
-                        return_pct *= position_side
-                        trades.append(
-                            {
-                                "date": ts,
-                                "action": "close",
-                                "price": current_price,
-                                "equity": eq,
-                                "return_pct": return_pct,
-                                "entry_price": entry_price,
-                                "side": position_side,
-                                "position_info": position_info,
-                                "signal_id": position_info.signal_id if position_info else None,
-                                **self.additional_on_exit_info(index=i),
-                            }
+                        self._record_close_trade(
+                            trades=trades,
+                            ts=ts,
+                            exit_price=current_price,
+                            equity=eq,
+                            index=exec_idx,
                         )
-                        self.close_action(index=exec_idx)
                 else:
                     pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
 
@@ -1079,24 +1098,13 @@ class StrategyBase(ABC):
             # There may be pending executions scheduled for the last bar; they've already executed
             if self.position_open:
                 current_price = float(close[-1])
-                position_info = self.position_info
-                return_pct = (current_price - entry_price) / entry_price if entry_price is not None else 0.0
-                return_pct *= self.position_side
-                trades.append(
-                    {
-                        "date": dates[-1],
-                        "action": "close",
-                        "price": current_price,
-                        "equity": eq,
-                        "return_pct": return_pct,
-                        "entry_price": entry_price,
-                        "side": self.position_side,
-                        "position_info": position_info,
-                        "signal_id": position_info.signal_id if position_info else None,
-                        **self.additional_on_exit_info(index=n - 1),
-                    }
+                self._record_close_trade(
+                    trades=trades,
+                    ts=dates[-1],
+                    exit_price=current_price,
+                    equity=eq,
+                    index=n - 1,
                 )
-                self.close_action(index=n - 1)
 
         self.reset_strategy_state()
         equity_series = pd.Series(equity, index=dates, name="equity")
