@@ -287,8 +287,13 @@ class PnLMonitorCog(BaseCog):
                     logger.info(
                         f"Position {pos_state.trade_id} has PnL of {pl_pct:.2%} which is greater than {self.config.roll_profit_threshold:.2%} of entry price. Rolling the position to lock in profits."
                     )
+                    # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
                     action = ROLL(
-                        trade_id=pos_state.trade_id, action={"quantity_diff": 0, "new_quantity": pos_state.quantity}
+                        trade_id=pos_state.trade_id,
+                        action={
+                            "quantity_diff": -abs(pos_state.quantity),
+                            "new_quantity": pos_state.quantity,
+                        },
                     )
                     action.analysis_date = portfolio_context.date
                     action.reason = f"PnL is {pl_pct:.2%} which is greater than {self.config.roll_profit_threshold:.2%} of entry price. Rolling the position to lock in profits."

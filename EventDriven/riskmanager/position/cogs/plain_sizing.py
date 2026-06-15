@@ -212,9 +212,13 @@ class PlainSizingCog(BaseCog):
                 )
 
                 if dte < self.config.dte_threshold:
+                    # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
                     action = ROLL(
                         trade_id=pos_state.trade_id,
-                        action=Changes(quantity_diff=0, new_quantity=pos_state.quantity),
+                        action=Changes(
+                            quantity_diff=-abs(pos_state.quantity),
+                            new_quantity=pos_state.quantity,
+                        ),
                     )
                     action.reason = (
                         f"DTE {dte} below threshold {self.config.dte_threshold}. Rolling to extend duration."
