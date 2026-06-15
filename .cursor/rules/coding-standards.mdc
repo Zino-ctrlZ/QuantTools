@@ -1,5 +1,5 @@
 ---
-description: Project coding standards — commits, type hints, dates, docstrings, naming, dataclasses
+description: Project coding standards — commits, type hints, dates, docstrings, comments, naming, dataclasses
 alwaysApply: true
 ---
 
@@ -43,6 +43,33 @@ Mandatory for every Python file created or edited. Follow PEP 257 and Google-sty
 2. Blank line, then a 2–4 line overview paragraph.
 3. Blank line, then structured sections with trailing colons: Core Classes, Core Dataclasses, Core Functions, Processing Flow, Risk/Assumptions, Caching Strategy, Usage (as applicable).
 4. Usage section: short doctest-style snippet when practical.
+
+## Inline Comments
+
+Add short, plain comments only when the code alone does not make **what was done** or **intended logic** easy to follow.
+
+- **When to comment:** non-obvious business rules, multi-step flow, surprising defaults, or workarounds.
+- **When to skip:** self-explanatory names, single obvious operations, or restating the code.
+- **Keep it brief:** one line when possible; a short block only for a non-trivial sequence.
+- **Focus on intent:** explain the decision or goal, not how the language works.
+
+Good:
+
+```python
+# Reuse cached manifest timestamps so reruns don't reset date_created.
+date_created = existing_manifest.get("date_created", now)
+
+# Block bootstrap preserves serial correlation in return paths.
+sampled_returns = historical_curve[block_idx].reshape(-1)[:size]
+```
+
+Bad:
+
+```python
+# Loop over all items in the list
+for item in items:
+    ...
+```
 
 ## Naming Conventions
 
