@@ -469,14 +469,16 @@ class ForwardDataManager(BaseDataManager):
         Notes:
             - Only dates present in all three series are retained
             - Spot prices may have NaNs (will be handled by vectorized functions)
-            - Rates and dividend data must be complete (no NaNs allowed)
+            - Rates are ffill then bfill for IRX gaps (middle and leading at slice start)
+            - Rates and dividend data must be complete (no NaNs allowed after ffill/bfill)
         """
         idx = spot.index.intersection(rates.index).intersection(third.index)
         
         spot = spot.reindex(idx)
         rates = rates.reindex(idx)
         third = third.reindex(idx)
-        
+
+        rates = rates.ffill().bfill()  # ponytail: IRX gaps at slice start/middle; upgrade path: fix sanitize/cache at source
 
         if rates.isna().any():
             raise ValueError("NaNs in rates after alignment.")

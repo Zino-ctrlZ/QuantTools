@@ -30,6 +30,7 @@ from ._enums import ArtifactType, Interval, SeriesId, RealTimeFallbackOption
 from .result import RatesResult
 from .base import BaseDataManager, CacheSpec
 from .utils.logging import get_logging_level
+from trade.datamanager.exceptions import EmptyDataException
 
 logger = setup_logger("trade.datamanager.rates", stream_log_level=get_logging_level())
 
@@ -239,16 +240,25 @@ class RatesDataManager(BaseDataManager):
                 return res
         date_str = pd.to_datetime(date).strftime("%Y-%m-%d") if isinstance(date, datetime) else date
 
-        rates_data = self.get_risk_free_rate_timeseries(
-            start_date=date_str,
-            end_date=date_str,
-            interval=interval,
-            str_interval=str_interval,
-        )
+        try:
+            rates_data = self.get_risk_free_rate_timeseries(
+                start_date=date_str,
+                end_date=date_str,
+                interval=interval,
+                str_interval=str_interval,
+            )
+        except EmptyDataException:
+            logger.warning(
+                f"No rate data found for date {date}. Resorting to fallback option `{fallback_option}`."
+            )
+            rates_data = RatesResult(
+                timeseries=pd.Series(dtype=float),
+                symbol=self.DEFAULT_YFINANCE_TICKER,
+            )
 
         ## Date is available, but resolving no data found
         rate = rates_data.timeseries
-        if rate is not None and not rate.empty:
+        if rate is not None and not rate.empty and not rate.isna().any():
             rate = rate.iloc[0:1]
         else:
             logger.warning(
