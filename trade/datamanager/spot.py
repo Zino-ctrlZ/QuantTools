@@ -26,6 +26,7 @@ from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager._enums import RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
+from trade.datamanager.utils.na_logging import log_na_after_retrieval
 
 
 logger = setup_logger("trade.datamanager.spot", stream_log_level=get_logging_level())
@@ -122,6 +123,7 @@ class SpotDataManager(BaseDataManager):
         super().__init__(enable_namespacing=enable_namespacing, symbol=symbol)
         self.symbol = symbol
 
+    @log_na_after_retrieval("spot")
     def get_spot_timeseries(
         self,
         start_date: Union[datetime, str],
@@ -195,6 +197,7 @@ class SpotDataManager(BaseDataManager):
 
         return result
 
+    @log_na_after_retrieval("spot")
     def get_at_time(
         self,
         date: Union[datetime, str],
@@ -263,6 +266,7 @@ class SpotDataManager(BaseDataManager):
         container.fallback_option = fallback_option
         return container
     
+    @log_na_after_retrieval("spot")
     def rt(
         self,
         fallback_option: Optional[RealTimeFallbackOption] = None,

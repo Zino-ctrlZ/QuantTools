@@ -73,6 +73,7 @@ from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.date import is_available_on_date, sync_date_index
 from trade.datamanager.utils.logging import get_logging_level
+from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
 
 
@@ -640,6 +641,7 @@ class VolDataManager(BaseDataManager):
         result.timeseries = european_equiv_iv
         return result
 
+    @log_na_after_retrieval("vol")
     def get_implied_volatility_timeseries(
         self,
         start_date: str,
@@ -833,6 +835,7 @@ class VolDataManager(BaseDataManager):
         else:
             raise ValueError(f"Unsupported option pricing model: {market_model}")
 
+    @log_na_after_retrieval("vol")
     def get_at_time_implied_volatility(
         self,
         as_of: str,
@@ -922,9 +925,11 @@ class VolDataManager(BaseDataManager):
                 as_of = change_to_last_busday(as_of - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
             else:
                 result = VolatilityResult()
-                result.timeseries = pd.Series(dtype=float,
-                                              index=pd.DatetimeIndex([to_datetime(as_of)]),
-                                              values = [float('nan') if fallback_option == RealTimeFallbackOption.NAN else 0.0])
+                result.timeseries = pd.Series(
+                    dtype=float,
+                    index=pd.DatetimeIndex([to_datetime(as_of)]),
+                    data=[float("nan") if fallback_option == RealTimeFallbackOption.NAN else 0.0],
+                )
                 
                 result.key = None
                 result.vol_model = vol_model or self.CONFIG.volatility_model
@@ -965,6 +970,7 @@ class VolDataManager(BaseDataManager):
         iv_timeseries.fallback_option = fallback_option
         return iv_timeseries
 
+    @log_na_after_retrieval("vol")
     def rt(
         self,
         expiration: str,

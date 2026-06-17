@@ -87,6 +87,7 @@ from trade.helpers.helper_types import DATE_HINT
 from trade.optionlib.config.types import DivType
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade import MARKET_CLOSE
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
@@ -156,6 +157,7 @@ class GreekDataManager(BaseDataManager):
         """
         super().__init__(symbol=symbol)
 
+    @log_na_after_retrieval("greeks")
     def get_greeks_timeseries(
         self,
         start_date: DATE_HINT,
@@ -640,6 +642,7 @@ class GreekDataManager(BaseDataManager):
 
         return result
 
+    @log_na_after_retrieval("greeks")
     def get_at_time_greeks(
         self,
         as_of: DATE_HINT,
@@ -774,6 +777,7 @@ class GreekDataManager(BaseDataManager):
         greeks_result_set.fallback_option = fallback_option
         return greeks_result_set
 
+    @log_na_after_retrieval("greeks")
     def rt(
         self,
         expiration: DATE_HINT,

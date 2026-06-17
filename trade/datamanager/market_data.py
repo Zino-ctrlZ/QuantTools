@@ -214,6 +214,7 @@ from trade.datamanager.utils.cache import (
 )
 from trade import SIGNALS_TO_RUN
 from trade.datamanager.utils.logging import get_logging_level
+from trade.datamanager.utils.na_logging import log_na_after_retrieval
 
 
 logger = setup_logger("trade.datamanager.market_data", stream_log_level=get_logging_level())
@@ -878,6 +879,7 @@ class MarketTimeseries:
 
         return self._clip_to_date_range(dividend_yield, self._start, self._end, *args, **kwargs)
 
+    @log_na_after_retrieval("market_timeseries")
     def get_split_factor_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> float | int:
         """Retrieve the split factor for a symbol at a specific date with forward-fill logic.
 
@@ -917,6 +919,7 @@ class MarketTimeseries:
             else:
                 return 1.0
 
+    @log_na_after_retrieval("market_timeseries")
     def get_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> AtIndexResult:
         """Retrieve point-in-time market data snapshot for a symbol at a specific date.
 
@@ -1055,6 +1058,7 @@ class MarketTimeseries:
 
         self.additional_data[additional_data_name][sym] = processed_data
 
+    @log_na_after_retrieval("market_timeseries")
     def get_timeseries(
         self,
         sym: str,

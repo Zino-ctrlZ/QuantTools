@@ -41,6 +41,7 @@ VARS = [
 ]
 
 UTILS_LOGGER_NAME = "trade.datamanager.utils"
+MODEL_NA_LOGGER_NAME = "trade.datamanager.utils.model_na"
 
 
 def set_logging_level(level: str) -> None:

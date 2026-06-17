@@ -20,6 +20,7 @@ import pandas as pd
 from trade.datamanager._enums import OptionSpotEndpointSource, VolatilityModel, OptionPricingModel
 from trade.optionlib.config.types import DivType
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade.datamanager.utils.na_logging import log_model_result_pack_na
 from trade.datamanager.vars import add_to_log_bucket
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
@@ -687,4 +688,5 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             dividend_type=dividend_type,
             market_model=load_request.market_model.name if load_request.market_model else "N/A",
         )
+    log_model_result_pack_na(model_data)
     return model_data
