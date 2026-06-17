@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Union
 import pandas as pd
+import numpy as np # noqa
 from trade.datamanager.exceptions import EmptyDataException
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
-from trade import HOLIDAY_SET
+from trade import HOLIDAY_SET # noqa
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 PANDAS_DATA_HINT = Union[pd.Series, pd.DataFrame]
@@ -61,11 +62,9 @@ def _data_structure_sanitize(
     # Pad to business-day grid, then forward-fill missing vendor prints.
     all_bus_days = pd.date_range(start=df.index.min(), end=df.index.max(), freq="B")
     all_bus_days = [d for d in all_bus_days if d.strftime("%Y-%m-%d") not in HOLIDAY_SET]
-    df = df.reindex(all_bus_days).ffill()
+    df = df.reindex(all_bus_days, fill_value=np.nan)
 
     # Filter out holidays
     df = df[~df.index.strftime("%Y-%m-%d").isin(HOLIDAY_SET)]
-
-    
 
     return df
