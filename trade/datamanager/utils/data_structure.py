@@ -1,5 +1,4 @@
 from datetime import datetime
-import numpy as np
 from typing import Union
 import pandas as pd
 from trade.datamanager.exceptions import EmptyDataException
@@ -21,7 +20,11 @@ def _data_structure_sanitize(
     end: Union[datetime, str],
     source_name: str = "",
 ) -> Union[pd.Series, pd.DataFrame]:
-    """Sanitizes the data structure by removing duplicates and sorting the index."""
+    """Sanitizes timeseries by deduping, filtering, and padding to business days.
+
+    Reindexes to the business-day grid between the first and last observed dates,
+    then forward-fills missing vendor prints (e.g. IRX gaps).
+    """
     logger.info(f"Sanitizing data from {start} to {end}...")
     if not isinstance(df, (pd.Series, pd.DataFrame)):
         raise TypeError(f"Expected pd.Series or pd.DataFrame for sanitization, got {type(df)}")
@@ -55,10 +58,10 @@ def _data_structure_sanitize(
     # Index name=datetime
     df.index.name = "datetime"
 
-    # Resample to business day frequency if not already and fill missing dates with NaN
+    # Pad to business-day grid, then forward-fill missing vendor prints.
     all_bus_days = pd.date_range(start=df.index.min(), end=df.index.max(), freq="B")
     all_bus_days = [d for d in all_bus_days if d.strftime("%Y-%m-%d") not in HOLIDAY_SET]
-    df = df.reindex(all_bus_days, fill_value=np.nan)
+    df = df.reindex(all_bus_days).ffill()
 
     # Filter out holidays
     df = df[~df.index.strftime("%Y-%m-%d").isin(HOLIDAY_SET)]

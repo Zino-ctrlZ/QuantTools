@@ -35,6 +35,7 @@ from trade.datamanager.result import DividendsResult, RatesResult
 from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.vars import get_times_series, load_name
+from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import (
     vectorized_discrete_pv,
@@ -469,8 +470,8 @@ class ForwardDataManager(BaseDataManager):
         Notes:
             - Only dates present in all three series are retained
             - Spot prices may have NaNs (will be handled by vectorized functions)
-            - Rates are ffill then bfill for IRX gaps (middle and leading at slice start)
-            - Rates and dividend data must be complete (no NaNs allowed after ffill/bfill)
+            - Vendor gaps in rates are forward-filled in ``_data_structure_sanitize``; alignment ffill covers reindex holes
+            - Rates and dividend data must be complete (no NaNs allowed after ffill)
         """
         idx = spot.index.intersection(rates.index).intersection(third.index)
         
@@ -478,7 +479,7 @@ class ForwardDataManager(BaseDataManager):
         rates = rates.reindex(idx)
         third = third.reindex(idx)
 
-        rates = rates.ffill().bfill()  # ponytail: IRX gaps at slice start/middle; upgrade path: fix sanitize/cache at source
+        rates = rates.ffill()  # ponytail: alignment reindex only; vendor gaps ffilled in _data_structure_sanitize
 
         if rates.isna().any():
             raise ValueError("NaNs in rates after alignment.")
@@ -638,6 +639,7 @@ class ForwardDataManager(BaseDataManager):
         forward_series = merged[~merged.index.duplicated(keep="last")]
         return forward_series
 
+    @log_na_after_retrieval("forward")
     def get_forward_timeseries(
         self,
         start_date: Union[datetime, str],
@@ -878,6 +880,7 @@ class ForwardDataManager(BaseDataManager):
         _data_structure_cache_it(self, key, value, expire=expire)
         return
 
+    @log_na_after_retrieval("forward")
     def get_forward(
         self,
         date: Union[datetime, str],
@@ -984,6 +987,7 @@ class ForwardDataManager(BaseDataManager):
         result.fallback_option = fallback_option
         return result
     
+    @log_na_after_retrieval("forward")
     def rt(
         self,
         maturity_date: Union[datetime, str],
