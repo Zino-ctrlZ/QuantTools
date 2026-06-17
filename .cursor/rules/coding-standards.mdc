@@ -46,21 +46,62 @@ Mandatory for every Python file created or edited. Follow PEP 257 and Google-sty
 
 ## Inline Comments
 
-Add short, plain comments only when the code alone does not make **what was done** or **intended logic** easy to follow.
+Docstrings are mandatory and describe **what** each unit does. Inline comments explain **why** and **where in the flow** — especially in orchestration and policy code.
 
-- **When to comment:** non-obvious business rules, multi-step flow, surprising defaults, or workarounds.
-- **When to skip:** self-explanatory names, single obvious operations, or restating the code.
-- **Keep it brief:** one line when possible; a short block only for a non-trivial sequence.
-- **Focus on intent:** explain the decision or goal, not how the language works.
+### Comment density tiers
 
-Good:
+| Tier | Examples | Expectation |
+|------|----------|-------------|
+| **A — Simple** | getters, thin wrappers, obvious transforms | Sparse comments (current default) |
+| **B — Orchestration** | multi-helper pipelines, dispatchers, diagnostics (`na_logging.py`) | Module `Processing Flow` + section headers + flow comments at branches |
+| **C — Domain / policy** | alignment rules, fallback enums, sanitize edge cases | Comment every non-obvious business rule |
+
+Signal tier B/C in the module docstring: `Comment density: orchestration` or `Comment density: domain policy`.
+
+### Always comment
+
+- Non-obvious business rules, surprising defaults, and workarounds (`ponytail:` for deliberate shortcuts)
+- **Orchestration modules:** numbered `Processing Flow` in the module docstring; `# --- section ---` headers for multi-step pipelines
+- **Skip lists / constants:** one line explaining why each group is excluded
+- **Heuristics:** arg parsing, fallback order, or debug behavior that logs more than the triggering row alone
+- **Branch intent** at dispatch points (why this path exists, not what the `if` checks)
+
+### Usually skip
+
+- Restating loops, assignments, or names that already convey the operation
+- Single obvious operations in tier-A files
+- Duplicating docstring content verbatim
+
+### Docstring vs inline split
+
+| Docstring | Inline |
+|-----------|--------|
+| API contract, Args/Returns | Position in the pipeline ("step 3 of 4") |
+| Single-function behavior | Cross-function intent and exclusions |
+| Examples | "Why not X" and surprising defaults |
+
+Keep comments in plain English. Prefer short multi-line blocks over single cryptic lines when the reasoning has assumptions or edge cases.
+
+### Preferred style (datamanager convention)
+
+Use `##` for inline comments. Walk through **what we are doing**, **what we assume**, and **what can go wrong** — the way a colleague would explain it aloud.
+
+Good (from `rates.py`):
 
 ```python
-# Reuse cached manifest timestamps so reruns don't reset date_created.
-date_created = existing_manifest.get("date_created", now)
+## Move date back to last business day
+## Using only change_to_last_busday assumes input date is not business day or is holiday
+## Which the function would roll back
+## But there's a possibility input date is today's date but before market open
+## In that case we need to move back one more business day
+date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
+```
 
-# Block bootstrap preserves serial correlation in return paths.
-sampled_returns = historical_curve[block_idx].reshape(-1)[:size]
+Also good (single line when the intent is simple and unambiguous):
+
+```python
+## To avoid infinite recursion in fallback
+force_fail_n += 1
 ```
 
 Bad:
@@ -69,7 +110,12 @@ Bad:
 # Loop over all items in the list
 for item in items:
     ...
+
+# ffwd fill rates
+rates = rates.ffill()
 ```
+
+**Review cue (tier B/C):** Could a new developer follow the pipeline — including edge cases — without opening every helper? If not, add plain-English flow comments.
 
 ## Naming Conventions
 
