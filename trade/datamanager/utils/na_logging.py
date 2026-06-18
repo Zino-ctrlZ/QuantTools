@@ -142,6 +142,11 @@ def _timeseries_values_at_index(
     if timeseries is None or index not in timeseries.index:
         return None
     row = timeseries.loc[index]
+    if isinstance(row, pd.DataFrame):
+        # ponytail: duplicate daily rows from cache/Theta; take last row when index is ambiguous
+        row = row.iloc[-1]
+    elif isinstance(timeseries, pd.Series) and isinstance(row, pd.Series):
+        row = row.iloc[-1]
     if isinstance(timeseries, pd.Series):
         label = timeseries.name or "value"
         return {label: _normalize_log_value(row)}
