@@ -2,7 +2,7 @@ import pandas as pd
 from dataclasses import dataclass
 from datetime import datetime, date
 from pandas.tseries.offsets import BDay
-from trade.helpers.helper import to_datetime, is_busday, is_USholiday
+from trade.helpers.helper import to_datetime, is_busday, is_USholiday, is_pre_market_hours, is_post_market_hours
 from trade.helpers.helper import ny_now
 from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR  # noqa
 from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME, get_enable_caching
@@ -108,6 +108,78 @@ def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
     return synced_series
 
 
+def _max_allowable_eod_end_date() -> datetime:
+    """Return the latest calendar date EOD market data may be requested through.
+
+    Pre-market and regular session use the prior B-day (today's EOD not published).
+    Post-market allows today. Overnight / closed uses prior B-day.
+
+    Returns:
+        Timezone-naive datetime for the runtime EOD upper bound.
+    """
+    today = ny_now()
+    prev_busday = (today - BDay(1)).to_pydatetime()
+    if is_pre_market_hours() or is_market_hours_today():
+        return pd.Timestamp(to_datetime(prev_busday)).tz_localize(None).to_pydatetime()
+    if is_post_market_hours():
+        return pd.Timestamp(to_datetime(today.date())).tz_localize(None).to_pydatetime()
+    ## Weekend / overnight: same as pre-market — no current-session EOD yet.
+    return pd.Timestamp(to_datetime(prev_busday)).tz_localize(None).to_pydatetime()
+
+
+def _sync_equity_date(
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+    *,
+    symbol: Optional[str] = None,
+    min_trade_date: Optional[DATE_HINT] = None,
+) -> Tuple[datetime, datetime]:
+    """Synchronize requested window for non-option EOD timeseries paths.
+
+    Clamps ``end_date`` to the latest EOD observation available at runtime.
+    Optionally floors ``start_date`` when ``min_trade_date`` is supplied (e.g. future
+    per-symbol IPO listing lookup).
+
+    Args:
+        start_date: Requested window start.
+        end_date: Requested window end.
+        symbol: Reserved for future IPO listing-date resolution (unused today).
+        min_trade_date: Optional explicit floor for ``start_date``.
+
+    Returns:
+        Adjusted ``(start_date, end_date)`` as datetimes.
+
+    Examples:
+        >>> start, end = _sync_equity_date("2020-01-01", "2026-06-18", symbol="AAPL")
+    """
+    start_dt = pd.Timestamp(to_datetime(start_date)).tz_localize(None).normalize()
+    end_dt = pd.Timestamp(to_datetime(end_date)).tz_localize(None).normalize()
+    max_allowable = pd.Timestamp(_max_allowable_eod_end_date()).tz_localize(None).normalize()
+
+    if end_dt > max_allowable:
+        logger.warning(
+            "Requested end_date %s is after latest available EOD %s. Adjusting.",
+            end_dt.date(),
+            max_allowable.date(),
+        )
+        end_dt = max_allowable
+
+    if min_trade_date is not None:
+        floor_dt = pd.Timestamp(to_datetime(min_trade_date)).tz_localize(None).normalize()
+        if start_dt < floor_dt:
+            logger.warning(
+                "Requested start_date %s is before min trade date %s. Adjusting.",
+                start_dt.date(),
+                floor_dt.date(),
+            )
+            start_dt = floor_dt
+
+    if start_dt > end_dt:
+        start_dt = end_dt
+
+    return start_dt.to_pydatetime(), end_dt.to_pydatetime()
+
+
 def _sync_date(
     symbol: str,
     start_date: DATE_HINT,
@@ -148,6 +220,8 @@ def _sync_date(
         - Constrains start_date to max(requested_start, min_available_date)
         - Constrains end_date to min(requested_end, max_available_date)
         - Prevents requesting dates outside available data range
+        - EOD: pre-market and market hours cap at previous B-day (EOD not published yet)
+        - QUOTE: pre-market caps at previous B-day; during/post session allows today
     """
 
     ## Process Note:
@@ -200,7 +274,7 @@ def _sync_date(
                 end_date = min(available_dates, key=lambda d: abs(d - end_date))
         return start_date, end_date
 
-    is_market_hrs = is_market_hours_today()
+    is_premarket = is_pre_market_hours()
     today = ny_now()
     timestamp_today = pd.Timestamp(today.date())
     timestamp_exp = pd.Timestamp(to_datetime(expiration).date())
@@ -213,9 +287,17 @@ def _sync_date(
         """Returns the latest date we should allow for this request at runtime."""
         if not is_expired:
             if endpoint_source == OptionSpotEndpointSource.EOD:
-                max_allowed_today = prev_busday if is_market_hrs else today
+                max_allowed_today = _max_allowable_eod_end_date()
+            
+            ## If QUOTE source, live prints exist during/post session; pre-market use prior B-day.
+            elif endpoint_source == OptionSpotEndpointSource.QUOTE:
+                if is_premarket:
+                    max_allowed_today = prev_busday
+                else:
+                    max_allowed_today = today
+
             else:
-                max_allowed_today = today
+                raise ValueError(f"Invalid endpoint source: {endpoint_source}. Must be EOD or QUOTE.")
 
             return min(timestamp_exp, pd.Timestamp(max_allowed_today.date()))
 

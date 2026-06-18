@@ -33,9 +33,9 @@ import pandas as pd
 
 from trade.datamanager.result import ModelResultPack, Result
 from trade.helpers.Logging import setup_logger
-from trade.datamanager.utils.logging import MODEL_NA_LOGGER_NAME, get_logging_level
+from trade.datamanager.utils.logging import MODEL_NA_LOGGER_NAME, get_logging_level # noqa
 
-na_logger = setup_logger(MODEL_NA_LOGGER_NAME, stream_log_level=get_logging_level())
+na_logger = setup_logger(MODEL_NA_LOGGER_NAME, stream_log_level="CRITICAL")
 
 ## Field exclusion sets for param snapshots (timeseries values are logged separately).
 ##

@@ -1,6 +1,23 @@
 from enum import Enum
 from typing import Literal, get_args
 from trade.optionlib.config.types import DivType # noqa
+from enum import IntEnum
+
+
+class CertificationLevel(IntEnum):
+    """
+    Guarantee level for data certification.
+
+    Levels:
+        L1: Return as-is; log structural issues (dupes, gaps, NaNs).
+        L2: Raise on unexplained violations.
+        L3: Fix issues (ffill, dedupe, resample), then certify.
+    """
+
+    L1 = 1
+    L2 = 2
+    L3 = 3
+
 
 class Interval(str, Enum):
     INTRADAY = "intraday"  # historical intraday timestamp

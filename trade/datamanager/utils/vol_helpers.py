@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional, Tuple, List
+from typing import Any, Optional, Tuple, List, Union
 import pandas as pd
 from trade.datamanager.result import (
     DividendsResult,
@@ -9,14 +9,17 @@ from trade.datamanager.result import (
     RatesResult,
     OptionSpotResult,
     ModelResultPack,
+    GreekResultSet,
 )
-from trade.datamanager.utils.date import sync_date_index, time_distance_helper, _sync_date
+from trade.datamanager.utils.date import sync_date_index, time_distance_helper, _sync_date, DATE_HINT
 from trade.datamanager.base import BaseDataManager
-from trade.datamanager._enums import OptionSpotEndpointSource
+from trade.datamanager._enums import CertificationLevel, OptionSpotEndpointSource
 from trade.datamanager.utils.cache import (
     _check_cache_for_timeseries_data_structure,
     _data_structure_cache_it,
 )
+from trade.datamanager.utils.classification import resolve_checked_missing_dates_for_option_contract
+from trade.datamanager.certification.integration import certify_manager_result
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
@@ -56,7 +59,79 @@ def _prepare_vol_calculation_setup(
     start_str = to_datetime(start_date).strftime("%Y-%m-%d")
     end_str = to_datetime(end_date).strftime("%Y-%m-%d")
 
+    result.endpoint_source = endpoint_source
+
     return result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date
+
+
+def resolve_checked_missing_dates_for_option_artifact(
+    *,
+    symbol: str,
+    strike: float,
+    right: str,
+    expiration: DATE_HINT,
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+) -> List[DATE_HINT]:
+    """Resolve vendor checked-missing dates for vol/greeks (shared with option spot).
+
+    Always derived from ``get_option_dates`` via ``classify_option_spot_dates`` —
+    not read from vol/greek cache. Spot, vol, and greeks share the same vendor
+    calendar for a contract; cache only stores this metadata on write for coverage
+    checks, it is not the source of truth for resolution.
+
+    Args:
+        symbol: Underlying ticker.
+        strike: Option strike.
+        right: Option right.
+        expiration: Option expiration.
+        start_date: Sync'd certification/cache window start.
+        end_date: Sync'd certification/cache window end.
+
+    Returns:
+        Vendor-confirmed missing business dates for the contract in-window.
+    """
+    ## Vendor list_dates defines gaps for spot, vol, and greeks on the same contract.
+    return resolve_checked_missing_dates_for_option_contract(
+        symbol=symbol,
+        strike=strike,
+        right=right,
+        expiration=to_datetime(expiration),
+        valid_start=start_date,
+        valid_end=end_date,
+    )
+
+
+def _certify_option_model_result(
+    result: Union[VolatilityResult, GreekResultSet],
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+    *,
+    cache_key: Optional[str] = None,
+    checked_missing_dates: Optional[List[DATE_HINT]] = None,
+    certification_level: Optional[CertificationLevel] = None,
+) -> Union[VolatilityResult, GreekResultSet]:
+    """Certify vol/greek result at return boundary after sanitize.
+
+    Args:
+        result: Assembled vol or greek result.
+        start_date: Sync'd certification window start.
+        end_date: Sync'd certification window end.
+        cache_key: Cache key when ``result.key`` is not yet set.
+        checked_missing_dates: Vendor checked-missing dates for option artifacts.
+        certification_level: Optional per-call level override.
+
+    Returns:
+        Result with ``is_certified=True`` after certifier completes.
+    """
+    return certify_manager_result(
+        result,
+        start_date,
+        end_date,
+        cache_key=cache_key,
+        checked_missing_dates=checked_missing_dates,
+        level=certification_level,
+    )
 
 
 def _handle_cache_for_vol(
@@ -65,7 +140,7 @@ def _handle_cache_for_vol(
     start_date: datetime,
     end_date: datetime,
     result: VolatilityResult,
-    optional_name: Optional[str] = "vol"
+    optional_name: Optional[str] = "vol",
 ) -> Tuple[Optional[pd.Series], bool, datetime, datetime, Optional[VolatilityResult]]:
     """Handle cache checking logic for volatility calculations.
 
@@ -103,15 +178,22 @@ def _merge_and_cache_vol_result(
     key: str,
     start_str: str,
     end_str: str,
+    *,
+    checked_missing_dates: Optional[List[DATE_HINT]] = None,
 ) -> pd.Series:
-    """Merge with cache if partial, cache result, and sanitize."""
+    """Merge with cache if partial, cache result with checked-missing metadata, and sanitize."""
     # Merge with cached data if partial
     if cached_data is not None and is_partial:
         merged = pd.concat([cached_data, iv_timeseries])
         iv_timeseries = merged[~merged.index.duplicated(keep="last")].sort_index()
 
-    # Cache the fetched data
-    _data_structure_cache_it(manager, key, iv_timeseries)
+    # Cache the fetched data; checked-missing dates accumulate on the cache entry.
+    _data_structure_cache_it(
+        manager,
+        key,
+        iv_timeseries,
+        checked_missing_dates=checked_missing_dates,
+    )
 
     # Sanitize before returning
     iv_timeseries = _data_structure_sanitize(

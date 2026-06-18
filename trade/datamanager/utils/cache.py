@@ -109,6 +109,7 @@ class _CachedData:
         - missing_start_date: The earliest missing date if partially present, else start_dt
         - missing_end_date: The latest missing date if partially present, else end_dt
         """
+
         if to_datetime(end_dt).date() == date.today() and datetime.now().time() < MARKET_OPEN:
             logger.info(
                 f"Requested end date {end_dt} is today but market has not opened yet. Adjusting end date to last business day."
@@ -370,6 +371,25 @@ def _check_cache_for_timeseries_data_structure(
         start_dt=start_dt,
         end_dt=end_dt,
     )
+
+
+def _get_checked_missing_dates_from_cache(
+    manager: BaseDataManager,
+    key: str,
+) -> List[DATE_HINT]:
+    """Read vendor checked-missing dates stored on a cache entry.
+
+    Args:
+        manager: Data manager that owns the cache namespace.
+        key: Cache key for the vol/greek/spot timeseries entry.
+
+    Returns:
+        Checked-missing dates from ``_CachedData`` metadata, or ``[]`` when absent.
+    """
+    cached_entry = manager.get(key, default=None)
+    if isinstance(cached_entry, _CachedData):
+        return list(cached_entry.checked_missing_dates or [])
+    return []
 
 
 def _data_structure_cache_check_missing(

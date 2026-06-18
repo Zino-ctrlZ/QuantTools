@@ -9,6 +9,8 @@ Core Dataclasses:
 Core Functions:
     classify_option_spot_dates: Splits a fetched DataFrame into observed and
         checked-missing dates given the requested valid window.
+    resolve_checked_missing_dates_for_option_contract: Vendor-calendar gaps for a
+        contract window without loading spot timeseries (vol/greeks/certifier).
 
 Processing Flow:
     1. Build the full set of expected business dates from the valid window.
@@ -163,9 +165,11 @@ def classify_option_spot_dates(
     checked_missing = list(set(expected_bus_days.date) - set(trading_days.date))
 
     if fetched is None or fetched.empty:
+        ## No spot rows loaded — vendor calendar still defines which dates are absent for
+        ## the whole contract (spot, vol, greeks share the same list_dates coverage).
         return DateClassification(
             observed_dates=pd.DatetimeIndex([]),
-            checked_missing_dates=list(expected_bus_days.date),
+            checked_missing_dates=checked_missing,
         )
 
     if not isinstance(fetched.index, pd.DatetimeIndex):
@@ -184,3 +188,44 @@ def classify_option_spot_dates(
         observed_dates=observed_idx,
         checked_missing_dates=checked_missing,
     )
+
+
+def resolve_checked_missing_dates_for_option_contract(
+    symbol: str,
+    strike: float,
+    right: str,
+    expiration: datetime,
+    valid_start: Union[datetime, str],
+    valid_end: Union[datetime, str],
+) -> List[datetime]:
+    """Resolve vendor checked-missing dates for an option contract window.
+
+    Uses ``get_option_dates`` (vendor list_dates) against the sync'd B-day window.
+    Spot, vol, and greeks share the same vendor gaps — no spot timeseries load required.
+
+    Args:
+        symbol: Underlying ticker.
+        strike: Option strike.
+        right: Option right (call/put).
+        expiration: Option expiration.
+        valid_start: Sync'd window start (from ``_sync_date``).
+        valid_end: Sync'd window end (from ``_sync_date``).
+
+    Returns:
+        Business dates in the window that the vendor does not list for this contract.
+
+    Examples:
+        >>> gaps = resolve_checked_missing_dates_for_option_contract(
+        ...     "AAPL", 150.0, "C", datetime(2026, 6, 20), "2026-01-05", "2026-01-09"
+        ... )
+    """
+    classification = classify_option_spot_dates(
+        fetched=pd.DataFrame(),
+        symbol=symbol,
+        strike=strike,
+        right=right,
+        expiration=expiration,
+        valid_start=valid_start,
+        valid_end=valid_end,
+    )
+    return list(classification.checked_missing_dates)

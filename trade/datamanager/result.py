@@ -3,14 +3,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Union
 from trade.optionlib.config.types import DivType
 from ._enums import (
-    GreekType, 
-    OptionSpotEndpointSource, 
-    OptionPricingModel, 
-    VolatilityModel, 
-    SeriesId, 
-    ModelPrice, 
+    GreekType,
+    OptionSpotEndpointSource,
+    OptionPricingModel,
+    VolatilityModel,
+    SeriesId,
+    ModelPrice,
     RealTimeFallbackOption,
-    AVAILABLE_GREEKS
+    AVAILABLE_GREEKS,
 )
 from .utils.date import DATE_HINT
 from typeguard import check_type
@@ -20,12 +20,20 @@ from typing import get_type_hints
 
 @dataclass
 class Result:
-    """Base class for all data manager result containers."""
+    """Base class for all data manager result containers.
+
+    Attributes:
+        is_certified: True after the certifier has run on this return (not the same as
+            ``CertificationResult.success``).
+    """
 
     model_input_keys: Optional[Dict[str, Any]] = None
     rt: Optional[bool] = False
     fallback_option: Optional[RealTimeFallbackOption] = None
     timeseries: Optional[Union[pd.Series, pd.DataFrame]] = None
+    endpoint_source: Optional[OptionSpotEndpointSource] = None
+    key: Optional[str] = None
+    is_certified: bool = False
 
     def __post_init__(self):
         """Simple formatting"""
@@ -71,8 +79,41 @@ class _EquityResultsBase(Result):
 
 
 @dataclass
+class MarketTimeseriesFactorResult(_EquityResultsBase):
+    """Throwaway certification wrapper for MarketTimeseries factor payloads.
+
+    Accepts ``Series`` or ``DataFrame`` timeseries (spot/chain_spot are OHLCV frames).
+    Not returned to callers — used only at the certification boundary in
+    ``certification.market_timeseries``.
+    """
+
+    timeseries: Optional[Union[pd.Series, pd.DataFrame]] = None
+    market_factor: Optional[str] = None
+    key: Optional[str] = None
+
+    def is_empty(self) -> bool:
+        """Return True when the factor payload is missing or has no rows."""
+        return self.timeseries is None or self.timeseries.empty
+
+    def _additional_repr_fields(self) -> Dict[str, Any]:
+        """Provides market-factor fields for string representation."""
+        return {
+            "symbol": self.symbol,
+            "market_factor": self.market_factor,
+            "is_empty": self.is_empty(),
+        }
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Normalize datetime index naming before type validation."""
+        if name == "timeseries" and value is not None and isinstance(value, (pd.Series, pd.DataFrame)):
+            value.index.name = "datetime"
+        super().__setattr__(name, value)
+
+
+@dataclass
 class DividendsResult(_EquityResultsBase):
     """Contains dividend schedule or yield data for a date range."""
+
     timeseries: Optional[pd.Series] = None
     dividend_type: Optional[DivType] = None
     key: Optional[str] = None
@@ -83,7 +124,7 @@ class DividendsResult(_EquityResultsBase):
         if self.dividend_type == DivType.DISCRETE:
             return self.timeseries
         return None
-    
+
     @daily_discrete_dividends.setter
     def daily_discrete_dividends(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
@@ -93,11 +134,10 @@ class DividendsResult(_EquityResultsBase):
         if self.dividend_type == DivType.CONTINUOUS:
             return self.timeseries
         return None
-    
+
     @daily_continuous_dividends.setter
     def daily_continuous_dividends(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
-        
 
     ## For schedule timeseries, this will be the actual schedule keys
     model_input_keys: Optional[Dict[str, Any]] = None
@@ -122,9 +162,9 @@ class DividendsResult(_EquityResultsBase):
             "is_empty": self.is_empty(),
             "undo_adjust": self.undo_adjust,
         }
-    
+
     def __setattr__(self, name, value):
-        
+
         ## Intercept dataframe/series, and add name attribute if missing. Only add name for series.
         ## Not ideal to do it here, but easier than finding all places where timeseries is set.
         if name == "timeseries" and value is not None:
@@ -133,8 +173,9 @@ class DividendsResult(_EquityResultsBase):
                 if isinstance(value, pd.Series):
                     if value.name is None:
                         value.name = "dividends"
-        
+
         super().__setattr__(name, value)
+
 
 @dataclass
 class RatesResult(Result):
@@ -146,7 +187,7 @@ class RatesResult(Result):
     @property
     def daily_risk_free_rates(self) -> Optional[pd.Series]:
         return self.timeseries
-    
+
     @daily_risk_free_rates.setter
     def daily_risk_free_rates(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
@@ -154,7 +195,7 @@ class RatesResult(Result):
     def is_empty(self) -> bool:
         """Checks if rate data is missing or empty."""
         return self.timeseries is None or self.timeseries.empty
-    
+
     def _additional_repr_fields(self):
         """Provides rate-specific fields for string representation."""
         return {
@@ -180,7 +221,7 @@ class RatesResult(Result):
 @dataclass
 class ForwardResult(_EquityResultsBase):
     """Contains forward price data (discrete or continuous dividend model)."""
-    
+
     timeseries: Optional[pd.Series] = None
     dividend_type: Optional[DivType] = None
     key: Optional[str] = None
@@ -196,7 +237,7 @@ class ForwardResult(_EquityResultsBase):
         if self.dividend_type == DivType.DISCRETE:
             return self.timeseries
         return None
-    
+
     @daily_discrete_forward.setter
     def daily_discrete_forward(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
@@ -206,11 +247,10 @@ class ForwardResult(_EquityResultsBase):
         if self.dividend_type == DivType.CONTINUOUS:
             return self.timeseries
         return None
-    
+
     @daily_continuous_forward.setter
     def daily_continuous_forward(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
-
 
     def is_empty(self) -> bool:
         """Checks if forward price data is missing or empty."""
@@ -256,11 +296,11 @@ class SpotResult(_EquityResultsBase):
 
     ## For spot timeseries. This is nothing but an indicator of the  source of spot data.
     model_input_keys: Optional[Dict[str, Any]] = None
-    
+
     @property
     def daily_spot(self) -> Optional[pd.Series]:
         return self.timeseries
-    
+
     @daily_spot.setter
     def daily_spot(self, value: Optional[pd.Series]) -> None:
         self.timeseries = value
@@ -316,10 +356,12 @@ class _OptionResultsBase(Result):
     def __repr__(self) -> str:
         """Delegates to base Result repr."""
         return super().__repr__()
-    
+
+
 @dataclass
 class _OptionModelResultsBase(_OptionResultsBase):
     """Base class for option model result containers."""
+
     endpoint_source: Optional[OptionSpotEndpointSource] = None
     market_model: Optional[OptionPricingModel] = None
     vol_model: Optional[VolatilityModel] = None
@@ -334,11 +376,10 @@ class _OptionModelResultsBase(_OptionResultsBase):
 @dataclass
 class OptionSpotResult(_OptionResultsBase):
     """Container for option spot price timeseries data."""
-    
+
     timeseries: Optional[pd.DataFrame] = None
     key: Optional[str] = None
     endpoint_source: Optional[OptionSpotEndpointSource] = None
-    
 
     ## For option spot timeseries, this will be the actual endpoint parameters
     model_input_keys: Optional[Dict[str, Any]] = None
@@ -346,7 +387,7 @@ class OptionSpotResult(_OptionResultsBase):
     @property
     def daily_option_spot(self) -> Optional[pd.DataFrame]:
         return self.timeseries
-    
+
     @daily_option_spot.setter
     def daily_option_spot(self, value: Optional[pd.DataFrame]) -> None:
         self.timeseries = value
@@ -355,7 +396,7 @@ class OptionSpotResult(_OptionResultsBase):
     def price(self) -> pd.Series:
         if self.rt:
             return self.midpoint
-        
+
         if not self.is_empty():
             if self.model_price == ModelPrice.CLOSE:
                 p = self.daily_option_spot.get("close")
@@ -371,9 +412,11 @@ class OptionSpotResult(_OptionResultsBase):
                 p = self.daily_option_spot.get("midpoint")
         else:
             return pd.Series(name="price", index=pd.DatetimeIndex([]), dtype=float)
-        
+
         if p is None:
-            raise ValueError(f"Requested model price '{self.model_price}' not found in option spot data. Available columns: {self.daily_option_spot.columns.tolist()}")
+            raise ValueError(
+                f"Requested model price '{self.model_price}' not found in option spot data. Available columns: {self.daily_option_spot.columns.tolist()}"
+            )
         return p
 
     @property
@@ -473,12 +516,14 @@ class GreekResultSet(_OptionModelResultsBase):
 
     def is_empty(self) -> bool:
         return self.timeseries is None or self.timeseries.empty
-    
+
     def _additional_repr_fields(self) -> Dict[str, Any]:
         super_additional = super()._additional_repr_fields()
         return {
             **super_additional,
-            "Available Greeks": [g for g in AVAILABLE_GREEKS if self.timeseries is not None and g in self.timeseries.columns],
+            "Available Greeks": [
+                g for g in AVAILABLE_GREEKS if self.timeseries is not None and g in self.timeseries.columns
+            ],
             "empty": self.is_empty(),
         }
 
@@ -490,31 +535,31 @@ class GreekResultSet(_OptionModelResultsBase):
         if self.timeseries is not None and GreekType.DELTA.value in self.timeseries.columns:
             return self.timeseries[GreekType.DELTA.value]
         return None
-    
+
     @property
     def gamma(self) -> Optional[pd.Series]:
         if self.timeseries is not None and GreekType.GAMMA.value in self.timeseries.columns:
             return self.timeseries[GreekType.GAMMA.value]
         return None
-    
+
     @property
     def theta(self) -> Optional[pd.Series]:
         if self.timeseries is not None and GreekType.THETA.value in self.timeseries.columns:
             return self.timeseries[GreekType.THETA.value]
         return None
-    
+
     @property
     def vega(self) -> Optional[pd.Series]:
         if self.timeseries is not None and GreekType.VEGA.value in self.timeseries.columns:
             return self.timeseries[GreekType.VEGA.value]
         return None
-    
+
     @property
     def rho(self) -> Optional[pd.Series]:
         if self.timeseries is not None and GreekType.RHO.value in self.timeseries.columns:
             return self.timeseries[GreekType.RHO.value]
         return None
-    
+
     @property
     def volga(self) -> Optional[pd.Series]:
         if self.timeseries is not None and GreekType.VOLGA.value in self.timeseries.columns:
@@ -555,7 +600,6 @@ class TheoreticalPriceResult(_OptionModelResultsBase):
                         value.name = "theoretical_price"
 
         super().__setattr__(name, value)
-    
 
 
 @dataclass
@@ -583,6 +627,8 @@ class ScenariosResult(_OptionModelResultsBase):
 
     def __repr__(self) -> str:
         return super().__repr__()
+
+
 @dataclass
 class ModelResultPack(Result):
     """
@@ -640,7 +686,7 @@ class ModelResultPack(Result):
 
     def __repr__(self) -> str:
         return super().__repr__()
-    
+
     def list_all_loaded(self) -> Dict[str, bool]:
         return {
             "spot": self.spot is not None and not self.spot.is_empty(),
@@ -651,7 +697,7 @@ class ModelResultPack(Result):
             "vol": self.vol is not None and not self.vol.is_empty(),
             "greek": self.greek is not None and not self.greek.is_empty(),
         }
-    
+
     def any_loaded(self) -> bool:
         return any(
             [
@@ -664,7 +710,7 @@ class ModelResultPack(Result):
                 self.greek is not None and not self.greek.is_empty(),
             ]
         )
-    
+
     def all_loaded(self) -> bool:
         return all(
             [
@@ -688,4 +734,3 @@ class ModelResultPack(Result):
     #         "vol": self.load_vol,
     #     }
     #     return all([mapping[req] for req in requested if req in mapping])
-

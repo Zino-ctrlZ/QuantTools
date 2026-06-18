@@ -9,7 +9,8 @@ from ._enums import (
     OptionPricingModel,
     VolatilityModel,
     RealTimeFallbackOption,
-    ModelPrice
+    ModelPrice,
+    CertificationLevel
 )
 from typeguard import check_type
 from typing import get_type_hints
@@ -32,7 +33,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     filter_out_special_dividends: bool = True
     greeks_to_compute: Union[List[GreekType], GreekType] = GreekType.GREEKS
     is_live: bool = False
-
+    certification_level: CertificationLevel = CertificationLevel.L2
+    allow_rates_resample_on_missing: bool = False
 
     def assert_valid(self) -> None:
         """Validates all configuration values against business rules."""
@@ -69,3 +71,30 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
         if hint is not None:
             check_type(value, hint)
         super().__setattr__(name, value)
+
+
+def setup_config_for_live() -> None:
+    """Setup the configuration for live trading."""
+    config = OptionDataConfig()
+    config.is_live = True
+
+    ## Fix on fail
+    config.certification_level = CertificationLevel.L3
+    
+    ## Address unique rates data issues
+    config.allow_rates_resample_on_missing = True
+
+    ## Pricing Model Schematic: Binomial Tree for American Options
+    config.option_model = OptionPricingModel.BINOMIAL
+    config.dividend_type = DivType.DISCRETE
+    config.volatility_model = VolatilityModel.MARKET
+    config.n_steps = 500
+
+    ## Always use split-adjusted prices
+    config.undo_adjust = True
+
+    ## Use last available rate for real-time fallback
+    config.real_time_fallback_option = RealTimeFallbackOption.USE_LAST_AVAILABLE
+
+    ## Always use midpoint price
+    config.model_price = ModelPrice.MIDPOINT
