@@ -58,8 +58,10 @@ from trade.datamanager.utils.vol_helpers import (
     _handle_cache_for_vol,
     _merge_and_cache_vol_result,
     _prepare_vol_calculation_setup,
+    resolve_checked_missing_dates_for_option_artifact,
+    _certify_option_model_result,
 )
-from trade.datamanager.utils.date import sync_date_index, is_available_on_date
+from trade.datamanager.utils.date import sync_date_index
 from trade.datamanager.utils.model import _load_model_data_timeseries, LoadRequest
 from trade.datamanager.utils.greeks_helpers import _prepare_greeks_to_compute, _get_prefilled_greek_result_set
 from trade.datamanager._enums import (
@@ -70,6 +72,7 @@ from trade.datamanager._enums import (
     VolatilityModel,
     RealTimeFallbackOption,
     ArtifactType,
+    CertificationLevel,
     Interval,
 )
 from trade.optionlib.greeks.numerical.binomial import binomial_tree_greeks
@@ -79,7 +82,7 @@ from trade.optionlib.assets.dividend import (
     get_vectorized_continuous_dividends,
     vector_convert_to_time_frac,
 )
-from trade.helpers.helper import to_datetime, change_to_last_busday
+from trade.helpers.helper import to_datetime
 from trade.datamanager._enums import SeriesId
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.config import OptionDataConfig
@@ -88,6 +91,7 @@ from trade.optionlib.config.types import DivType
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 from trade.datamanager.utils.na_logging import log_na_after_retrieval
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade import MARKET_CLOSE
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
@@ -157,7 +161,6 @@ class GreekDataManager(BaseDataManager):
         """
         super().__init__(symbol=symbol)
 
-    @log_na_after_retrieval("greeks")
     def get_greeks_timeseries(
         self,
         start_date: DATE_HINT,
@@ -177,6 +180,7 @@ class GreekDataManager(BaseDataManager):
         market_model: Optional[OptionPricingModel] = None,
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> GreekResultSet:
         """Returns daily option greeks timeseries using specified pricing model.
 
@@ -289,6 +293,7 @@ class GreekDataManager(BaseDataManager):
                 endpoint_source=endpoint_source,
                 undo_adjust=undo_adjust,
                 model_price=model_price,
+                certification_level=certification_level,
             )
         elif market_model == OptionPricingModel.BSM or market_model == OptionPricingModel.EURO_EQIV:
             return self._get_bsm_greeks(
@@ -308,6 +313,7 @@ class GreekDataManager(BaseDataManager):
                 endpoint_source=endpoint_source,
                 undo_adjust=undo_adjust,
                 model_price=model_price,
+                certification_level=certification_level,
             )
         else:
             raise ValueError(f"Unsupported market model: {market_model}")
@@ -330,6 +336,7 @@ class GreekDataManager(BaseDataManager):
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> GreekResultSet:
         """Compute option greeks using Cox-Ross-Rubinstein binomial tree model.
 
@@ -376,7 +383,7 @@ class GreekDataManager(BaseDataManager):
         ## biomial tree greeks calculation function calculates all greeks at once. So I'll check cache
         ## for a greek and if missing, compute all and store in cache.
         ## endpoint_source & div_type will resolved at `get_timeseries` level; the frontend function.
-        
+
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
         model_price = model_price or self.CONFIG.model_price
         result = result or GreekResultSet()
@@ -406,15 +413,33 @@ class GreekDataManager(BaseDataManager):
         result.key = key
         result.model_price = model_price
 
+        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
         if early_return:
             result.timeseries = cached_data[greeks_to_compute]
-            return result
-        
+            return _certify_option_model_result(
+                result,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                certification_level=certification_level,
+            )
+
         expiration_ts = to_datetime(expiration)
-        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        expiration_ts = expiration_ts.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
         request = self._create_load_request(
             start_date=start_date,
             end_date=end_date,
@@ -468,10 +493,26 @@ class GreekDataManager(BaseDataManager):
         greeks_df = pd.DataFrame(greeks_res_dict, index=S.index)
 
         ## Use utility: Merge and cache
-        greeks_df = _merge_and_cache_vol_result(self, greeks_df, cached_data, is_partial, key, start_str, end_str)
+        greeks_df = _merge_and_cache_vol_result(
+            self,
+            greeks_df,
+            cached_data,
+            is_partial,
+            key,
+            start_str,
+            end_str,
+            checked_missing_dates=checked_missing_dates,
+        )
         result.timeseries = greeks_df[greeks_to_compute]
 
-        return result
+        return _certify_option_model_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=checked_missing_dates,
+            certification_level=certification_level,
+        )
 
     def _get_bsm_greeks(
         self,
@@ -492,6 +533,7 @@ class GreekDataManager(BaseDataManager):
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> GreekResultSet:
         """Compute option greeks using Black-Scholes-Merton model.
 
@@ -568,12 +610,28 @@ class GreekDataManager(BaseDataManager):
         result.model_price = model_price
         result.endpoint_source = endpoint_source
 
+        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
         if early_return:
             result.timeseries = cached_data[greeks_to_compute]
-            return result
+            return _certify_option_model_result(
+                result,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                certification_level=certification_level,
+            )
 
         request = self._create_load_request(
             start_date=start_date,
@@ -600,7 +658,9 @@ class GreekDataManager(BaseDataManager):
         f = model_data.forward.timeseries if request.load_forward else f.timeseries
         s, f, r, d, vol = sync_date_index(S, f, r, d, vol)
         expiration_ts = to_datetime(expiration)
-        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        expiration_ts = expiration_ts.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
 
         ## Convert dividends to present value amounts
         if dividend_type == DivType.DISCRETE:
@@ -637,10 +697,26 @@ class GreekDataManager(BaseDataManager):
         greeks_df = pd.DataFrame(greeks_res_dict, index=s.index)
 
         ## Use utility: Merge and cache
-        greeks_df = _merge_and_cache_vol_result(self, greeks_df, cached_data, is_partial, key, start_str, end_str)
+        greeks_df = _merge_and_cache_vol_result(
+            self,
+            greeks_df,
+            cached_data,
+            is_partial,
+            key,
+            start_str,
+            end_str,
+            checked_missing_dates=checked_missing_dates,
+        )
         result.timeseries = greeks_df[greeks_to_compute]
 
-        return result
+        return _certify_option_model_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=checked_missing_dates,
+            certification_level=certification_level,
+        )
 
     @log_na_after_retrieval("greeks")
     def get_at_time_greeks(
@@ -665,117 +741,66 @@ class GreekDataManager(BaseDataManager):
     ) -> GreekResultSet:
         """Get option greeks at a specific point in time.
 
-        Computes option sensitivities for a single valuation date. Handles non-business days
-        and holidays according to fallback_option setting. Useful for historical analysis on
-        specific dates or intraday calculations.
-
-        Args:
-            as_of: Valuation date (YYYY-MM-DD string or datetime).
-            expiration: Option expiration date (YYYY-MM-DD string or datetime).
-            strike: Strike price of the option.
-            right: Option type ('c' for call, 'p' for put).
-            dividend_type: DivType.DISCRETE or DivType.CONTINUOUS. Defaults to CONFIG setting.
-            greeks_to_compute: Which greeks to compute. Single GreekType or list of GreekTypes.
-            S: Optional pre-computed spot prices. If None, loads automatically.
-            f: Optional pre-computed forward prices. If None, loads automatically.
-            r: Optional pre-computed risk-free rates. If None, loads automatically.
-            d: Optional pre-computed dividend data. If None, loads automatically.
-            vol: Optional pre-computed implied volatilities. If None, loads automatically.
-            endpoint_source: Option data source (ORATS, HIST, QUOTE). Defaults to CONFIG setting.
-            market_model: OptionPricingModel.BSM or BINOMIAL. Defaults to CONFIG setting.
-            undo_adjust: If True, uses split-adjusted prices.
-            fallback_option: How to handle non-business days (RAISE_ERROR, USE_LAST_AVAILABLE,
-                NAN, ZERO). Defaults to CONFIG setting.
-            model_price: Which price to use (CLOSE, OPEN, MIDPOINT). Defaults to CONFIG setting.
-
-        Returns:
-            GreekResultSet containing single-row DataFrame with computed greeks as columns,
-            plus model metadata and cache key.
-
-        Raises:
-            ValueError: If as_of is not a business day and fallback_option is RAISE_ERROR.
-
-        Examples:
-            >>> # Get greeks for a specific date
-            >>> greek_mgr = GreekDataManager("AAPL")
-            >>> result = greek_mgr.get_at_time_greeks(
-            ...     as_of="2025-01-15",
-            ...     expiration="2025-06-20",
-            ...     strike=150.0,
-            ...     right="c"
-            ... )
-            >>> print(result.timeseries[["delta", "gamma"]].iloc[0])
-
-            >>> # Handle non-business day with last available data
-            >>> from trade.datamanager._enums import RealTimeFallbackOption
-            >>> result = greek_mgr.get_at_time_greeks(
-            ...     as_of="2025-01-18",  # Saturday
-            ...     expiration="2025-06-20",
-            ...     strike=150.0,
-            ...     right="c",
-            ...     fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE
-            ... )
+        Fetches a 10-business-day lookback window certified at L1, then resolves
+        greeks per ``fallback_option``.
         """
-
         vol_model = VolatilityModel.MARKET
         dividend_type = dividend_type or self.CONFIG.dividend_type
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
         market_model = market_model or self.CONFIG.option_model
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
         model_price = model_price or self.CONFIG.model_price
-        if not is_available_on_date(as_of):
-            logger.warning(
-                f"Valuation date {as_of} is not a business day or holiday. Resolving using fallback options {fallback_option}."
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Valuation date {as_of} is not a business day or holiday.")
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## Using only change_to_last_busday assumes input date is not business day or is holiday
-                ## Which the function would roll back
-                ## But there's a possibility input date is today's date but before market open
-                ## In that case we need to move back one more business day
-                logger.info("Using last available business day for valuation date.")
-                as_of = change_to_last_busday((as_of - pd.tseries.offsets.BDay(1)), time_of_day_aware=False)
-                logger.info(f"New valuation date: {as_of}")
-            else:
-                result = GreekResultSet()
-                v = float("nan") if fallback_option == RealTimeFallbackOption.NAN else 0.0
-                value_dict = {g: [v] for g in _prepare_greeks_to_compute(greeks_to_compute)}
-                result.timeseries = pd.DataFrame(data=value_dict, index=pd.DatetimeIndex([to_datetime(as_of)]))
-                result.key = None
-                result.vol_model = vol_model or self.CONFIG.volatility_model
-                result.market_model = market_model or self.CONFIG.option_model
-                result.expiration = to_datetime(expiration)
-                result.right = right
-                result.strike = strike
-                result.endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
-                result.dividend_type = dividend_type or self.CONFIG.dividend_type
-                result.symbol = self.symbol
-                result.model_price = model_price
-                result.fallback_option = fallback_option
-                return result
 
-        greeks_result_set = self.get_greeks_timeseries(
-            start_date=as_of,
-            end_date=as_of,
-            expiration=expiration,
-            strike=strike,
-            right=right,
-            dividend_type=dividend_type,
-            greeks_to_compute=greeks_to_compute,
-            S=S,
-            r=r,
-            d=d,
-            vol=vol,
-            f=f,
-            endpoint_source=endpoint_source,
-            market_model=market_model,
-            undo_adjust=undo_adjust,
-            model_price=model_price,
+        def _fetch(start: str, end: str) -> GreekResultSet:
+            return self.get_greeks_timeseries(
+                start_date=start,
+                end_date=end,
+                expiration=expiration,
+                strike=strike,
+                right=right,
+                dividend_type=dividend_type,
+                greeks_to_compute=greeks_to_compute,
+                S=S,
+                r=r,
+                d=d,
+                vol=vol,
+                f=f,
+                endpoint_source=endpoint_source,
+                market_model=market_model,
+                undo_adjust=undo_adjust,
+                model_price=model_price,
+                certification_level=CertificationLevel.L1,
+            )
+
+        row, meta = resolve_value_at_date(
+            as_of,
+            fetch_timeseries=_fetch,
+            extract_timeseries=lambda r: r.timeseries if r.timeseries is not None else pd.Series(dtype=float),
+            fallback_option=fallback_option,
         )
-        greeks_result_set.fallback_option = fallback_option
-        return greeks_result_set
+
+        result = meta.source_result if meta.source_result is not None else GreekResultSet()
+        if (
+            meta.source_result is None
+            and fallback_option in (RealTimeFallbackOption.NAN, RealTimeFallbackOption.ZEROED)
+            and isinstance(row, pd.Series)
+        ):
+            fill = row.iloc[0]
+            cols = _prepare_greeks_to_compute(greeks_to_compute)
+            row = pd.DataFrame({g: [fill] for g in cols}, index=row.index)
+        result.timeseries = row
+        result.fallback_option = meta.fallback_option
+        if meta.source_result is None:
+            result.vol_model = vol_model
+            result.market_model = market_model
+            result.expiration = to_datetime(expiration)
+            result.right = right
+            result.strike = strike
+            result.endpoint_source = endpoint_source
+            result.dividend_type = dividend_type
+            result.symbol = self.symbol
+            result.model_price = model_price
+        return result
 
     @log_na_after_retrieval("greeks")
     def rt(
