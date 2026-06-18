@@ -23,10 +23,23 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.result import OptionSpotResult
-from trade.datamanager._enums import ArtifactType, Interval, ModelPrice, SeriesId, OptionSpotEndpointSource
+from trade.datamanager._enums import (
+    ArtifactType,
+    CertificationLevel,
+    Interval,
+    ModelPrice,
+    SeriesId,
+    OptionSpotEndpointSource,
+    RealTimeFallbackOption,
+)
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
-from trade.datamanager.utils.classification import classify_option_spot_dates
+from trade.datamanager.certification.integration import certify_manager_result
+from trade.datamanager.utils.classification import (
+    classify_option_spot_dates,
+    resolve_checked_missing_dates_for_option_contract,
+)
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date, is_available_on_date
 from trade.datamanager.utils.logging import get_logging_level
@@ -37,7 +50,6 @@ from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
 logger = setup_logger("trade.datamanager.option_spot", stream_log_level=get_logging_level())
-
 
 
 class OptionSpotDataManager(BaseDataManager):
@@ -153,7 +165,6 @@ class OptionSpotDataManager(BaseDataManager):
             endpoint_source=endpoint_source,
         )
 
-    @log_na_after_retrieval("option_spot")
     def get_option_spot(
         self,
         date: Union[datetime, str],
@@ -164,11 +175,12 @@ class OptionSpotDataManager(BaseDataManager):
         opttick: Optional[str] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         model_price: Optional[ModelPrice] = None,
+        fallback_option: Optional[RealTimeFallbackOption] = None,
     ) -> OptionSpotResult:
         """Fetches option spot price for a single date from Thetadata API.
 
-        Retrieves OHLC data for a specific option contract on a single date.
-        Wrapper around get_option_spot_timeseries with single-date range.
+        Retrieves OHLC data for a specific option contract on a single date using
+        a 10-business-day lookback window certified at L1.
 
         Args:
             date: Target date (YYYY-MM-DD string or datetime).
@@ -178,47 +190,41 @@ class OptionSpotDataManager(BaseDataManager):
             opttick: Optional ticker string (e.g., "AAPL250620C00150000"). If provided,
                 overrides strike, expiration, and right parameters.
             endpoint_source: API endpoint to use (EOD or QUOTE). Uses config default if None.
+            model_price: Optional model price type to use.
+            fallback_option: Policy when exact date is missing or non-trading.
 
         Returns:
             OptionSpotResult containing daily_option_spot DataFrame with OHLC data,
             plus metadata (key, endpoint_source).
-
-        Examples:
-            >>> opt_mgr = OptionSpotDataManager("AAPL")
-            >>> # Using strike/expiration/right
-            >>> result = opt_mgr.get_option_spot(
-            ...     date="2025-01-15",
-            ...     strike=150.0,
-            ...     expiration="2025-06-20",
-            ...     right="C"
-            ... )
-            >>> close_price = result.daily_option_spot["close"].iloc[0]
-
-            >>> # Using opttick
-            >>> result = opt_mgr.get_option_spot(
-            ...     date="2025-01-15",
-            ...     opttick="AAPL250620C00150000"
-            ... )
-
-        Notes:
-            - Returns DataFrame with columns: open, high, low, close, volume
-            - Uses EOD endpoint by default for historical data
-            - Quote endpoint available for more recent data
         """
-        date_str = pd.to_datetime(date).strftime("%Y-%m-%d") if isinstance(date, datetime) else date
-        result = self.get_option_spot_timeseries(
-            start_date=date_str,
-            end_date=date_str,
-            strike=strike,
-            expiration=expiration,
-            right=right,
-            opttick=opttick,
-            endpoint_source=endpoint_source,
-            model_price=model_price,
+        fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
+        endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
+
+        def _fetch(start: str, end: str) -> OptionSpotResult:
+            return self.get_option_spot_timeseries(
+                start_date=start,
+                end_date=end,
+                strike=strike,
+                expiration=expiration,
+                right=right,
+                opttick=opttick,
+                endpoint_source=endpoint_source,
+                model_price=model_price,
+                certification_level=CertificationLevel.L1,
+            )
+
+        row, meta = resolve_value_at_date(
+            date,
+            fetch_timeseries=_fetch,
+            extract_timeseries=lambda r: r.daily_option_spot,
+            fallback_option=fallback_option,
         )
+
+        result = meta.source_result if meta.source_result is not None else OptionSpotResult()
+        result.daily_option_spot = row
+        result.fallback_option = meta.fallback_option
         return result
 
-    @log_na_after_retrieval("option_spot")
     def get_option_spot_timeseries(
         self,
         start_date: Union[datetime, str],
@@ -230,6 +236,7 @@ class OptionSpotDataManager(BaseDataManager):
         opttick: Optional[str] = None,
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         model_price: Optional[ModelPrice] = None,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> OptionSpotResult:
         """Fetches option spot price time-series from Thetadata API.
 
@@ -285,7 +292,7 @@ class OptionSpotDataManager(BaseDataManager):
         """
         if endpoint_source is None:
             endpoint_source = self.CONFIG.option_spot_endpoint_source
-        
+
         result = OptionSpotResult()
         result.symbol = self.symbol
         result.endpoint_source = endpoint_source
@@ -331,6 +338,15 @@ class OptionSpotDataManager(BaseDataManager):
             expiration=expiration,
         )
 
+        checked_missing_dates = resolve_checked_missing_dates_for_option_contract(
+            symbol=self.symbol,
+            strike=float(strike),
+            right=right,
+            expiration=expiration,
+            valid_start=start_date,
+            valid_end=end_date,
+        )
+
         # Check cache
         cached_data, is_partial, start_date, end_date = _check_cache_for_timeseries_data_structure(
             key=key,
@@ -341,10 +357,23 @@ class OptionSpotDataManager(BaseDataManager):
 
         if cached_data is not None and not is_partial:
             logger.info(f"Cache hit for option spot timeseries key: {key}")
+            cached_data = _data_structure_sanitize(
+                cached_data,
+                start=start_str,
+                end=end_str,
+                source_name=f"cached option spot timeseries for {self.symbol} with strike {strike}, right {right}, expiration {expiration}",
+            )
             result.daily_option_spot = cached_data
             result.key = key
             result.endpoint_source = endpoint_source
-            return result
+            return certify_manager_result(
+                result,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                level=certification_level,
+            )
         elif is_partial:
             logger.info(
                 f"Cache partially covers requested date range for option spot timeseries. Key: {key}. Fetching missing dates."
@@ -443,7 +472,14 @@ class OptionSpotDataManager(BaseDataManager):
         result.daily_option_spot = fetched_data
         result.key = key
         result.endpoint_source = endpoint_source
-        return result
+        return certify_manager_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=classification.checked_missing_dates,
+            level=certification_level,
+        )
 
     def _query_thetadata_api(
         self,

@@ -25,13 +25,15 @@ from trade.datamanager.vars import get_times_series, get_dm_gen_path, load_name,
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult
 from trade.datamanager.base import BaseDataManager, CacheSpec
-from trade.datamanager._enums import ArtifactType, SeriesId, Interval, RealTimeFallbackOption
+from trade.datamanager._enums import ArtifactType, CertificationLevel, SeriesId, Interval, RealTimeFallbackOption
 from trade.datamanager.utils import slice_schedule
-from trade.datamanager.utils.date import DateRangePacket, is_available_on_date
+from trade.datamanager.utils.date import DateRangePacket, _sync_equity_date
+from trade.datamanager.certification.integration import certify_manager_result
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.utils.na_logging import log_na_after_retrieval
-from trade.helpers.helper import CustomCache, change_to_last_busday, to_datetime
+from trade.helpers.helper import CustomCache, to_datetime
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import get_vectorized_dividend_scehdule
 
@@ -456,7 +458,6 @@ class DividendDataManager(BaseDataManager):
         _data_structure_cache_it(self, key, data, expire=86400)
         return data, key
 
-    @log_na_after_retrieval("dividend")
     def get_schedule_timeseries(
         self,
         start_date: Union[datetime, str],
@@ -464,6 +465,7 @@ class DividendDataManager(BaseDataManager):
         maturity_date: Union[datetime, str],
         dividend_type: Optional[DivType] = None,
         undo_adjust: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> DividendsResult:
         """Returns daily dividend schedule time-series from valuation dates to maturity.
 
@@ -508,6 +510,9 @@ class DividendDataManager(BaseDataManager):
             logger.info(f"Using config default dividend_type: {self.CONFIG.dividend_type}")
 
         dividend_type = DivType(dividend_type) if dividend_type is not None else self.CONFIG.dividend_type
+        start_date, end_date = _sync_equity_date(start_date, end_date, symbol=self.symbol)
+        packet = DateRangePacket(start_date, end_date, maturity_date=maturity_date)
+        start_str, end_str = packet.start_str, packet.end_str
         result = DividendsResult()
         result.symbol = self.symbol
         result.dividend_type = dividend_type
@@ -528,19 +533,27 @@ class DividendDataManager(BaseDataManager):
             data = data.drop_duplicates()
             result.daily_discrete_dividends = data
             result.key = key
+            return certify_manager_result(
+                result, start_str, end_str, cache_key=key, level=certification_level
+            )
 
         elif dividend_type == DivType.CONTINUOUS:
-            start_str = (
-                pd.to_datetime(start_date).strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
+            key = self.make_key(
+                symbol=self.symbol,
+                artifact_type=ArtifactType.DIVS,
+                series_id=SeriesId.HIST,
+                current_state="continuous_yield",
+                interval=Interval.EOD,
+                vendor="market_timeseries",
             )
-            end_str = pd.to_datetime(end_date).strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
             yield_history = self.get_div_yield_history(self.symbol)
             filtered = yield_history[(yield_history.index >= start_str) & (yield_history.index <= end_str)]
-            filtered.index.name = "datetime"
-            filtered.index = to_datetime(filtered.index)
-            filtered = filtered.sort_index()
             result.daily_continuous_dividends = filtered
-            result.key = None
+            result.key = key
+            ## MT ``_get_dividend_yield_timeseries`` already ran sanitize → NA log → certify.
+            result.is_certified = True
+            return result
+
         return result
 
     @log_na_after_retrieval("dividend")
@@ -554,110 +567,59 @@ class DividendDataManager(BaseDataManager):
     ) -> DividendsResult:
         """Returns dividend schedule for a single valuation date to maturity.
 
-        Fetches dividend data (discrete events or continuous yields) from a single
-        valuation date to maturity date. Suitable for real-time pricing scenarios.
+        Fetches a 10-business-day lookback window certified at L1, then resolves
+        the schedule row per ``fallback_option``.
 
         Args:
             valuation_date: Reference date for valuation (YYYY-MM-DD string or datetime).
             maturity_date: Horizon date for dividends (YYYY-MM-DD string or datetime).
             dividend_type: DivType.DISCRETE or DivType.CONTINUOUS. Uses config default if None.
             undo_adjust: If True, adjusts dividends for splits as of valuation date.
+            fallback_option: Policy when exact date is missing or non-trading.
 
         Returns:
             DividendsResult with daily_discrete_dividends or daily_continuous_dividends,
             plus metadata.
-
-        Examples:
-            >>> div_mgr = DividendDataManager("AAPL")
-            >>> result = div_mgr.get_schedule(
-            ...     valuation_date="2025-01-15",
-            ...     maturity_date="2025-06-20",
-            ...     dividend_type=DivType.DISCRETE,
-            ...     undo_adjust=True
-            ... )
-            >>> schedule = result.daily_discrete_dividends.iloc[0]
-            >>> logger.info(schedule.schedule)  # List of ScheduleEntry objects
-
-        Notes:
-            - For DISCRETE: Returns Series with single entry containing Schedule object
-            - For CONTINUOUS: Returns filtered yield history between dates
-            - Split adjustments applied if undo_adjust=True
         """
         load_name(self.symbol)
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
         dividend_type = DivType(dividend_type) if dividend_type is not None else self.CONFIG.dividend_type
-        valuation_date = to_datetime(valuation_date)
-
-        if not is_available_on_date(valuation_date):
-            logger.warning(
-                f"Valuation date {valuation_date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}"
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Valuation date {valuation_date} is not a business day or holiday.")
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## Using only change_to_last_busday assumes input date is not business day or is holiday
-                ## Which the function would roll back
-                ## But there's a possibility input date is today's date but before market open
-                ## In that case we need to move back one more business day
-                valuation_date = change_to_last_busday(
-                    valuation_date - pd.tseries.offsets.BDay(1), time_of_day_aware=False
-                )
-            else:
-                result = DividendsResult()
-                dividend = pd.Series(dtype=float)
-                if dividend_type == DivType.DISCRETE:
-                    result.daily_discrete_dividends = dividend
-                else:
-                    result.daily_continuous_dividends = dividend
-                result.key = None
-                result.undo_adjust = undo_adjust
-                result.dividend_type = dividend_type
-                result.symbol = self.symbol
-                result.fallback_option = fallback_option
-                return result
-
-        val_str = valuation_date.strftime("%Y-%m-%d") if isinstance(valuation_date, datetime) else valuation_date
         mat_str = maturity_date.strftime("%Y-%m-%d") if isinstance(maturity_date, datetime) else maturity_date
 
-        if dividend_type == DivType.DISCRETE:
-            data, key = self.get_discrete_dividend_schedule(
-                start_date=val_str,
-                end_date=mat_str,
-                valuation_date=val_str,  # optional, but consistent
+        def _extract(result: DividendsResult) -> pd.Series:
+            series = (
+                result.daily_discrete_dividends
+                if dividend_type == DivType.DISCRETE
+                else result.daily_continuous_dividends
             )
-            if undo_adjust:
-                split_factor = TS.get_split_factor_at_index(self.symbol, pd.to_datetime(valuation_date))
-            else:
-                split_factor = 1.0
-            data = Schedule(schedule=[entry * split_factor for entry in data])
-            data = pd.Series({val_str: data})
-            data.index = to_datetime(data.index)
-            data.index.name = "datetime"
-        elif dividend_type == DivType.CONTINUOUS:
-            data = self.get_div_yield_history(self.symbol)
-            data = data[
-                (data.index.date >= pd.to_datetime(valuation_date).date())
-                & (data.index.date <= pd.to_datetime(valuation_date).date())
-            ]
-            data.index.name = "datetime"
-            data.index = to_datetime(data.index)
-            key = None
-        else:
-            raise ValueError(f"Unsupported dividend type: {dividend_type}")
+            return series if series is not None else pd.Series(dtype=float)
 
-        result = DividendsResult()
+        def _fetch(start: str, end: str) -> DividendsResult:
+            return self.get_schedule_timeseries(
+                start_date=start,
+                end_date=end,
+                maturity_date=mat_str,
+                dividend_type=dividend_type,
+                undo_adjust=undo_adjust,
+                certification_level=CertificationLevel.L1,
+            )
 
+        row, meta = resolve_value_at_date(
+            valuation_date,
+            fetch_timeseries=_fetch,
+            extract_timeseries=_extract,
+            fallback_option=fallback_option,
+        )
+
+        result = meta.source_result if meta.source_result is not None else DividendsResult()
         if dividend_type == DivType.DISCRETE:
-            result.daily_discrete_dividends = data
+            result.daily_discrete_dividends = row
         else:
-            result.daily_continuous_dividends = data
-        result.key = key
-        result.undo_adjust = undo_adjust
-        result.dividend_type = dividend_type
+            result.daily_continuous_dividends = row
+        result.fallback_option = meta.fallback_option
         result.symbol = self.symbol
-        result.fallback_option = fallback_option
-
+        result.dividend_type = dividend_type
+        result.undo_adjust = undo_adjust
         return result
 
     @log_na_after_retrieval("dividend")
