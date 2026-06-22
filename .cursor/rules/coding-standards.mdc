@@ -145,3 +145,12 @@ Examples:
 ```
 
 Do not use `ponytail:` for missing docstrings, type hints, or trust-boundary validation — those stay mandatory.
+
+### Minimal fix (scope, not comments)
+
+`ponytail:` marks an **accepted shortcut in code**. **Minimal fix** means the smallest diff that addresses the **named root cause** — not every audit recommendation row.
+
+- **Do:** one expression swap reusing an existing helper (e.g. `change_to_last_busday` instead of `BDay(1)` in `roll_tasks.py`).
+- **Do not:** new helpers with one caller, extra scheduled tasks, or cross-file orchestration because the audit listed contributing factors (timing gaps, holiday EOD paths, monitoring).
+
+See TFP-Algo `.cursor/skills/ponytail-review/SKILL.md` § *Minimal fix vs audit sprawl* for the ROLL defer worked example.
