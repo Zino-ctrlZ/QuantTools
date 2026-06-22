@@ -21,7 +21,7 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.vars import SECONDS_IN_DAY, SECONDS_IN_YEAR # noqa
 from trade.helpers.helper_types import DATE_HINT
 
-logger = setup_logger("trade.optionlib.assets.dividend", stream_log_level="DEBUG")
+logger = setup_logger("trade.optionlib.assets.dividend", stream_log_level="WARNING")
 FREQ_MAP = {
     "monthly": 1,
     "quarterly": 3,
