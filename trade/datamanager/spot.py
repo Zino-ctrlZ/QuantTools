@@ -273,5 +273,6 @@ class SpotDataManager(BaseDataManager):
         """
 
         date = datetime.now()
-        at_index_result = self.get_at_time(date=date, undo_adjust=undo_adjust)
+        at_index_result = self.get_at_time(date=date, undo_adjust=undo_adjust, fallback_option=fallback_option)
+        at_index_result.rt = True
         return at_index_result

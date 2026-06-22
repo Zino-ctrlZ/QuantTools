@@ -19,10 +19,8 @@ Typical usage:
 from datetime import datetime, date
 from typing import Any, ClassVar, Optional, Tuple, Union
 import pandas as pd
-import numpy as np
 from trade.datamanager.market_data import TimeseriesData
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import to_datetime
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.utils.cache import _check_cache_for_timeseries_data_structure, _data_structure_cache_it
 from trade.datamanager.certification.integration import certify_manager_result

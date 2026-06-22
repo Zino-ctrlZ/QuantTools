@@ -81,8 +81,8 @@ def setup_config_for_live() -> None:
     ## Fix on fail
     config.certification_level = CertificationLevel.L3
     
-    ## Address unique rates data issues
-    config.allow_rates_resample_on_missing = True
+    ## Leave rates resampling off so certification can catch missing rates
+    config.allow_rates_resample_on_missing = False
 
     ## Pricing Model Schematic: Binomial Tree for American Options
     config.option_model = OptionPricingModel.BINOMIAL
