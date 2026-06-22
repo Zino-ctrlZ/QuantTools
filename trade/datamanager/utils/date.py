@@ -119,9 +119,9 @@ def _max_allowable_eod_end_date() -> datetime:
     """
     today = ny_now()
     prev_busday = (today - BDay(1)).to_pydatetime()
-    if is_pre_market_hours() or is_market_hours_today():
+    if is_pre_market_hours():
         return pd.Timestamp(to_datetime(prev_busday)).tz_localize(None).to_pydatetime()
-    if is_post_market_hours():
+    if is_post_market_hours() or is_market_hours_today():
         return pd.Timestamp(to_datetime(today.date())).tz_localize(None).to_pydatetime()
     ## Weekend / overnight: same as pre-market — no current-session EOD yet.
     return pd.Timestamp(to_datetime(prev_busday)).tz_localize(None).to_pydatetime()
@@ -157,7 +157,7 @@ def _sync_equity_date(
     max_allowable = pd.Timestamp(_max_allowable_eod_end_date()).tz_localize(None).normalize()
 
     if end_dt > max_allowable:
-        logger.warning(
+        logger.info(
             "Requested end_date %s is after latest available EOD %s. Adjusting.",
             end_dt.date(),
             max_allowable.date(),
@@ -167,7 +167,7 @@ def _sync_equity_date(
     if min_trade_date is not None:
         floor_dt = pd.Timestamp(to_datetime(min_trade_date)).tz_localize(None).normalize()
         if start_dt < floor_dt:
-            logger.warning(
+            logger.info(
                 "Requested start_date %s is before min trade date %s. Adjusting.",
                 start_dt.date(),
                 floor_dt.date(),
