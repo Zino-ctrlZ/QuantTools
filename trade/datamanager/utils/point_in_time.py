@@ -299,7 +299,9 @@ def resolve_value_at_date(
     start_str, end_str, requested_dt = _lookback_window_bounds(as_of, lookback_bdays=lookback_bdays)
 
     result = fetch_timeseries(start_str, end_str)
-    key = result.key
+    ## fetch_timeseries may return a Result (has .key) or a raw Series/DataFrame
+    ## (market_data get_at_index / get_split_factor_at_index) — key is diagnostic only.
+    key = getattr(result, "key", None)
     window_ts = extract_timeseries(result)
 
     row, resolved_dt, used_fallback = _resolve_from_window(
