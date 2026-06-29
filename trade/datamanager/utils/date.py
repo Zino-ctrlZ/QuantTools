@@ -263,13 +263,13 @@ def _sync_date(
             available_dates = set(to_datetime(dates))
             if start_date not in available_dates:
                 logger.warning(
-                    f"Adjusted start_date {start_date.date()} is not in available dates. Adjusting to nearest available date."
+                    f"Adjusted start_date {start_date.date()} is not in available dates. Adjusting to nearest available date. opttick: {opttick}"
                 )
                 start_date = min(available_dates, key=lambda d: abs(d - start_date))
             end_is_not_today = end_date.date() != ny_now().date()
             if end_date not in available_dates and end_is_not_today:
                 logger.warning(
-                    f"Adjusted end_date {end_date.date()} is not in available dates. Adjusting to nearest available date."
+                    f"Adjusted end_date {end_date.date()} is not in available dates. Adjusting to nearest available date. opttick: {opttick}"
                 )
                 end_date = min(available_dates, key=lambda d: abs(d - end_date))
         return start_date, end_date
