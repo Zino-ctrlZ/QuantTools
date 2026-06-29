@@ -3,6 +3,8 @@
 Managers fetch the last N business days through the requested date, certify at L1,
 then resolve a single row per ``RealTimeFallbackOption``. Each manager supplies
 its own timeseries fetcher; this module owns lookback bounds and fallback selection.
+NA data-quality logging belongs on the timeseries certification path, not on the
+clipped at-time return.
 
 Comment density: orchestration
 
@@ -198,6 +200,7 @@ def _resolve_from_window(
     *,
     column: Optional[str] = None,
     trading_day_required: bool = True,
+    key: Optional[str] = None,
 ) -> tuple[Union[pd.Series, pd.DataFrame], datetime, bool]:
     """Select one row from the lookback window per ``fallback_option``.
 
@@ -255,7 +258,7 @@ def _resolve_from_window(
 
     candidates = on_or_before[valid_mask]
     if candidates.empty:
-        raise ValueError(f"No prior non-NaN data in lookback window for date {requested_dt.date()}.")
+        raise ValueError(f"No prior non-NaN data in lookback window for date {requested_dt.date()} for key {key}.")
 
     resolved_dt = candidates.index[-1]
     row = _take_row(ts, resolved_dt, column=column)
@@ -296,6 +299,7 @@ def resolve_value_at_date(
     start_str, end_str, requested_dt = _lookback_window_bounds(as_of, lookback_bdays=lookback_bdays)
 
     result = fetch_timeseries(start_str, end_str)
+    key = result.key
     window_ts = extract_timeseries(result)
 
     row, resolved_dt, used_fallback = _resolve_from_window(
@@ -304,6 +308,7 @@ def resolve_value_at_date(
         fallback_option,
         column=column,
         trading_day_required=trading_day_required,
+        key=key,
     )
 
     meta = PointInTimeMeta(
