@@ -18,7 +18,10 @@ from trade.datamanager.utils.cache import (
     _check_cache_for_timeseries_data_structure,
     _data_structure_cache_it,
 )
-from trade.datamanager.utils.classification import resolve_checked_missing_dates_for_option_contract
+from trade.datamanager.utils.classification import (
+    classify_option_spot_dates,
+    resolve_checked_missing_dates_for_option_contract,
+)
 from trade.datamanager.certification.integration import certify_manager_result
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
@@ -73,12 +76,18 @@ def resolve_checked_missing_dates_for_option_artifact(
     start_date: DATE_HINT,
     end_date: DATE_HINT,
 ) -> List[DATE_HINT]:
-    """Resolve vendor checked-missing dates for vol/greeks (shared with option spot).
+    """Resolve checked-missing dates for vol/greeks, reconciled against observed spot.
 
-    Always derived from ``get_option_dates`` via ``classify_option_spot_dates`` —
-    not read from vol/greek cache. Spot, vol, and greeks share the same vendor
-    calendar for a contract; cache only stores this metadata on write for coverage
-    checks, it is not the source of truth for resolution.
+    checked_missing = expected − vendor_listed − observed_price_days (see
+    ``classify_option_spot_dates``). Spot, vol, and greeks share the same vendor
+    calendar for a contract, but vendor ``list_dates`` is intermittently truncated
+    for non-expired options. Using ``list_dates`` alone here lets a flaky call
+    inflate the exemption set (masking real gaps) or, paired with a stale spot
+    placeholder, shrink it (false NaN failures).
+
+    To stay robust, this loads the contract's cached EOD option spot (the reliable
+    price source) and reconciles: any date with a real observed price is removed
+    from checked_missing regardless of what ``list_dates`` returned this call.
 
     Args:
         symbol: Underlying ticker.
@@ -89,17 +98,56 @@ def resolve_checked_missing_dates_for_option_artifact(
         end_date: Sync'd certification/cache window end.
 
     Returns:
-        Vendor-confirmed missing business dates for the contract in-window.
+        Business dates that are neither vendor-listed nor observed with a price —
+        the only dates whose NaNs cert should exempt.
     """
-    ## Vendor list_dates defines gaps for spot, vol, and greeks on the same contract.
-    return resolve_checked_missing_dates_for_option_contract(
+    ## Lazy import avoids a circular dependency (option_spot imports cert utilities).
+    from trade.datamanager.option_spot import OptionSpotDataManager
+
+    ## Reliable observed-price source: cached EOD spot for this contract. L1 keeps it
+    ## non-raising; a real price on a date can never be "vendor checked-missing".
+    fetched: pd.DataFrame = pd.DataFrame()
+    try:
+        spot_result = OptionSpotDataManager(symbol).get_option_spot_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            strike=float(strike),
+            right=right,
+            expiration=to_datetime(expiration),
+            endpoint_source=OptionSpotEndpointSource.EOD,
+            certification_level=CertificationLevel.L1,
+        )
+        if spot_result.daily_option_spot is not None:
+            fetched = spot_result.daily_option_spot
+    except Exception as exc:  ## Defensive: fall back to vendor-only gaps on spot-load failure.
+        logger.warning(
+            "Option spot reconciliation for checked-missing failed for %s %s%s exp=%s (%r); "
+            "falling back to vendor list_dates only.",
+            symbol,
+            strike,
+            right,
+            expiration,
+            exc,
+        )
+        return resolve_checked_missing_dates_for_option_contract(
+            symbol=symbol,
+            strike=strike,
+            right=right,
+            expiration=to_datetime(expiration),
+            valid_start=start_date,
+            valid_end=end_date,
+        )
+
+    classification = classify_option_spot_dates(
+        fetched=fetched,
         symbol=symbol,
-        strike=strike,
+        strike=float(strike),
         right=right,
         expiration=to_datetime(expiration),
         valid_start=start_date,
         valid_end=end_date,
     )
+    return list(classification.checked_missing_dates)
 
 
 def _certify_option_model_result(
