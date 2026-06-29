@@ -1,7 +1,8 @@
 """LoadRequest dataclass for model data loading orchestration.
 
 Validates date windows and optional pre-loaded timeseries inputs before
-``_load_model_data_timeseries`` fetches missing factors.
+``_load_model_data`` / ``_load_model_data_timeseries`` fetch missing factors; rt/as_of
+window expansion is handled in the orchestrator, not on ``LoadRequest`` pegged dates.
 
 Comment density: domain policy
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from dataclasses import dataclass
-from typing import List, Optional, Set, Union
+from typing import  Optional, Set, Union
 
 import pandas as pd
 
@@ -162,6 +163,10 @@ class LoadRequest:
 
         if self.model_price is None:
             self.model_price = ModelPrice.MIDPOINT
+        
+        ## If rt is True, set endpoint_source to QUOTE.
+        if self.rt:
+            self.endpoint_source = OptionSpotEndpointSource.QUOTE
 
         self._validate_provided_inputs()
 

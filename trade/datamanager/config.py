@@ -98,3 +98,6 @@ def setup_config_for_live() -> None:
 
     ## Always use midpoint price
     config.model_price = ModelPrice.MIDPOINT
+
+    ## Always use quotes
+    config.option_spot_endpoint_source = OptionSpotEndpointSource.QUOTE

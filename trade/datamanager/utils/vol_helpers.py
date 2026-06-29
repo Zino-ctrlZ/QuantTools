@@ -114,7 +114,7 @@ def resolve_checked_missing_dates_for_option_artifact(
             strike=float(strike),
             right=right,
             expiration=to_datetime(expiration),
-            endpoint_source=OptionSpotEndpointSource.EOD,
+            endpoint_source=OptionSpotEndpointSource.QUOTE,
             certification_level=CertificationLevel.L1,
         )
         if spot_result.daily_option_spot is not None:
