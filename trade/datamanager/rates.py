@@ -21,7 +21,8 @@ from trade.helpers.Logging import setup_logger
 from curl_cffi.requests.exceptions import SSLError
 import backoff
 from .utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
-from .utils.date import _sync_equity_date, to_datetime
+from .utils.date import _sync_equity_date, business_day_grid
+from trade.helpers.helper import to_datetime
 from .utils.data_structure import _data_structure_sanitize
 from .utils.point_in_time import resolve_value_at_date
 from .config import OptionDataConfig
@@ -32,30 +33,13 @@ from .base import BaseDataManager, CacheSpec
 from .utils.logging import get_logging_level
 from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.exceptions import EmptyDataException
-from trade import HOLIDAY_SET
 
 logger = setup_logger("trade.datamanager.rates", stream_log_level=get_logging_level())
 
 
-
-
-def _business_day_grid(start_date: Union[datetime, str], end_date: Union[datetime, str]) -> pd.DatetimeIndex:
-    """Build the certification B-day grid for ``[start_date, end_date]``.
-
-    For option artifacts, ``checked_missing_dates`` are omitted from the grid so
-    L3 does not fabricate rows on vendor-confirmed absent dates.
-    """
-    start_d = pd.Timestamp(to_datetime(start_date)).normalize()
-    end_d = pd.Timestamp(to_datetime(end_date)).normalize()
-
-    all_bus_days = pd.date_range(start=start_d, end=end_d, freq="B")
-    ## Match check calendar: drop exchange holidays and option checked-missing dates.
-    filtered = [d for d in all_bus_days if d.strftime("%Y-%m-%d") not in HOLIDAY_SET]
-    return pd.DatetimeIndex(filtered)
-
 def _resample_rates_data(rates_data: pd.Series, start_date: Union[datetime, str], end_date: Union[datetime, str]) -> pd.Series:
     """Resample rates data to a business-day grid."""
-    bus_days = _business_day_grid(start_date, end_date)
+    bus_days = pd.DatetimeIndex(business_day_grid(start_date, end_date))
     rates_data = rates_data.reindex(bus_days)
     rates_data = rates_data.ffill()
     return rates_data

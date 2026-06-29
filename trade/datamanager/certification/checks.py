@@ -30,8 +30,7 @@ from typing import Callable, List, Optional, Union
 
 import pandas as pd
 
-from trade import HOLIDAY_SET
-from trade.datamanager.utils.date import is_available_on_date
+from trade.datamanager.utils.date import business_day_grid, is_available_on_date
 from trade.helpers.helper import to_datetime
 from trade.helpers.helper_types import DATE_HINT
 
@@ -83,22 +82,11 @@ def certification_required_bus_days(
     Returns:
         Sorted list of dates the certifier treats as must-have observations.
     """
-    start_d = pd.Timestamp(to_datetime(start_date)).normalize()
-    end_d = pd.Timestamp(to_datetime(end_date)).normalize()
-    checked_set = set(checked_missing_dates or [])
-
-    required: List[date] = []
-    for ts in pd.date_range(start=start_d, end=end_d, freq="B"):
-        day = ts.date()
-        if ts.strftime("%Y-%m-%d") in HOLIDAY_SET:
-            continue
-        if day in checked_set:
-            continue
-        ## Pre-market today is not required; during market hours today in-range is required.
-        if not is_available_on_date(day):
-            continue
-        required.append(day)
-    return required
+    return [
+        day
+        for day in business_day_grid(start_date, end_date, checked_missing_dates)
+        if is_available_on_date(day)
+    ]
 
 
 def _calendar_gaps_excluding_checked_missing(

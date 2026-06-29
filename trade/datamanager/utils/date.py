@@ -20,7 +20,7 @@ from pathlib import Path
 import os
 from typing import Tuple, List, Optional, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
-from trade import MARKET_CLOSE, MARKET_OPEN
+from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
@@ -426,3 +426,41 @@ def is_available_on_date(date: date) -> bool:
 
     ## Else just return trading day status
     return is_trading_day
+
+
+def business_day_grid(
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+    checked_missing_dates: Optional[List[date]] = None,
+) -> List[date]:
+    """Build business days in ``[start_date, end_date]`` minus holidays and checked-missing dates.
+
+    Core calendar grid for certification, rates resample, and other timeseries paths.
+    Does not apply runtime availability (``is_available_on_date``); callers add that
+    when pre-market today should be excluded from a required-observation set.
+
+    Args:
+        start_date: Window start (inclusive).
+        end_date: Window end (inclusive).
+        checked_missing_dates: Vendor-confirmed absent dates to omit from the grid.
+
+    Returns:
+        Sorted list of ``date`` objects on the B-day grid after exclusions.
+
+    Examples:
+        >>> grid = business_day_grid("2025-01-01", "2025-01-10")
+        >>> checked = business_day_grid("2025-01-01", "2025-01-10", checked_missing_dates=[date(2025, 1, 3)])
+    """
+    start_d = pd.Timestamp(to_datetime(start_date)).normalize()
+    end_d = pd.Timestamp(to_datetime(end_date)).normalize()
+    checked_set = set(checked_missing_dates or [])
+
+    grid: List[date] = []
+    for ts in pd.date_range(start=start_d, end=end_d, freq="B"):
+        day = ts.date()
+        if ts.strftime("%Y-%m-%d") in HOLIDAY_SET:
+            continue
+        if day in checked_set:
+            continue
+        grid.append(day)
+    return grid
