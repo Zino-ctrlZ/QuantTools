@@ -35,7 +35,7 @@ from trade.datamanager.result import (
     SpotResult,
     VolatilityResult,
 )
-from trade.datamanager.utils.vol_helpers import resolve_checked_missing_dates_for_option_artifact
+from trade.datamanager.utils.classification import resolve_checked_missing_dates_for_option_contract
 from trade.helpers.helper import get_missing_dates, to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.optionlib.config.types import DivType
@@ -212,13 +212,13 @@ class LoadRequest:
         """Return vendor-confirmed absent dates for the request's option contract."""
         if self.strike is None or self.right is None or self.expiration is None:
             return set()
-        checked = resolve_checked_missing_dates_for_option_artifact(
+        checked = resolve_checked_missing_dates_for_option_contract(
             symbol=self.symbol,
             strike=self.strike,
             right=self.right,
             expiration=self.expiration,
-            start_date=self.start_date,
-            end_date=self.end_date,
+            valid_start=self.start_date,
+            valid_end=self.end_date,
         )
         return {to_datetime(d).date() for d in checked}
 

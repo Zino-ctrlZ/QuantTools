@@ -66,7 +66,7 @@ from trade.datamanager.utils.vol_helpers import (
     _prepare_dividend_data_for_pricing,
     _merge_and_cache_vol_result,
     _prepare_vol_calculation_setup,
-    resolve_checked_missing_dates_for_option_artifact,
+    reconcile_checked_missing_dates_for_option_artifact,
     _certify_option_model_result,
 )
 from trade.datamanager.utils.model import _load_model_data_timeseries
@@ -257,17 +257,7 @@ class VolDataManager(BaseDataManager):
             right=right,
         )
 
-        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
-            symbol=self.symbol,
-            strike=strike,
-            right=right,
-            expiration=expiration,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
 
@@ -304,6 +294,22 @@ class VolDataManager(BaseDataManager):
 
         # Use utility: Merge provided data
         _, F, r, _, market_price = _merge_provided_with_loaded_data(model_data, F=F, r=r, market_price=market_price)
+
+        fetched_option_spot = (
+            market_price.daily_option_spot
+            if market_price is not None and market_price.daily_option_spot is not None
+            else pd.DataFrame()
+        )
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+            fetched=fetched_option_spot,
+        )
 
         # Extract data
         forward = F.daily_continuous_forward if dividend_type == DivType.CONTINUOUS else F.daily_discrete_forward
@@ -445,17 +451,7 @@ class VolDataManager(BaseDataManager):
         )
         result.key = key
 
-        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
-            symbol=self.symbol,
-            strike=strike,
-            right=right,
-            expiration=expiration,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
         if early_return is not None:
@@ -492,6 +488,21 @@ class VolDataManager(BaseDataManager):
         # Use utility: Merge provided data
         S, _, r, dividends, market_price = _merge_provided_with_loaded_data(
             model_data, S=S, r=r, dividends=dividends, market_price=market_price
+        )
+        fetched_option_spot = (
+            market_price.daily_option_spot
+            if market_price is not None and market_price.daily_option_spot is not None
+            else pd.DataFrame()
+        )
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+            fetched=fetched_option_spot,
         )
         # Extract data
         spot = S.daily_spot
@@ -633,17 +644,7 @@ class VolDataManager(BaseDataManager):
             right=right,
         )
 
-        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
-            symbol=self.symbol,
-            strike=strike,
-            right=right,
-            expiration=expiration,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
         if early_return is not None:
@@ -677,6 +678,16 @@ class VolDataManager(BaseDataManager):
         # Use utility: Merge provided data
         S, F, r, dividends, _ = _merge_provided_with_loaded_data(
             model_data, S=model_data.spot, F=F, r=r, dividends=dividends
+        )
+        ## Euro-equiv path does not load option spot; reconcile from cache + vendor list_dates only.
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
         )
 
         # Extract data
