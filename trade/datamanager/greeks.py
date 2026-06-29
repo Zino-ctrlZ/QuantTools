@@ -58,7 +58,7 @@ from trade.datamanager.utils.vol_helpers import (
     _handle_cache_for_vol,
     _merge_and_cache_vol_result,
     _prepare_vol_calculation_setup,
-    resolve_checked_missing_dates_for_option_artifact,
+    reconcile_checked_missing_dates_for_option_artifact,
     _certify_option_model_result,
 )
 from trade.datamanager.utils.date import sync_date_index
@@ -412,16 +412,7 @@ class GreekDataManager(BaseDataManager):
         result.key = key
         result.model_price = model_price
 
-        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
-            symbol=self.symbol,
-            strike=strike,
-            right=right,
-            expiration=expiration,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
         if early_return:
@@ -456,6 +447,15 @@ class GreekDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
         )
         model_data = _load_model_data_timeseries(request)
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+        )
         S = model_data.spot.timeseries if request.load_spot else S.timeseries
         r = model_data.rates.timeseries if request.load_rates else r.timeseries
         d = model_data.dividend.timeseries if request.load_dividend else d.timeseries
@@ -609,16 +609,7 @@ class GreekDataManager(BaseDataManager):
         result.model_price = model_price
         result.endpoint_source = endpoint_source
 
-        checked_missing_dates = resolve_checked_missing_dates_for_option_artifact(
-            symbol=self.symbol,
-            strike=strike,
-            right=right,
-            expiration=expiration,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
         if early_return:
@@ -650,6 +641,15 @@ class GreekDataManager(BaseDataManager):
             model_price=model_price,
         )
         model_data = _load_model_data_timeseries(request)
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+        )
         S = model_data.spot.timeseries if request.load_spot else S.timeseries
         r = model_data.rates.timeseries if request.load_rates else r.timeseries
         d = model_data.dividend.timeseries if request.load_dividend else d.timeseries
