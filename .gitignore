@@ -221,3 +221,6 @@ EventDriven/riskmanager/.decommission/
 # Local debug folders (keep out of remote)
 debug/
 **/debug/
+
+# Local sandbox / scratch (keep out of remote)
+.sandbox/
