@@ -7,10 +7,12 @@ and environment metadata (including ``THETADATA_USE_V3``).
 Comment density: orchestration
 
 Processing Flow:
-    1. ``@log_na_after_retrieval`` (or an explicit call) invokes ``log_retrieval_na``.
-    2. Dispatch selects a type-specific logger (Result, ModelResultPack, TimeseriesData, etc.).
-    3. Type-specific code collects NA datetime indices per component/field.
-    4. ``_log_na_snapshots`` emits one pretty-printed WARNING per NA index to
+    1. Certified timeseries: ``certify_manager_result`` invokes NA forensics before certification.
+    2. Point-in-time: ``resolve_value_at_date`` fetches a certified lookback window; no decorator here.
+    3. ``@log_na_after_retrieval`` remains for legacy/non-cert paths (e.g. explicit calls); not for ``get_at_time`` / ``rt()``.
+    4. Dispatch selects a type-specific logger (Result, ModelResultPack, TimeseriesData, etc.).
+    5. Type-specific code collects NA datetime indices per component/field.
+    6. ``_log_na_snapshots`` emits one pretty-printed WARNING per NA index to
        ``trade.datamanager.utils.model_na``.
 
 Core Functions:

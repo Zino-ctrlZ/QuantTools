@@ -43,7 +43,6 @@ from trade.datamanager.utils.classification import (
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date, is_available_on_date
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from dbase.DataAPI.ThetaData import retrieve_eod_ohlc, quote_to_eod_patch, retrieve_quote_rt
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from dbase.utils import default_timestamp
@@ -558,7 +557,6 @@ class OptionSpotDataManager(BaseDataManager):
             )
             return pd.DataFrame()
 
-    @log_na_after_retrieval("option_spot")
     def rt(
         self,
         strike: float,

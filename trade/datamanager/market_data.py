@@ -217,7 +217,6 @@ from trade.datamanager.utils.date import _sync_equity_date
 from trade.datamanager.exceptions import EmptyDataException
 from trade import SIGNALS_TO_RUN
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.certification.market_timeseries import certify_market_factor_payload
 from trade.datamanager._enums import CertificationLevel, RealTimeFallbackOption
 from trade.datamanager.utils.point_in_time import resolve_value_at_date
@@ -1008,7 +1007,6 @@ class MarketTimeseries:
             sym, "dividend_yield", clipped, start, end, method="_get_dividend_yield_timeseries"
         )
 
-    @log_na_after_retrieval("market_timeseries")
     def get_split_factor_at_index(
         self,
         sym: str,
@@ -1051,7 +1049,6 @@ class MarketTimeseries:
             return 1.0
         return row.iloc[0]
 
-    @log_na_after_retrieval("market_timeseries")
     def get_at_index(
         self,
         sym: str,

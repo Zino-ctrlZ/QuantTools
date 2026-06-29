@@ -35,7 +35,6 @@ from trade.datamanager.result import DividendsResult, RatesResult
 from trade.datamanager._enums import ArtifactType, CertificationLevel, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.vars import get_times_series, load_name
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import (
     vectorized_discrete_pv,
@@ -882,7 +881,6 @@ class ForwardDataManager(BaseDataManager):
         _data_structure_cache_it(self, key, value, expire=expire)
         return
 
-    @log_na_after_retrieval("forward")
     def get_forward(
         self,
         date: Union[datetime, str],
@@ -957,7 +955,6 @@ class ForwardDataManager(BaseDataManager):
         result.dividend_type = dividend_type
         return result
     
-    @log_na_after_retrieval("forward")
     def rt(
         self,
         maturity_date: Union[datetime, str],

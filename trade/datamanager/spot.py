@@ -22,7 +22,6 @@ from trade.datamanager.result import SpotResult
 from trade.datamanager.vars import get_times_series, load_name
 from trade.datamanager._enums import ArtifactType, CertificationLevel, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.utils.date import _sync_equity_date
 from trade.datamanager.utils.point_in_time import resolve_value_at_date
 
@@ -204,7 +203,6 @@ class SpotDataManager(BaseDataManager):
         result.is_certified = True
         return result
 
-    @log_na_after_retrieval("spot")
     def get_at_time(
         self,
         date: Union[datetime, str],
@@ -252,7 +250,6 @@ class SpotDataManager(BaseDataManager):
         container.timeseries = row
         return container
     
-    @log_na_after_retrieval("spot")
     def rt(
         self,
         fallback_option: Optional[RealTimeFallbackOption] = None,

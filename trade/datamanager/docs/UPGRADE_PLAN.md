@@ -96,8 +96,9 @@ persisted to cache.
       `get_at_time_implied_volatility`, `get_at_time_greeks`, `get_at_index`, `get_split_factor_at_index`
 - [x] All `rt()` methods delegate to the above
 
-Point-in-time paths keep `@log_na_after_retrieval`; they do not re-certify beyond the L1
-lookback window fetch.
+Point-in-time paths do **not** use `@log_na_after_retrieval`; NA forensics run on the
+underlying L1 lookback fetch inside certification. `resolve_value_at_date` owns fallback
+selection only (see `docs/README.md` — Certification → NA logging split).
 
 ### `checked_missing_dates` policy (**resolved**)
 
@@ -192,7 +193,8 @@ Moved to `trade/datamanager/docs/`:
 
 - [x] Moved into `certify_manager_result` for certified timeseries (pre-cert forensics)
 - [x] Removed `@log_na_after_retrieval` from certified timeseries methods
-- [x] Kept on point-in-time paths and `log_model_result_pack_na` in `model.py`
+- [x] Removed from point-in-time / `rt()` paths (timeseries cert owns NA; `resolve_value_at_date` owns fallback)
+- [x] Kept `log_model_result_pack_na` in `model.py` for orchestrator-level pack logging
 
 ### MarketTimeseries
 
