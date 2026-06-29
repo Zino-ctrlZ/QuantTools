@@ -32,7 +32,6 @@ from trade.datamanager.certification.integration import certify_manager_result
 from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.datamanager.utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.helpers.helper import CustomCache, to_datetime
 from trade.optionlib.config.types import DivType
 from trade.optionlib.assets.dividend import get_vectorized_dividend_scehdule
@@ -191,7 +190,6 @@ class DividendDataManager(BaseDataManager):
         )
 
     ## Dividend yield history retrieval for continuous dividends. Already cached in MarketTimeseries.
-    @log_na_after_retrieval("dividend")
     def get_div_yield_history(self, symbol: str) -> pd.Series:
         """Retrieves continuous dividend yield history from MarketTimeseries.
 
@@ -218,7 +216,6 @@ class DividendDataManager(BaseDataManager):
         return div_history
 
     ## Discrete dividend schedule retrieval with caching.
-    @log_na_after_retrieval("dividend")
     def get_discrete_dividend_schedule(
         self,
         *,
@@ -556,7 +553,6 @@ class DividendDataManager(BaseDataManager):
 
         return result
 
-    @log_na_after_retrieval("dividend")
     def get_schedule(
         self,
         valuation_date: Union[datetime, str],
@@ -622,7 +618,6 @@ class DividendDataManager(BaseDataManager):
         result.undo_adjust = undo_adjust
         return result
 
-    @log_na_after_retrieval("dividend")
     def rt(
         self,
         maturity_date: Union[datetime, str],

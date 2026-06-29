@@ -90,7 +90,6 @@ from trade.helpers.helper_types import DATE_HINT
 from trade.optionlib.config.types import DivType
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade import MARKET_CLOSE
 
@@ -718,7 +717,6 @@ class GreekDataManager(BaseDataManager):
             certification_level=certification_level,
         )
 
-    @log_na_after_retrieval("greeks")
     def get_at_time_greeks(
         self,
         as_of: DATE_HINT,
@@ -802,7 +800,6 @@ class GreekDataManager(BaseDataManager):
             result.model_price = model_price
         return result
 
-    @log_na_after_retrieval("greeks")
     def rt(
         self,
         expiration: DATE_HINT,

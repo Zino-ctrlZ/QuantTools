@@ -31,7 +31,6 @@ from .result import RatesResult
 from trade.datamanager.certification.integration import certify_manager_result
 from .base import BaseDataManager, CacheSpec
 from .utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.exceptions import EmptyDataException
 
 logger = setup_logger("trade.datamanager.rates", stream_log_level=get_logging_level())
@@ -168,7 +167,6 @@ class RatesDataManager(BaseDataManager):
         """Sets the symbol associated with this RatesDataManager."""
         pass
 
-    @log_na_after_retrieval("rates")
     def get_rate(
         self,
         date: Union[datetime, str],
@@ -518,7 +516,6 @@ class RatesDataManager(BaseDataManager):
         ]
         return data_min
     
-    @log_na_after_retrieval("rates")
     def rt(self, fallback_option: Optional[RealTimeFallbackOption] = None) -> RatesResult:
         """Shortcut for get_rate method.
 

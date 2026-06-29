@@ -70,6 +70,7 @@ post-sanitize, **pre-certify** data; L3 repairs are not persisted.
 - **Pre-market today** — excluded from the certification B-day grid via `is_available_on_date`.
 - **Date sync** — `_sync_date` (options) and `_sync_equity_date` (equity EOD) clamp fetch windows so pre-market requests do not pull unavailable today rows.
 - **Point-in-time** — `utils/point_in_time.resolve_value_at_date` (10 BDay lookback, L1 on fetch) wired to `get_at_time` / `rt()` paths.
+- **NA logging split** — timeseries certification owns data-quality NA forensics (`certify_manager_result`); point-in-time resolution owns fallback semantics (`resolve_value_at_date`). Do **not** add `@log_na_after_retrieval` on `get_at_time`, `get_rate`, `get_forward`, `get_schedule`, `rt()`, or other clip/resolution paths — a clipped one-row result would duplicate warnings already emitted on the underlying lookback window.
 
 **Logging:**
 
