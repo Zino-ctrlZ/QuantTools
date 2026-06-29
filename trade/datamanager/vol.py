@@ -77,7 +77,6 @@ from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.date import sync_date_index
 from trade.datamanager.utils.logging import get_logging_level
-from trade.datamanager.utils.na_logging import log_na_after_retrieval
 from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
 
@@ -231,7 +230,12 @@ class VolDataManager(BaseDataManager):
         """
 
         # Use utility: Prepare setup
-        endpoint_source = result.endpoint_source if result is not None else self.CONFIG.option_spot_endpoint_source
+        endpoint_source = (
+            # Three layers of fallback: market_price, result, config
+            market_price.endpoint_source if market_price is not None else
+            result.endpoint_source if result is not None else
+            self.CONFIG.option_spot_endpoint_source
+        )
         result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
             _prepare_vol_calculation_setup(
                 self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
@@ -266,6 +270,7 @@ class VolDataManager(BaseDataManager):
         cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
+
         if early_return is not None:
             return _certify_option_model_result(
                 early_return,
@@ -407,9 +412,13 @@ class VolDataManager(BaseDataManager):
             ...     n_steps=200
             ... )
         """
-
         # Use utility: Prepare setup
-        endpoint_source = market_price.endpoint_source if market_price is not None else None
+        endpoint_source = (
+            # Three layers of fallback: market_price, result, config
+            market_price.endpoint_source if market_price is not None else
+            result.endpoint_source if result is not None else
+            self.CONFIG.option_spot_endpoint_source
+        )
         result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
             _prepare_vol_calculation_setup(
                 self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
@@ -484,7 +493,6 @@ class VolDataManager(BaseDataManager):
         S, _, r, dividends, market_price = _merge_provided_with_loaded_data(
             model_data, S=S, r=r, dividends=dividends, market_price=market_price
         )
-
         # Extract data
         spot = S.daily_spot
         rates = r.daily_risk_free_rates
@@ -516,7 +524,6 @@ class VolDataManager(BaseDataManager):
             N=[n_steps] * len(spot),
         )
         iv_timeseries = pd.Series(data=iv_timeseries, index=spot.index)
-
         # Use utility: Merge and cache
         iv_timeseries = _merge_and_cache_vol_result(
             self,
@@ -948,7 +955,6 @@ class VolDataManager(BaseDataManager):
         else:
             raise ValueError(f"Unsupported option pricing model: {market_model}")
 
-    @log_na_after_retrieval("vol")
     def get_at_time_implied_volatility(
         self,
         as_of: str,
@@ -1029,7 +1035,6 @@ class VolDataManager(BaseDataManager):
             result.model_price = model_price
         return result
 
-    @log_na_after_retrieval("vol")
     def rt(
         self,
         expiration: str,
