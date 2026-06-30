@@ -32,11 +32,13 @@ Typical Usage:
     ... )
     >>> print(result.timeseries.head())
 """
+
 from datetime import datetime
 from typing import Any, ClassVar, Optional
 import pandas as pd
 from trade.datamanager._enums import (
     ArtifactType,
+    CertificationLevel,
     Interval,
     ModelPrice,
     OptionPricingModel,
@@ -56,7 +58,7 @@ from trade.datamanager.result import (
     SpotResult,
     DividendsResult,
 )
-from trade.datamanager.utils.cache import MARKET_OPEN, MARKET_CLOSE # noqa
+from trade.datamanager.utils.cache import MARKET_OPEN, MARKET_CLOSE  # noqa
 from trade.datamanager.utils.vol_helpers import (
     _prepare_time_to_expiration,
     _handle_cache_for_vol,
@@ -64,17 +66,19 @@ from trade.datamanager.utils.vol_helpers import (
     _prepare_dividend_data_for_pricing,
     _merge_and_cache_vol_result,
     _prepare_vol_calculation_setup,
+    reconcile_checked_missing_dates_for_option_artifact,
+    _certify_option_model_result,
 )
 from trade.datamanager.utils.model import _load_model_data_timeseries
 from trade.optionlib.vol.implied_vol import vector_bsm_iv_estimation, vector_crr_iv_estimation
 from trade.optionlib.pricing.binomial import vector_crr_binomial_pricing
 from trade.optionlib.config.types import DivType
-from trade.helpers.helper import change_to_last_busday, to_datetime
+from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
-from trade.datamanager.utils.date import is_available_on_date, sync_date_index
+from trade.datamanager.utils.date import sync_date_index
 from trade.datamanager.utils.logging import get_logging_level
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.optionlib.assets.dividend import vector_convert_to_time_frac
-
 
 logger = setup_logger("trade.datamanager.vol", stream_log_level=get_logging_level())
 
@@ -129,6 +133,7 @@ class VolDataManager(BaseDataManager):
         ...     right="c"
         ... )
     """
+
     CACHE_NAME: ClassVar[str] = "vol_data_manager_cache"
     DEFAULT_SERIES_ID: ClassVar["SeriesId"] = SeriesId.HIST
     CONFIG: OptionDataConfig = OptionDataConfig()
@@ -141,9 +146,7 @@ class VolDataManager(BaseDataManager):
             cls.INSTANCES[symbol] = instance
         return cls.INSTANCES[symbol]
 
-    def __init__(
-        self, symbol: str, *, enable_namespacing: bool = False
-    ) -> None:
+    def __init__(self, symbol: str, *, enable_namespacing: bool = False) -> None:
         """Initialize VolDataManager with symbol-specific configuration.
 
         Args:
@@ -187,6 +190,7 @@ class VolDataManager(BaseDataManager):
         market_price: Optional[OptionSpotResult] = None,
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> VolatilityResult:
         """Compute implied volatilities using Black-Scholes-Merton model.
 
@@ -226,9 +230,16 @@ class VolDataManager(BaseDataManager):
         """
 
         # Use utility: Prepare setup
-        endpoint_source = result.endpoint_source if result is not None else self.CONFIG.option_spot_endpoint_source
-        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = _prepare_vol_calculation_setup(
-            self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+        endpoint_source = (
+            # Three layers of fallback: market_price, result, config
+            market_price.endpoint_source if market_price is not None else
+            result.endpoint_source if result is not None else
+            self.CONFIG.option_spot_endpoint_source
+        )
+        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
+            _prepare_vol_calculation_setup(
+                self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+            )
         )
         # Make key for caching
         key = self.make_key(
@@ -246,13 +257,19 @@ class VolDataManager(BaseDataManager):
             right=right,
         )
 
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
+
         if early_return is not None:
-            return early_return
-        
+            return _certify_option_model_result(
+                early_return,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                certification_level=certification_level,
+            )
 
         # Load model data
         load_request = LoadRequest(
@@ -265,7 +282,7 @@ class VolDataManager(BaseDataManager):
             load_forward=F is None,
             load_rates=r is None,
             load_option_spot=market_price is None,
-            load_dividend=False, ## Not needed for BSM IV. Already handled in forward.
+            load_dividend=False,  ## Not needed for BSM IV. Already handled in forward.
             load_vol=False,
             strike=strike,
             right=right,
@@ -275,9 +292,24 @@ class VolDataManager(BaseDataManager):
         )
         model_data = _load_model_data_timeseries(load_request)
 
-
         # Use utility: Merge provided data
         _, F, r, _, market_price = _merge_provided_with_loaded_data(model_data, F=F, r=r, market_price=market_price)
+
+        fetched_option_spot = (
+            market_price.daily_option_spot
+            if market_price is not None and market_price.daily_option_spot is not None
+            else pd.DataFrame()
+        )
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+            fetched=fetched_option_spot,
+        )
 
         # Extract data
         forward = F.daily_continuous_forward if dividend_type == DivType.CONTINUOUS else F.daily_discrete_forward
@@ -285,7 +317,9 @@ class VolDataManager(BaseDataManager):
         option_spot = market_price.price
         forward, rates, option_spot = sync_date_index(forward, rates, option_spot)
         expiration_ts = to_datetime(expiration)
-        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        expiration_ts = expiration_ts.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
 
         # Use utility: Prepare T
         T = _prepare_time_to_expiration(forward.index, expiration_ts)
@@ -303,12 +337,27 @@ class VolDataManager(BaseDataManager):
 
         # Use utility: Merge and cache
         iv_timeseries = _merge_and_cache_vol_result(
-            self, iv_timeseries, cached_data, is_partial, key, start_str, end_str
+            self,
+            iv_timeseries,
+            cached_data,
+            is_partial,
+            key,
+            start_str,
+            end_str,
+            checked_missing_dates=checked_missing_dates,
         )
 
         # Prepare result
         result.timeseries = iv_timeseries
-        return result
+        result.key = key
+        return _certify_option_model_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=checked_missing_dates,
+            certification_level=certification_level,
+        )
 
     def _get_crr_implied_volatility_timeseries(
         self,
@@ -328,6 +377,7 @@ class VolDataManager(BaseDataManager):
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
         n_steps: Optional[int] = None,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> VolatilityResult:
         """Compute implied volatilities using Cox-Ross-Rubinstein binomial model.
 
@@ -368,11 +418,17 @@ class VolDataManager(BaseDataManager):
             ...     n_steps=200
             ... )
         """
-
         # Use utility: Prepare setup
-        endpoint_source = market_price.endpoint_source if market_price is not None else None
-        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = _prepare_vol_calculation_setup(
-            self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+        endpoint_source = (
+            # Three layers of fallback: market_price, result, config
+            market_price.endpoint_source if market_price is not None else
+            result.endpoint_source if result is not None else
+            self.CONFIG.option_spot_endpoint_source
+        )
+        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
+            _prepare_vol_calculation_setup(
+                self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+            )
         )
         n_steps = n_steps or self.CONFIG.n_steps
 
@@ -395,12 +451,18 @@ class VolDataManager(BaseDataManager):
         )
         result.key = key
 
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
         if early_return is not None:
-            return early_return
+            return _certify_option_model_result(
+                early_return,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                certification_level=certification_level,
+            )
 
         # Load model data
         load_request = LoadRequest(
@@ -414,7 +476,7 @@ class VolDataManager(BaseDataManager):
             load_rates=r is None,
             load_dividend=dividends is None,
             load_option_spot=market_price is None,
-            load_forward= False, ## Not needed for CRR IV. Spot used directly.
+            load_forward=False,  ## Not needed for CRR IV. Spot used directly.
             load_vol=False,
             strike=strike,
             right=right,
@@ -427,7 +489,21 @@ class VolDataManager(BaseDataManager):
         S, _, r, dividends, market_price = _merge_provided_with_loaded_data(
             model_data, S=S, r=r, dividends=dividends, market_price=market_price
         )
-
+        fetched_option_spot = (
+            market_price.daily_option_spot
+            if market_price is not None and market_price.daily_option_spot is not None
+            else pd.DataFrame()
+        )
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
+            fetched=fetched_option_spot,
+        )
         # Extract data
         spot = S.daily_spot
         rates = r.daily_risk_free_rates
@@ -440,7 +516,9 @@ class VolDataManager(BaseDataManager):
 
         # Use utility: Prepare T
         expiration_ts = to_datetime(expiration)
-        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        expiration_ts = expiration_ts.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
         T = _prepare_time_to_expiration(option_spot.index, expiration_ts)
 
         # Calculate IV
@@ -457,15 +535,29 @@ class VolDataManager(BaseDataManager):
             N=[n_steps] * len(spot),
         )
         iv_timeseries = pd.Series(data=iv_timeseries, index=spot.index)
-
         # Use utility: Merge and cache
         iv_timeseries = _merge_and_cache_vol_result(
-            self, iv_timeseries, cached_data, is_partial, key, start_str, end_str
+            self,
+            iv_timeseries,
+            cached_data,
+            is_partial,
+            key,
+            start_str,
+            end_str,
+            checked_missing_dates=checked_missing_dates,
         )
 
         # Prepare result
         result.timeseries = iv_timeseries
-        return result
+        result.key = key
+        return _certify_option_model_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=checked_missing_dates,
+            certification_level=certification_level,
+        )
 
     def _get_european_equivalent_volatility_timeseries(
         self,
@@ -483,6 +575,7 @@ class VolDataManager(BaseDataManager):
         dividend_type: Optional[DivType] = DivType.DISCRETE,
         undo_adjust: bool = True,
         n_steps: Optional[int] = None,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> VolatilityResult:
         """Convert American implied volatilities to European-equivalent BSM volatilities.
 
@@ -530,8 +623,10 @@ class VolDataManager(BaseDataManager):
 
         # Use utility: Prepare setup
         endpoint_source = crr_american_vols.endpoint_source
-        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = _prepare_vol_calculation_setup(
-            self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+        result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
+            _prepare_vol_calculation_setup(
+                self, start_date, end_date, expiration, strike, right, dividend_type, endpoint_source, result
+            )
         )
 
         # Make key for caching
@@ -549,12 +644,18 @@ class VolDataManager(BaseDataManager):
             right=right,
         )
 
-        # Use utility: Handle cache
-        cached_data, is_partial, start_date, end_date, early_return = _handle_cache_for_vol(
+        cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result
         )
         if early_return is not None:
-            return early_return
+            return _certify_option_model_result(
+                early_return,
+                start_date,
+                end_date,
+                cache_key=key,
+                checked_missing_dates=checked_missing_dates,
+                certification_level=certification_level,
+            )
 
         # Load model data
         load_request = LoadRequest(
@@ -577,6 +678,16 @@ class VolDataManager(BaseDataManager):
         # Use utility: Merge provided data
         S, F, r, dividends, _ = _merge_provided_with_loaded_data(
             model_data, S=model_data.spot, F=F, r=r, dividends=dividends
+        )
+        ## Euro-equiv path does not load option spot; reconcile from cache + vendor list_dates only.
+        checked_missing_dates = reconcile_checked_missing_dates_for_option_artifact(
+            symbol=self.symbol,
+            strike=strike,
+            right=right,
+            expiration=expiration,
+            start_date=start_date,
+            end_date=end_date,
+            cached_checked_missing=checked_missing_dates,
         )
 
         # Extract data
@@ -605,7 +716,9 @@ class VolDataManager(BaseDataManager):
 
         # Price with CRR using American IVs in European mode
         expiration_ts = to_datetime(expiration)
-        expiration_ts = expiration_ts.replace(hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute)  # Set to end of day for accurate T calculation
+        expiration_ts = expiration_ts.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute
+        )  # Set to end of day for accurate T calculation
         european_crr_price = vector_crr_binomial_pricing(
             S0=spot.values,
             K=[strike] * len(spot),
@@ -633,12 +746,27 @@ class VolDataManager(BaseDataManager):
 
         # Use utility: Merge and cache
         european_equiv_iv = _merge_and_cache_vol_result(
-            self, european_equiv_iv, cached_data, is_partial, key, start_str, end_str
+            self,
+            european_equiv_iv,
+            cached_data,
+            is_partial,
+            key,
+            start_str,
+            end_str,
+            checked_missing_dates=checked_missing_dates,
         )
 
         # Prepare result
         result.timeseries = european_equiv_iv
-        return result
+        result.key = key
+        return _certify_option_model_result(
+            result,
+            start_date,
+            end_date,
+            cache_key=key,
+            checked_missing_dates=checked_missing_dates,
+            certification_level=certification_level,
+        )
 
     def get_implied_volatility_timeseries(
         self,
@@ -661,6 +789,7 @@ class VolDataManager(BaseDataManager):
         endpoint_source: Optional[OptionSpotEndpointSource] = None,
         vol_model: Optional[VolatilityModel] = None,
         model_price: Optional[ModelPrice] = None,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> VolatilityResult:
         """Compute daily implied volatilities for a specific option across a date range.
 
@@ -777,6 +906,7 @@ class VolDataManager(BaseDataManager):
                 model_price=model_price,
                 undo_adjust=undo_adjust,
                 result=result,
+                certification_level=certification_level,
             )
         elif market_model == OptionPricingModel.BINOMIAL:
             return self._get_crr_implied_volatility_timeseries(
@@ -795,6 +925,7 @@ class VolDataManager(BaseDataManager):
                 american=american,
                 n_steps=n_steps,
                 result=result,
+                certification_level=certification_level,
             )
         elif market_model == OptionPricingModel.EURO_EQIV:
             # First get the CRR American implied volatilities
@@ -814,6 +945,7 @@ class VolDataManager(BaseDataManager):
                 n_steps=n_steps,
                 model_price=model_price,
                 result=result,
+                certification_level=certification_level,
             )
             return self._get_european_equivalent_volatility_timeseries(
                 start_date=start_date,
@@ -829,6 +961,7 @@ class VolDataManager(BaseDataManager):
                 undo_adjust=undo_adjust,
                 n_steps=n_steps,
                 result=result,
+                certification_level=certification_level,
             )
         else:
             raise ValueError(f"Unsupported option pricing model: {market_model}")
@@ -857,113 +990,61 @@ class VolDataManager(BaseDataManager):
     ) -> VolatilityResult:
         """Compute implied volatility at a specific point in time.
 
-        Convenience method that retrieves implied volatility for a single date by calling
-        get_implied_volatility_timeseries with start_date=end_date=as_of. Useful for
-        historical backtesting or analysis at specific dates.
-
-        Args:
-            as_of: Specific valuation date (YYYY-MM-DD string or datetime).
-            expiration: Option expiration date (YYYY-MM-DD string or datetime).
-            strike: Strike price of the option.
-            right: Option type ('c' for call, 'p' for put).
-            dividend_type: Dividend treatment (DISCRETE or CONTINUOUS). Defaults to DISCRETE.
-            american: If True, uses American exercise; if False, European.
-            market_model: Pricing model to use (BSM, BINOMIAL, EURO_EQIV). Defaults to CONFIG.option_model.
-            S: Optional pre-computed spot prices. If None, loads automatically.
-            F: Optional pre-computed forward prices. If None, loads automatically.
-            dividends: Optional pre-computed dividend data. If None, loads automatically.
-            r: Optional pre-computed risk-free rates. If None, loads automatically.
-            market_price: Optional pre-computed option prices. If None, loads automatically.
-            undo_adjust: If True, uses split-adjusted prices.
-            n_steps: Number of binomial tree steps. Only used for BINOMIAL/EURO_EQIV models.
-            endpoint_source: Data source for option prices (e.g., CHAIN, QUOTE).
-
-        Returns:
-            VolatilityResult with single-row timeseries containing the implied volatility
-            at the specified date.
-
-        Examples:
-            >>> # Get IV on a specific historical date
-            >>> vol_mgr = VolDataManager("AAPL")
-            >>> result = vol_mgr.get_at_time_implied_volatility(
-            ...     as_of="2025-01-15",
-            ...     expiration="2025-06-20",
-            ...     strike=150.0,
-            ...     right="c",
-            ...     american=True
-            ... )
-            >>> print(f"IV on 2025-01-15: {result.timeseries.iloc[0]:.4f}")
-
-            >>> # Use in backtesting loop
-            >>> for date in backtest_dates:
-            ...     vol_result = vol_mgr.get_at_time_implied_volatility(
-            ...         as_of=date,
-            ...         expiration=expiration,
-            ...         strike=strike,
-            ...         right="p"
-            ...     )
-            ...     iv_value = vol_result.timeseries.iloc[0]
+        Fetches a 10-business-day lookback window certified at L1, then resolves
+        IV per ``fallback_option``.
         """
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
         model_price = model_price or self.CONFIG.model_price
-        as_of = to_datetime(as_of)
-        if not is_available_on_date(as_of):
-            logger.warning(
-                f"Valuation date {as_of} is not a business day or holiday. Resolving using fallback options {fallback_option}."
+        vol_model = vol_model or self.CONFIG.volatility_model
+        market_model = market_model or self.CONFIG.option_model
+        dividend_type = dividend_type or self.CONFIG.dividend_type
+        endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
+
+        def _fetch(start: str, end: str) -> VolatilityResult:
+            return self.get_implied_volatility_timeseries(
+                start_date=start,
+                end_date=end,
+                expiration=expiration,
+                strike=strike,
+                right=right,
+                dividend_type=dividend_type,
+                american=american,
+                market_model=market_model,
+                S=S,
+                F=F,
+                dividends=dividends,
+                r=r,
+                market_price=market_price,
+                undo_adjust=undo_adjust,
+                n_steps=n_steps,
+                endpoint_source=endpoint_source,
+                vol_model=vol_model,
+                model_price=model_price,
+                certification_level=CertificationLevel.L1,
             )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Valuation date {as_of} is not a business day or holiday.")
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## Using only change_to_last_busday assumes input date is not business day or is holiday
-                ## Which the function would roll back
-                ## But there's a possibility input date is today's date but before market open
-                ## In that case we need to move back one more business day
-                as_of = change_to_last_busday(as_of - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-            else:
-                result = VolatilityResult()
-                result.timeseries = pd.Series(dtype=float,
-                                              index=pd.DatetimeIndex([to_datetime(as_of)]),
-                                              values = [float('nan') if fallback_option == RealTimeFallbackOption.NAN else 0.0])
-                
-                result.key = None
-                result.vol_model = vol_model or self.CONFIG.volatility_model
-                result.market_model = market_model or self.CONFIG.option_model
-                result.expiration = to_datetime(expiration)
-                result.right = right
-                result.strike = strike
-                result.endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
-                result.dividend_type = dividend_type or self.CONFIG.dividend_type
-                result.symbol = self.symbol
-                result.undo_adjust = undo_adjust
-                result.model_price = model_price
-                result.fallback_option = fallback_option
 
-                return result
-
-        iv_timeseries = self.get_implied_volatility_timeseries(
-            start_date=as_of,
-            end_date=as_of,
-            expiration=expiration,
-            strike=strike,
-            right=right,
-            dividend_type=dividend_type,
-            american=american,
-            market_model=market_model,
-            S=S,
-            F=F,
-            dividends=dividends,
-            r=r,
-            market_price=market_price,
-            undo_adjust=undo_adjust,
-            n_steps=n_steps,
-            endpoint_source=endpoint_source,
-            vol_model=vol_model,
-            model_price=model_price,
+        row, meta = resolve_value_at_date(
+            as_of,
+            fetch_timeseries=_fetch,
+            extract_timeseries=lambda r: r.timeseries,
+            fallback_option=fallback_option,
         )
-        iv_timeseries.timeseries = iv_timeseries.timeseries.loc[to_datetime(as_of) : to_datetime(as_of)]
-        iv_timeseries.fallback_option = fallback_option
-        return iv_timeseries
+
+        result = meta.source_result if meta.source_result is not None else VolatilityResult()
+        result.timeseries = row
+        result.fallback_option = meta.fallback_option
+        if meta.source_result is None:
+            result.vol_model = vol_model
+            result.market_model = market_model
+            result.expiration = to_datetime(expiration)
+            result.right = right
+            result.strike = strike
+            result.endpoint_source = endpoint_source
+            result.dividend_type = dividend_type
+            result.symbol = self.symbol
+            result.undo_adjust = undo_adjust
+            result.model_price = model_price
+        return result
 
     def rt(
         self,

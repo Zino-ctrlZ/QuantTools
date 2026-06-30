@@ -1,3 +1,23 @@
+"""Model data orchestration: timeseries loading, point-in-time clip, and sync checks.
+
+Resolves fetch windows, chains factor preloads (D→R→S→F→option_spot→vol→greeks), and
+clips loaded windows to an anchor for ``rt``/``as_of`` without re-fetching.
+
+Comment density: orchestration
+
+Core Functions:
+    _resolve_model_load_window: Hist uses request dates; rt/as_of expands lookback from anchor.
+    _load_model_data_timeseries: Main orchestrator; always returns full-window timeseries.
+    _load_model_data_as_date: Calls orchestrator, clips each factor to anchor.
+    _load_model_data: Public router (hist vs point-in-time).
+    assert_synchronized_model: Cross-factor alignment and metadata checks.
+
+Processing Flow:
+    1. Resolve window (explicit range or anchor + lookback).
+    2. Load missing factors via timeseries getters with chained preloads.
+    3. For rt/as_of: clip in-memory via ``_resolve_from_window`` (no second fetch).
+"""
+
 import time
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.result import (
@@ -11,15 +31,25 @@ from trade.datamanager.result import (
     GreekResultSet,
 )
 import os
-from trade.datamanager._enums import ModelPrice, SeriesId
+from trade.datamanager._enums import (
+    ModelPrice,
+    OptionPricingModel,
+    OptionSpotEndpointSource,
+    RealTimeFallbackOption,
+    SeriesId,
+    VolatilityModel,
+)
 from trade.datamanager.requests import LoadRequest
-from trade.datamanager.utils.date import DateRangePacket
 from trade.datamanager.config import OptionDataConfig
-from typing import Optional, Union
+from copy import copy
+from typing import Optional, Tuple, Union
 import pandas as pd
-from trade.datamanager._enums import OptionSpotEndpointSource, VolatilityModel, OptionPricingModel
 from trade.optionlib.config.types import DivType
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade.datamanager.utils.na_logging import log_model_result_pack_na
+from trade.datamanager.utils.point_in_time import _lookback_window_bounds, _resolve_from_window
+from trade.datamanager.utils.date import DATE_HINT
+from trade.helpers.helper import to_datetime
 from trade.datamanager.vars import add_to_log_bucket
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
@@ -390,15 +420,106 @@ def assert_synchronized_model(
             f"Non-empty series: {[k for k,v in series_map.items() if isinstance(v,(pd.Series,pd.DataFrame)) and not v.empty]}"
         )
 
-def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
-    """
-    Loads model data based on the provided load request.
+_DEFAULT_ORCHESTRATOR_LOOKBACK_BDATES = 10
 
-    Parameters:
-        load_request (LoadRequest): The request specifying what data to load.
+
+def _resolve_model_load_window(
+    load_request: LoadRequest,
+    lookback_bdays: int = _DEFAULT_ORCHESTRATOR_LOOKBACK_BDATES,
+) -> Tuple[Optional[DATE_HINT], DATE_HINT, DATE_HINT]:
+    """Resolve anchor and fetch window for the model orchestrator.
+
+    Historical requests use explicit ``start_date``/``end_date``. ``rt``/``as_of``
+    requests peg start=end=anchor on ``LoadRequest``; the orchestrator expands to
+    a lookback window for loading while the anchor remains the clip target.
+
+    Args:
+        load_request: Caller request with date mode flags.
+        lookback_bdays: Business-day lookback for point-in-time modes.
 
     Returns:
-        ModelResultPack: A container with the loaded model data.
+        ``(anchor, start_date, end_date)`` where ``anchor`` is ``None`` for hist.
+    """
+    if load_request.on_date or load_request.rt:
+        anchor = load_request.as_of or load_request.end_date
+        start_str, end_str, anchor_dt = _lookback_window_bounds(
+            anchor,
+            lookback_bdays=lookback_bdays,
+        )
+        return anchor_dt, start_str, end_str
+    return None, load_request.start_date, load_request.end_date
+
+
+def _clip_result_at_anchor(
+    result: Optional[Union[DividendsResult, RatesResult, SpotResult, ForwardResult, OptionSpotResult, VolatilityResult, GreekResultSet]],
+    anchor: DATE_HINT,
+    fallback_option: RealTimeFallbackOption,
+) -> Optional[Union[DividendsResult, RatesResult, SpotResult, ForwardResult, OptionSpotResult, VolatilityResult, GreekResultSet]]:
+    """Clip one loaded result to a single row at ``anchor`` without re-fetching.
+
+    Args:
+        result: Loaded factor result with a timeseries window.
+        anchor: Valuation date to resolve.
+        fallback_option: Policy when exact date is missing or non-trading.
+
+    Returns:
+        Copy of ``result`` with a single-row timeseries, or ``None``/empty input.
+    """
+    if result is None or result.is_empty():
+        return result
+    anchor_ts = pd.Timestamp(to_datetime(anchor)).normalize()
+    row, _, _ = _resolve_from_window(
+        result.timeseries,
+        anchor_ts,
+        fallback_option,
+        key=result.key or result.__class__.__name__,
+    )
+    clipped = copy(result)
+    clipped.timeseries = row
+    clipped.rt = True
+    clipped.fallback_option = fallback_option
+    return clipped
+
+
+def _clip_model_packet_at_anchor(
+    packet: ModelResultPack,
+    anchor: DATE_HINT,
+    fallback_option: RealTimeFallbackOption,
+) -> ModelResultPack:
+    """Clip every loaded factor in a model packet to one row at ``anchor``.
+
+    Args:
+        packet: Full-window ``ModelResultPack`` from the timeseries orchestrator.
+        anchor: Valuation date to resolve.
+        fallback_option: Policy when exact date is missing or non-trading.
+
+    Returns:
+        Copy of ``packet`` with single-row factors and ``rt=True``.
+    """
+    clipped = copy(packet)
+    clipped.dividend = _clip_result_at_anchor(packet.dividend, anchor, fallback_option)
+    clipped.rates = _clip_result_at_anchor(packet.rates, anchor, fallback_option)
+    clipped.spot = _clip_result_at_anchor(packet.spot, anchor, fallback_option)
+    clipped.forward = _clip_result_at_anchor(packet.forward, anchor, fallback_option)
+    clipped.option_spot = _clip_result_at_anchor(packet.option_spot, anchor, fallback_option)
+    clipped.vol = _clip_result_at_anchor(packet.vol, anchor, fallback_option)
+    clipped.greek = _clip_result_at_anchor(packet.greek, anchor, fallback_option)
+    clipped.rt = True
+    return clipped
+
+
+def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
+    """Load all requested factors over the orchestrator-resolved window.
+
+    Always uses timeseries getters and chains preloads (D→R→S→F→option_spot→vol→greeks).
+    For ``rt``/``as_of``, ``LoadRequest`` pegs start=end=anchor; this function expands
+    the fetch window via lookback. Clip to anchor via ``_load_model_data_as_date``.
+
+    Args:
+        load_request: Flags and payloads describing which factors to load.
+
+    Returns:
+        ``ModelResultPack`` with full-window timeseries for each requested factor.
     """
     ## Import here to avoid circular dependencies
     from trade.datamanager.dividend import DividendDataManager
@@ -409,18 +530,15 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     from trade.datamanager.vol import VolDataManager
     from trade.datamanager.greeks import GreekDataManager
 
-    is_as_of = load_request.on_date
-    is_rt = load_request.rt
+    _, start_date, end_date = _resolve_model_load_window(load_request)
+    start_date = to_datetime(start_date)
+    end_date = to_datetime(end_date)
+
     load_info = {}
     start_time = time.time()
-    packet = DateRangePacket(
-        start_date=load_request.start_date, end_date=load_request.end_date, maturity_date=load_request.expiration
-    )
     load_info["date_range_packet"] = time.time() - start_time
     symbol = load_request.symbol
-    start_date = packet.start_date
-    end_date = packet.end_date
-    expiration = packet.maturity_date
+    expiration = load_request.expiration
     d = load_request.load_dividend
     r = load_request.load_rates
     s = load_request.load_spot
@@ -440,62 +558,60 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_request.option_spot_timeseries,
     )
     if _get_print_diagnostics():
-        print(f"Paramerters for request:")
+        print("Parameters for request:")
         for k, v in load_request.__dict__.items():
             print(f"{k}: {v}")
         print("\n")
     model_data = ModelResultPack()
 
-    # Load BSM-specific data
     if d:
+        logger.info(f"Loading dividend data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         d_params = {
             "maturity_date": expiration,
             "dividend_type": dividend_type,
             "undo_adjust": load_request.undo_adjust,
         }
-        if not is_as_of and not is_rt:
-            D = DividendDataManager(symbol).get_schedule_timeseries(
-                start_date=start_date,
-                end_date=end_date,
-                **d_params,
-            )
-        elif is_as_of and not is_rt:
-            D = DividendDataManager(symbol).get_schedule(
-                valuation_date=end_date,
-                fallback_option=load_request.fall_back_option,
-                **d_params,
-            )
-        else:  # is_rt
-            D = DividendDataManager(symbol).rt(
-                fallback_option=load_request.fall_back_option,
-                **d_params,
-            )
+        if _get_print_diagnostics():
+            print(f"d_params: {d_params}")
+        D = DividendDataManager(symbol).get_schedule_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            **d_params,
+        )
         load_info["dividend_load_time"] = time.time() - start_time
 
     if r:
+        logger.info(f"Loading rates data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
-        if not is_as_of and not is_rt:
-            R = RatesDataManager().get_risk_free_rate_timeseries(start_date=start_date, end_date=end_date)
-        elif is_as_of and not is_rt:
-            R = RatesDataManager().get_rate(date=end_date, fallback_option=load_request.fall_back_option)
-        else:  # is_rt
-            R = RatesDataManager().rt(fallback_option=load_request.fall_back_option)
+        if _get_print_diagnostics():
+            print(
+                f"Rates params: start_date={start_date}, end_date={end_date}, "
+                f"fallback_option={load_request.fall_back_option}"
+            )
+        R = RatesDataManager().get_risk_free_rate_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+        )
         load_info["rates_load_time"] = time.time() - start_time
 
     if s:
+        logger.info(f"Loading spot data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
-        if not is_as_of and not is_rt:
-            S = SpotDataManager(symbol).get_spot_timeseries(
-                start_date=start_date, end_date=end_date, undo_adjust=load_request.undo_adjust
+        if _get_print_diagnostics():
+            print(
+                f"Spot params: start_date={start_date}, end_date={end_date}, "
+                f"undo_adjust={load_request.undo_adjust}"
             )
-        elif is_as_of and not is_rt:
-            S = SpotDataManager(symbol).get_at_time(date=end_date)
-        else:  # is_rt
-            S = SpotDataManager(symbol=symbol).rt(fallback_option=load_request.fall_back_option)
+        S = SpotDataManager(symbol).get_spot_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            undo_adjust=load_request.undo_adjust,
+        )
         load_info["spot_load_time"] = time.time() - start_time
 
     if f:
+        logger.info(f"Loading forward data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         f_params = {
             "maturity_date": expiration,
@@ -505,25 +621,17 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             "spot": S,
             "rates": R,
         }
-        if not is_as_of and not is_rt:
-            F = ForwardDataManager(symbol=symbol).get_forward_timeseries(
-                start_date=start_date,
-                end_date=end_date,
-                **f_params,
-            )
-        elif is_as_of and not is_rt:
-            F = ForwardDataManager(symbol=symbol).get_forward(
-                date=end_date,
-                **f_params,
-            )
-        else:  # is_rt
-            F = ForwardDataManager(symbol=symbol).rt(
-                fallback_option=load_request.fall_back_option,
-                **f_params,
-            )
+        if _get_print_diagnostics():
+            print(f"Forward params: {f_params}")
+        F = ForwardDataManager(symbol=symbol).get_forward_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            **f_params,
+        )
         load_info["forward_load_time"] = time.time() - start_time
 
     if opt_spot:
+        logger.info(f"Loading option spot data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         opt_params = {
             "expiration": expiration,
@@ -532,28 +640,18 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             "endpoint_source": load_request.endpoint_source,
             "model_price": model_price,
         }
-        if not is_as_of and not is_rt:
-            market_price = OptionSpotDataManager(symbol=symbol).get_option_spot_timeseries(
-                start_date=start_date,
-                end_date=end_date,
-                **opt_params,
-            )
-        elif is_as_of and not is_rt:
-            market_price = OptionSpotDataManager(symbol=symbol).get_option_spot(
-                date=end_date,
-                **opt_params,
-            )
-        else:  # is_rt
-            opt_params.pop("endpoint_source")  # RT does not use endpoint_source
-            opt_params.pop("model_price")  # RT does not use model_price
-            market_price = OptionSpotDataManager(symbol=symbol).rt(
-                **opt_params,
-            )
-
+        if _get_print_diagnostics():
+            print(f"Option spot params: {opt_params}")
+        market_price = OptionSpotDataManager(symbol=symbol).get_option_spot_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            **opt_params,
+        )
         load_info["option_spot_load_time"] = time.time() - start_time
         OPTION_SPOT = market_price
 
     if vol:
+        logger.info(f"Loading implied volatility data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         v_params = {
             "expiration": expiration,
@@ -561,87 +659,62 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             "right": load_request.right,
             "market_model": load_request.market_model,
             "vol_model": load_request.vol_model,
+            "undo_adjust": load_request.undo_adjust,
+            "endpoint_source": load_request.endpoint_source,
+            "model_price": model_price,
+            "dividend_type": dividend_type,
             "dividends": D,
             "F": F,
             "S": S,
             "r": R,
-            "dividend_type": dividend_type,
             "market_price": OPTION_SPOT,
-            "undo_adjust": load_request.undo_adjust,
-            "endpoint_source": load_request.endpoint_source,
-            "model_price": model_price,
         }
-        if not is_as_of and not is_rt:
-            V = VolDataManager(symbol=symbol).get_implied_volatility_timeseries(
-                start_date=start_date,
-                end_date=end_date,
-                **v_params,
-            )
-        elif is_as_of and not is_rt:
-            V = VolDataManager(symbol=symbol).get_at_time_implied_volatility(
-                as_of=end_date,
-                fallback_option=load_request.fall_back_option,
-                **v_params,
-            )
-        else:  # is_rt
-            v_params.pop("endpoint_source")  # RT does not use endpoint_source
-            V = VolDataManager(symbol=symbol).rt(
-                fallback_option=load_request.fall_back_option,
-                **v_params,
-            )
-
+        if _get_print_diagnostics():
+            print(f"Vol params: {v_params}")
+        V = VolDataManager(symbol=symbol).get_implied_volatility_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            **v_params,
+        )
         load_info["vol_load_time"] = time.time() - start_time
         model_data.vol = V
+
     if greek:
+        logger.info(f"Loading greek data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         grk_params = {
             "expiration": expiration,
             "strike": load_request.strike,
             "right": load_request.right,
             "market_model": load_request.market_model,
+            "dividend_type": dividend_type,
+            "undo_adjust": load_request.undo_adjust,
+            "endpoint_source": load_request.endpoint_source,
+            "model_price": model_price,
             "d": D,
             "f": F,
             "S": S,
             "r": R,
             "vol": V,
-            "dividend_type": dividend_type,
-            "undo_adjust": load_request.undo_adjust,
-            "endpoint_source": load_request.endpoint_source,
-            "model_price": model_price,
         }
-        if not is_as_of and not is_rt:
-            G = GreekDataManager(symbol=symbol).get_greeks_timeseries(
-                start_date=start_date,
-                end_date=end_date,
-                **grk_params,
-            )
-        elif is_as_of and not is_rt:
-            G = GreekDataManager(symbol=symbol).get_at_time_greeks(
-                as_of=end_date,
-                fallback_option=load_request.fall_back_option,
-                **grk_params,
-            )
-        else:  # is_rt
-            grk_params.pop("endpoint_source")  # RT does not use endpoint_source
-            G = GreekDataManager(symbol=symbol).rt(
-                fallback_option=load_request.fall_back_option,
-                **grk_params,
-            )
+        G = GreekDataManager(symbol=symbol).get_greeks_timeseries(
+            start_date=start_date,
+            end_date=end_date,
+            **grk_params,
+        )
         load_info["greek_load_time"] = time.time() - start_time
         model_data.greek = G
-    
+
     model_data.dividend = D
     model_data.dividend_type = dividend_type
     model_data.forward = F
     model_data.rates = R
     model_data.spot = S
     model_data.option_spot = OPTION_SPOT
-    model_data.series_id = SeriesId.HIST if (not is_as_of and not is_rt) else SeriesId.AT_TIME
+    model_data.series_id = SeriesId.HIST
     model_data.undo_adjust = load_request.undo_adjust
     model_data.time_to_load = load_info
     model_data.endpoint_source = load_request.endpoint_source
-
-
 
     if not any(
         [
@@ -654,9 +727,14 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             load_request.load_greek,
         ]
     ):
-        logger.info(("No data requested to load in _load_model_data_timeseries()."
-                        f" Option: Symbol={symbol}, exp={expiration}, strike={load_request.strike} right={load_request.right}"
-                        f" Load bools: d={d}, r={r}, s={s}, f={f}, opt_spot={opt_spot}, vol={vol}, greek={greek}"))
+        logger.info(
+            (
+                "No data requested to load in _load_model_data_timeseries()."
+                f" Option: Symbol={symbol}, exp={expiration}, strike={load_request.strike} "
+                f"right={load_request.right}"
+                f" Load bools: d={d}, r={r}, s={s}, f={f}, opt_spot={opt_spot}, vol={vol}, greek={greek}"
+            )
+        )
         return model_data
 
     assert_synchronized_model(
@@ -665,21 +743,19 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         undo_adjust=load_request.undo_adjust,
         dividend_type=dividend_type,
         require_anchor=model_data.option_spot is not None,
-        is_rt=is_rt,
-        check_fallback_option=is_rt or is_as_of,
+        is_rt=False,
+        check_fallback_option=False,
     )
-    model_data.rt = is_rt
+    model_data.rt = False
     model_data.market_model = load_request.market_model or OptionDataConfig().option_model
     model_data.vol_model = load_request.vol_model or OptionDataConfig().volatility_model
     model_data.model_price = load_request.model_price or OptionDataConfig().model_price
-    
-    
-    ## Log what was loaded only if something was actually loaded
+
     if load_info:
         log_model_load_info(
             log_info=load_info,
-            is_rt=is_rt,
-            is_timeseries=not is_as_of,
+            is_rt=False,
+            is_timeseries=True,
             symbol=symbol,
             expiration=expiration,
             strike=load_request.strike,
@@ -687,4 +763,54 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             dividend_type=dividend_type,
             market_model=load_request.market_model.name if load_request.market_model else "N/A",
         )
+    log_model_result_pack_na(model_data)
     return model_data
+
+
+def _load_model_data_as_date(load_request: LoadRequest) -> ModelResultPack:
+    """Load full lookback window, then clip each factor to the request anchor.
+
+    Args:
+        load_request: Point-in-time or real-time request (``on_date`` or ``rt``).
+
+    Returns:
+        ``ModelResultPack`` with single-row factors at the anchor date.
+    """
+    anchor, _, _ = _resolve_model_load_window(load_request)
+    fallback = load_request.fall_back_option or RealTimeFallbackOption.USE_LAST_AVAILABLE
+
+    ## Orchestrator loads the expanded window; anchor on the request is only the clip target.
+    packet = _load_model_data_timeseries(load_request)
+
+    clipped = _clip_model_packet_at_anchor(packet, anchor, fallback)
+    clipped.series_id = SeriesId.AT_TIME
+    clipped.market_model = packet.market_model
+    clipped.vol_model = packet.vol_model
+    clipped.model_price = packet.model_price
+    clipped.time_to_load = packet.time_to_load
+
+    assert_synchronized_model(
+        packet=clipped,
+        symbol=load_request.symbol,
+        undo_adjust=load_request.undo_adjust,
+        dividend_type=clipped.dividend_type,
+        require_anchor=clipped.option_spot is not None,
+        is_rt=True,
+        check_fallback_option=True,
+    )
+    log_model_result_pack_na(clipped)
+    return clipped
+
+
+def _load_model_data(load_request: LoadRequest) -> ModelResultPack:
+    """Route model loading by date mode.
+
+    Args:
+        load_request: Historical window or point-in-time/real-time anchor request.
+
+    Returns:
+        Full-window pack for hist; single-row clipped pack for ``rt``/``as_of``.
+    """
+    if load_request.on_date or load_request.rt:
+        return _load_model_data_as_date(load_request)
+    return _load_model_data_timeseries(load_request)

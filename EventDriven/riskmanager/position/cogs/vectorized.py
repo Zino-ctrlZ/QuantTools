@@ -165,9 +165,10 @@ class VectorizedCog(BaseCog):
                         f"Recommending ROLL."
                     )
 
+                    # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
                     action = ROLL(
                         trade_id=pos_state.trade_id,
-                        action=Changes(quantity_diff=0, new_quantity=qty),
+                        action=Changes(quantity_diff=-abs(qty), new_quantity=qty),
                     )
                     action.reason = (
                         f"DTE {dte} below threshold {self.config.dte_threshold}. Rolling to extend duration."

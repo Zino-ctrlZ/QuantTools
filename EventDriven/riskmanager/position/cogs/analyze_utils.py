@@ -349,7 +349,8 @@ def analyze_position(
     # DTE Check
     if strategy_enabled_actions.dte:
         if dte < dte_limit:  # Inline the check for performance
-            action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
+            # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
+            action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=-abs(qty), new_quantity=qty))
             action.reason = f"not enough DTE ({dte} < {dte_limit})"
             logger.debug(f"ROLL action for {trade_id} due to DTE check. DTE: {dte}, threshold: {dte_limit}")
             return action
@@ -358,7 +359,8 @@ def analyze_position(
     if strategy_enabled_actions.moneyness:
         if any(abs(m) > abs(moneyness_limit) for m in moneyness_list):  # Inline the check
             m = max(moneyness_list, key=abs)
-            action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=0, new_quantity=qty))
+            # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
+            action = ROLL(trade_id=trade_id, action=Changes(quantity_diff=-abs(qty), new_quantity=qty))
             action.reason = f"position is too ITM ({m} exceeds {moneyness_limit})"
             logger.debug(f"ROLL action for {trade_id} due to moneyness check. Moneyness values: {moneyness_list}, threshold: {moneyness_limit}")
             return action
@@ -418,10 +420,11 @@ def analyze_position(
                 # elif q_diff == 0 and qty == 1:
                 elif new_qty == 0:
                     logger.info(f"Calculated new quantity for {trade_id} is zero after adjusting for {greek} breach. Creating ROLL action instead to avoid closing position.")
+                    # quantity_diff = -abs(qty) signals close-first for live; new_quantity is post-roll size.
                     max_adjust_action = ROLL(
-                        trade_id=trade_id, action=Changes(quantity_diff=q_diff, new_quantity=0)
+                        trade_id=trade_id, action=Changes(quantity_diff=-abs(qty), new_quantity=qty)
                     )
-                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v}), New qty=0, rolling instead of closing."
+                    max_adjust_action.reason = f"position {greek} exceeds limit ({greek_v} > {greek_limit_v}), rolling instead of reducing to zero."
                 
                 else:
                     logger.warning(

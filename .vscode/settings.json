@@ -52,12 +52,9 @@
     // Disable pylint (redundant with ruff)
     "python.linting.pylintEnabled": false,
     "python.linting.enabled": true,
-
-    "jupytextSync.pythonExecutable": "/Users/chiemelienwanisobi/miniconda3/envs/openbb_new_use/bin/python",
-
     "python-envs.pythonProjects": [
         {
-            "path": ".",
+            "path": "",
             "envManager": "ms-python.python:conda",
             "packageManager": "ms-python.python:conda"
         }

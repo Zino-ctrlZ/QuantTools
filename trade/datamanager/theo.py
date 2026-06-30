@@ -50,7 +50,7 @@ import pandas as pd
 from typing import Optional, Literal, Dict, List
 from trade.datamanager.utils.model import (
     LoadRequest,
-    _load_model_data_timeseries,
+    _load_model_data,
     DivType,
     VolatilityModel,
     OptionPricingModel,
@@ -358,8 +358,8 @@ def get_option_theoretical_price(
         as_of=as_of,
     )
 
-    # Load required market data
-    packet = _load_model_data_timeseries(load_request)
+    ## Router clips to a single anchor row for rt/as_of; full window for hist.
+    packet = _load_model_data(load_request)
 
     # Extract time series data, using provided data if available
     s, r, vol, d, f = (
@@ -887,8 +887,8 @@ def calculate_scenarios(
         rt=rt,
     )
 
-    # Load required market data
-    packet = _load_model_data_timeseries(load_request)
+    ## Router clips to a single anchor row for rt/as_of; full window for hist.
+    packet = _load_model_data(load_request)
 
     s, r, vol, base_prices, d = (
         packet.spot.timeseries if not packet.spot.is_empty() else spot.timeseries,

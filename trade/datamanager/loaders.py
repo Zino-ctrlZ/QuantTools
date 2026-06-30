@@ -44,7 +44,7 @@ Typical Usage:
 
 from typing import Optional
 from trade.datamanager.result import DividendsResult, SpotResult
-from trade.datamanager.utils.model import LoadRequest, _load_model_data_timeseries, ModelResultPack
+from trade.datamanager.utils.model import LoadRequest, _load_model_data, ModelResultPack
 from trade.datamanager.utils.date import DATE_HINT
 from trade.datamanager._enums import (
     SeriesId,
@@ -218,5 +218,5 @@ def load_full_option_data(
         rates_timeseries=rates_timeseries,
     )
     
-    data_packet = _load_model_data_timeseries(request)
+    data_packet = _load_model_data(request)
     return data_packet

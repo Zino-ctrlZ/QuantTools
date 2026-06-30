@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from openbb import obb
+from openbb import obb # noqa
 import pandas as pd
 from trade.optionlib.config.defaults import (
     OPTION_TIMESERIES_START_DATE,  # noqa
@@ -12,8 +12,14 @@ from trade.optionlib.assets.dividend import infer_frequency, FREQ_MAP
 from trade.datamanager.utils.logging import get_logging_level, register_to_factor_list
 from trade.datamanager.config import OptionDataConfig
 
+from trade.datamanager.utils.date import business_day_grid
+from trade.helpers.helper import to_datetime
+
 logger = setup_logger("trade.datamanager.market_data_helpers.dividends", stream_log_level=get_logging_level())
 register_to_factor_list("trade.datamanager.market_data_helpers.dividends")
+
+## Earliest date for the daily dividend B-day grid (pre-IPO / pre-dividend rows are zero).
+DIVIDEND_DAILY_GRID_START = "1999-01-01"
 
 
 @dataclass
@@ -31,8 +37,20 @@ DIVIDEND_CACHE = CustomCache(
 
 
 def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.Series:
-    """Resample dividend series to daily frequency with forward fill."""
+    """Resample dividend series to daily business-day frequency with forward fill.
 
+    Sparse ex-dividend prints are resampled and forward-filled through today (or
+    zero-filled when dividends appear discontinued). The series is then aligned
+    to ``business_day_grid`` from ``DIVIDEND_DAILY_GRID_START``; dates before the
+    first observed dividend are set to zero.
+
+    Args:
+        div_series: Historical dividend amounts indexed by ex-dividend date.
+        buffer: Extra day buffer added to inferred payment cadence for discontinuation check.
+
+    Returns:
+        Daily dividend amounts on the shared B-day grid.
+    """
     freq = infer_frequency(div_series)
     if freq is None:
         raise ValueError("Could not infer frequency.")
@@ -47,16 +65,35 @@ def resample_dividends_to_daily(div_series: pd.Series, buffer: int = 30) -> pd.S
     ## There are cases where dividends were discontinued, so we will only forward fill if the last known dividend date - today is less than freq_days
     ## If not we fill with zeros
     last_div_date = div_series.dropna().index[-1]
+    first_div_date = pd.Timestamp(div_series.dropna().index[0]).normalize()
     today = datetime.now()
     days_since_last_div = (today - last_div_date).days
 
     ## Add additional days to ffill into
     resampled = resampled.reindex(pd.date_range(start=resampled.index[0], end=today, freq="1b"))
-    if days_since_last_div <= freq_days:
-        resampled = resampled.ffill()
-    else:
+    dividends_discontinued = days_since_last_div > freq_days
+    if dividends_discontinued:
         logger.info("Filling with zeros as dividends seem to be discontinued.")
         resampled.loc[last_div_date + timedelta(days=1) : today] = 0.0
+    else:
+        resampled = resampled.ffill()
+
+    ## Align to shared B-day grid from 1999; pre-first-dividend dates are zero.
+    grid = pd.DatetimeIndex(
+        business_day_grid(DIVIDEND_DAILY_GRID_START, to_datetime(today).date())
+    )
+    resampled = resampled.reindex(grid)
+    prior_mask = resampled.index.normalize() < first_div_date
+    resampled.loc[prior_mask] = 0.0
+
+    if dividends_discontinued:
+        after_last_mask = resampled.index.normalize() > pd.Timestamp(last_div_date).normalize()
+        resampled.loc[after_last_mask] = resampled.loc[after_last_mask].fillna(0.0)
+    else:
+        resampled = resampled.ffill()
+
+    resampled.loc[prior_mask] = 0.0
+
     resampled.index = pd.to_datetime(resampled.index, format="%Y-%m-%d")
     resampled.name = "dividend_amount"
     resampled.index.name = "datetime"

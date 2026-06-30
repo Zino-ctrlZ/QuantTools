@@ -17,22 +17,31 @@ from datetime import datetime
 from typing import ClassVar, Optional, Union
 import pandas as pd
 import yfinance as yf
-import numpy as np
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday
 from curl_cffi.requests.exceptions import SSLError
 import backoff
 from .utils.cache import _data_structure_cache_it, _check_cache_for_timeseries_data_structure
-from .utils.date import is_available_on_date, to_datetime
+from .utils.date import _sync_equity_date, business_day_grid
+from trade.helpers.helper import to_datetime
 from .utils.data_structure import _data_structure_sanitize
+from .utils.point_in_time import resolve_value_at_date
 from .config import OptionDataConfig
-from ._enums import ArtifactType, Interval, SeriesId, RealTimeFallbackOption
+from ._enums import ArtifactType, CertificationLevel, Interval, SeriesId, RealTimeFallbackOption
 from .result import RatesResult
+from trade.datamanager.certification.integration import certify_manager_result
 from .base import BaseDataManager, CacheSpec
 from .utils.logging import get_logging_level
+from trade.datamanager.exceptions import EmptyDataException
 
 logger = setup_logger("trade.datamanager.rates", stream_log_level=get_logging_level())
 
+
+def _resample_rates_data(rates_data: pd.Series, start_date: Union[datetime, str], end_date: Union[datetime, str]) -> pd.Series:
+    """Resample rates data to a business-day grid."""
+    bus_days = pd.DatetimeIndex(business_day_grid(start_date, end_date))
+    rates_data = rates_data.reindex(bus_days)
+    rates_data = rates_data.ffill()
+    return rates_data
 
 def deannualize(annual_rate: float, periods: int = 365) -> float:
     """Converts annualized interest rate to per-period rate.
@@ -164,19 +173,20 @@ class RatesDataManager(BaseDataManager):
         interval: Interval = Interval.EOD,
         str_interval: Optional[str] = None,
         fallback_option: Optional[RealTimeFallbackOption] = None,
-        *,
-        force_fail_n: int = 0,
     ) -> RatesResult:
         """Returns risk-free rate for a single date.
 
         Fetches the risk-free interest rate (from 13-week T-Bill) for a specific date.
-        Returns empty result if date is not a business day or is a US holiday.
+        Uses a 10-business-day lookback window certified at L1, then resolves the
+        value per ``fallback_option``.
 
         Args:
             date: Target date for rate lookup (YYYY-MM-DD string or datetime).
             interval: Time interval resolution. Defaults to Interval.EOD (end-of-day).
             str_interval: Optional yfinance interval string (e.g., "1d", "30m").
                 Overrides interval parameter if provided.
+            fallback_option: Policy when exact date is missing or non-trading.
+                Defaults to ``OptionDataConfig.real_time_fallback_option``.
 
         Returns:
             RatesResult containing daily_risk_free_rates Series with single value,
@@ -200,88 +210,35 @@ class RatesDataManager(BaseDataManager):
             - Uses internal timeseries method with single-date range
             - Returns annualized rate (e.g., 0.0485 = 4.85%)
         """
-        ## To avoid infinite recursion in fallback
-        if force_fail_n > 7:
-            raise ValueError("Exceeded maximum recursion attempts in get_rate fallback handling.")
-        force_fail_n += 1 
         fallback_option = fallback_option or self.CONFIG.real_time_fallback_option
-        date = to_datetime(date)
-        
-        ## Resolving date availability
-        if not is_available_on_date(date.date()):
-            logger.warning(
-                f"Requested date {date} is not a business day or is a US holiday. Resorting to fallback option `{fallback_option}`."
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Date {date} is not available for risk-free rate data.")
-            
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## Using only change_to_last_busday assumes input date is not business day or is holiday
-                ## Which the function would roll back
-                ## But there's a possibility input date is today's date but before market open
-                ## In that case we need to move back one more business day
-                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-                return self.get_rate(
-                    date=date,
+
+        def _fetch(start: str, end: str) -> RatesResult:
+            try:
+                return self.get_risk_free_rate_timeseries(
+                    start_date=start,
+                    end_date=end,
                     interval=interval,
                     str_interval=str_interval,
-                    fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE,
-                    force_fail_n=force_fail_n,
+                    certification_level=CertificationLevel.L1,
                 )
-            else:
-                value = pd.Series(dtype=float,
-                                  index = [pd.to_datetime(date)],
-                                  data = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
-                
-                res = RatesResult(timeseries=value, symbol=self.DEFAULT_YFINANCE_TICKER)
-                res.fallback_option = fallback_option
-                return res
-        date_str = pd.to_datetime(date).strftime("%Y-%m-%d") if isinstance(date, datetime) else date
+            except EmptyDataException:
+                return RatesResult(
+                    timeseries=pd.Series(dtype=float),
+                    symbol=self.DEFAULT_YFINANCE_TICKER,
+                )
 
-        rates_data = self.get_risk_free_rate_timeseries(
-            start_date=date_str,
-            end_date=date_str,
-            interval=interval,
-            str_interval=str_interval,
+        rate_row, meta = resolve_value_at_date(
+            date,
+            fetch_timeseries=_fetch,
+            extract_timeseries=lambda r: r.timeseries,
+            fallback_option=fallback_option,
         )
 
-        ## Date is available, but resolving no data found
-        rate = rates_data.timeseries
-        if rate is not None and not rate.empty:
-            rate = rate.iloc[0:1]
-        else:
-            logger.warning(
-                f"No rate data found for date {date}. Resorting to fallback option `{fallback_option}`."
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"No rate data found for date {date}.")
-            elif fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## We are retaining the original date for logging and index purposes.
-                ## Because the returned rate should still be indexed by the requested date, which would be used in further calculations.
-                original_date = to_datetime(date).date()
-                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-                res = self.get_rate(
-                    date=date,
-                    interval=interval,
-                    str_interval=str_interval,
-                    fallback_option=RealTimeFallbackOption.USE_LAST_AVAILABLE,
-                    force_fail_n=force_fail_n,
-                )
-                rate = res.timeseries
-                rate = rate.iloc[0:1]
-                logger.warning(
-                    f"Using last available rate for date {date} for {original_date} as fallback."
-                )
-                rate.index = [pd.to_datetime(original_date)]
-            else:
-                rate = pd.Series(dtype=float,
-                                 index = [to_datetime(date)],
-                                 data = [np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0])
-
-        res = RatesResult(timeseries=rate, symbol=self.DEFAULT_YFINANCE_TICKER)
-        res.fallback_option = fallback_option
+        res = RatesResult(timeseries=rate_row, symbol=self.DEFAULT_YFINANCE_TICKER)
+        res.fallback_option = meta.fallback_option
+        if meta.source_result is not None:
+            res.is_certified = meta.source_result.is_certified
+            res.key = meta.source_result.key
         return res
 
     def get_risk_free_rate_timeseries(
@@ -290,6 +247,8 @@ class RatesDataManager(BaseDataManager):
         end_date: Union[datetime, str],
         interval: Interval = Interval.EOD,
         str_interval: Optional[str] = None,
+        *,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> RatesResult:
         """Returns risk-free rate time-series with partial cache support.
 
@@ -348,6 +307,7 @@ class RatesDataManager(BaseDataManager):
         if interval != Interval.EOD:
             raise ValueError("RatesDataManager is EOD-only.")
 
+        start_date, end_date = _sync_equity_date(start_date, end_date)
 
         start_str = pd.to_datetime(start_date).strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
         end_str = pd.to_datetime(end_date).strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
@@ -370,11 +330,10 @@ class RatesDataManager(BaseDataManager):
 
 
         ## Check cache
-        series, is_partial, start_date, end_date = _check_cache_for_timeseries_data_structure(
+        series, is_partial, fetch_start, fetch_end = _check_cache_for_timeseries_data_structure(
             self=self, key=key, start_dt=start_str, end_dt=end_str
         )
 
-            ## If no missing dates, return cached series
         if series is not None and not is_partial:
             logger.info(f"Cache fully covers requested date range for risk-free rate timeseries. Key: {key}")
             series = _data_structure_sanitize(
@@ -383,19 +342,28 @@ class RatesDataManager(BaseDataManager):
                 end=end_str,
                 source_name=f"cached risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER}",
             )
-            return RatesResult(timeseries=series, symbol=self.DEFAULT_YFINANCE_TICKER)
-        else:
-            ## Fetch overriding date range for missing data
-            start_date = start_str
-            end_date = end_str
-            logger.info(
-                f"Cache partially covers requested date range for risk-free rate timeseries. Key: {key}"
+            result = RatesResult(
+                timeseries=series,
+                symbol=self.DEFAULT_YFINANCE_TICKER,
+                key=key,
             )
-            
-        # Fetch rates data
+            return certify_manager_result(result, start_str, end_str, level=certification_level)
+
+        if series is not None and is_partial:
+            logger.info(
+                f"Cache partially covers requested date range for risk-free rate timeseries. "
+                f"Key: {key}. Fetching missing dates from {fetch_start} to {fetch_end}."
+            )
+        else:
+            logger.info(
+                f"No usable cache for risk-free rate timeseries. Key: {key}. "
+                f"Fetching from {fetch_start} to {fetch_end}."
+            )
+
+        # Fetch rates data for the missing sub-range only (full window on cache miss).
         rates_data = self._query_yfinance(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=fetch_start,
+            end_date=fetch_end,
             interval=fn_interval,
         )["annualized"]
         rates_data = rates_data[(rates_data.index >= pd.to_datetime(start_str)) & (rates_data.index <= pd.to_datetime(end_str))]
@@ -408,9 +376,14 @@ class RatesDataManager(BaseDataManager):
         # If data is empty, return empty result
         if rates_data.empty:
             logger.warning(
-                f"No risk-free rate data found for date range {start_date} to {end_date}."
+                f"No risk-free rate data found for date range {fetch_start} to {fetch_end}."
             )
-            return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=pd.Series(dtype=float))
+            return certify_manager_result(
+                RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=pd.Series(dtype=float), key=key),
+                start_str,
+                end_str,
+                level=certification_level,
+            )
 
 
         ## Cache the updated series. This is allowed cause `cache_it` uses the utility function from
@@ -424,8 +397,12 @@ class RatesDataManager(BaseDataManager):
             end=end_str,
             source_name=f"final risk-free rate timeseries for {self.DEFAULT_YFINANCE_TICKER} after merging cache and fetched data",
         )
+        if self.CONFIG.allow_rates_resample_on_missing:
+            logger.info(f"Resampling rates data on missing dates for {self.DEFAULT_YFINANCE_TICKER}.")
+            rates_data = _resample_rates_data(rates_data, start_str, end_str)
 
-        return RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=rates_data)
+        result = RatesResult(symbol=self.DEFAULT_YFINANCE_TICKER, timeseries=rates_data, key=key)
+        return certify_manager_result(result, start_str, end_str, level=certification_level)
 
     def cache_it(self, key: str, value: pd.Series, *, expire: Optional[int] = None) -> None:
         """Merges and caches rate time-series, excluding today's partial data.

@@ -152,7 +152,9 @@ See Also
 --------
 
 For comprehensive documentation, see:
-    - trade/datamanager/README.md: Complete module guide
+    - trade/datamanager/docs/README.md: Complete module guide
+    - trade/datamanager/docs/UPGRADE_PLAN.md: Certification rollout (completed)
+    - trade/datamanager/docs/FUTURE_CHANGES.md: Backlog and deferred work
     - Individual manager docstrings: Detailed API documentation
     - trade/datamanager/loaders.py: Convenience loader functions
     - trade/datamanager/timeseries.py: Unified interface documentation

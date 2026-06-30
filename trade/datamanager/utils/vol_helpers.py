@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Any, Optional, Tuple, List
+from datetime import date, datetime
+from typing import Any, Optional, Tuple, List, Union
 import pandas as pd
 from trade.datamanager.result import (
     DividendsResult,
@@ -9,14 +9,18 @@ from trade.datamanager.result import (
     RatesResult,
     OptionSpotResult,
     ModelResultPack,
+    GreekResultSet,
 )
-from trade.datamanager.utils.date import sync_date_index, time_distance_helper, _sync_date
+from trade.datamanager.utils.date import sync_date_index, time_distance_helper, _sync_date, DATE_HINT
 from trade.datamanager.base import BaseDataManager
-from trade.datamanager._enums import OptionSpotEndpointSource
+from trade.datamanager._enums import CertificationLevel, OptionSpotEndpointSource
 from trade.datamanager.utils.cache import (
     _check_cache_for_timeseries_data_structure,
     _data_structure_cache_it,
+    _get_checked_missing_dates_from_cache,
 )
+from trade.datamanager.utils.classification import classify_option_spot_dates
+from trade.datamanager.certification.integration import certify_manager_result
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
@@ -56,7 +60,115 @@ def _prepare_vol_calculation_setup(
     start_str = to_datetime(start_date).strftime("%Y-%m-%d")
     end_str = to_datetime(end_date).strftime("%Y-%m-%d")
 
+    result.endpoint_source = endpoint_source
+
     return result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date
+
+
+def _filter_checked_missing_to_window(
+    checked_missing_dates: List[DATE_HINT],
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+) -> List[DATE_HINT]:
+    """Keep checked-missing dates that fall inside ``[start_date, end_date]``.
+
+    Args:
+        checked_missing_dates: Candidate vendor-confirmed absent dates.
+        start_date: Window start (inclusive).
+        end_date: Window end (inclusive).
+
+    Returns:
+        Filtered checked-missing dates as ``date`` objects.
+    """
+    start_d = to_datetime(start_date).date()
+    end_d = to_datetime(end_date).date()
+    return sorted(
+        {
+            to_datetime(d).date()
+            for d in checked_missing_dates
+            if start_d <= to_datetime(d).date() <= end_d
+        }
+    )
+
+
+def reconcile_checked_missing_dates_for_option_artifact(
+    *,
+    symbol: str,
+    strike: float,
+    right: str,
+    expiration: DATE_HINT,
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+    cached_checked_missing: Optional[List[DATE_HINT]] = None,
+    fetched: Optional[pd.DataFrame] = None,
+) -> List[date]:
+    """Merge cache seed with a single classify pass over already-loaded option spot.
+
+    checked_missing = (fresh_classify ∪ cached_seed) − newly_observed_price_days.
+    Call after model load when option spot is already in memory; pass an empty
+    frame when spot was not loaded (greeks / euro-equiv vol).
+
+    Args:
+        symbol: Underlying ticker.
+        strike: Option strike.
+        right: Option right.
+        expiration: Option expiration.
+        start_date: Sync'd certification/cache window start for this fetch slice.
+        end_date: Sync'd certification/cache window end for this fetch slice.
+        cached_checked_missing: Checked-missing dates stored on the vol/greek cache entry.
+        fetched: Option spot OHLC frame from the current load (may be empty).
+
+    Returns:
+        Reconciled checked-missing dates for cert and cache metadata.
+    """
+    fetched_df = fetched if fetched is not None else pd.DataFrame()
+    classification = classify_option_spot_dates(
+        fetched=fetched_df,
+        symbol=symbol,
+        strike=float(strike),
+        right=right,
+        expiration=to_datetime(expiration),
+        valid_start=start_date,
+        valid_end=end_date,
+    )
+    cached_set = {
+        to_datetime(d).date() for d in (cached_checked_missing or [])
+    }
+    observed_set = set(pd.DatetimeIndex(classification.observed_dates).normalize().date)
+    fresh_set = {to_datetime(d).date() for d in classification.checked_missing_dates}
+    return sorted((fresh_set | cached_set) - observed_set)
+
+
+def _certify_option_model_result(
+    result: Union[VolatilityResult, GreekResultSet],
+    start_date: DATE_HINT,
+    end_date: DATE_HINT,
+    *,
+    cache_key: Optional[str] = None,
+    checked_missing_dates: Optional[List[DATE_HINT]] = None,
+    certification_level: Optional[CertificationLevel] = None,
+) -> Union[VolatilityResult, GreekResultSet]:
+    """Certify vol/greek result at return boundary after sanitize.
+
+    Args:
+        result: Assembled vol or greek result.
+        start_date: Sync'd certification window start.
+        end_date: Sync'd certification window end.
+        cache_key: Cache key when ``result.key`` is not yet set.
+        checked_missing_dates: Vendor checked-missing dates for option artifacts.
+        certification_level: Optional per-call level override.
+
+    Returns:
+        Result with ``is_certified=True`` after certifier completes.
+    """
+    return certify_manager_result(
+        result,
+        start_date,
+        end_date,
+        cache_key=cache_key,
+        checked_missing_dates=checked_missing_dates,
+        level=certification_level,
+    )
 
 
 def _handle_cache_for_vol(
@@ -65,17 +177,28 @@ def _handle_cache_for_vol(
     start_date: datetime,
     end_date: datetime,
     result: VolatilityResult,
-    optional_name: Optional[str] = "vol"
-) -> Tuple[Optional[pd.Series], bool, datetime, datetime, Optional[VolatilityResult]]:
+    optional_name: Optional[str] = "vol",
+) -> Tuple[
+    Optional[pd.Series],
+    bool,
+    datetime,
+    datetime,
+    Optional[VolatilityResult],
+    List[date],
+]:
     """Handle cache checking logic for volatility calculations.
 
     Returns:
-        Tuple of (cached_data, is_partial, adjusted_start, adjusted_end, result_or_none)
-        If result_or_none is not None, caller should return it immediately (full cache hit)
+        Tuple of (cached_data, is_partial, adjusted_start, adjusted_end,
+        result_or_none, checked_missing_dates). When ``result_or_none`` is set,
+        return immediately (full cache hit) using window-filtered checked-missing
+        metadata from cache. Otherwise the sixth element is the full cache seed for
+        reconcile after fetch.
     """
     cached_data, is_partial, start_date, end_date = _check_cache_for_timeseries_data_structure(
         key=key, self=manager, start_dt=start_date, end_dt=end_date
     )
+    cached_checked_missing = _get_checked_missing_dates_from_cache(manager, key)
 
     if cached_data is not None and not is_partial:
         logger.info(f"Cache hit for {optional_name} timeseries key: {key}")
@@ -86,13 +209,18 @@ def _handle_cache_for_vol(
             source_name=f"cached {optional_name} timeseries for key: {key}",
         )
         result.timeseries = cached_data
-        return cached_data, is_partial, start_date, end_date, result
+        checked_missing_dates = _filter_checked_missing_to_window(
+            cached_checked_missing,
+            start_date,
+            end_date,
+        )
+        return cached_data, is_partial, start_date, end_date, result, checked_missing_dates
     elif is_partial:
         logger.info(f"Cache partially covers requested date range. Key: {key}. Fetching missing dates.")
     else:
         logger.info(f"No cache found for key: {key}. Fetching from source.")
 
-    return cached_data, is_partial, start_date, end_date, None
+    return cached_data, is_partial, start_date, end_date, None, list(cached_checked_missing)
 
 
 def _merge_and_cache_vol_result(
@@ -103,15 +231,22 @@ def _merge_and_cache_vol_result(
     key: str,
     start_str: str,
     end_str: str,
+    *,
+    checked_missing_dates: Optional[List[DATE_HINT]] = None,
 ) -> pd.Series:
-    """Merge with cache if partial, cache result, and sanitize."""
+    """Merge with cache if partial, cache result with checked-missing metadata, and sanitize."""
     # Merge with cached data if partial
     if cached_data is not None and is_partial:
         merged = pd.concat([cached_data, iv_timeseries])
         iv_timeseries = merged[~merged.index.duplicated(keep="last")].sort_index()
 
-    # Cache the fetched data
-    _data_structure_cache_it(manager, key, iv_timeseries)
+    # Cache the fetched data; checked-missing dates accumulate on the cache entry.
+    _data_structure_cache_it(
+        manager,
+        key,
+        iv_timeseries,
+        checked_missing_dates=checked_missing_dates,
+    )
 
     # Sanitize before returning
     iv_timeseries = _data_structure_sanitize(

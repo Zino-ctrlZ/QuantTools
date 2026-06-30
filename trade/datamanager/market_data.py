@@ -212,8 +212,14 @@ from trade.datamanager.utils.cache import (
     _extract_data,  # noqa
     _simple_extract_from_cache,  # noqa
 )
+from trade.datamanager.utils.data_structure import _data_structure_sanitize
+from trade.datamanager.utils.date import _sync_equity_date
+from trade.datamanager.exceptions import EmptyDataException
 from trade import SIGNALS_TO_RUN
 from trade.datamanager.utils.logging import get_logging_level
+from trade.datamanager.certification.market_timeseries import certify_market_factor_payload
+from trade.datamanager._enums import CertificationLevel, RealTimeFallbackOption
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 
 
 logger = setup_logger("trade.datamanager.market_data", stream_log_level=get_logging_level())
@@ -501,6 +507,43 @@ class MarketTimeseries:
         SPLIT_FACTOR_CACHE.clear()
         logger.info("All MarketTimeseries caches have been cleared.")
 
+    def _sanitize_market_factor_for_cache(
+        self,
+        data: pd.DataFrame | pd.Series,
+        sym: str,
+        start: str,
+        end: str,
+        factor: str,
+    ) -> pd.DataFrame | pd.Series | None:
+        """Structural sanitize before writing a market factor into MT internal cache.
+
+        Args:
+            data: Raw vendor payload.
+            sym: Equity ticker.
+            start: Inclusive cache window start (YYYY-MM-DD).
+            end: Inclusive cache window end (YYYY-MM-DD).
+            factor: Factor label for logging (spot, chain_spot, dividends, split_factor).
+
+        Returns:
+            Sanitized payload, or None when sanitize yields no rows.
+        """
+        try:
+            return _data_structure_sanitize(
+                data,
+                start=start,
+                end=end,
+                source_name=f"market_timeseries {factor} for {sym}",
+            )
+        except EmptyDataException:
+            logger.warning(
+                "No %s data for symbol %s after sanitize for window %s to %s.",
+                factor,
+                sym,
+                start,
+                end,
+            )
+            return None
+
     def _load_spot_into_cache(self, sym: str, start: str, end: str) -> pd.DataFrame | None:
         """Load spot OHLCV data for a symbol into the cache.
 
@@ -525,6 +568,11 @@ class MarketTimeseries:
                 start=start,
                 end=end,
             )
+            spot_data = self._sanitize_market_factor_for_cache(
+                spot_data, sym, start, end, "spot"
+            )
+            if spot_data is None:
+                return None
             _cache_it_timeseries_data_structure(
                 existing=self._spot.get(sym),
                 key=sym,
@@ -562,6 +610,11 @@ class MarketTimeseries:
                 end=end,
                 spot_type="chain_spot",
             )
+            chain_spot_data = self._sanitize_market_factor_for_cache(
+                chain_spot_data, sym, start, end, "chain_spot"
+            )
+            if chain_spot_data is None:
+                return None
 
             _cache_it_timeseries_data_structure(
                 existing=self._chain_spot.get(sym),
@@ -599,6 +652,13 @@ class MarketTimeseries:
 
         try:
             divs = get_daily_dividends_timeseries(sym, start=start or self._start, end=end or self._end)
+            load_start = start or self._start
+            load_end = end or self._end
+            divs = self._sanitize_market_factor_for_cache(
+                divs, sym, load_start, load_end, "dividends"
+            )
+            if divs is None:
+                return None
             _cache_it_timeseries_data_structure(
                 existing=self._dividends.get(sym),
                 key=sym,
@@ -636,6 +696,11 @@ class MarketTimeseries:
             #     chain_spot = chain_spot.data
 
             split_factor = chain_spot["split_factor"]
+            split_factor = self._sanitize_market_factor_for_cache(
+                split_factor, sym, start, self._end, "split_factor"
+            )
+            if split_factor is None:
+                return None
             _cache_it_timeseries_data_structure(
                 existing=self._split_factor.get(sym),
                 key=sym,
@@ -679,6 +744,20 @@ class MarketTimeseries:
         clipped = df[(df.index.date >= to_datetime(start).date()) & (df.index.date <= to_datetime(end).date())]
         return clipped
 
+    def _sync_equity_window(self, sym: str, start: str, end: str) -> tuple[str, str]:
+        """Clamp a factor request window to runtime EOD availability.
+
+        Args:
+            sym: Equity ticker.
+            start: Requested window start (YYYY-MM-DD).
+            end: Requested window end (YYYY-MM-DD).
+
+        Returns:
+            Synced ``(start, end)`` strings for cache, clip, and certification.
+        """
+        start_dt, end_dt = _sync_equity_date(start, end, symbol=sym.upper())
+        return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+
     def _get_spot_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.DataFrame:
         """Retrieve spot OHLCV timeseries for a symbol with automatic cache management.
 
@@ -701,6 +780,7 @@ class MarketTimeseries:
         """
         start = start or self._start
         end = end or self._end
+        start, end = self._sync_equity_window(sym, start, end)
         cached_data = self._spot.get(sym)
         if cached_data is None:
             cached_data = self._load_spot_into_cache(sym, start, end)
@@ -716,7 +796,16 @@ class MarketTimeseries:
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
-        return self._clip_to_date_range(cached_data, start, end).copy()
+        clipped = self._clip_to_date_range(cached_data, start, end).copy()
+        return certify_market_factor_payload(
+            sym,
+            "spot",
+            clipped,
+            start,
+            end,
+            method="_get_spot_timeseries",
+            certification_level=kwargs.get("certification_level"),
+        )
 
     def _get_chain_spot_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.DataFrame:
         """Retrieve chain-derived spot timeseries for a symbol with automatic cache management.
@@ -741,6 +830,7 @@ class MarketTimeseries:
 
         start = start or self._start
         end = end or self._end
+        start, end = self._sync_equity_window(sym, start, end)
         cached_data = self._chain_spot.get(sym)
         if cached_data is None:
             cached_data = self._load_chain_spot_into_cache(sym, start, end)
@@ -755,7 +845,16 @@ class MarketTimeseries:
                 sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
-        return self._clip_to_date_range(cached_data, start, end)
+        clipped = self._clip_to_date_range(cached_data, start, end)
+        return certify_market_factor_payload(
+            sym,
+            "chain_spot",
+            clipped,
+            start,
+            end,
+            method="_get_chain_spot_timeseries",
+            certification_level=kwargs.get("certification_level"),
+        )
 
     def _get_dividends_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.Series:
         """Retrieve daily dividend timeseries for a symbol with automatic cache management.
@@ -781,6 +880,7 @@ class MarketTimeseries:
             start = self._start
         if end is None:
             end = self._end
+        start, end = self._sync_equity_window(sym, start, end)
         cached_data = self._dividends.get(sym)
         if cached_data is None:
             cached_data = self._load_dividends_into_cache(sym, start, end)
@@ -796,7 +896,16 @@ class MarketTimeseries:
             )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
-        return self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
+        clipped = self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
+        return certify_market_factor_payload(
+            sym,
+            "dividends",
+            clipped,
+            start,
+            end,
+            method="_get_dividends_timeseries",
+            certification_level=kwargs.get("certification_level"),
+        )
 
     def _get_split_factor_timeseries(self, sym: str, start: str = None, end: str = None, *args, **kwargs) -> pd.Series:
         """Retrieve split factor timeseries for a symbol with automatic cache management.
@@ -823,6 +932,7 @@ class MarketTimeseries:
         ## Decide dates
         start = start or self._start
         end = end or self._end
+        start, end = self._sync_equity_window(sym, start, end)
         cached_data = self._split_factor.get(sym)
 
         ## If no data, load from chain spot and extract split factor
@@ -848,9 +958,20 @@ class MarketTimeseries:
             # if isinstance(cached_data, _CachedData):
             #     cached_data = cached_data.data
 
-        return self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
+        clipped = self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
+        return certify_market_factor_payload(
+            sym,
+            "split_factor",
+            clipped,
+            start,
+            end,
+            method="_get_split_factor_timeseries",
+            certification_level=kwargs.get("certification_level"),
+        )
 
-    def _get_dividend_yield_timeseries(self, sym: str, *args, **kwargs) -> pd.Series:
+    def _get_dividend_yield_timeseries(
+        self, sym: str, start: str = None, end: str = None, *args, **kwargs
+    ) -> pd.Series:
         """Calculate and retrieve dividend yield timeseries for a symbol.
 
         Computes daily dividend yield by dividing dividend amounts by spot close prices.
@@ -858,7 +979,9 @@ class MarketTimeseries:
 
         Args:
             sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
-            **kwargs: Additional arguments (currently unused, for extensibility).
+            start: Optional start date string (YYYY-MM-DD). Defaults to self._start.
+            end: Optional end date string (YYYY-MM-DD). Defaults to self._end.
+            **kwargs: Additional arguments passed to date clipping.
 
         Returns:
             Series with dividend yields (as decimals, not percentages) and DatetimeIndex.
@@ -868,56 +991,72 @@ class MarketTimeseries:
             >>> yield_ts = mts._get_dividend_yield_timeseries("AAPL")
             >>> print(yield_ts.mean() * 100)  # Average yield as percentage
         """
-        spot = self._get_spot_timeseries(sym)
-        dividends = self._get_dividends_timeseries(sym)
+        start = start or self._start
+        end = end or self._end
+        start, end = self._sync_equity_window(sym, start, end)
+        spot = self._get_spot_timeseries(sym, start=start, end=end)
+        dividends = self._get_dividends_timeseries(sym, start=start, end=end)
 
         dividend_yield = dividends / spot["close"]
         # Fill non-dividend dates with 0 yield. I believe it should be fine
         # TODO: Pay close attention to this. Maybe find an alternative way to handle non-dividend dates if it causes issues.
         dividend_yield.fillna(0.0, inplace=True)
 
-        return self._clip_to_date_range(dividend_yield, self._start, self._end, *args, **kwargs)
+        clipped = self._clip_to_date_range(dividend_yield, start, end, *args, **kwargs)
+        return certify_market_factor_payload(
+            sym, "dividend_yield", clipped, start, end, method="_get_dividend_yield_timeseries"
+        )
 
-    def get_split_factor_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> float | int:
+    def get_split_factor_at_index(
+        self,
+        sym: str,
+        index: pd.Timestamp,
+        fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE,
+        *args,
+        **kwargs,
+    ) -> float | int:
         """Retrieve the split factor for a symbol at a specific date with forward-fill logic.
 
-        Returns the cumulative split factor at the requested date. If the exact date is not
-        in the series, returns the most recent prior split factor (forward-fill). Returns
-        1.0 if no data exists or the date precedes all split data.
+        Fetches a 10-business-day lookback window certified at L1, then resolves the
+        split factor per ``fallback_option``.
 
         Args:
             sym: Stock ticker symbol (e.g., "AAPL", "MSFT").
             index: Date for split factor lookup (pd.Timestamp or date string).
+            fallback_option: Policy when exact date is missing or non-trading.
 
         Returns:
             Cumulative split factor at the specified date (1.0 = no adjustment).
-
-        Examples:
-            >>> mts = MarketTimeseries()
-            >>> factor = mts.get_split_factor_at_index("AAPL", "2025-06-15")
-            >>> print(f"Split factor: {factor}")
-            >>> # Returns 1.0 if no splits, or adjustment factor if splits occurred
         """
-        split_factor_series = self._split_factor.get(sym)
-        if split_factor_series is None:
+        sym = sym.upper()
+
+        def _fetch(start: str, end: str) -> pd.Series:
+            series = self._get_split_factor_timeseries(
+                sym,
+                start=start,
+                end=end,
+                certification_level=CertificationLevel.L1,
+            )
+            return series if series is not None else pd.Series(dtype=float)
+
+        row, _meta = resolve_value_at_date(
+            index,
+            fetch_timeseries=_fetch,
+            extract_timeseries=lambda s: s,
+            fallback_option=fallback_option,
+        )
+        if row.empty:
             return 1.0
+        return row.iloc[0]
 
-        split_factor_series = _extract_data(split_factor_series)
-        # if isinstance(split_factor_series, _CachedData) or split_factor_series.__class__.__name__ == "_CachedData":
-        #     split_factor_series = split_factor_series.data
-
-        index = pd.to_datetime(index)
-        if index in split_factor_series.index:
-            return split_factor_series.loc[index]
-        else:
-            prior_dates = split_factor_series.index[split_factor_series.index <= index]
-            if not prior_dates.empty:
-                nearest_date = prior_dates.max()
-                return split_factor_series.loc[nearest_date]
-            else:
-                return 1.0
-
-    def get_at_index(self, sym: str, index: pd.Timestamp, *args, **kwargs) -> AtIndexResult:
+    def get_at_index(
+        self,
+        sym: str,
+        index: pd.Timestamp,
+        fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE,
+        *args,
+        **kwargs,
+    ) -> AtIndexResult:
         """Retrieve point-in-time market data snapshot for a symbol at a specific date.
 
         Returns a complete snapshot of market data (spot, chain_spot, dividends, rates,
@@ -941,22 +1080,45 @@ class MarketTimeseries:
             >>> print(snapshot.split_factor)  # Cumulative split adjustment
         """
 
-        ## Ensure data is loaded for the symbol
         sym = sym.upper()
         index = to_datetime(index, format="%Y-%m-%d")
-        spot = self._get_spot_timeseries(sym, start=index, end=index)
-        chain_spot = self._get_chain_spot_timeseries(sym, start=index, end=index)
-        dividends = self._get_dividends_timeseries(sym, start=index, end=index)
-        split_factor = self._get_split_factor_timeseries(sym, start=index)
+        cert_kw = {"certification_level": CertificationLevel.L1}
 
-        ## Retrieve data at index
+        spot_row, _ = resolve_value_at_date(
+            index,
+            fetch_timeseries=lambda s, e: self._get_spot_timeseries(sym, start=s, end=e, **cert_kw),
+            extract_timeseries=lambda df: df,
+            fallback_option=fallback_option,
+        )
+        chain_row, _ = resolve_value_at_date(
+            index,
+            fetch_timeseries=lambda s, e: self._get_chain_spot_timeseries(sym, start=s, end=e, **cert_kw),
+            extract_timeseries=lambda df: df,
+            fallback_option=fallback_option,
+        )
+        div_row, _ = resolve_value_at_date(
+            index,
+            fetch_timeseries=lambda s, e: self._get_dividends_timeseries(sym, start=s, end=e, **cert_kw),
+            extract_timeseries=lambda s: s,
+            fallback_option=fallback_option,
+        )
+        split_row, _ = resolve_value_at_date(
+            index,
+            fetch_timeseries=lambda s, e: self._get_split_factor_timeseries(sym, start=s, end=e, **cert_kw),
+            extract_timeseries=lambda s: s,
+            fallback_option=fallback_option,
+        )
+
+        spot = spot_row.iloc[0] if not spot_row.empty else None
+        chain_spot = chain_row.iloc[0] if not chain_row.empty else None
+        dividends = float(div_row.iloc[0]) if not div_row.empty and pd.notna(div_row.iloc[0]) else 0.0
+        split_factor = float(split_row.iloc[0]) if not split_row.empty and pd.notna(split_row.iloc[0]) else 1.0
         index_str = index.strftime("%Y-%m-%d")
-        spot = spot.loc[index_str] if index_str in spot.index else None
-        chain_spot = chain_spot.loc[index_str] if index_str in chain_spot.index else None
-        dividends = dividends.loc[index_str] if index_str in dividends.index else 0.0
-        rates = np.nan
-        dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
-        split_factor = split_factor.loc[index_str] if index_str in split_factor.index else 1.0
+        dividend_yield = (
+            dividends / spot["close"]
+            if spot is not None and dividends is not None and spot.get("close")
+            else None
+        )
 
         return AtIndexResult(
             spot=spot,
@@ -964,7 +1126,7 @@ class MarketTimeseries:
             dividends=dividends,
             sym=sym,
             date=index_str,
-            rates=rates,
+            rates=np.nan,
             dividend_yield=dividend_yield,
             split_factor=split_factor,
         )
@@ -1141,37 +1303,8 @@ class MarketTimeseries:
             )
 
         elif factor in self.DEFAULT_NAMES:
-            ## Retrieve data for the specified factor
-            data = None
-            if factor in ["spot", "chain_spot", "dividends", "split_factor"]:
-                data = data_funcs[factor](sym, start=start_date, end=end_date)
+            data = data_funcs[factor](sym, start=start_date, end=end_date)
 
-            ## Special handling for dividend_yield
-            elif factor == "dividend_yield":
-                divs = self._get_dividends_timeseries(sym, start=start_date, end=end_date)
-                spot = self._get_spot_timeseries(sym, start=start_date, end=end_date)
-
-                ## Ensure we have both dividends and spot data
-                if divs is None:
-                    raise ValueError(f"No dividend data found for symbol {sym} to calculate dividend yield.")
-                if spot is None:
-                    raise ValueError(f"No spot data found for symbol {sym} to calculate dividend yield.")
-
-                ## Calculate dividend yield
-                dividend_yield = divs / spot["close"]
-                data = dividend_yield
-
-            ## Filter data by start_date and end_date if provided
-            if start_date is not None or end_date is not None:
-                start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d") if start_date is not None else None
-                end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d") if end_date is not None else None
-
-                if start_date is not None:
-                    data = data[data.index >= start_date]
-                if end_date is not None:
-                    data = data[data.index <= end_date]
-
-            ## Construct TimeseriesData based on the factor
             if data is None:
                 raise ValueError(f"No data found for factor {factor} and symbol {sym}.")
             if factor == "spot":
@@ -1192,7 +1325,7 @@ class MarketTimeseries:
             spot = self._get_spot_timeseries(sym, start=start_date, end=end_date)
             chain_spot = self._get_chain_spot_timeseries(sym, start=start_date, end=end_date)
             dividends = self._get_dividends_timeseries(sym, start=start_date, end=end_date)
-            dividend_yield = dividends / spot["close"] if spot is not None and dividends is not None else None
+            dividend_yield = self._get_dividend_yield_timeseries(sym, start=start_date, end=end_date)
             split_factor = self._get_split_factor_timeseries(sym, start=start_date, end=end_date)
 
             ## Filter data by start_date and end_date if provided

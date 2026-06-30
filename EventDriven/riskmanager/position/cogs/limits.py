@@ -363,6 +363,9 @@ class LimitsAndSizingCog(BaseCog):
         """
         Failsafe method ensures the quantity size is never 0 as long as cash can buy at least 1 contract, and that limits are set to some default value, even
         if there are errors in the main on_new_position logic.
+
+        When quantity is 0, may bump quantity to 1 and persist a buffered delta limit (delta * 1.15) only when
+        ``at_time_data.delta`` is finite and positive; otherwise the sizer CREATE limit is kept and not saved.
         """
         if new_pos_state.limits is not None and new_pos_state.order["data"]["quantity"] != 0:
             return new_pos_state
@@ -399,19 +402,25 @@ class LimitsAndSizingCog(BaseCog):
                 )
 
             ## Update limits to set to delta + buffer to avoid repeated sizing issues if the issue was with limit calculation
-            logger.warning(
-                f"Delta limit for trade_id {new_pos_state.order['data']['trade_id']} was calculated as {new_pos_state.limits.delta}, which is below the default delta per contract of {delta}. Setting delta limit to {delta * 1.15} to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation."
-            )
-            new_pos_state.limits.delta = (
-                delta * 1.15
-            )  # Set delta limit to 15% above the delta of a single contract to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation
-            pos_lmts = PositionLimits(
-                delta=new_pos_state.limits.delta,
-                dte=self.config.default_dte,
-                moneyness=self.config.default_moneyness,
-                creation_date=request.date,
-            )
-            self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
+            if delta is not None and math.isfinite(delta) and delta > 0:
+                logger.warning(
+                    f"Delta limit for trade_id {new_pos_state.order['data']['trade_id']} was calculated as {new_pos_state.limits.delta}, which is below the default delta per contract of {delta}. Setting delta limit to {delta * 1.15} to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation."
+                )
+                new_pos_state.limits.delta = (
+                    delta * 1.15
+                )  # Set delta limit to 15% above the delta of a single contract to allow for at least 1 contract to be sized in the next cycle, and to avoid repeated sizing issues if the issue was with limit calculation
+                pos_lmts = PositionLimits(
+                    delta=new_pos_state.limits.delta,
+                    dte=self.config.default_dte,
+                    moneyness=self.config.default_moneyness,
+                    creation_date=request.date,
+                )
+                self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
+            else:
+                logger.warning(
+                    f"Delta for trade_id {new_pos_state.order['data']['trade_id']} is non-finite ({delta!r}); "
+                    f"skipping failsafe delta limit overwrite and keeping sizer CREATE limit of {new_pos_state.limits.delta}."
+                )
 
             ## Update metadata as well to reflect the new limits and quantity
             metadata = self._get_metadata(new_pos_state.order["data"]["trade_id"])

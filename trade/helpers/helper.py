@@ -61,7 +61,7 @@ from pprint import pprint, pformat
 import atexit
 import signal
 import shortuuid
-from trade import get_pool_enabled, register_signal
+from trade import get_pool_enabled, register_signal, MARKET_CLOSE, MARKET_OPEN
 from trade.helpers.pools import runProcesses
 from trade.helpers.threads import runThreads
 from typing import Optional
@@ -110,6 +110,20 @@ def is_weekend(dt: str | datetime) -> bool:
     return dt.weekday() >= 5  # Saturday is 5, Sunday is 6
 
 
+def is_pre_market_hours() -> bool:
+    """
+    Check if the current time in New York is within pre-market hours (4:00 AM to 9:30 AM) on a business day.
+    """
+    now = ny_now().time()
+    return now < MARKET_OPEN.time()
+
+def is_post_market_hours() -> bool:
+    """
+    Check if the current time in New York is within post-market hours (4:00 PM to 8:00 PM) on a business day.
+    """
+    now = ny_now().time()
+    return now > MARKET_CLOSE.time()
+
 def is_market_hours_today() -> bool:
     """
     Check if the current time in New York is within market hours (9:30 AM to 4:00 PM) on a business day.
@@ -121,11 +135,7 @@ def is_market_hours_today() -> bool:
     if now.weekday() >= 5:  # Saturday or Sunday
         return False
 
-    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-
-    return market_open <= now <= market_close
-
+    return not (is_pre_market_hours() or is_post_market_hours())
 
 def assert_member_of_enum(value: Any, enum_class: Enum) -> None:
     """

@@ -19,20 +19,20 @@ Typical usage:
 from datetime import datetime, date
 from typing import Any, ClassVar, Optional, Tuple, Union
 import pandas as pd
-import numpy as np
 from trade.datamanager.market_data import TimeseriesData
-from trade.datamanager.utils.date import is_available_on_date
 from trade.helpers.Logging import setup_logger
-from trade.helpers.helper import change_to_last_busday, to_datetime
 from trade.datamanager.utils.data_structure import _data_structure_sanitize
 from trade.datamanager.utils.cache import _check_cache_for_timeseries_data_structure, _data_structure_cache_it
+from trade.datamanager.certification.integration import certify_manager_result
+from trade.datamanager.utils.date import _sync_equity_date
+from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade.datamanager.base import BaseDataManager, CacheSpec
 from trade.datamanager.dividend import DividendDataManager
 from trade.datamanager.result import ForwardResult, SpotResult
 from trade.datamanager.rates import RatesDataManager
 from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.result import DividendsResult, RatesResult
-from trade.datamanager._enums import ArtifactType, Interval, RealTimeFallbackOption, SeriesId
+from trade.datamanager._enums import ArtifactType, CertificationLevel, Interval, RealTimeFallbackOption, SeriesId
 from trade.datamanager.utils.logging import get_logging_level
 from trade.datamanager.vars import get_times_series, load_name
 from trade.optionlib.config.types import DivType
@@ -469,14 +469,16 @@ class ForwardDataManager(BaseDataManager):
         Notes:
             - Only dates present in all three series are retained
             - Spot prices may have NaNs (will be handled by vectorized functions)
-            - Rates and dividend data must be complete (no NaNs allowed)
+            - Rates are forward-filled here for alignment; gap/dup certification is L3
+            - Rates and dividend data must be complete (no NaNs allowed after ffill)
         """
         idx = spot.index.intersection(rates.index).intersection(third.index)
         
         spot = spot.reindex(idx)
         rates = rates.reindex(idx)
         third = third.reindex(idx)
-        
+
+        rates = rates.ffill()  # ponytail: alignment-only ffill; B-day grid / dupes deferred to L3 certifier
 
         if rates.isna().any():
             raise ValueError("NaNs in rates after alignment.")
@@ -647,6 +649,7 @@ class ForwardDataManager(BaseDataManager):
         *,
         dividend_result: Optional[DividendsResult] = None,
         use_chain_spot: bool = True,
+        certification_level: Optional[CertificationLevel] = None,
     ) -> ForwardResult:
         """Returns daily forward price time-series from valuation dates to maturity.
 
@@ -714,11 +717,10 @@ class ForwardDataManager(BaseDataManager):
 
         ## Load first
         load_name(self.symbol)
+        start_date, end_date = _sync_equity_date(start_date, end_date, symbol=self.symbol)
 
         ## Normalize inputs
         result = ForwardResult()
-        og_start_date = start_date
-        og_end_date = end_date
         dividend_type, start_dt, end_dt, mat_dt, start_str, end_str, mat_str = self._normalize_inputs(
             start_date=start_date,
             end_date=end_date,
@@ -741,7 +743,9 @@ class ForwardDataManager(BaseDataManager):
             use_chain_spot=use_chain_spot,
         )
         if cached_result is not None:
-            return cached_result
+            return certify_manager_result(
+                cached_result, start_dt, end_dt, cache_key=key, level=certification_level
+            )
 
         dividend_result = self._get_dividend_result(
             start_str=start_str,
@@ -808,8 +812,8 @@ class ForwardDataManager(BaseDataManager):
         self.cache_it(key, forward_series, expire=86400)  # 24 hours expiry
         forward_series = _data_structure_sanitize(
             forward_series,
-            start=og_start_date,
-            end=og_end_date,
+            start=start_dt,
+            end=end_dt,
             source_name=f"forward timeseries for {self.symbol} with maturity {mat_str}",
         )
 
@@ -820,9 +824,10 @@ class ForwardDataManager(BaseDataManager):
 
         result.undo_adjust = use_chain_spot
         result.symbol = self.symbol
-        result.undo_adjust = use_chain_spot
 
-        return result
+        return certify_manager_result(
+            result, start_dt, end_dt, cache_key=key, level=certification_level
+        )
 
     def make_key(self, *, symbol: str, interval=None, artifact_type=None, series_id=None, **extra_parts) -> str:
         """Delegates to BaseDataManager key construction.
@@ -890,8 +895,8 @@ class ForwardDataManager(BaseDataManager):
     ) -> ForwardResult:
         """Returns the forward price at a specific valuation date.
 
-        Computes forward price for a single valuation date to maturity. Wrapper around
-        get_forward_timeseries with single-date range.
+        Fetches a 10-business-day lookback window certified at L1, then resolves
+        the forward per ``fallback_option``.
 
         Args:
             date: Valuation date (YYYY-MM-DD string or datetime).
@@ -901,85 +906,53 @@ class ForwardDataManager(BaseDataManager):
             spot: Optional pre-loaded TimeseriesData.
             rates: Optional pre-computed rates data.
             use_chain_spot: If True, uses split-adjusted chain_spot prices.
-            fallback_option: Optional fallback option for real-time data.
+            fallback_option: Policy when exact date is missing or non-trading.
+
         Returns:
             ForwardResult containing single forward price in daily_discrete_forward
             or daily_continuous_forward Series.
-
-        Examples:
-            >>> fwd_mgr = ForwardDataManager("AAPL")
-            >>> result = fwd_mgr.get_forward(
-            ...     date="2025-01-15",
-            ...     maturity_date="2025-06-20",
-            ...     dividend_type=DivType.DISCRETE,
-            ...     use_chain_spot=True
-            ... )
-            >>> forward_price = result.daily_discrete_forward.iloc[0]
-            >>> logger.info(f"Forward: ${forward_price:.2f}")
-            Forward: $156.45
-
-        Notes:
-            - Suitable for real-time pricing scenarios
-            - Internally calls get_forward_timeseries with date as both start and end
         """
         load_name(self.symbol)
         dividend_type = DivType(dividend_type) if dividend_type is not None else DivType.DISCRETE
         fallback_option = fallback_option if fallback_option is not None else self.CONFIG.real_time_fallback_option
-        date = to_datetime(date)
-
-
-        if not is_available_on_date(date):
-            logger.warning(
-                f"Valuation date {date} is not a business day or holiday. No dividends available. Resolution: {fallback_option}"
-            )
-            if fallback_option == RealTimeFallbackOption.RAISE_ERROR:
-                raise ValueError(f"Valuation date {date} is not a business day or holiday.")
-            if fallback_option == RealTimeFallbackOption.USE_LAST_AVAILABLE:
-                ## Move date back to last business day
-                ## Using only change_to_last_busday assumes input date is not business day or is holiday
-                ## Which the function would roll back
-                ## But there's a possibility input date is today's date but before market open
-                ## In that case we need to move back one more business day
-                date = change_to_last_busday(date - pd.tseries.offsets.BDay(1), time_of_day_aware=False)
-            else:
-                result = ForwardResult()
-                if dividend_type == DivType.DISCRETE:
-                    result.daily_discrete_forward = pd.Series(
-                        dtype=float,
-                        index=[date],
-                        data=[np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0],
-                    )
-                else:
-                    result.daily_continuous_forward = pd.Series(
-                        dtype=float,
-                        index=[date],
-                        data=[np.nan if fallback_option == RealTimeFallbackOption.NAN else 0.0],
-                    )
-
-                result.key = None
-                result.undo_adjust = use_chain_spot
-                result.dividend_type = dividend_type
-                result.symbol = self.symbol
-                result.fallback_option = fallback_option
-                return result
-
-        date_str = date.strftime("%Y-%m-%d") if isinstance(date, datetime) else date
         mat_str = maturity_date.strftime("%Y-%m-%d") if isinstance(maturity_date, datetime) else maturity_date
-        start = date_str
-        end = date_str
 
+        def _extract(result: ForwardResult) -> pd.Series:
+            series = (
+                result.daily_discrete_forward
+                if dividend_type == DivType.DISCRETE
+                else result.daily_continuous_forward
+            )
+            return series if series is not None else pd.Series(dtype=float)
 
-        result = self.get_forward_timeseries(
-            start_date=start,
-            end_date=end,
-            maturity_date=mat_str,
-            dividend_type=dividend_type,
-            use_chain_spot=use_chain_spot,
-            dividend_result=dividend_result,
-            spot=spot,
-            rates=rates,
+        def _fetch(start: str, end: str) -> ForwardResult:
+            return self.get_forward_timeseries(
+                start_date=start,
+                end_date=end,
+                maturity_date=mat_str,
+                dividend_type=dividend_type,
+                use_chain_spot=use_chain_spot,
+                dividend_result=dividend_result,
+                spot=spot,
+                rates=rates,
+                certification_level=CertificationLevel.L1,
+            )
+
+        row, meta = resolve_value_at_date(
+            date,
+            fetch_timeseries=_fetch,
+            extract_timeseries=_extract,
+            fallback_option=fallback_option,
         )
-        result.fallback_option = fallback_option
+
+        result = meta.source_result if meta.source_result is not None else ForwardResult()
+        if dividend_type == DivType.DISCRETE:
+            result.daily_discrete_forward = row
+        else:
+            result.daily_continuous_forward = row
+        result.fallback_option = meta.fallback_option
+        result.symbol = self.symbol
+        result.dividend_type = dividend_type
         return result
     
     def rt(
