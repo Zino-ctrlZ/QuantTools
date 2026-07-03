@@ -501,6 +501,11 @@ class StrategyBase(ABC):
             Provide exactly one of date or index. Access data using self.close[idx],
             self.indicators, etc.
 
+            Implementations should be purely signal-based: do not consult position
+            state (e.g. ``position_open``, entry price, stops set in ``open_action``).
+            Use ``should_open()`` when logic depends on whether a position is already
+            open or other portfolio/position context.
+
         Example:
             def is_open_signal(self, *, date=None, index=None):
                 idx, _ = self._resolve(date=date, index=index)
@@ -527,14 +532,18 @@ class StrategyBase(ABC):
             bool: True if signal to close position is present, False otherwise
 
         Note:
-            Provide exactly one of date or index. This is only called when position_open
-            is True. Access data using self.close[idx], self.stop, etc.
+            Provide exactly one of date or index. The framework calls this only when
+            a position is open, but the implementation should still be purely
+            signal-based: do not consult position state (e.g. ``position_open``,
+            entry price, ``self.stop``). Express exit conditions from market/signal
+            data alone. Use ``should_close()`` for position-aware logic (e.g. stop
+            levels, hold duration, profit targets).
 
         Example:
             def is_close_signal(self, *, date=None, index=None):
                 idx, _ = self._resolve(date=date, index=index)
                 sma = self.get_indicator('SMA_20').values.iloc[idx]
-                return self.close[idx] < sma or self.close[idx] < self.stop
+                return self.close[idx] < sma
         """
         raise NotImplementedError("Subclasses must implement is_close_signal() method.")
 
@@ -776,7 +785,9 @@ class StrategyBase(ABC):
         3. Open signal is present (is_open_signal returns True)
 
         Can be overridden to add additional logic (e.g., position sizing constraints,
-        cooldown periods, maximum daily trades).
+        cooldown periods, maximum daily trades). Unlike ``is_open_signal()``, this
+        method may use position state (e.g. whether a position is open, entry price,
+        stops, hold duration) to decide whether to act on the open signal.
 
         Args:
             date (pd.Timestamp, optional): Date to check
@@ -799,7 +810,9 @@ class StrategyBase(ABC):
         2. Close signal is present (is_close_signal returns True)
 
         Can be overridden to add additional logic (e.g., time-based exits,
-        profit targets).
+        profit targets). Unlike ``is_close_signal()``, this method may use
+        position state (e.g. entry price, ``self.stop``, hold duration) to decide
+        whether to act on the close signal.
 
         Args:
             date (pd.Timestamp, optional): Date to check
