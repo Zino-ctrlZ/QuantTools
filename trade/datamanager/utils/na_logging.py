@@ -12,7 +12,7 @@ Processing Flow:
     3. ``@log_na_after_retrieval`` remains for legacy/non-cert paths (e.g. explicit calls); not for ``get_at_time`` / ``rt()``.
     4. Dispatch selects a type-specific logger (Result, ModelResultPack, TimeseriesData, etc.).
     5. Type-specific code collects NA datetime indices per component/field.
-    6. ``_log_na_snapshots`` emits one pretty-printed WARNING per NA index to
+    6. ``_log_na_snapshots`` emits one pretty-printed INFO per NA index to
        ``trade.datamanager.utils.model_na``.
 
 Core Functions:
@@ -204,7 +204,7 @@ def _log_na_snapshots(
                 "params": component_params,
                 "values_at_index": _timeseries_values_at_index(timeseries, index),
             }
-        na_logger.warning("%s:\n%s", log_label, _format_na_snapshot(snapshot))
+        na_logger.info("%s:\n%s", log_label, _format_na_snapshot(snapshot))
 
 
 def _model_result_components(
@@ -355,7 +355,7 @@ def log_at_index_result_na(
         "na_sources": na_fields,
         "values": field_values,
     }
-    na_logger.warning("%s:\n%s", snapshot["log_label"], _format_na_snapshot(snapshot))
+    na_logger.info("%s:\n%s", snapshot["log_label"], _format_na_snapshot(snapshot))
 
 
 def log_pandas_series_na(
@@ -399,7 +399,7 @@ def log_scalar_na(
         },
         "value": _normalize_log_value(value),
     }
-    na_logger.warning("%s:\n%s", snapshot["log_label"], _format_na_snapshot(snapshot))
+    na_logger.info("%s:\n%s", snapshot["log_label"], _format_na_snapshot(snapshot))
 
 
 ## --- Dispatch and decorator entry points ---
