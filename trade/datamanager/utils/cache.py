@@ -408,6 +408,8 @@ def _data_structure_cache_check_missing(
     """
     ## Firstly we want to ensure backward compatibility with old cache data structure which is just the raw pd.Series or pd.DataFrame.
     ## We will convert it to the new cache data structure and save it back to cache for future use. This way we can also populate the missing dates info for old cache entries.
+    if cached_data is None:
+        raise ValueError(f"Cached data is None for key: {key}. Check queried information.")
 
     if isinstance(cached_data, (pd.Series, pd.DataFrame)):
         logger.info(f"Converting old cache data structure to new for key: {key}")
@@ -418,20 +420,7 @@ def _data_structure_cache_check_missing(
 
     ## For end, we move backward if not busday
     end_dt = change_to_last_busday(end_dt, time_of_day_aware=False, offset=1)
-    return cached_data._comprehensive_cache_check(start_dt=start_dt, end_dt=end_dt)
-
-    missing = get_missing_dates(cached_data, _start=start_dt, _end=end_dt)
-    if not missing:
-        logger.info(f"Cache hit for timeseries data structure key: {key}")
-        cached_data = _data_structure_sanitize(
-            cached_data,
-            start=start_dt,
-            end=end_dt,
-            source_name=f"cached timeseries for key {key}",
-        )
-        return cached_data, False, start_dt, end_dt
-    logger.info(
-        f"Cache partially covers requested date range for timeseries data structure. "
-        f"Key: {key}. Fetching missing dates: {missing}"
-    )
-    return cached_data, True, min(missing), max(missing)
+    try:
+        return cached_data._comprehensive_cache_check(start_dt=start_dt, end_dt=end_dt)
+    except Exception as e:
+        raise ValueError(f"Error in comprehensive cache check for key: {key}. Error: {e}") from e
