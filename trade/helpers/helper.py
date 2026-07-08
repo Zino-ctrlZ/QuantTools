@@ -409,12 +409,21 @@ class CustomCache(Cache):
             register_signal("exit", self._on_exit)
         else:
             # just record the dir for later weekly cron clean-up
-            with open(self.register_location, "r") as f:
-                json_file = json.load(f)
-            with open(self.register_location, "w") as f:
-                loc = str(self.dir)
-                json_file.update({loc: self.expiry_date})
+            registry = Path(self.register_location)
+
+            try:
+                raw = registry.read_text()
+                json_file = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                json_file = {}
+
+            loc = str(self.dir)
+            json_file.update({loc: self.expiry_date})
+
+            tmp = registry.with_suffix(".tmp")
+            with tmp.open("w") as f:
                 json.dump(json_file, f, default=str)
+            tmp.replace(registry)
 
     def keys(self):
         return list(self)
