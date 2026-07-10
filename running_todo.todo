@@ -1,40 +1,21 @@
 Running Todo:
 
-    ☐ Write steps to add new strategy to backtest framework
-    ☐ Write steps to add new strategy to live trading framework
-    ☐ Check if thetadata v3 is backward compatible with v2
-    ☐ Write proper docstring for binomial model in optlib
-    ☐ Complelely decommission old method of getting rates.
     ☐ How do we handle reverse splits?
     ☐ Write a ChainDataManager
     ☐ Add full dataframe tp Spot Result
         - Include price property to pick from columns. Create enum for standard columns
     ☐ Remove all import for riskmanager.market_data
     ☐ Save scaling in position sizing info to database
-    ✔ Make order picker faster & more efficient @done(26-02-17 07:17)
     ☐ Singleton Metaclass with attribute picking
-    ✔ Find a way to save historically closed in signals tabled. @done(26-02-17 07:17)
     ☐ Add slippage pnl to live attribution
     ☐ Aggregator should take trades & equity data only
-    ✔ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it) @done(26-02-17 07:17)
     ☐ Switch to TimeseriesDataManager for pnl attribution
-    ✔ Discontinue all use of module_test.raw_code.DataManagers @done(26-06-07 21:25)
-        1. Option.py
-        2. xmultiply_attr.py
     ☐ Discontinue xmultiply_attr.py
-    ✔ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed. @done(26-02-17 07:19)
     ☐ Move all vol and pricing logic to use the new OptLib
         ☐ Eg FillOptimizer
-    ✔ Ensure MarketTimeseries is not cutting out dividends or split factors for real time @done(26-02-17 07:19)
-    ✔ Ensure make position id & signal id comes from one place (Signal id from strategy base, position id from create order) @done(26-02-17 07:20)
-    ✔ Update get_risk_free_rate_helper to use RatesDataManager @done(26-06-07 21:28)
     ☐ Look into alternatives for backfilling dividends with 0.0 in get_timeseries
     ☐ Move strategy files to db.
-    ✔ Set evb default market_model = bsm, div = continuous for speed. Disable logging. @done(26-02-17 07:20)
     ☐ Replace populate_chain_cache with ChainDataManager which caches none-today data and reloads today data on each call.
-    ✔ Remind zino about table diffing @done(26-06-07 21:28)
-    ✔ Update info in config dictionary in order picker to reflect new changes (eg min_total_price) @done(26-02-17 07:21)
-    ✔ streamline all evb stream logging level as done in trade.datamanager @done(26-06-07 21:28)
     ☐ Normalize everywhere to use the following for position:
         - fyi: This includes: events, signals, positions, etc. Anywhere we need to represent a position, we should use this format to avoid confusion and ensure consistency across the codebase.
         - Side int: 1 for long, -1 for short
@@ -44,35 +25,57 @@ Running Todo:
     ☐ Clean up old todos in the codebase and move any relevant ones to this todo list.
     ☐ Revisit Binomial Vol Model estimation logic.
     ☐ Run an analysis on greek estimation accuracy.
+    ☐ Make finance db more cleaner. Mostly just deleting stuff and giving better names
+    ☐ Work on making the setup file + dependencies resolution we talked about earlier
+    ☐ Merge all to-do
+    ☐ Clean up todo's and mark done
     
 
-Todo before going back to backtesting:
-    ✔ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. @done(26-02-13 14:52)
-    ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14)
-    ✔ Clean up evb order getter + preset orders (speed up essentially) @done(26-02-11 21:44)
-    ✔ Push config change to db (changed min_total_price to 0.5 from 0.95) @done(26-02-13 09:42)
-    ✔ Move emefiele reports to the reports channel @done(26-06-07 21:24)
-    ✔ Populate get_strategy_instance with has_position (Optional) @done(26-06-07 21:24)
-    ✔ Cache checker should use date range info, with missing dates info saved @done(26-02-14 18:47)
-        ✔ All ts loaders should return the data @done(26-02-15 21:28)
-        ✔ Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups @done(26-02-15 21:28)
-        ✔ Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual. @done(26-02-15 21:28)
-        ✔ New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)` @done(26-02-15 21:28)
-    ✔ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval) @done(26-02-15 19:45)
-    ✔ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup. @done(26-02-15 20:39)
-    ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29)
-    ✔ Close signals added to signals table @done(26-02-09 16:34)
-    ✔ Ensure backtesting a live strategy works seamlessly @done(26-02-15 21:28)
-    ✔ Decipher the diff btwn backtest and live strategy performance @done(26-02-10 19:57)
-    ✔ I don't like how limit sizing is going. Look into it. @done(26-02-10 21:25)
-
 Future Todos:
-    ☐ In the new order gen system:
-        1. Orders will be generated straight from StrategyBase instead of being generated with a table
-        2. Signals table will be generated by using StrategyBase class to make the model aware of positions, and then create a snapshot
-            a. To achieve this, get_strategy_instance will need to be updated to store current positions information and pass it to the strategy instance. This will allow the strategy to make informed decisions about generating signals based on existing positions.
-        3. This will allow us to have a more seamless integration between backtesting and live trading, as the same logic will be used for both. It will also allow us to have more complex strategies that can take into account existing positions when generating new signals.
-        4. Signal table can actually show the decisions of inidividual tickers in the strategies.
 
     ☐ Backtesting.py doesn't have t-plus-n functionality. But we can effectively implement it with the wrapper around StrategyBase.
         
+Archive:
+  ✔ Write steps to add new strategy to backtest framework (opted for workflow files instead) @done(26-07-10 10:01) @project(Running Todo)
+  ✔ Write steps to add new strategy to live trading framework (opted for workflow files instead) @done(26-07-10 10:01) @project(Running Todo)
+  ✔ Check if thetadata v3 is backward compatible with v2 @done(26-07-10 10:01) @project(Running Todo)
+  ✔ Write proper docstring for binomial model in optlib @done(26-07-10 10:01) @project(Running Todo)
+  ✔ Complelely decommission old method of getting rates. @done(26-07-10 10:01) @project(Running Todo)
+  ✔ Make order picker faster & more efficient @done(26-02-17 07:17) @project(Running Todo)
+  ✔ Find a way to save historically closed in signals tabled. @done(26-02-17 07:17) @project(Running Todo)
+  ✔ EVB should use StrategyBase class (Optionally, dataframe, but probably should discourage it) @done(26-02-17 07:17) @project(Running Todo)
+  ✔ Discontinue all use of module_test.raw_code.DataManagers @done(26-06-07 21:25) @project(Running Todo)
+    1. Option.py
+    2. xmultiply_attr.py
+  ✔ Add refresh information to MarketTimeseries to avoid constantly refreshing data when not needed. @done(26-02-17 07:19) @project(Running Todo)
+  ✔ Ensure MarketTimeseries is not cutting out dividends or split factors for real time @done(26-02-17 07:19) @project(Running Todo)
+  ✔ Ensure make position id & signal id comes from one place (Signal id from strategy base, position id from create order) @done(26-02-17 07:20) @project(Running Todo)
+  ✔ Update get_risk_free_rate_helper to use RatesDataManager @done(26-06-07 21:28) @project(Running Todo)
+  ✔ Set evb default market_model = bsm, div = continuous for speed. Disable logging. @done(26-02-17 07:20) @project(Running Todo)
+  ✔ Remind zino about table diffing @done(26-06-07 21:28) @project(Running Todo)
+  ✔ Update info in config dictionary in order picker to reflect new changes (eg min_total_price) @done(26-02-17 07:21) @project(Running Todo)
+  ✔ streamline all evb stream logging level as done in trade.datamanager @done(26-06-07 21:28) @project(Running Todo)
+  ✔ For test order gen, it should use PREVIOU day's cash of order gen, not current cash. @done(26-02-13 14:52) @project(Todo before going back to backtesting)
+  ✔ Allow preset orders in Evb order getter @done(26-02-09 21:14) @project(Todo before going back to backtesting)
+  ✔ Clean up evb order getter + preset orders (speed up essentially) @done(26-02-11 21:44) @project(Todo before going back to backtesting)
+  ✔ Push config change to db (changed min_total_price to 0.5 from 0.95) @done(26-02-13 09:42) @project(Todo before going back to backtesting)
+  ✔ Move emefiele reports to the reports channel @done(26-06-07 21:24) @project(Todo before going back to backtesting)
+  ✔ Populate get_strategy_instance with has_position (Optional) @done(26-06-07 21:24) @project(Todo before going back to backtesting)
+  ✔ Cache checker should use date range info, with missing dates info saved @done(26-02-14 18:47) @project(Todo before going back to backtesting)
+  ✔ All ts loaders should return the data @done(26-02-15 21:28) @project(Todo before going back to backtesting)
+  ✔ Maybe cache timeseries object and use to return date range & at index to avoid doing multiple cache lookups @done(26-02-15 21:28) @project(Todo before going back to backtesting)
+  ✔ Maybe during the first get_timeseries, cache the entire date range for syms with class range, find a way to drop today as usual. @done(26-02-15 21:28) @project(Todo before going back to backtesting)
+  ✔ New methods in timeseries object: `covers_full_range(start, end)`, `get_at_index(date)`, `get_date_range(start, end)` @done(26-02-15 21:28) @project(Todo before going back to backtesting)
+  ✔ Evb should use strategy base class and not have any direct dependency on dataframe (except for timeseries data retrieval) @done(26-02-15 19:45) @project(Todo before going back to backtesting)
+  ✔ Update start date in Backtesting.py stats generated during PTBacktester. And general cleanup. @done(26-02-15 20:39) @project(Todo before going back to backtesting)
+  ✔ Implement tplusn execution in StrategyBase @done(26-02-13 16:29) @project(Todo before going back to backtesting)
+  ✔ Close signals added to signals table @done(26-02-09 16:34) @project(Todo before going back to backtesting)
+  ✔ Ensure backtesting a live strategy works seamlessly @done(26-02-15 21:28) @project(Todo before going back to backtesting)
+  ✔ Decipher the diff btwn backtest and live strategy performance @done(26-02-10 19:57) @project(Todo before going back to backtesting)
+  ✔ I don't like how limit sizing is going. Look into it. @done(26-02-10 21:25) @project(Todo before going back to backtesting)
+  ✔ In the new order gen system: @done(26-07-10 09:53) @project(Future Todos)
+    1. Orders will be generated straight from StrategyBase instead of being generated with a table
+    2. Signals table will be generated by using StrategyBase class to make the model aware of positions, and then create a snapshot
+    a. To achieve this, get_strategy_instance will need to be updated to store current positions information and pass it to the strategy instance. This will allow the strategy to make informed decisions about generating signals based on existing positions.
+    3. This will allow us to have a more seamless integration between backtesting and live trading, as the same logic will be used for both. It will also allow us to have more complex strategies that can take into account existing positions when generating new signals.
+    4. Signal table can actually show the decisions of inidividual tickers in the strategies.
