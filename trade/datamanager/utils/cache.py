@@ -175,13 +175,27 @@ class _CachedData:
         raw_missing = get_missing_dates(self.data, _start=start_dt, _end=end_dt)
         unfilled = [d for d in raw_missing if to_datetime(d).date() not in checked_missing_set]
 
+        ## Post-search: surface exact gaps before collapsing them to a reload bounding box.
+        unfilled_dates = sorted(to_datetime(d).date() for d in unfilled)
         logger.info(
-            f"Cache partially covers requested date range for timeseries data structure. "
-            f"Key: {self.key}. Dates still needed: {unfilled}"
+            "Partial cache missing-date search for key=%s: count=%s missing_dates=%s "
+            "(requested=%s..%s)",
+            self.key,
+            len(unfilled_dates),
+            unfilled_dates,
+            to_datetime(start_dt).date(),
+            to_datetime(end_dt).date(),
         )
 
         missing_start_date = to_datetime(min(unfilled) if unfilled else start_dt)
         missing_end_date = to_datetime(max(unfilled) if unfilled else end_dt)
+        logger.info(
+            "Partial cache reload window for key=%s: %s..%s "
+            "(min/max of missing dates, not discrete gap segments)",
+            self.key,
+            missing_start_date.date(),
+            missing_end_date.date(),
+        )
         return self.data, True, missing_start_date, missing_end_date
 
 
