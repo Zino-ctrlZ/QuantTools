@@ -924,6 +924,8 @@ class StrategyBase(ABC):
         exit_price: float,
         equity: float,
         index: int,
+        trade_return_path: Optional[List[Dict[str, Any]]] = None,
+        trade_entry_index: Optional[int] = None,
     ) -> None:
         """Append a close trade from live ``position_info`` and clear position state.
 
@@ -933,6 +935,8 @@ class StrategyBase(ABC):
             exit_price: Exit price for the close.
             equity: Equity after bar return, before state reset.
             index: Bar index passed to ``close_action``.
+            trade_return_path: Optional per-bar cumulative return path for the active trade.
+            trade_entry_index: Optional bar index where the active trade was opened.
         """
         position_info = self.position_info
         entry_price = position_info.entry_price if position_info else None
@@ -942,6 +946,31 @@ class StrategyBase(ABC):
             return_pct = ((exit_price - float(entry_price)) / float(entry_price)) * float(side)
         else:
             return_pct = 0.0
+
+        mae: Optional[float] = None
+        mfe: Optional[float] = None
+        days_to_mae: Optional[int] = None
+        days_to_mfe: Optional[int] = None
+        mae_date: Optional[pd.Timestamp] = None
+        mfe_date: Optional[pd.Timestamp] = None
+        cumulative_trade_returns: Optional[List[float]] = None
+        cumulative_trade_return_dates: Optional[List[pd.Timestamp]] = None
+        if trade_return_path:
+            cumulative_trade_returns = [float(p["cum_return_pct"]) for p in trade_return_path]
+            cumulative_trade_return_dates = [pd.Timestamp(p["date"]) for p in trade_return_path]
+            trade_return_values = np.asarray(cumulative_trade_returns, dtype=float)
+            mae_idx = int(np.argmin(trade_return_values))
+            mfe_idx = int(np.argmax(trade_return_values))
+            mae = float(trade_return_values[mae_idx])
+            mfe = float(trade_return_values[mfe_idx])
+            mae_date = cumulative_trade_return_dates[mae_idx]
+            mfe_date = cumulative_trade_return_dates[mfe_idx]
+
+            if trade_entry_index is not None:
+                mae_bar_index = int(trade_return_path[mae_idx]["index"])
+                mfe_bar_index = int(trade_return_path[mfe_idx]["index"])
+                days_to_mae = int(mae_bar_index - trade_entry_index)
+                days_to_mfe = int(mfe_bar_index - trade_entry_index)
 
         trades.append(
             {
@@ -954,10 +983,335 @@ class StrategyBase(ABC):
                 "side": side,
                 "position_info": position_info,
                 "signal_id": position_info.signal_id if position_info else None,
+                "mae": mae,
+                "mfe": mfe,
+                "days_to_mae": days_to_mae,
+                "days_to_mfe": days_to_mfe,
+                "mae_date": mae_date,
+                "mfe_date": mfe_date,
+                "trade_returns": cumulative_trade_returns,
+                "trade_return_dates": cumulative_trade_return_dates,
                 **self.additional_on_exit_info(index=index),
             }
         )
         self.close_action(index=index)
+
+    def _record_open_trade(
+        self,
+        *,
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        price: float,
+        equity: float,
+        index: int,
+        signal_id: Optional[SignalID],
+    ) -> None:
+        """Append an open trade record with any strategy-provided entry metadata.
+
+        Args:
+            trades: Trade log mutated in place.
+            ts: Execution timestamp.
+            price: Entry price for the open.
+            equity: Equity at execution.
+            index: Bar index used for ``additional_on_entry_info``.
+            signal_id: Signal identifier associated with this open.
+        """
+        ## This helper only logs the open event; state transitions happen in open_action.
+        trades.append(
+            {
+                "date": ts,
+                "action": "open",
+                "price": price,
+                "equity": equity,
+                "signal_id": signal_id,
+                **self.additional_on_entry_info(index=index),
+            }
+        )
+
+    def _apply_daily_mtm_and_update_trade_path(
+        self,
+        *,
+        index: int,
+        current_price: float,
+        close: np.ndarray,
+        ts: pd.Timestamp,
+        eq: float,
+        trade_entry_equity: Optional[float],
+        active_trade_returns: List[Dict[str, Any]],
+    ) -> float:
+        """Apply one-bar MTM for an open trade and append cumulative return path.
+
+        Args:
+            index: Current bar index.
+            current_price: Close price at ``index``.
+            close: Full close-price array.
+            ts: Timestamp at ``index``.
+            eq: Equity before this bar MTM.
+            trade_entry_equity: Equity snapshot when the active trade was opened.
+            active_trade_returns: Mutable cumulative return path for the active trade.
+
+        Returns:
+            Updated equity after this bar MTM.
+        """
+        ## No MTM on the first bar or when we did not carry a position into this bar.
+        in_pos_prev = self.position_open
+        if index <= 0 or not in_pos_prev or trade_entry_equity is None:
+            return eq
+
+        ## Read prior position context required for fixed-size PnL math.
+        prev_price = float(close[index - 1])
+        position_info = self.position_info
+        entry_price = position_info.entry_price if position_info else None
+        side = position_info.side if position_info else None
+        if entry_price is None or side is None or float(entry_price) == 0.0:
+            return eq
+
+        ## Fixed notional sizing: units are frozen from equity at entry.
+        position_size = float(trade_entry_equity) / float(entry_price)
+        eq += position_size * float(side) * (current_price - prev_price)
+
+        ## Track cumulative return from entry to current bar for MAE/MFE.
+        trade_return_pct = ((current_price - float(entry_price)) / float(entry_price)) * float(side)
+        active_trade_returns.append(
+            {
+                "date": ts,
+                "index": index,
+                "cum_return_pct": float(trade_return_pct),
+            }
+        )
+        return eq
+
+    def _execute_open_trade(
+        self,
+        *,
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        index: int,
+        current_price: float,
+        eq: float,
+        side: int,
+        signal_id: Optional[SignalID],
+    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
+        """Open a position at the current bar and initialize active-trade tracking.
+
+        Args:
+            trades: Trade log mutated in place.
+            ts: Execution timestamp.
+            index: Execution bar index.
+            current_price: Execution price.
+            eq: Current equity used for fixed-size position sizing.
+            side: Trade side (+1 long, -1 short).
+            signal_id: Signal identifier for the open.
+
+        Returns:
+            Tuple of ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
+        """
+        ## Guard against duplicate opens if caller already has a live position.
+        if self.position_open:
+            return None, None, []
+
+        ## Open state + initialize trade path with entry-point zero return.
+        trade_entry_equity = eq
+        self.open_action(index=index, side=side, signal_id=signal_id, entry_price=current_price)
+        active_trade_entry_index = index
+        active_trade_returns: List[Dict[str, Any]] = [{"date": ts, "index": index, "cum_return_pct": 0.0}]
+        self._record_open_trade(
+            trades=trades,
+            ts=ts,
+            price=current_price,
+            equity=eq,
+            index=index,
+            signal_id=signal_id,
+        )
+        return trade_entry_equity, active_trade_entry_index, active_trade_returns
+
+    def _execute_close_trade(
+        self,
+        *,
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        index: int,
+        current_price: float,
+        eq: float,
+        active_trade_returns: List[Dict[str, Any]],
+        active_trade_entry_index: Optional[int],
+    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
+        """Close an active position and clear active-trade tracking state.
+
+        Args:
+            trades: Trade log mutated in place.
+            ts: Execution timestamp.
+            index: Execution bar index.
+            current_price: Execution price.
+            eq: Current equity.
+            active_trade_returns: Cumulative return path for the active trade.
+            active_trade_entry_index: Entry bar index for the active trade.
+
+        Returns:
+            Reset state tuple ``(None, None, [])`` when close executes; otherwise
+            the untouched input state if no position is open.
+        """
+        ## If nothing is open, preserve current tracking state as-is.
+        if not self.position_open:
+            return None, active_trade_entry_index, active_trade_returns
+
+        ## Close helper computes return + MAE/MFE fields and appends the close record.
+        self._record_close_trade(
+            trades=trades,
+            ts=ts,
+            exit_price=current_price,
+            equity=eq,
+            index=index,
+            trade_return_path=active_trade_returns,
+            trade_entry_index=active_trade_entry_index,
+        )
+        return None, None, []
+
+    def _process_pending_executions(
+        self,
+        *,
+        index: int,
+        pending: Dict[int, List[Dict[str, Any]]],
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        current_price: float,
+        eq: float,
+        trade_entry_equity: Optional[float],
+        active_trade_entry_index: Optional[int],
+        active_trade_returns: List[Dict[str, Any]],
+        enforce_open_on_signal: bool,
+        enforce_close_on_signal: bool,
+    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
+        """Execute any pending open/close operations scheduled for this bar.
+
+        Args:
+            index: Current bar index.
+            pending: Pending execution map keyed by execution bar index.
+            trades: Trade log mutated in place.
+            ts: Current timestamp.
+            current_price: Current close price.
+            eq: Current equity.
+            trade_entry_equity: Active trade entry equity state.
+            active_trade_entry_index: Active trade entry index state.
+            active_trade_returns: Active trade cumulative return path state.
+            enforce_open_on_signal: Whether to re-check open signal at execution.
+            enforce_close_on_signal: Whether to re-check close signal at execution.
+
+        Returns:
+            Updated ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
+        """
+        ## Pending ops are scheduled from earlier bars when tplusn > 0.
+        for op in pending.pop(index, []):
+            action = op.get("action")
+            if action == "open":
+                ## Optional enforcement: re-check that open condition still holds at execution time.
+                enforce_open = self.should_open(index=index).ok if enforce_open_on_signal else True
+                if enforce_open and not self.position_open:
+                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_open_trade(
+                        trades=trades,
+                        ts=ts,
+                        index=index,
+                        current_price=current_price,
+                        eq=eq,
+                        side=op.get("side"),
+                        signal_id=op.get("signal_id"),
+                    )
+            elif action == "close":
+                ## Optional enforcement: re-check that close condition still holds at execution time.
+                enforce_close = self.should_close(index=index).ok if enforce_close_on_signal else True
+                if enforce_close and self.position_open:
+                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
+                        trades=trades,
+                        ts=ts,
+                        index=index,
+                        current_price=current_price,
+                        eq=eq,
+                        active_trade_returns=active_trade_returns,
+                        active_trade_entry_index=active_trade_entry_index,
+                    )
+
+        return trade_entry_equity, active_trade_entry_index, active_trade_returns
+
+    def _process_signal_decisions(
+        self,
+        *,
+        index: int,
+        tn_int: int,
+        n: int,
+        pending: Dict[int, List[Dict[str, Any]]],
+        trades: List[Dict[str, Any]],
+        ts: pd.Timestamp,
+        current_price: float,
+        eq: float,
+        trade_entry_equity: Optional[float],
+        active_trade_entry_index: Optional[int],
+        active_trade_returns: List[Dict[str, Any]],
+    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
+        """Process open/close decisions at signal time and execute or schedule.
+
+        Args:
+            index: Current signal bar index.
+            tn_int: Non-negative execution delay in bars (t+n).
+            n: Total bar count.
+            pending: Pending execution map keyed by execution bar index.
+            trades: Trade log mutated in place.
+            ts: Current timestamp.
+            current_price: Current close price.
+            eq: Current equity.
+            trade_entry_equity: Active trade entry equity state.
+            active_trade_entry_index: Active trade entry index state.
+            active_trade_returns: Active trade cumulative return path state.
+
+        Returns:
+            Updated ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
+        """
+        ## Decisions are evaluated on the signal bar; execution may be immediate or scheduled.
+        open_decision = self.should_open(index=index)
+        close_decision = self.should_close(index=index)
+
+        if open_decision.ok:
+            exec_idx = index if tn_int == 0 else min(index + tn_int, n - 1)
+            if tn_int == 0:
+                ## Immediate open path (t+0).
+                if not self.position_open:
+                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_open_trade(
+                        trades=trades,
+                        ts=ts,
+                        index=exec_idx,
+                        current_price=current_price,
+                        eq=eq,
+                        side=open_decision.side,
+                        signal_id=open_decision.signal_id,
+                    )
+            else:
+                ## Delayed open path (t+n).
+                pending.setdefault(exec_idx, []).append(
+                    {
+                        "action": "open",
+                        "signal_index": index,
+                        "side": open_decision.side,
+                        "signal_id": open_decision.signal_id,
+                    }
+                )
+        elif close_decision.ok:
+            exec_idx = index if tn_int == 0 else min(index + tn_int, n - 1)
+            if tn_int == 0:
+                ## Immediate close path (t+0).
+                if self.position_open:
+                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
+                        trades=trades,
+                        ts=ts,
+                        index=exec_idx,
+                        current_price=current_price,
+                        eq=eq,
+                        active_trade_returns=active_trade_returns,
+                        active_trade_entry_index=active_trade_entry_index,
+                    )
+            else:
+                ## Delayed close path (t+n).
+                pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": index})
+
+        return trade_entry_equity, active_trade_entry_index, active_trade_returns
 
     def simulate(
         self, finalize: bool = True, enforce_open_on_signal: bool = False, enforce_close_on_signal: bool = False
@@ -1007,126 +1361,73 @@ class StrategyBase(ABC):
         eq = 1.0
         trade_entry_equity: Optional[float] = None
 
+        # Active trade path of cumulative returns from entry onward.
+        active_trade_returns: List[Dict[str, Any]] = []
+        active_trade_entry_index: Optional[int] = None
+
         # pending executions: map execution_index -> list of ops ("open"/"close")
         pending: Dict[int, List[Dict[str, Any]]] = {}
 
-        # We start from i=0; interval returns apply from i-1 -> i if in position at i-1
+        ## --- Main simulation loop ---
+        ## 1) Apply one-bar MTM for previously open positions.
+        ## 2) Execute due pending orders (from prior t+n scheduling).
+        ## 3) Evaluate new signals and execute/schedule.
         for i in range(n):
             ts = dates[i]
             current_price = float(close[i])
-            in_pos_prev = self.position_open
+            eq = self._apply_daily_mtm_and_update_trade_path(
+                index=i,
+                current_price=current_price,
+                close=close,
+                ts=ts,
+                eq=eq,
+                trade_entry_equity=trade_entry_equity,
+                active_trade_returns=active_trade_returns,
+            )
 
-            # 1) Daily MTM on fixed size (1x equity at open) when in position from prior bar
-            if i > 0 and in_pos_prev and trade_entry_equity is not None:
-                prev_price = float(close[i - 1])
-                position_info = self.position_info
-                entry_price = position_info.entry_price if position_info else None
-                side = position_info.side if position_info else None
-                if entry_price is not None and side is not None and float(entry_price) != 0.0:
-                    position_size = float(trade_entry_equity) / float(entry_price)
-                    eq += position_size * float(side) * (current_price - prev_price)
+            trade_entry_equity, active_trade_entry_index, active_trade_returns = self._process_pending_executions(
+                index=i,
+                pending=pending,
+                trades=trades,
+                ts=ts,
+                current_price=current_price,
+                eq=eq,
+                trade_entry_equity=trade_entry_equity,
+                active_trade_entry_index=active_trade_entry_index,
+                active_trade_returns=active_trade_returns,
+                enforce_open_on_signal=enforce_open_on_signal,
+                enforce_close_on_signal=enforce_close_on_signal,
+            )
 
-            # 2) First, process any scheduled executions for this index
-            for op in pending.pop(i, []):
-                if op.get("action") == "open":
-                    ## Optionally enforce that the signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
-                    enforce_open = self.should_open(index=i).ok if enforce_open_on_signal else True
-
-                    # only open if not already in a position
-                    if not self.position_open and enforce_open:
-                        trade_entry_equity = eq
-                        self.open_action(
-                            index=i, side=op.get("side"), signal_id=op.get("signal_id"), entry_price=current_price
-                        )
-                        trades.append(
-                            {
-                                "date": ts,
-                                "action": "open",
-                                "price": current_price,
-                                "equity": eq,
-                                "signal_id": op.get("signal_id"),
-                                **self.additional_on_entry_info(index=i),
-                            }
-                        )
-
-                elif op.get("action") == "close":
-                    ## Optionally enforce that the close signal is still valid at execution time (e.g., if tplusn > 0, the market conditions may have changed)
-                    enforce_close = self.should_close(index=i).ok if enforce_close_on_signal else True
-                    if self.position_open and enforce_close:
-                        self._record_close_trade(
-                            trades=trades,
-                            ts=ts,
-                            exit_price=current_price,
-                            equity=eq,
-                            index=i,
-                        )
-                        trade_entry_equity = None
-
-            # 3) Check for new signals at t and schedule (or execute immediately if tn==0)
-            open_decision = self.should_open(index=i)
-            close_decision = self.should_close(index=i)
-            if open_decision.ok:
-                exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
-                if tn_int == 0:
-                    # immediate execution
-                    if not self.position_open:
-                        trade_entry_equity = eq
-                        self.open_action(
-                            index=exec_idx,
-                            side=open_decision.side,
-                            signal_id=open_decision.signal_id,
-                            entry_price=current_price,
-                        )
-                        trades.append(
-                            {
-                                "date": ts,
-                                "action": "open",
-                                "price": current_price,
-                                "equity": eq,
-                                "signal_id": open_decision.signal_id,
-                                **self.additional_on_entry_info(index=i),
-                            }
-                        )
-                else:
-                    pending.setdefault(exec_idx, []).append(
-                        {
-                            "action": "open",
-                            "signal_index": i,
-                            "side": open_decision.side,
-                            "signal_id": open_decision.signal_id,
-                        }
-                    )
-
-            elif close_decision.ok:
-                exec_idx = i if tn_int == 0 else min(i + tn_int, n - 1)
-                if tn_int == 0:
-                    if self.position_open:
-                        self._record_close_trade(
-                            trades=trades,
-                            ts=ts,
-                            exit_price=current_price,
-                            equity=eq,
-                            index=exec_idx,
-                        )
-                        trade_entry_equity = None
-                else:
-                    pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": i})
+            trade_entry_equity, active_trade_entry_index, active_trade_returns = self._process_signal_decisions(
+                index=i,
+                tn_int=tn_int,
+                n=n,
+                pending=pending,
+                trades=trades,
+                ts=ts,
+                current_price=current_price,
+                eq=eq,
+                trade_entry_equity=trade_entry_equity,
+                active_trade_entry_index=active_trade_entry_index,
+                active_trade_returns=active_trade_returns,
+            )
 
             equity[i] = eq
 
-        # After loop, optionally finalize: if position still open close at last bar
+        ## --- Optional finalize step ---
         if finalize:
-            # There may be pending executions scheduled for the last bar; they've already executed
             if self.position_open:
                 current_price = float(close[-1])
-                self._record_close_trade(
+                trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
                     trades=trades,
                     ts=dates[-1],
-                    exit_price=current_price,
-                    equity=eq,
+                    current_price=current_price,
                     index=n - 1,
+                    eq=eq,
+                    active_trade_returns=active_trade_returns,
+                    active_trade_entry_index=active_trade_entry_index,
                 )
-                trade_entry_equity = None
 
         self.reset_strategy_state()
         equity_series = pd.Series(equity, index=dates, name="equity")
@@ -1160,6 +1461,14 @@ class StrategyBase(ABC):
                 "entry_price": open_trade["price"],
                 "entry_equity": open_trade["equity"],
                 "return_pct": None,
+                "mae": None,
+                "mfe": None,
+                "days_to_mae": None,
+                "days_to_mfe": None,
+                "mae_date": None,
+                "mfe_date": None,
+                "trade_returns": None,
+                "trade_return_dates": None,
                 "side": open_trade.get("side"),
                 "signal_id": open_trade.get("signal_id"),
             }
@@ -1170,6 +1479,14 @@ class StrategyBase(ABC):
                         "exit_price": close_trade["price"],
                         "exit_equity": close_trade["equity"],
                         "return_pct": close_trade["return_pct"],
+                        "mae": close_trade.get("mae"),
+                        "mfe": close_trade.get("mfe"),
+                        "days_to_mae": close_trade.get("days_to_mae"),
+                        "days_to_mfe": close_trade.get("days_to_mfe"),
+                        "mae_date": close_trade.get("mae_date"),
+                        "mfe_date": close_trade.get("mfe_date"),
+                        "trade_returns": close_trade.get("trade_returns"),
+                        "trade_return_dates": close_trade.get("trade_return_dates"),
                         "side": close_trade.get("side"),
                         "position_info": close_trade.get("position_info"),
                     }
