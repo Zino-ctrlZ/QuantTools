@@ -791,9 +791,29 @@ class MarketTimeseries:
             end_dt=end,
         )
         if is_partial:
-            data = self._load_spot_into_cache(
-                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
-            )
+            miss_start = missing_start_date.strftime("%Y-%m-%d")
+            miss_end = missing_end_date.strftime("%Y-%m-%d")
+            data = self._load_spot_into_cache(sym, miss_start, miss_end)
+            ## Compare tip reload request vs what the vendor load actually returned.
+            if data is not None and len(data):
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=spot: "
+                    "requested=%s..%s returned=%s..%s rows=%s",
+                    sym,
+                    miss_start,
+                    miss_end,
+                    data.index.min().date(),
+                    data.index.max().date(),
+                    len(data),
+                )
+            else:
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=spot: "
+                    "requested=%s..%s returned=empty",
+                    sym,
+                    miss_start,
+                    miss_end,
+                )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
         clipped = self._clip_to_date_range(cached_data, start, end).copy()
@@ -841,9 +861,29 @@ class MarketTimeseries:
             end_dt=end,
         )
         if is_partial:
-            data = self._load_chain_spot_into_cache(
-                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
-            )
+            miss_start = missing_start_date.strftime("%Y-%m-%d")
+            miss_end = missing_end_date.strftime("%Y-%m-%d")
+            data = self._load_chain_spot_into_cache(sym, miss_start, miss_end)
+            ## chain_spot may download full history internally; log post-load span here.
+            if data is not None and len(data):
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=chain_spot: "
+                    "requested=%s..%s returned=%s..%s rows=%s",
+                    sym,
+                    miss_start,
+                    miss_end,
+                    data.index.min().date(),
+                    data.index.max().date(),
+                    len(data),
+                )
+            else:
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=chain_spot: "
+                    "requested=%s..%s returned=empty",
+                    sym,
+                    miss_start,
+                    miss_end,
+                )
             cached_data = pd.concat([cached_data, data]).sort_index()
         clipped = self._clip_to_date_range(cached_data, start, end)
         return certify_market_factor_payload(
@@ -891,9 +931,29 @@ class MarketTimeseries:
             end_dt=end,
         )
         if is_partial:
-            data = self._load_dividends_into_cache(
-                sym, missing_start_date.strftime("%Y-%m-%d"), missing_end_date.strftime("%Y-%m-%d")
-            )
+            miss_start = missing_start_date.strftime("%Y-%m-%d")
+            miss_end = missing_end_date.strftime("%Y-%m-%d")
+            data = self._load_dividends_into_cache(sym, miss_start, miss_end)
+            ## Compare tip reload request vs dividend vendor payload span.
+            if data is not None and len(data):
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=dividends: "
+                    "requested=%s..%s returned=%s..%s rows=%s",
+                    sym,
+                    miss_start,
+                    miss_end,
+                    data.index.min().date(),
+                    data.index.max().date(),
+                    len(data),
+                )
+            else:
+                logger.info(
+                    "Partial reload vendor span for key=%s factor=dividends: "
+                    "requested=%s..%s returned=empty",
+                    sym,
+                    miss_start,
+                    miss_end,
+                )
             cached_data = pd.concat([cached_data, data]).sort_index()
 
         clipped = self._clip_to_date_range(cached_data, start, end, *args, **kwargs)

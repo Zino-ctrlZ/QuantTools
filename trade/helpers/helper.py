@@ -770,17 +770,35 @@ def retrieve_timeseries(
         pd.DataFrame: DataFrame with OHLCV data and additional columns for split adjustments
     """
     if spot_type == "chain_price" or spot_type == "chain_spot":
+        ## chain_spot always downloads full history for split factors, then clips to request.
+        full_end = (change_to_last_busday(datetime.today()) + BDay(1)).strftime(
+            "%Y-%m-%d"
+        )
+        logger.info(
+            "chain_spot yfinance full-history fetch for %s: download=1960-01-01..%s "
+            "then clip to requested=%s..%s",
+            tick,
+            full_end,
+            start,
+            end,
+        )
         df = retrieve_timeseries(
             tick,
-            end=(change_to_last_busday(datetime.today()) + BDay(1)).strftime(
-                "%Y-%m-%d"
-            ),
+            end=full_end,
             start="1960-01-01",
             interval=interval,
             provider=provider,
         )
         df.index = pd.to_datetime(df.index)
         df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
+        if df is not None and not df.empty:
+            logger.info(
+                "chain_spot after clip for %s: returned=%s..%s rows=%s",
+                tick,
+                df.index.min().date(),
+                df.index.max().date(),
+                len(df),
+            )
         df["close"] = df["close"] * df["split_factor"]
         df["open"] = df["open"] * df["split_factor"]
         df["high"] = df["high"] * df["split_factor"]
@@ -813,6 +831,19 @@ def retrieve_timeseries(
                 return data
 
             data = query_data(start=start, end=end, tick=tick, interval=interval)
+
+            ## Surface raw vendor span before inclusive-end clip (partial reloads use this path).
+            if data is not None and not data.empty:
+                logger.info(
+                    "yfinance download span for %s: query_start=%s query_end_exclusive=%s "
+                    "raw_returned=%s..%s rows=%s",
+                    tick,
+                    start,
+                    pd.to_datetime(end).date(),
+                    data.index.min().date(),
+                    data.index.max().date(),
+                    len(data),
+                )
 
             ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
             if data.empty:
