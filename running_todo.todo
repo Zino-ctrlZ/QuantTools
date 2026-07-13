@@ -1,5 +1,5 @@
 Running Todo:
-
+    ☐ Add thetadata & vol fitting config to option data config
     ☐ How do we handle reverse splits?
     ☐ Write a ChainDataManager
     ☐ Resolve who should own tplusn info. StrategyBase or EVB? Or both with syncing?
