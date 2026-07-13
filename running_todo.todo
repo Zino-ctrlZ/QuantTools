@@ -2,6 +2,10 @@ Running Todo:
 
     ☐ How do we handle reverse splits?
     ☐ Write a ChainDataManager
+    ☐ Resolve who should own tplusn info. StrategyBase or EVB? Or both with syncing?
+        ☐ Should `should_trade` have tplusn info?
+        ☐ Should EventDriven.portfolio expect generate signals on trade to take into account should_trade?
+        ☐ How does live handle tplusn v backtest?
     ☐ Add full dataframe tp Spot Result
         - Include price property to pick from columns. Create enum for standard columns
     ☐ Remove all import for riskmanager.market_data

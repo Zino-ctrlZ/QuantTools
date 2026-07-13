@@ -618,6 +618,50 @@ def reset_storing_to_db() -> None:
     DatabaseMetadataStore.PERSIST_TO_DB = True
 
 
+def build_position_store(
+    *,
+    live: bool = False,
+    strategy_name: Optional[str] = None,
+    default_dte: Optional[int] = None,
+    default_moneyness: Optional[float] = None,
+    position_store: Optional[PositionStore] = None,
+    verify_after_save: bool = True,
+) -> PositionStore:
+    """Build an in-memory or database position store from a live flag.
+
+    Args:
+        live: When ``True``, return a ``DatabasePositionStore``; otherwise in-memory.
+        strategy_name: Strategy identifier required for database stores.
+        default_dte: Fallback DTE applied when loading limits from the database.
+        default_moneyness: Fallback moneyness applied when loading limits from the database.
+        position_store: Optional explicit store override (wins over ``live``).
+        verify_after_save: Re-read the database after each write and raise on mismatch.
+
+    Returns:
+        Configured ``PositionStore`` implementation.
+
+    Raises:
+        ValueError: If ``live`` is ``True`` and ``strategy_name`` is missing.
+
+    Examples:
+        >>> store = build_position_store(live=False)
+        >>> isinstance(store, InMemoryPositionStore)
+        True
+    """
+    if position_store is not None:
+        return position_store
+    if live:
+        if not strategy_name:
+            raise ValueError("strategy_name is required when live=True")
+        return DatabasePositionStore(
+            strategy_name=strategy_name,
+            default_dte=default_dte,
+            default_moneyness=default_moneyness,
+            verify_after_save=verify_after_save,
+        )
+    return InMemoryPositionStore()
+
+
 def ticker_from_trade_id(trade_id: str) -> str:
     """Extract the underlying ticker from a trade identifier.
 
