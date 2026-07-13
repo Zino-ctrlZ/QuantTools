@@ -20,6 +20,7 @@ from pathlib import Path
 import os
 from typing import Tuple, List, Optional, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
+from trade.datamanager.utils.equity_start_dates import get_start_date
 from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
@@ -137,13 +138,15 @@ def _sync_equity_date(
     """Synchronize requested window for non-option EOD timeseries paths.
 
     Clamps ``end_date`` to the latest EOD observation available at runtime.
-    Optionally floors ``start_date`` when ``min_trade_date`` is supplied (e.g. future
-    per-symbol IPO listing lookup).
+    Floors ``start_date`` to ``min_trade_date`` when supplied, otherwise to the
+    cached per-symbol listing date resolved via ``get_start_date`` when ``symbol``
+    is provided.
 
     Args:
         start_date: Requested window start.
         end_date: Requested window end.
-        symbol: Reserved for future IPO listing-date resolution (unused today).
+        symbol: Equity ticker used to resolve listing-date floor when
+            ``min_trade_date`` is omitted.
         min_trade_date: Optional explicit floor for ``start_date``.
 
     Returns:
@@ -164,8 +167,12 @@ def _sync_equity_date(
         )
         end_dt = max_allowable
 
-    if min_trade_date is not None:
-        floor_dt = pd.Timestamp(to_datetime(min_trade_date)).tz_localize(None).normalize()
+    resolved_min_trade_date = min_trade_date
+    if resolved_min_trade_date is None and symbol is not None:
+        resolved_min_trade_date = get_start_date(symbol)
+
+    if resolved_min_trade_date is not None:
+        floor_dt = pd.Timestamp(to_datetime(resolved_min_trade_date)).tz_localize(None).normalize()
         if start_dt < floor_dt:
             logger.info(
                 "Requested start_date %s is before min trade date %s. Adjusting.",

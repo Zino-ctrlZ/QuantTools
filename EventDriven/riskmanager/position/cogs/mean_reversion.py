@@ -2,6 +2,8 @@
 
 Implements z-score-based position sizing and fallback quantity handling for
 mean-reversion strategies, plus a senior variant with additional logging.
+Metadata persistence goes through ``PositionStore`` (in-memory by default,
+database when ``live=True``).
 
 Core Classes:
     MeanReversionSizerCog: Base z-score sizing and metadata capture cog.
@@ -11,23 +13,28 @@ Core Dataclasses:
     _MRLimitsMetaData: Per-trade sizing metadata for mean-reversion logic.
 
 Usage:
-    >>> cog = MeanReversionSizerCog(eq_strategy=strategy)
+    >>> cog = MeanReversionSizerCog(eq_strategy=strategy, live=False)
     >>> cog.on_new_position(state)
 """
 
 import math
-from EventDriven.riskmanager.position.base import BaseCog
-from EventDriven.configs.core import MeanReversionSizerConfigs
-from typing import Optional
-from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisContext, CogActions
+from dataclasses import dataclass
+from typing import Dict, Optional, TYPE_CHECKING
+
 import numpy as np
-from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_position_sizing
+import pandas as pd
+
+from EventDriven.configs.core import MeanReversionSizerConfigs
+from EventDriven.dataclasses.states import CogActions, NewPositionState, PositionAnalysisContext
+from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData
+from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_position_sizing
 from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
-from dataclasses import dataclass
-import pandas as pd
 from trade.helpers.Logging import setup_logger
+
+if TYPE_CHECKING:
+    from EventDriven.riskmanager.position.stores.limits_store import PositionStore
 
 logger = setup_logger("EventDriven.riskmanager.position.cogs.mean_reversion")
 
@@ -41,23 +48,46 @@ class _MRLimitsMetaData(_LimitsMetaData):
 
 
 class MeanReversionSizerCog(BaseCog):
-    """Z-score-driven sizing cog for mean-reversion strategies."""
+    """Z-score-driven sizing cog with optional database-backed metadata persistence."""
 
     default_config: MeanReversionSizerConfigs = MeanReversionSizerConfigs()
 
-    def __init__(self, eq_strategy: MultiAssetStrategy, config: Optional[MeanReversionSizerConfigs] = None):
+    def __init__(
+        self,
+        eq_strategy: MultiAssetStrategy,
+        config: Optional[MeanReversionSizerConfigs] = None,
+        *,
+        live: bool = False,
+        position_store: Optional["PositionStore"] = None,
+        verify_after_save: bool = True,
+    ) -> None:
         """Initialize the mean-reversion sizing cog.
 
         Args:
             eq_strategy: Strategy interface used to fetch indicator data.
             config: Optional runtime sizing configuration.
+            live: When ``True``, persist metadata via ``DatabasePositionStore``.
+            position_store: Optional store override for testing.
+            verify_after_save: Re-read the database after each write when ``live``.
         """
+        ## Lazy import avoids circular RiskManager -> cogs -> stores -> backtest load
+        from EventDriven.riskmanager.position.stores.limits_store import build_position_store
+
         if config is None:
             config = MeanReversionSizerConfigs()
         super().__init__(config)
         self.eq_strategy = eq_strategy
-        self.position_metadata = {}
+        self.live = live
+        self.position_metadata: Dict[str, _MRLimitsMetaData] = {}
         self.config: MeanReversionSizerConfigs = config
+        strategy_name = self.config.run_name or "mean_reversion_sizer_cog"
+        self._position_store = build_position_store(
+            live=live,
+            strategy_name=strategy_name,
+            default_dte=self.config.default_dte,
+            position_store=position_store,
+            verify_after_save=verify_after_save,
+        )
 
     def on_new_position(self, state: NewPositionState):
         """Size a new position using z-score-based mean-reversion scaling.
@@ -126,7 +156,7 @@ class MeanReversionSizerCog(BaseCog):
             zexcess=z_excess,
         )
         logger.info(f"Storing metadata for trade_id {order['data']['trade_id']}: {metadata}")
-        self.position_metadata[order["data"]["trade_id"]] = metadata
+        self._store_metadata(metadata)
 
         if q == 0:
             self.on_new_position_update(
@@ -136,9 +166,20 @@ class MeanReversionSizerCog(BaseCog):
         metadata.new_quantity = order["data"][
             "quantity"
         ]  # Update metadata with final quantity after potential adjustment in on_position_update
+        ## Re-persist so live metadata stores see the final quantity
+        self._store_metadata(metadata)
         logger.info(
             f"Final quantity for trade_id {order['data']['trade_id']} after potential adjustment: {metadata.new_quantity}. Updated metadata: {metadata}"
         )
+
+    def _store_metadata(self, metadata: _MRLimitsMetaData) -> None:
+        """Persist metadata in-process and through the configured store.
+
+        Args:
+            metadata: Mean-reversion sizing metadata payload.
+        """
+        self.position_metadata[metadata.trade_id] = metadata
+        self._position_store.save_metadata(metadata.trade_id, metadata)
 
     def _analyze_impl(self, portfolio_context: PositionAnalysisContext) -> CogActions:
         """Return no ongoing analysis opinions for this sizing-focused cog.
@@ -214,14 +255,31 @@ class MeanReversionSizerCog(BaseCog):
 class SeniorMeanReversionSizerCog(MeanReversionSizerCog):
     """Extended mean-reversion sizing cog with extra fallback logging."""
 
-    def __init__(self, eq_strategy: MultiAssetStrategy, config: Optional[MeanReversionSizerConfigs] = None):
+    def __init__(
+        self,
+        eq_strategy: MultiAssetStrategy,
+        config: Optional[MeanReversionSizerConfigs] = None,
+        *,
+        live: bool = False,
+        position_store: Optional["PositionStore"] = None,
+        verify_after_save: bool = True,
+    ) -> None:
         """Initialize the senior mean-reversion cog.
 
         Args:
             eq_strategy: Strategy interface used to fetch indicator data.
             config: Optional runtime sizing configuration.
+            live: When ``True``, persist metadata via ``DatabasePositionStore``.
+            position_store: Optional store override for testing.
+            verify_after_save: Re-read the database after each write when ``live``.
         """
-        super().__init__(eq_strategy, config)
+        super().__init__(
+            eq_strategy,
+            config,
+            live=live,
+            position_store=position_store,
+            verify_after_save=verify_after_save,
+        )
 
     def on_new_position(self, state):
         """Run base sizing then apply senior-level quantity-0 diagnostics.

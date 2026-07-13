@@ -6,6 +6,9 @@ Provides a lightweight sizing and analysis cog that:
 - Emits DTE-based ROLL opinions during analysis.
 - Skips sizing and analysis checks for excluded strategy slug tokens.
 
+Persistence of limits and metadata goes through ``PositionStore`` (in-memory by
+default, database when ``live=True``).
+
 Core Classes:
     PlainSizingCog: Position sizing and DTE-based roll analysis implementation.
 
@@ -14,11 +17,11 @@ Configuration:
         and strategy-slug exclusion tokens.
 
 Usage:
-    >>> cog = PlainSizingCog()
+    >>> cog = PlainSizingCog(live=False)
     >>> cog.on_new_position(new_position_state)
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 
 import pandas as pd
 
@@ -33,27 +36,52 @@ from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_posi
 from EventDriven.types import SignalID
 from trade.helpers.Logging import setup_logger
 
+if TYPE_CHECKING:
+    from EventDriven.riskmanager.position.stores.limits_store import PositionStore
+
 logger = setup_logger("EventDriven.riskmanager.position.cogs.plain_sizing", stream_log_level="INFO")
 
 
 class PlainSizingCog(BaseCog):
-    """Default delta-limit sizing cog with DTE-based roll recommendations."""
+    """Default delta-limit sizing cog with optional database-backed persistence."""
 
     default_config = PlainSizingCogConfig()
 
-    def __init__(self, config: Optional[PlainSizingCogConfig] = None):
+    def __init__(
+        self,
+        config: Optional[PlainSizingCogConfig] = None,
+        *,
+        live: bool = False,
+        position_store: Optional["PositionStore"] = None,
+        verify_after_save: bool = True,
+    ) -> None:
         """Initialize the plain sizing cog.
 
         Args:
             config: Optional runtime configuration for sizing, roll checks,
                 and exclusion behavior.
+            live: When ``True``, persist limits/metadata via ``DatabasePositionStore``.
+            position_store: Optional store override for testing.
+            verify_after_save: Re-read the database after each write when ``live``.
         """
+        ## Lazy import avoids circular RiskManager -> cogs -> stores -> backtest load
+        from EventDriven.riskmanager.position.stores.limits_store import build_position_store
+
         if config is None:
             config = PlainSizingCogConfig()
         super().__init__(config)
+        self.live = live
         self.position_limits: Dict[str, PositionLimits] = {}
         self.position_metadata: Dict[str, _LimitsMetaData] = {}
         self.config: PlainSizingCogConfig = config
+        strategy_name = self.config.run_name or "plain_sizing_cog"
+        self._position_store = build_position_store(
+            live=live,
+            strategy_name=strategy_name,
+            default_dte=self.config.dte_threshold,
+            position_store=position_store,
+            verify_after_save=verify_after_save,
+        )
 
     def _is_excluded_strategy(self, signal_id: str) -> bool:
         """Return whether a signal should be excluded from checks.
@@ -154,7 +182,7 @@ class PlainSizingCog(BaseCog):
             creation_date=request.date,
         )
         state.limits = pos_lmts
-        self.position_limits[order["data"]["trade_id"]] = pos_lmts
+        self._save_position_limits(order["data"]["trade_id"], order["signal_id"], pos_lmts)
 
         metadata = _LimitsMetaData(
             trade_id=order["data"]["trade_id"],
@@ -169,7 +197,44 @@ class PlainSizingCog(BaseCog):
             new_quantity=q,
         )
         logger.info(f"Storing plain sizing metadata for trade_id {order['data']['trade_id']}: {metadata}")
-        self.position_metadata[order["data"]["trade_id"]] = metadata
+        self._store_metadata(metadata)
+
+    def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
+        """Persist position limits through the configured store.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+            limits: Limit values to store.
+        """
+        self.position_limits[trade_id] = limits
+        self._position_store.save_limits(trade_id, signal_id, limits)
+
+    def _get_position_limits(self, trade_id: str, signal_id: str) -> Optional[PositionLimits]:
+        """Load position limits from the in-process cache or store.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+
+        Returns:
+            Stored limits, or ``None`` when absent.
+        """
+        if trade_id in self.position_limits:
+            return self.position_limits[trade_id]
+        limits = self._position_store.get_limits(trade_id, signal_id)
+        if limits is not None:
+            self.position_limits[trade_id] = limits
+        return limits
+
+    def _store_metadata(self, metadata: _LimitsMetaData) -> None:
+        """Persist metadata in-process and through the configured store.
+
+        Args:
+            metadata: Limits sizing metadata payload.
+        """
+        self.position_metadata[metadata.trade_id] = metadata
+        self._position_store.save_metadata(metadata.trade_id, metadata)
 
     def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
         """Analyze open positions and emit DTE-based roll recommendations.

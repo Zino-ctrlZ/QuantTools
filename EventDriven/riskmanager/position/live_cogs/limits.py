@@ -1,314 +1,205 @@
-"""Live Trading Limits and Sizing Cog with Database Persistence.
+"""Live trading limits cog with database-backed position store persistence.
 
-This module implements LiveCOGLimitsAndSizingCog, a specialized version of the
-LimitsAndSizingCog for live trading environments. It extends the base cog with
-database persistence, position limit retrieval from historical records, and
-state management across trading sessions.
+``LiveCOGLimitsAndSizingCog`` extends ``LimitsAndSizingCog`` and delegates
+limits and sizing metadata persistence to ``DatabasePositionStore``. That store
+writes through to the ``limits`` and ``position_metadata`` tables, verifies
+saves, and keeps an optional in-memory cache keyed by ``(signal_id, trade_id)``.
 
-Core Class:
-    LiveCOGLimitsAndSizingCog: Live trading limits enforcement with persistence
+Core Classes:
+    LiveCOGLimitsAndSizingCog: Live limits enforcement with store persistence.
 
-Key Differences from Base Cog:
-    Database Integration:
-        - Persists position limits to database
-        - Retrieves historical limits on startup
-        - Maintains limit continuity across sessions
-        - Audit trail for all limit changes
+Core Functions:
+    enable_storing_to_db: Enable global DB persistence for limits/metadata stores.
+    disable_storing_to_db: Disable global DB persistence (cache-only writes).
+    reset_storing_to_db: Restore default DB persistence (enabled).
 
-    State Management:
-        - Loads position state from database
-        - Syncs in-memory and persisted limits
-        - Handles session restarts gracefully
-        - Prevents limit recalculation on restart
-
-    Cool-off Period:
-        - Prevents rapid limit adjustments
-        - Configurable delay between updates
-        - Reduces database write volume
-        - Stabilizes position sizing
-
-Limit Persistence Strategy:
-    On Position Open:
-        1. Calculate initial limits via sizer
-        2. Store limits to database
-        3. Cache in memory for fast access
-        4. Associate with trade_id and signal_id
-
-    On Position Analysis:
-        1. Check memory cache first
-        2. Fall back to database if not cached
-        3. Use limits for risk evaluation
-        4. Update limits only if needed
-
-    On Limit Update:
-        1. Recalculate via sizer
-        2. Compare to current limits
-        3. Apply cool-off logic
-        4. Persist to database if changed
-        5. Update memory cache
-
-Database Schema:
-    Limits Table:
-        - trade_id: Unique position identifier
-        - signal_id: Strategy signal reference
-        - strategy_name: Strategy identifier
-        - date: Limit creation/modification date
-        - delta: Delta limit value
-        - gamma: Gamma limit value (if enabled)
-        - vega: Vega limit value (if enabled)
-        - theta: Theta limit value (if enabled)
-
-    Indexes:
-        - Primary: (trade_id, strategy_name, signal_id)
-        - Secondary: (strategy_name, date)
-        - Query optimization for retrieval
-
-Limit Retrieval Flow:
-    1. Check self.position_limits dict (memory cache)
-    2. If not found, query database via get_position_limit()
-    3. Load all Greek measures from database
-    4. Construct PositionLimits object
-    5. Apply defaults for missing measures
-    6. Cache in memory for future access
-    7. Return limits to caller
-
-Limit Storage Flow:
-    1. Extract limit values from PositionLimits object
-    2. Prepare database parameters
-    3. Call store_position_limits() utility
-    4. Write to limits table
-    5. Update memory cache
-    6. Log storage operation
-
-Cool-off Period Logic:
-    Purpose:
-        - Prevents limit thrashing
-        - Reduces database writes
-        - Stabilizes position management
-        - Avoids overreaction to noise
-
-    Implementation:
-        - Track last limit update time per position
-        - Compare current time to last update
-        - Skip update if within cool-off window
-        - Configurable period (default: 0 = disabled)
-
-    Typical Values:
-        - 0: No cool-off (update immediately)
-        - 3600: 1 hour between updates
-        - 86400: Daily updates only
-
-Position Limit Defaults:
-    When Not Found in Database:
-        - Delta: Calculate from sizer
-        - Gamma: Use config default or None
-        - Vega: Use config default or None
-        - Theta: Use config default or None
-        - DTE: Use config.default_dte
-        - Moneyness: Use config.default_moneyness
-
-Session Continuity:
-    Restart Handling:
-        1. Load all active positions from database
-        2. Retrieve limits for each position
-        3. Populate memory cache
-        4. Resume analysis with correct limits
-        5. Maintain limit consistency
-
-    Prevents:
-        - Limit reset on restart
-        - Position over-sizing after crash
-        - Inconsistent risk management
-        - Loss of limit history
-
-Integration with Base Cog:
-    Overridden Methods:
-        - _save_position_limits(): Add database persistence
-        - _get_position_limits(): Add database retrieval
-        - _analyze_impl(): Delegates to base, may add logging
-
-    Inherited Functionality:
-        - All limit enforcement logic
-        - Sizer integration
-        - Greek calculations
-        - Action recommendations
-
-Configuration:
-    Required Config:
-        - run_name: Strategy identifier for database
-        - default_dte: Fallback DTE if not in database
-        - default_moneyness: Fallback moneyness
-        - enabled_limits: Which Greeks to track
-
-    Optional Config:
-        - cool_off_period: Seconds between updates (default: 0)
-        - persist_limits: Enable/disable persistence (default: True)
-        - cache_limits: Enable/disable memory cache (default: True)
+Processing Flow:
+    1. Construct ``DatabasePositionStore`` from ``config.run_name`` and defaults.
+    2. On save, write limits/metadata through the store (DB + cache when enabled).
+    3. On get, read from store cache or DB; fall back to config DTE/moneyness defaults.
+    4. Keep ``position_metadata`` in-process for same-session failsafe updates.
 
 Usage:
-    # Initialize live cog
-    live_cog = LiveCOGLimitsAndSizingCog(
-        config=limits_config,
-        sizer_configs=sizer_config,
-        underlier_list=['AAPL', 'MSFT']
-    )
-
-    # On new position
-    limits = live_cog.on_new_position(
-        position_state=new_position,
-        analysis_date=date
-    )
-    # Automatically saved to database
-
-    # On position analysis
-    actions = live_cog.analyze(
-        context=analysis_context
-    )
-    # Limits retrieved from cache or database
-
-Error Handling:
-    Database Failures:
-        - Fall back to calculated limits
-        - Log errors with context
-        - Continue analysis if possible
-        - Don't crash on read failures
-
-    Missing Limits:
-        - Calculate new limits via sizer
-        - Use config defaults where applicable
-        - Log missing limit warnings
-        - Store newly calculated limits
-
-    Cache Inconsistency:
-        - Database is source of truth
-        - Memory cache refreshed on mismatch
-        - Periodic cache validation
-
-Performance:
-    - Memory cache provides O(1) limit access
-    - Database queries only on cache miss
-    - Batch updates for multiple positions
-    - Connection pooling for database
-    - Lazy loading of position limits
-
-Monitoring:
-    Logged Events:
-        - Limit storage operations
-        - Limit retrieval from database
-        - Cache hits and misses
-        - Cool-off period activations
-        - Limit update rejections
-
-Notes:
-    - Requires database connection configured
-    - Thread-safe via database transaction handling
-    - Compatible with backtest cog for testing
-    - All timestamps in UTC
-    - Positions tracked by composite key
-
-See Also:
-    - save_utils.py: Database persistence utilities
-    - ../cogs/limits.py: Base LimitsAndSizingCog
-    - ../../sizer/: Position sizing implementations
+    >>> from EventDriven.riskmanager.position.live_cogs.limits import LiveCOGLimitsAndSizingCog
+    >>> from EventDriven.configs.core import LimitsEnabledConfig
+    >>> cog = LiveCOGLimitsAndSizingCog(config=LimitsEnabledConfig(run_name="demo"))
 """
 
-from typing import Dict
-from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog, PositionLimits
-from EventDriven.configs.core import LimitsEnabledConfig, BaseSizerConfigs
-from .save_utils import get_position_limit, store_position_limits
-from ..cogs.vars import MEASURES_SET
+from __future__ import annotations
+
+from typing import List, Optional, Union
+
+from EventDriven.configs.core import (
+    BaseSizerConfigs,
+    DefaultSizerConfigs,
+    LimitsEnabledConfig,
+    ZscoreSizerConfigs,
+)
+from EventDriven.dataclasses.limits import PositionLimits
+from EventDriven.riskmanager.position.cogs.limits import LimitsAndSizingCog, _LimitsMetaData, metadata_from_store_payload
+from EventDriven.riskmanager.position.stores.limits_store import (
+    PositionStore,
+    build_position_store,
+)
+from EventDriven.riskmanager.position.stores.limits_store import (
+    disable_storing_to_db as _disable_storing_to_db,
+)
+from EventDriven.riskmanager.position.stores.limits_store import (
+    enable_storing_to_db as _enable_storing_to_db,
+)
+from EventDriven.riskmanager.position.stores.limits_store import (
+    reset_storing_to_db as _reset_storing_to_db,
+)
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger("EventDriven.riskmanager.position.live_cogs.limits")
 
 
-def enable_storing_to_db(*args, **kwargs):
-    """Utility to enable or disable database storage of limits globally for testing."""
-    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = True
+def enable_storing_to_db(*args: object, **kwargs: object) -> None:
+    """Enable database persistence for limits and metadata stores globally.
 
-def disable_storing_to_db(*args, **kwargs):
-    """Utility to disable database storage of limits globally for testing."""
-    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = False
+    Args:
+        *args: Ignored; accepted for call-site compatibility.
+        **kwargs: Ignored; accepted for call-site compatibility.
+    """
+    _enable_storing_to_db(*args, **kwargs)
 
 
-def reset_storing_to_db():
-    """Utility to reset database storage of limits to default (enabled)."""
-    LiveCOGLimitsAndSizingCog.SAVE_LIMITS_TO_DB = True
+def disable_storing_to_db(*args: object, **kwargs: object) -> None:
+    """Disable database persistence for limits and metadata stores globally.
+
+    Args:
+        *args: Ignored; accepted for call-site compatibility.
+        **kwargs: Ignored; accepted for call-site compatibility.
+    """
+    _disable_storing_to_db(*args, **kwargs)
+
+
+def reset_storing_to_db() -> None:
+    """Reset database persistence for limits and metadata stores to enabled."""
+    _reset_storing_to_db()
 
 
 class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
-    """
-    Live trading specialized limits cog with database persistence.
-
-    Extends LimitsAndSizingCog to add:
-    - Database storage and retrieval of position limits
-    - State persistence across trading sessions
-    - Cool-off period for limit updates
-    - Audit trail for compliance
+    """Live limits cog that persists via ``DatabasePositionStore``.
 
     Attributes:
-        position_limits (Dict[str, PositionLimits]): Memory cache of position limits
-        cool_off_period (int): Seconds between limit updates (0 = no limit)
-
-    Note:
-        This class is designed for live trading environments where position
-        state must persist across restarts and limit history must be maintained
-        for compliance and analysis.
+        cool_off_period: Reserved cool-off window in seconds (0 = disabled).
+        _position_store: Combined limits and metadata persistence backend.
     """
 
-    SAVE_LIMITS_TO_DB: bool = True
-
     def __init__(
-        self, config: LimitsEnabledConfig = None, sizer_configs: BaseSizerConfigs = None, underlier_list: list = None
-    ):
+        self,
+        config: Optional[LimitsEnabledConfig] = None,
+        sizer_configs: Optional[Union[BaseSizerConfigs, DefaultSizerConfigs, ZscoreSizerConfigs]] = None,
+        underlier_list: Optional[List[str]] = None,
+        position_store: Optional[PositionStore] = None,
+        *,
+        live: bool = True,
+        verify_after_save: bool = True,
+    ) -> None:
+        """Initialize the live database-backed limits cog.
+
+        Args:
+            config: Limits cog configuration; ``run_name`` is used as strategy name.
+            sizer_configs: Sizer configuration object.
+            underlier_list: Underliers used by vol-adjusted sizers.
+            position_store: Optional store override for testing.
+            live: When ``True`` (default), persist via ``DatabasePositionStore``.
+            verify_after_save: Re-read the database after each write and raise on mismatch.
+        """
         super().__init__(config=config, sizer_configs=sizer_configs, underlier_list=underlier_list)
-        self.position_limits: Dict[str, PositionLimits] = {}
+        strategy_name = self.config.run_name or "live_limits_cog"
+        self.live = live
         self.cool_off_period = 0
-
-    def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
-        """
-        Save the position limits for a given trade ID and signal ID.
-        """
-
-        ## Use in-memory cache only if DB persistence is disabled
-        if not self.SAVE_LIMITS_TO_DB:
-            self.position_limits[trade_id] = limits
-            return
-
-        store_position_limits(
-            delta_limit=limits.delta,
-            gamma_limit=limits.gamma,
-            vega_limit=limits.vega,
-            theta_limit=limits.theta,
-            trade_id=trade_id,
-            signal_id=signal_id,
-            strategy_name=self.config.run_name,
-            date=limits.creation_date,
+        self._position_store = build_position_store(
+            live=live,
+            strategy_name=strategy_name,
+            default_dte=self.config.default_dte,
+            default_moneyness=self.config.default_moneyness,
+            position_store=position_store,
+            verify_after_save=verify_after_save,
         )
 
-    def _get_position_limits(self, trade_id: str, signal_id: str) -> PositionLimits:
-        """
-        Retrieve the position limits for a given trade ID and signal ID.
-        """
-        if trade_id in self.position_limits:
-            return self.position_limits[trade_id]
+    def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
+        """Persist limits through the configured position store.
 
-        lm = PositionLimits()
-        for risk_measure in MEASURES_SET:
-            date, limit_value = get_position_limit(
-                trade_id=trade_id,
-                strategy_name=self.config.run_name,
-                signal_id=signal_id,
-                risk_measure=risk_measure,
-            )
-            if limit_value is not None:
-                setattr(lm, risk_measure, limit_value)
-                lm.creation_date = date
-        lm.dte = self.config.default_dte
-        lm.moneyness = self.config.default_moneyness
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+            limits: Limit values to store.
+        """
+        self._position_store.save_limits(trade_id, signal_id, limits)
 
-        self.position_limits[trade_id] = lm
-        return lm
+    def _get_position_limits(self, trade_id: str, signal_id: str) -> Optional[PositionLimits]:
+        """Load limits from the store, falling back to config defaults when absent.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+
+        Returns:
+            Stored limits, or a defaults-only ``PositionLimits`` when no row exists
+            so analyze paths do not dereference ``None``.
+        """
+        limits = self._position_store.get_limits(trade_id, signal_id)
+        if limits is not None:
+            return limits
+
+        ## No DB/cache row yet — analyze still expects an object with dte/moneyness
+        return PositionLimits(
+            dte=self.config.default_dte,
+            moneyness=self.config.default_moneyness,
+        )
+
+    def _store_metadata(self, metadata: _LimitsMetaData) -> None:
+        """Persist metadata in-process and through the position store.
+
+        Args:
+            metadata: Limits sizing metadata payload.
+        """
+        ## Keep the in-process dict for same-session failsafe lookups by trade_id only
+        self.position_metadata[metadata.trade_id] = metadata
+        self._position_store.save_metadata(metadata.trade_id, metadata)
+
+    def _get_metadata(self, trade_id: str) -> Optional[_LimitsMetaData]:
+        """Load metadata from the in-process cache.
+
+        The base cog only passes ``trade_id``. Same-session failsafe updates rely
+        on the in-process dict populated by ``_store_metadata``. Cross-session
+        reload should use ``_position_store.get_metadata(trade_id, signal_id)``.
+
+        Args:
+            trade_id: Unique trade identifier.
+
+        Returns:
+            Stored metadata, or ``None`` when absent from the in-process cache.
+        """
+        cached = self.position_metadata.get(trade_id)
+        if cached is not None:
+            return cached
+        return None
+
+    def get_stored_metadata(self, trade_id: str, signal_id: str) -> Optional[_LimitsMetaData]:
+        """Load metadata from the position store by ``(trade_id, signal_id)``.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+
+        Returns:
+            Reconstructed metadata, or ``None`` when absent.
+        """
+        payload = self._position_store.get_metadata(trade_id, signal_id)
+        return metadata_from_store_payload(payload)
 
     def _analyze_impl(self, portfolio_context):
+        """Delegate portfolio analysis to the base limits cog.
+
+        Args:
+            portfolio_context: Portfolio analysis context from the position analyzer.
+
+        Returns:
+            Cog actions produced by the base implementation.
+        """
         return super()._analyze_impl(portfolio_context)

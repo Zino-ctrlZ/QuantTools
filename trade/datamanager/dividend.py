@@ -359,10 +359,10 @@ class DividendDataManager(BaseDataManager):
             ...
 
         Notes:
-            - Fetches full schedule from start_date to maturity_date once
+            - Fetches dividend events once from the rebuild-window start through maturity
             - Builds daily schedules by slicing based on valuation date
             - Split adjustments multiply dividend amounts by cumulative split factor
-            - Partial cache hits merge with existing data
+            - Partial cache hits rebuild only the missing valuation window, then merge
             - Cache expires after 12 hours
         """
         logger.info(
@@ -406,27 +406,39 @@ class DividendDataManager(BaseDataManager):
             ]
             return cached_series, key
         else:
+            ## Cold miss → full request; tip/gap partial → only the missing window.
             start_str, end_str = (
                 to_datetime(missing_start_date).strftime("%Y-%m-%d"),
                 to_datetime(missing_end_date).strftime("%Y-%m-%d"),
             )
 
-        # Build from scratch for missing dates
-        # Fetch ONCE: all events from start_date to maturity_date
+        # Build from scratch for the rebuild window only (not always the full request).
+        # Fetch ONCE: events from rebuild start through maturity.
         full_schedule, _ = self.get_discrete_dividend_schedule(
             start_date=start_str,
             end_date=mat_str,
             valuation_date=start_str,
         )
 
-        # Build daily schedules efficiently using a moving pointer
+        ## Use narrowed start_str/end_str so tip partial does not rebuild 2018→today.
+        build_start = to_datetime(start_str).date()
+        build_end = to_datetime(end_str).date()
+        logger.info(
+            "Discrete schedule rebuild window for %s: %s..%s (is_partial=%s, requested=%s..%s)",
+            self.symbol,
+            build_start,
+            build_end,
+            is_partial,
+            start_dt,
+            end_dt,
+        )
         series = {}
-        date_range = pd.date_range(start=start_dt, end=end_dt, freq="B").strftime("%Y-%m-%d")
+        date_range = pd.date_range(start=build_start, end=build_end, freq="B").strftime("%Y-%m-%d")
         for d in date_range:
             if d in HOLIDAY_SET:
                 # Skip holidays
                 continue
-            d_date = datetime.strptime(d, "%Y-%m-%d").date()
+            d_date = to_datetime(d).date()
 
             ## Simple filter approach
             sliced = slice_schedule(full_schedule, d_date, mat_dt)
@@ -444,7 +456,7 @@ class DividendDataManager(BaseDataManager):
 
         # Cache the constructed timeseries
         if is_partial:
-            # Merge with existing cached series
+            # Merge tip/gap rebuild with existing cached series; keep last on overlap.
             merged = pd.concat([cached_series, data])
             data = merged[~merged.index.duplicated(keep="last")]
 
@@ -527,7 +539,8 @@ class DividendDataManager(BaseDataManager):
             data.index.name = "datetime"
             data = data[(data.index >= pd.to_datetime(start_date)) & (data.index <= pd.to_datetime(end_date))]
             data = data.sort_index()
-            data = data.drop_duplicates()
+            ## Index dedupe (value drop_duplicates does not collapse duplicate labels).
+            data = data[~data.index.duplicated(keep="last")]
             result.daily_discrete_dividends = data
             result.key = key
             return certify_manager_result(

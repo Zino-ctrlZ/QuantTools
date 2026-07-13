@@ -29,6 +29,7 @@ from EventDriven.riskmanager.position.stores.limits_store import (
     PositionStore,
     PositionStoreKey,
     StoreVerificationError,
+    build_position_store,
     disable_storing_to_db,
     enable_storing_to_db,
     reset_storing_to_db,
@@ -36,7 +37,6 @@ from EventDriven.riskmanager.position.stores.limits_store import (
 )
 from EventDriven.riskmanager.position.stores.tmp_limits_cogs import (
     TmpLimitsAndSizingCog,
-    TmpLiveLimitsAndSizingCog,
 )
 
 __all__ = [
@@ -53,8 +53,29 @@ __all__ = [
     "StoreVerificationError",
     "TmpLimitsAndSizingCog",
     "TmpLiveLimitsAndSizingCog",
+    "build_position_store",
     "disable_storing_to_db",
     "enable_storing_to_db",
     "reset_storing_to_db",
     "ticker_from_trade_id",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily resolve live-cog aliases to avoid circular imports.
+
+    Args:
+        name: Attribute name requested on this package.
+
+    Returns:
+        ``LiveCOGLimitsAndSizingCog`` when ``TmpLiveLimitsAndSizingCog`` is requested.
+
+    Raises:
+        AttributeError: If ``name`` is not defined on this package.
+    """
+    if name == "TmpLiveLimitsAndSizingCog":
+        ## Lazy: live_cogs.limits imports this package's limits_store submodule
+        from EventDriven.riskmanager.position.live_cogs.limits import LiveCOGLimitsAndSizingCog
+
+        return LiveCOGLimitsAndSizingCog
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

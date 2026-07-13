@@ -19,7 +19,7 @@ Legend: priority **high** · **medium** · **low**
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| medium | **IPO listing date floor** | `_sync_equity_date(..., symbol=...)` — resolve per-symbol listing date and pass as `min_trade_date`. Do not use `OPTION_TIMESERIES_START_DATE` (options vendor bound only). |
+| medium | ~~**IPO listing date floor**~~ | Done — ``get_start_date`` + ``equity_start_dates.yaml`` wired into ``_sync_equity_date``. |
 
 ---
 

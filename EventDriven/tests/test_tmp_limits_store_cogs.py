@@ -1,4 +1,4 @@
-"""Tests for temporary limits cogs backed by position stores."""
+"""Tests for limits cogs backed by position stores."""
 
 from __future__ import annotations
 
@@ -10,18 +10,15 @@ import pytest
 
 from EventDriven.configs.core import LimitsEnabledConfig
 from EventDriven.dataclasses.limits import PositionLimits
-from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData
+from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData, metadata_from_store_payload
+from EventDriven.riskmanager.position.live_cogs.limits import LiveCOGLimitsAndSizingCog
 from EventDriven.riskmanager.position.stores.limits_store import (
     DatabaseLimitsStore,
     DatabaseMetadataStore,
     disable_storing_to_db,
     reset_storing_to_db,
 )
-from EventDriven.riskmanager.position.stores.tmp_limits_cogs import (
-    TmpLimitsAndSizingCog,
-    TmpLiveLimitsAndSizingCog,
-    metadata_from_store_payload,
-)
+from EventDriven.riskmanager.position.stores.tmp_limits_cogs import TmpLimitsAndSizingCog
 
 TEST_STRATEGY = "tmp_limits_store_test"
 TRADE_ID = "&L:AAPL20261218C380"
@@ -147,11 +144,11 @@ def test_tmp_in_memory_cog_roundtrips_limits_and_metadata() -> None:
     assert math.isclose(loaded_metadata.delta_lmt, metadata.delta_lmt)
 
 
-def test_tmp_live_cog_writes_limits_to_temp_db(temp_db_env: None) -> None:
-    """Live tmp cog should persist limits to portfolio_data_temp."""
+def test_live_cog_writes_limits_to_temp_db(temp_db_env: None) -> None:
+    """Live cog should persist limits to portfolio_data_temp via DatabasePositionStore."""
     signal_id = _unique_signal_id()
     config = LimitsEnabledConfig(run_name=TEST_STRATEGY, default_dte=30, default_moneyness=0.05)
-    cog = TmpLiveLimitsAndSizingCog(config=config)
+    cog = LiveCOGLimitsAndSizingCog(config=config)
     limits = _sample_limits(signal_id)
 
     try:
@@ -167,31 +164,31 @@ def test_tmp_live_cog_writes_limits_to_temp_db(temp_db_env: None) -> None:
         _cleanup_db_rows(signal_id, TRADE_ID)
 
 
-def test_tmp_live_cog_writes_metadata_to_temp_db(temp_db_env: None) -> None:
-    """Live tmp cog should persist metadata to portfolio_data_temp."""
+def test_live_cog_writes_metadata_to_temp_db(temp_db_env: None) -> None:
+    """Live cog should persist metadata to portfolio_data_temp."""
     signal_id = _unique_signal_id()
     config = LimitsEnabledConfig(run_name=TEST_STRATEGY)
-    cog = TmpLiveLimitsAndSizingCog(config=config)
+    cog = LiveCOGLimitsAndSizingCog(config=config)
     metadata = _sample_metadata(TRADE_ID, signal_id)
 
     try:
         cog._store_metadata(metadata)
         cog._position_store.metadata._cache.clear()
 
-        loaded = cog._position_store.get_metadata(TRADE_ID, signal_id)
+        loaded = cog.get_stored_metadata(TRADE_ID, signal_id)
         assert loaded is not None
-        assert loaded["trade_id"] == TRADE_ID
-        assert loaded["signal_id"] == signal_id
-        assert math.isclose(float(loaded["delta_lmt"]), metadata.delta_lmt)
+        assert loaded.trade_id == TRADE_ID
+        assert loaded.signal_id == signal_id
+        assert math.isclose(float(loaded.delta_lmt), metadata.delta_lmt)
     finally:
         _cleanup_db_rows(signal_id, TRADE_ID)
 
 
-def test_tmp_live_cog_updates_existing_metadata_row(temp_db_env: None) -> None:
-    """Live tmp cog should update an existing metadata row for the same key."""
+def test_live_cog_updates_existing_metadata_row(temp_db_env: None) -> None:
+    """Live cog should update an existing metadata row for the same key."""
     signal_id = _unique_signal_id()
     config = LimitsEnabledConfig(run_name=TEST_STRATEGY)
-    cog = TmpLiveLimitsAndSizingCog(config=config)
+    cog = LiveCOGLimitsAndSizingCog(config=config)
     metadata = _sample_metadata(TRADE_ID, signal_id)
     updated = _LimitsMetaData(
         trade_id=TRADE_ID,
@@ -211,10 +208,27 @@ def test_tmp_live_cog_updates_existing_metadata_row(temp_db_env: None) -> None:
         cog._store_metadata(updated)
         cog._position_store.metadata._cache.clear()
 
-        loaded = cog._position_store.get_metadata(TRADE_ID, signal_id)
+        loaded = cog.get_stored_metadata(TRADE_ID, signal_id)
         assert loaded is not None
-        assert math.isclose(float(loaded["delta_lmt"]), updated.delta_lmt)
-        assert loaded["new_quantity"] == 3
+        assert math.isclose(float(loaded.delta_lmt), updated.delta_lmt)
+        assert loaded.new_quantity == 3
+    finally:
+        _cleanup_db_rows(signal_id, TRADE_ID)
+
+
+def test_live_cog_in_process_metadata_survives_failsafe_lookup(temp_db_env: None) -> None:
+    """Same-session ``_get_metadata(trade_id)`` should see the in-process cache."""
+    signal_id = _unique_signal_id()
+    config = LimitsEnabledConfig(run_name=TEST_STRATEGY)
+    cog = LiveCOGLimitsAndSizingCog(config=config)
+    metadata = _sample_metadata(TRADE_ID, signal_id)
+
+    try:
+        cog._store_metadata(metadata)
+        loaded = cog._get_metadata(TRADE_ID)
+        assert loaded is not None
+        assert loaded.signal_id == signal_id
+        assert math.isclose(loaded.delta_lmt, metadata.delta_lmt)
     finally:
         _cleanup_db_rows(signal_id, TRADE_ID)
 
@@ -227,7 +241,7 @@ def test_disable_storing_to_db_skips_db_writes(temp_db_env: None) -> None:
     assert DatabaseLimitsStore.PERSIST_TO_DB is False
     assert DatabaseMetadataStore.PERSIST_TO_DB is False
 
-    cog = TmpLiveLimitsAndSizingCog(config=config)
+    cog = LiveCOGLimitsAndSizingCog(config=config)
     limits = _sample_limits(signal_id)
     metadata = _sample_metadata(TRADE_ID, signal_id)
 
@@ -236,5 +250,76 @@ def test_disable_storing_to_db_skips_db_writes(temp_db_env: None) -> None:
     cog._position_store.limits._cache.clear()
     cog._position_store.metadata._cache.clear()
 
-    assert cog._get_position_limits(TRADE_ID, signal_id) is None
+    assert cog._position_store.get_limits(TRADE_ID, signal_id) is None
     assert cog._position_store.get_metadata(TRADE_ID, signal_id) is None
+
+    ## Live cog falls back to defaults-only limits when the store has no row
+    fallback = cog._get_position_limits(TRADE_ID, signal_id)
+    assert fallback is not None
+    assert fallback.delta is None
+    assert fallback.dte == config.default_dte
+    assert fallback.moneyness == config.default_moneyness
+
+
+def test_build_position_store_live_flag() -> None:
+    """``build_position_store`` should select in-memory vs database from ``live``."""
+    from EventDriven.riskmanager.position.stores.limits_store import (
+        DatabasePositionStore,
+        InMemoryPositionStore,
+        build_position_store,
+    )
+
+    assert isinstance(build_position_store(live=False), InMemoryPositionStore)
+    db_store = build_position_store(live=True, strategy_name=TEST_STRATEGY)
+    assert isinstance(db_store, DatabasePositionStore)
+
+
+def test_plain_sizing_cog_uses_store_when_live_false() -> None:
+    """PlainSizingCog should persist through InMemoryPositionStore when not live."""
+    from EventDriven.configs.core import PlainSizingCogConfig
+    from EventDriven.riskmanager.position.cogs.plain_sizing import PlainSizingCog
+    from EventDriven.riskmanager.position.stores.limits_store import InMemoryPositionStore
+
+    config = PlainSizingCogConfig(run_name=TEST_STRATEGY, dte_threshold=15)
+    cog = PlainSizingCog(config=config, live=False)
+    signal_id = _unique_signal_id()
+    limits = _sample_limits(signal_id)
+    metadata = _sample_metadata(TRADE_ID, signal_id)
+
+    assert isinstance(cog._position_store, InMemoryPositionStore)
+    cog._save_position_limits(TRADE_ID, signal_id, limits)
+    cog._store_metadata(metadata)
+
+    loaded = cog._get_position_limits(TRADE_ID, signal_id)
+    assert loaded is not None
+    assert math.isclose(loaded.delta, limits.delta)
+    assert cog.position_metadata[TRADE_ID].signal_id == signal_id
+
+
+def test_donchian_cog_uses_database_store_when_live(temp_db_env: None) -> None:
+    """DonchianMomentumCog with live=True should write limits to temp DB."""
+    from EventDriven.configs.core import DonchianMomentumCogConfig
+    from EventDriven.riskmanager.position.cogs.donchian_cog import DonchianMomentumCog
+    from EventDriven.riskmanager.position.stores.limits_store import DatabasePositionStore
+
+    class _StubStrategy:
+        """Minimal strategy stub; store tests do not call sizing."""
+
+        pass
+
+    signal_id = _unique_signal_id()
+    config = DonchianMomentumCogConfig(run_name=TEST_STRATEGY, dte_threshold=15)
+    cog = DonchianMomentumCog(eq_strategy=_StubStrategy(), config=config, live=True)
+    limits = _sample_limits(signal_id)
+
+    assert isinstance(cog._position_store, DatabasePositionStore)
+    try:
+        cog._save_position_limits(TRADE_ID, signal_id, limits)
+        cog.position_limits.clear()
+        cog._position_store.limits._cache.clear()
+        loaded = cog._get_position_limits(TRADE_ID, signal_id)
+        assert loaded is not None
+        assert math.isclose(loaded.delta, limits.delta)
+        assert loaded.dte == config.dte_threshold
+    finally:
+        _cleanup_db_rows(signal_id, TRADE_ID)

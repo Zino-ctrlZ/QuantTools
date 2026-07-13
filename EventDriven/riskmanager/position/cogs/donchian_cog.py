@@ -1,7 +1,9 @@
 """Donchian momentum position sizing and roll opinion cog.
 
 Applies Donchian-specific sizing logic for new positions and emits DTE-based
-ROLL opinions during analysis for Donchian strategy positions.
+ROLL opinions during analysis for Donchian strategy positions. Persistence of
+limits and metadata goes through ``PositionStore`` (in-memory by default,
+database when ``live=True``).
 
 Core Classes:
     DonchianMomentumCogConfig: Runtime knobs for scaling and DTE checks.
@@ -11,29 +13,31 @@ Core Dataclasses:
     _DonchianLimitsMetaData: Per-trade sizing metadata capture.
 
 Usage:
-    >>> cog = DonchianMomentumCog(eq_strategy=strategy)
+    >>> cog = DonchianMomentumCog(eq_strategy=strategy, live=False)
     >>> cog.on_new_position(state)
 """
 
-from typing import Dict
-from EventDriven.riskmanager.position.base import BaseCog
-from typing import Optional
-from EventDriven.dataclasses.states import NewPositionState, PositionAnalysisContext, CogActions
-from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_position_sizing
-from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData
-from EventDriven.types import SignalID
-from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
-from dataclasses import dataclass
+from typing import Dict, Optional, TYPE_CHECKING
+
 import pandas as pd
+from dataclasses import dataclass
+
 from EventDriven.configs.core import DonchianMomentumCogConfig
 from EventDriven.dataclasses.limits import PositionLimits
-from trade.helpers.Logging import setup_logger
+from EventDriven.dataclasses.states import CogActions, NewPositionState, PositionAnalysisContext
 from EventDriven.riskmanager.actions import ROLL, Changes
-from .analyze_utils import get_dte_and_moneyness_from_trade_id
+from EventDriven.riskmanager.position.base import BaseCog
+from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_moneyness_from_trade_id
+from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData
+from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_position_sizing
+from EventDriven.types import SignalID
+from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
+from trade.helpers.Logging import setup_logger
+
+if TYPE_CHECKING:
+    from EventDriven.riskmanager.position.stores.limits_store import PositionStore
 
 logger = setup_logger("EventDriven.riskmanager.position.cogs.donchian_cog")
-
-
 
 
 @dataclass
@@ -45,32 +49,49 @@ class _DonchianLimitsMetaData(_LimitsMetaData):
 
 
 class DonchianMomentumCog(BaseCog):
-    """
-    Donchian Momentum Cog for position analysis.
-
-    This cog evaluates the momentum of a position based on its entry price relative to
-    the Donchian channel. It emits opinions on whether the position is showing positive
-    or negative momentum, which can be used for risk management decisions.
-    """
+    """Donchian momentum sizing cog with optional database-backed persistence."""
 
     default_config: DonchianMomentumCogConfig = DonchianMomentumCogConfig()
 
-    def __init__(self, eq_strategy: MultiAssetStrategy, config: Optional[DonchianMomentumCogConfig] = None):
+    def __init__(
+        self,
+        eq_strategy: MultiAssetStrategy,
+        config: Optional[DonchianMomentumCogConfig] = None,
+        *,
+        live: bool = False,
+        position_store: Optional["PositionStore"] = None,
+        verify_after_save: bool = True,
+    ) -> None:
         """Initialize the Donchian momentum cog.
 
         Args:
             eq_strategy: Strategy interface used to fetch indicator data.
             config: Optional runtime configuration for sizing and analysis.
+            live: When ``True``, persist limits/metadata via ``DatabasePositionStore``.
+            position_store: Optional store override for testing.
+            verify_after_save: Re-read the database after each write when ``live``.
         """
+        ## Lazy import avoids circular RiskManager -> cogs -> stores -> backtest load
+        from EventDriven.riskmanager.position.stores.limits_store import build_position_store
+
         if config is None:
-            config: DonchianMomentumCogConfig = DonchianMomentumCogConfig()
+            config = DonchianMomentumCogConfig()
 
         super().__init__(config)
         self._config: DonchianMomentumCogConfig = config
         self.eq_strategy = eq_strategy
+        self.live = live
         self.position_limits: Dict[str, PositionLimits] = {}
         self.position_metadata: Dict[str, _DonchianLimitsMetaData] = {}
         self.config: DonchianMomentumCogConfig = config
+        strategy_name = self.config.run_name or "donchian_momentum_cog"
+        self._position_store = build_position_store(
+            live=live,
+            strategy_name=strategy_name,
+            default_dte=self.config.dte_threshold,
+            position_store=position_store,
+            verify_after_save=verify_after_save,
+        )
 
     def is_donchian_strategy(self, signal_id: str) -> bool:
         """Return True when signal_id belongs to a Donchian strategy."""
@@ -178,7 +199,6 @@ class DonchianMomentumCog(BaseCog):
             breakout_score=breakout_score,
             rvol=rvol,
         )
-        self.position_metadata[order["data"]["trade_id"]] = metadata
 
         pos_lmts = PositionLimits(
             delta=scaled_limit,
@@ -192,29 +212,42 @@ class DonchianMomentumCog(BaseCog):
         logger.debug(f"Stored momentum metadata for trade ID {order['data']['trade_id']}: {metadata}")
 
     def _save_position_limits(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
-        """
-        Save the position limits for future reference.
+        """Persist position limits through the configured store.
 
         Args:
             trade_id: The unique identifier for the trade.
             signal_id: The identifier for the signal that generated the trade.
             limits: The PositionLimits object containing the limits to be saved.
-        Returns:
-            None
         """
         self.position_limits[trade_id] = limits
+        self._position_store.save_limits(trade_id, signal_id, limits)
         logger.debug(f"Saved position limits for trade ID {trade_id}: {limits}")
 
-    def _store_metadata(self, metadata: _DonchianLimitsMetaData) -> None:
+    def _get_position_limits(self, trade_id: str, signal_id: str) -> Optional[PositionLimits]:
+        """Load position limits from the in-process cache or store.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+
+        Returns:
+            Stored limits, or ``None`` when absent.
         """
-        Store the metadata associated with a position for future analysis.
+        if trade_id in self.position_limits:
+            return self.position_limits[trade_id]
+        limits = self._position_store.get_limits(trade_id, signal_id)
+        if limits is not None:
+            self.position_limits[trade_id] = limits
+        return limits
+
+    def _store_metadata(self, metadata: _DonchianLimitsMetaData) -> None:
+        """Persist metadata in-process and through the configured store.
 
         Args:
             metadata: The _DonchianLimitsMetaData object containing the metadata to be stored.
-        Returns:
-            None
         """
         self.position_metadata[metadata.trade_id] = metadata
+        self._position_store.save_metadata(metadata.trade_id, metadata)
         logger.debug(f"Stored metadata for trade ID {metadata.trade_id}: {metadata}")
 
     def get_momentum_scaler(

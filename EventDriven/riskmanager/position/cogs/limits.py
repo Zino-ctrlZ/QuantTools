@@ -233,6 +233,7 @@ from EventDriven.types import Order
 from EventDriven.exceptions import EVBacktestError
 from typing import List, Optional, Union, Dict
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import to_datetime
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.riskmanager.sizer._sizer import DefaultSizer, BaseSizer, ZscoreRVolSizer, default_delta_limit  # noqa
 from EventDriven.configs.core import ZscoreSizerConfigs, DefaultSizerConfigs
@@ -264,6 +265,42 @@ class _LimitsMetaData:
     prev_quantity: Optional[int] = None
     new_quantity: Optional[int] = None
     rvol: Optional[float] = None
+
+
+def metadata_from_store_payload(payload: object) -> Optional[_LimitsMetaData]:
+    """Convert a store payload back to ``_LimitsMetaData``.
+
+    Args:
+        payload: Dataclass, dict, or ``None`` value from a metadata store.
+
+    Returns:
+        Reconstructed metadata object, or ``None`` when ``payload`` is ``None``.
+    """
+    if payload is None:
+        return None
+    if isinstance(payload, _LimitsMetaData):
+        return payload
+    if not isinstance(payload, dict):
+        return None
+
+    raw_date = payload.get("date")
+    if isinstance(raw_date, str):
+        raw_date = to_datetime(raw_date)
+
+    return _LimitsMetaData(
+        trade_id=payload["trade_id"],
+        date=raw_date,
+        signal_id=payload["signal_id"],
+        scalar=payload["scalar"],
+        sizing_lev=payload["sizing_lev"],
+        delta_lmt=payload["delta_lmt"],
+        delta_per_contract=payload.get("delta_per_contract"),
+        option_price=payload.get("option_price"),
+        undl_price=payload.get("undl_price"),
+        prev_quantity=payload.get("prev_quantity"),
+        new_quantity=payload.get("new_quantity"),
+        rvol=payload.get("rvol"),
+    )
 
 
 class LimitsAndSizingCog(BaseCog):
@@ -427,6 +464,8 @@ class LimitsAndSizingCog(BaseCog):
             if metadata is not None:
                 metadata.delta_lmt = new_pos_state.limits.delta
                 metadata.new_quantity = new_pos_state.order["data"]["quantity"]
+                ## Re-persist so live DB/metadata stores see the failsafe bump
+                self._store_metadata(metadata)
                 logger.warning(
                     f"Updated metadata for trade_id {new_pos_state.order['data']['trade_id']} to reflect new delta limit of {metadata.delta_lmt} and new quantity of {metadata.new_quantity}."
                 )
