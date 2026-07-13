@@ -34,19 +34,23 @@ cleanup_expired_caches()
 
 ## Universal Holidays set
 ## Get Business days FOR NYSE (Some days are still trading days)
-##TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
+## Floor 1980 so listing-era lookbacks (e.g. chain_spot from 1990) do not treat
+## pre-2000 NYSE holidays as unfilled cache gaps (see audit l3-chain-spot-duplicate-concat-2026-07-13).
+## TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
 NY = ZoneInfo("America/New_York")
 nyse = mcal.get_calendar("NYSE")
-schedule = nyse.schedule(start_date="2000-01-01", end_date="2040-01-01", tz=NY)
+_HOLIDAY_CAL_START = "1980-01-01"
+_HOLIDAY_CAL_END = "2040-01-01"
+schedule = nyse.schedule(start_date=_HOLIDAY_CAL_START, end_date=_HOLIDAY_CAL_END, tz=NY)
 # pylint: disable=E1101
 all_trading_days = mcal.date_range(schedule, frequency="1D").date  ## type: ignore
-all_days = pd.date_range(start="2000-01-01", end="2040-01-01", freq="B")
+all_days = pd.date_range(start=_HOLIDAY_CAL_START, end=_HOLIDAY_CAL_END, freq="B")
 holidays = set(all_days.difference(all_trading_days).strftime("%Y-%m-%d").to_list())
-all_new_years = pd.date_range(start="2000-01-01", end="2040-01-01", freq="AS").strftime("%Y-%m-%d").to_list()
+all_new_years = pd.date_range(start=_HOLIDAY_CAL_START, end=_HOLIDAY_CAL_END, freq="AS").strftime("%Y-%m-%d").to_list()
 all_christmas = list(
     map(
         lambda x: x.replace(day=25).strftime("%Y-%m-%d"),
-        pd.date_range(start="2000-01-01", end="2040-01-01", freq="A-DEC"),
+        pd.date_range(start=_HOLIDAY_CAL_START, end=_HOLIDAY_CAL_END, freq="A-DEC"),
     )
 )
 holidays.update(all_new_years)
