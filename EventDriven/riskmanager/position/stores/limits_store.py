@@ -1202,7 +1202,9 @@ def _limit_values_equal(expected: Optional[float], stored: Optional[float]) -> b
         return True
     if expected is None or stored is None:
         return False
-    return math.isclose(expected, stored, rel_tol=1e-9, abs_tol=1e-9)
+    # ponytail: limits.value is MySQL FLOAT (~7 sig figs); abs_tol=1e-7 matches round-trip.
+    # EPIC: migrate column to DOUBLE for tighter verification — audit fix-this-error-2026-07-14.
+    return math.isclose(expected, stored, rel_tol=0.0, abs_tol=1e-7)
 
 
 def _normalize_row_date(value: Any) -> date:
