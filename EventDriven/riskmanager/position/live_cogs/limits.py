@@ -50,6 +50,7 @@ from EventDriven.riskmanager.position.stores.limits_store import (
 from EventDriven.riskmanager.position.stores.limits_store import (
     reset_storing_to_db as _reset_storing_to_db,
 )
+from EventDriven.riskmanager.live_diag import enable_live_diag
 from trade.helpers.Logging import setup_logger
 
 logger = setup_logger("EventDriven.riskmanager.position.live_cogs.limits")
@@ -106,11 +107,15 @@ class LiveCOGLimitsAndSizingCog(LimitsAndSizingCog):
             underlier_list: Underliers used by vol-adjusted sizers.
             position_store: Optional store override for testing.
             live: When ``True`` (default), persist via ``DatabasePositionStore``.
-            verify_after_save: Re-read the database after each write and raise on mismatch.
+            verify_after_save: Re-read the database after each write. Live stores
+                log mismatches to the verification logger instead of raising.
         """
         super().__init__(config=config, sizer_configs=sizer_configs, underlier_list=underlier_list)
         strategy_name = self.config.run_name or "live_limits_cog"
         self.live = live
+        ## Only enable here; do not disable on live=False (another live path may have turned it on)
+        if live:
+            enable_live_diag()
         self.cool_off_period = 0
         self._position_store = build_position_store(
             live=live,

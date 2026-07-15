@@ -171,6 +171,7 @@ from importlib.resources import files
 from trade.helpers.Logging import setup_logger
 from trade.helpers.pools import _change_global_stream_level
 from EventDriven.dataclasses.timeseries import AtTimeOptionData, AtTimePositionData
+from EventDriven.riskmanager.live_diag import fields_at_current_date, log_live_checkpoint
 from EventDriven.types import TradeID
 
 logger = setup_logger("EventDriven.riskmanager.market_timeseries", stream_log_level="WARNING")
@@ -577,6 +578,22 @@ class BacktestTimeseries(BacktestRunMixin):
             with self.lock:
                 data = self.generate_option_data_for_trade(_id, date)  ## Generate the option data for the trade
 
+            ## Live diag: per-leg current-date scalars before netting (catches which leg went NaN)
+            log_live_checkpoint(
+                "leg_loaded",
+                trade_id=position_id,
+                date=date,
+                data={
+                    "opttick": _id,
+                    "direction": direction,
+                    **fields_at_current_date(
+                        data,
+                        ["Delta", "Vol", "Midpoint", "Closebid", "Closeask"],
+                        date_value=date,
+                    ),
+                },
+            )
+
             if direction == "L":
                 long.append(data)
             elif direction == "S":
@@ -612,6 +629,18 @@ class BacktestTimeseries(BacktestRunMixin):
         position_data["r"] = self.rf_timeseries
         position_data["y"] = timeseries_data.dividends
         position_data["spread"] = position_data["Closeask"] - position_data["Closebid"]
+
+        ## Live diag: net position current-date scalars after long-short (NaN propagates from either leg)
+        log_live_checkpoint(
+            "position_netted",
+            trade_id=position_id,
+            date=date,
+            data=fields_at_current_date(
+                position_data,
+                ["Delta", "Vol", "Midpoint", "Closebid", "Closeask"],
+                date_value=date,
+            ),
+        )
 
         ## Apply skip columns adjustment (only on newly calculated data)
         position_data = self._skip_columns_adjustment(position_data=position_data, position_id=position_id)

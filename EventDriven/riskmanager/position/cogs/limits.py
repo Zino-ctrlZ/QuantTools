@@ -235,6 +235,7 @@ from typing import List, Optional, Union, Dict
 from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import to_datetime
 from EventDriven.riskmanager.position.base import BaseCog
+from EventDriven.riskmanager.live_diag import log_live_checkpoint
 from EventDriven.riskmanager.sizer._sizer import DefaultSizer, BaseSizer, ZscoreRVolSizer, default_delta_limit  # noqa
 from EventDriven.configs.core import ZscoreSizerConfigs, DefaultSizerConfigs
 from EventDriven.dataclasses.limits import PositionLimits
@@ -573,6 +574,20 @@ class LimitsAndSizingCog(BaseCog):
         order = new_position_state.order
         order_dict = order.to_dict()
         order_dict["data"]["quantity"] = q
+        ## Live diag: final sizing inputs (delta NaN shows here as flags delta=nan)
+        log_live_checkpoint(
+            "limits_sized",
+            trade_id=order["data"]["trade_id"],
+            date=request.date,
+            data={
+                "delta": delta,
+                "delta_lmt": delta_lmt,
+                "price": option_price,
+                "cash": request.tick_cash,
+                "quantity": q,
+            },
+            note="post_size",
+        )
         if q == 0:
             logger.warning(
                 f"Calculated position size is 0 for order {order['data']['trade_id']}. Delta per contract ({delta}) exceeds limit {delta_lmt}."

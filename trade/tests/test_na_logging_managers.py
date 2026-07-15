@@ -76,6 +76,24 @@ def test_log_retrieval_na_model_pack_dispatch(na_log_baseline: int) -> None:
     _assert_new_na_log(na_log_baseline, label="ModelResultPack dispatch")
 
 
+def test_log_retrieval_na_timeseries_duplicate_index_does_not_raise(na_log_baseline: int) -> None:
+    """Duplicate-index spot rows do not crash NA snapshot logging at that date."""
+    idx = pd.to_datetime(["2026-06-14", "2026-06-15", "2026-06-15"])
+    spot = pd.DataFrame({"close": [100.0, 101.0, 102.0]}, index=idx)
+    rates_idx = pd.to_datetime(["2026-06-14", "2026-06-15"])
+    rates = pd.Series([0.05, float("nan")], index=rates_idx, name="r")
+    data = TimeseriesData(
+        spot=spot,
+        chain_spot=None,
+        dividends=None,
+        dividend_yield=None,
+        split_factor=None,
+        rates=rates,
+    )
+    log_retrieval_na(data, manager="market_timeseries", method="synthetic", symbol="NVDA")
+    _assert_new_na_log(na_log_baseline, label="TimeseriesData duplicate index")
+
+
 def test_log_retrieval_na_timeseries_data_dispatch(na_log_baseline: int) -> None:
     """TimeseriesData routes through log_timeseries_data_na."""
     idx = pd.to_datetime(["2024-01-02"])
