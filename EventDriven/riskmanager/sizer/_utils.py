@@ -288,6 +288,8 @@ def scaler(realized_vol_series: pd.Series, factor: float, window: int) -> pd.Ser
     z = (realized_vol_series - rolling_mean) / rolling_std
     # return factor / (1 + z.abs())
     # return factor / (1 + np.exp(z))
+    if isinstance(z, pd.Series):
+        logger.info(f"z: \n{z.head(10).to_string()}")
     scaler = np.clip(factor / (1 + np.exp(z)), 0.5, factor)
     return scaler
 
