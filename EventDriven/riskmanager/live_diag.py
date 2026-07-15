@@ -47,7 +47,11 @@ _FLAG_KEYS = frozenset(
     {
         "delta",
         "gamma",
+        "vega",
+        "theta",
+        "rho",
         "vol",
+        "iv",
         "midpoint",
         "price",
         "option_price",
@@ -55,8 +59,37 @@ _FLAG_KEYS = frozenset(
         "closeask",
         "delta_lmt",
         "quantity",
+        "s",
+        "r",
+        "y",
     }
 )
+
+## Greeks / quotes at leg_loaded (extended) vs earlier pipeline stages.
+LEG_LOADED_FIELD_COLUMNS = (
+    "Delta",
+    "Gamma",
+    "Vega",
+    "Theta",
+    "Vol",
+    "Midpoint",
+    "Closebid",
+    "Closeask",
+)
+
+## Quote + delta columns for net/load/trade checkpoints (unchanged from original leg_loaded set).
+OPTION_TRADE_FIELD_COLUMNS = (
+    "Delta",
+    "Vol",
+    "Midpoint",
+    "Closebid",
+    "Closeask",
+)
+
+## Raw datamanager artifact columns (lowercase) before the joined frame.
+GREEK_ARTIFACT_COLUMNS = ("delta", "gamma", "vega", "theta", "rho")
+OPTION_SPOT_ARTIFACT_COLUMNS = ("midpoint", "closebid", "closeask")
+VOL_ARTIFACT_COLUMNS = ("iv",)
 
 DateLike = Union[datetime, date, str, pd.Timestamp]
 
@@ -185,6 +218,23 @@ def fields_at_current_date(
         Dict of column → value, plus ``row_found`` (bool).
     """
     cols = list(columns)
+    if isinstance(data, pd.Series):
+        series = data
+        row = get_row_at_date(series.to_frame(name=series.name or "value"), date_value)
+        if row is None:
+            out = {c: None for c in cols}
+            out["row_found"] = False
+            return out
+        name = series.name or "value"
+        out = {}
+        for col in cols:
+            if str(col).lower() == str(name).lower():
+                out[col] = row.get(name, row.iloc[0] if len(row) else None)
+            else:
+                out[col] = None
+        out["row_found"] = True
+        return out
+
     row = get_row_at_date(data, date_value)
     if row is None:
         out: Dict[str, Any] = {c: None for c in cols}
@@ -199,6 +249,35 @@ def fields_at_current_date(
         out[col] = None if actual is None else row.get(actual)
     out["row_found"] = True
     return out
+
+
+def log_option_data_checkpoint(
+    stage: str,
+    *,
+    opttick: str,
+    data: Optional[pd.DataFrame] = None,
+    date: Optional[DateLike] = None,
+    columns: Iterable[str] = OPTION_TRADE_FIELD_COLUMNS,
+    note: str = "",
+    **extra: Any,
+) -> None:
+    """Emit one option-data checkpoint with standard quote/delta columns.
+
+    Args:
+        stage: Stable stage id (e.g. ``option_data_windowed``).
+        opttick: Option tick being processed.
+        data: Joined option timeseries frame.
+        date: As-of date for row lookup.
+        columns: Columns to pull from the current-date row.
+        note: Optional free-text qualifier.
+        **extra: Additional scalar payload keys merged into ``data``.
+    """
+    payload: Dict[str, Any] = {
+        "opttick": opttick,
+        **fields_at_current_date(data, columns, date_value=date),
+        **extra,
+    }
+    log_live_checkpoint(stage, trade_id=opttick, date=date, data=payload, note=note)
 
 
 def _value_flag(value: Any) -> str:

@@ -548,7 +548,7 @@ def populate_cache_with_chain(
 
 
 ##UTILS
-def load_position_data_new(opttick, processed_option_data, start, end) -> pd.DataFrame:
+def load_position_data_new(opttick, processed_option_data, start, end, *, as_of_date=None) -> pd.DataFrame:
     """
     Load position data for a given option tick using the new data loading method.
 
@@ -562,6 +562,16 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     It does not apply any splits or adjustments. It will only retrieve the data for the given option tick.
     """
     import time
+
+    from EventDriven.riskmanager.live_diag import (
+        GREEK_ARTIFACT_COLUMNS,
+        OPTION_SPOT_ARTIFACT_COLUMNS,
+        OPTION_TRADE_FIELD_COLUMNS,
+        VOL_ARTIFACT_COLUMNS,
+        fields_at_current_date,
+        log_live_checkpoint,
+        log_option_data_checkpoint,
+    )
 
     ## Check if the option tick is already processed
     if opttick in processed_option_data:
@@ -591,6 +601,35 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     vol = new_data.vol.timeseries
     greeks, option_spot, s, y, r, vol = sync_date_index(greeks, option_spot, s, y, r, vol)
 
+    ## Live diag: per-artifact scalars before join (pinpoints greek vs quote vs vol source)
+    log_live_checkpoint(
+        "greek_artifact_loaded",
+        trade_id=opttick,
+        date=as_of_date,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(greeks, GREEK_ARTIFACT_COLUMNS, date_value=as_of_date),
+        },
+    )
+    log_live_checkpoint(
+        "option_spot_artifact_loaded",
+        trade_id=opttick,
+        date=as_of_date,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(option_spot, OPTION_SPOT_ARTIFACT_COLUMNS, date_value=as_of_date),
+        },
+    )
+    log_live_checkpoint(
+        "vol_artifact_loaded",
+        trade_id=opttick,
+        date=as_of_date,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(vol, VOL_ARTIFACT_COLUMNS, date_value=as_of_date),
+        },
+    )
+
     ## set names properly
     start_time = time.time()
     s.name = "s"
@@ -601,6 +640,12 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     data.columns = data.columns.str.capitalize()
     data = data.join(s).join(r).join(vol)#.join(y)
     logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
+    log_option_data_checkpoint(
+        "position_data_loaded",
+        opttick=opttick,
+        data=data,
+        date=as_of_date,
+    )
     processed_option_data[opttick] = data
     return data
 
@@ -623,7 +668,8 @@ def load_position_data(opttick, processed_option_data, start, end, *args, **kwar
     This function retrieves the data for the given position ID. It applies any necessary splits or adjustments.
     It will retrieve the data for all option ticks in the position ID and concatenate them together.
     """
-    return load_position_data_new(opttick, processed_option_data, start, end)
+    as_of_date = kwargs.pop("as_of_date", None)
+    return load_position_data_new(opttick, processed_option_data, start, end, as_of_date=as_of_date)
 
 
 def enrich_data(data, ticker, s, r, y, s0_close):
