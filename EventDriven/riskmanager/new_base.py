@@ -209,6 +209,7 @@ from EventDriven.types import ResultsEnum, Order, BacktestRunMixin
 from EventDriven.configs.core import RiskManagerConfig
 from EventDriven._vars import CONTRACT_MULTIPLIER, load_riskmanager_cache
 from EventDriven.liquidity import LiquidityPolicy
+from EventDriven.riskmanager.live_diag import log_live_checkpoint
 from pprint import pprint
 
 logger = setup_logger("EventDriven.riskmanager.new_base", stream_log_level="WARNING")
@@ -512,9 +513,30 @@ class RiskManager(BacktestRunMixin):
                 f"At time data found for position ID: {position_id} on date: {req.date}, updating close price to {close_price}"
             )
             order["data"]["close"] = close_price
+            ## Live diag: snapshot handed to Limits cog (delta here is what sizing will see)
+            log_live_checkpoint(
+                "at_time_snapshot",
+                trade_id=position_id,
+                date=req.date,
+                data={
+                    "delta": at_time_data.delta,
+                    "gamma": at_time_data.gamma,
+                    "price": at_time_data.get_price(),
+                    "midpoint": at_time_data.midpoint,
+                    "closebid": at_time_data.bid,
+                    "closeask": at_time_data.ask,
+                },
+            )
         else:
             logger.critical(
                 f"At time data NOT found for position ID: {position_id} on date: {req.date}, close price remains unchanged"
+            )
+            log_live_checkpoint(
+                "at_time_snapshot",
+                trade_id=position_id,
+                date=req.date,
+                data={"delta": None, "price": None, "row_found": False},
+                note="at_time_data_missing",
             )
 
         ## Create NewPositionState and run through position_analyzer
