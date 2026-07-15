@@ -272,6 +272,92 @@ def test_build_position_store_live_flag() -> None:
     assert isinstance(build_position_store(live=False), InMemoryPositionStore)
     db_store = build_position_store(live=True, strategy_name=TEST_STRATEGY)
     assert isinstance(db_store, DatabasePositionStore)
+    ## Live verification logs instead of raising so market watch is not aborted
+    assert db_store.limits.raise_on_verification_failure is False
+    assert db_store.metadata.raise_on_verification_failure is False
+
+
+def test_limit_values_equal_truncation_tolerant() -> None:
+    """Stored truncated floats should match full-precision expected limits."""
+    from EventDriven.riskmanager.position.stores.limits_store import _limit_values_equal
+
+    expected = 0.011384508341273985
+    assert _limit_values_equal(expected, 0.0113845)
+    assert _limit_values_equal(expected, 0.0114)
+    assert _limit_values_equal(expected, 0.011)
+    assert _limit_values_equal(expected, 0.01)
+    assert not _limit_values_equal(expected, 0.02)
+    assert _limit_values_equal(None, None)
+    assert not _limit_values_equal(expected, None)
+
+
+def test_metadata_to_dict_sanitizes_nan() -> None:
+    """NaN metadata fields must serialize as null for valid MySQL JSON."""
+    from EventDriven.riskmanager.position.stores.limits_store import (
+        _dumps_metadata_json,
+        metadata_to_dict,
+    )
+
+    payload = metadata_to_dict(
+        {
+            "trade_id": TRADE_ID,
+            "signal_id": "sig",
+            "delta_per_contract": float("nan"),
+            "rvol": 0.55,
+            "nested": {"x": float("inf")},
+        }
+    )
+    assert payload["delta_per_contract"] is None
+    assert payload["nested"]["x"] is None
+    ## Dump path must not raise; NaN/Inf already coerced to null
+    encoded = _dumps_metadata_json(payload)
+    assert "NaN" not in encoded
+    assert "null" in encoded
+    assert '"delta_per_contract": null' in encoded
+
+
+def test_live_store_logs_verification_failure_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live DB stores should log verification failures instead of raising."""
+    from EventDriven.riskmanager.position.stores.limits_store import (
+        DatabaseLimitsStore,
+        StoreVerificationError,
+        build_position_store,
+    )
+
+    store = build_position_store(live=True, strategy_name=TEST_STRATEGY)
+    logged: list[str] = []
+
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.stores.limits_store.store_position_limits",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.stores.limits_store._collect_limits_verification_errors",
+        lambda **kwargs: ["delta mismatch: expected=1.0, stored=2.0"],
+    )
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.stores.limits_store.verification_logger.error",
+        lambda msg, *args, **kwargs: logged.append(msg % args if args else msg),
+    )
+
+    signal_id = _unique_signal_id()
+    limits = _sample_limits(signal_id)
+    store.save_limits(TRADE_ID, signal_id, limits)
+
+    assert logged
+    assert "limits store verification failed" in logged[0]
+    ## Cache retained so the live session keeps intended limits
+    assert store.get_limits(TRADE_ID, signal_id) is limits
+
+    ## Non-live raise path still surfaces to callers/tests
+    raising_store = DatabaseLimitsStore(
+        strategy_name=TEST_STRATEGY,
+        raise_on_verification_failure=True,
+    )
+    with pytest.raises(StoreVerificationError):
+        raising_store.save(TRADE_ID, signal_id, limits)
 
 
 def test_plain_sizing_cog_uses_store_when_live_false() -> None:

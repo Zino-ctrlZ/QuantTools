@@ -11,11 +11,13 @@ Public API:
     ``signal_id`` explicitly. Underlying tickers are parsed from ``trade_id``.
 
 Post-save verification:
-    Database stores re-read persisted rows after each write. On mismatch,
-    the local cache entry is dropped and ``StoreVerificationError`` is raised
-    so callers do not proceed with unverified state. Recommended caller
-    behavior: log the failure, skip or halt sizing for that trade, and retry
-    once; do not silently fall back to in-memory limits in live trading.
+    Database stores re-read persisted rows after each write. Float limits are
+    compared truncation-tolerant (stored precision wins). On mismatch or DB
+    write failure, ``raise_on_verification_failure`` controls handling: tests
+    raise; live stores (``False``) log to the dedicated verification logger,
+    keep the in-memory cache, and continue so market watch is not aborted.
+
+Comment density: domain policy.
 
 DB persistence toggle:
     ``DatabaseLimitsStore.PERSIST_TO_DB`` and ``DatabaseMetadataStore.PERSIST_TO_DB``
@@ -31,6 +33,7 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
@@ -45,6 +48,10 @@ from trade.helpers.Logging import setup_logger
 from trade.helpers.helper import to_datetime
 
 logger = setup_logger("EventDriven.riskmanager.position.stores.limits_store")
+## Ops-facing channel for live verify failures; keep off the hot trading error path
+verification_logger = setup_logger(
+    "EventDriven.riskmanager.position.stores.limits_store_verification"
+)
 
 PORTFOLIO_DATA_DB = "portfolio_data"
 POSITION_METADATA_TABLE = "position_metadata"
@@ -290,6 +297,7 @@ class DatabaseLimitsStore(LimitsStore):
         default_moneyness: Optional[float] = None,
         use_cache: bool = True,
         verify_after_save: bool = True,
+        raise_on_verification_failure: bool = True,
         db: Optional[DatabaseAdapter] = None,
     ) -> None:
         """Initialize the database limits store.
@@ -299,7 +307,9 @@ class DatabaseLimitsStore(LimitsStore):
             default_dte: Fallback DTE when limits are loaded from the database.
             default_moneyness: Fallback moneyness when limits are loaded from the database.
             use_cache: When ``True``, cache reads and write-through saves locally.
-            verify_after_save: Re-read the database after each write and raise on mismatch.
+            verify_after_save: Re-read the database after each write and check for mismatch.
+            raise_on_verification_failure: When ``True``, raise on mismatch or DB write
+                failure; when ``False`` (live), log and keep the in-memory cache.
             db: Optional database adapter override for testing.
         """
         self.strategy_name = strategy_name
@@ -307,11 +317,16 @@ class DatabaseLimitsStore(LimitsStore):
         self.default_moneyness = default_moneyness
         self.use_cache = use_cache
         self.verify_after_save = verify_after_save
+        self.raise_on_verification_failure = raise_on_verification_failure
         self._db = db or DatabaseAdapter()
         self._cache: Dict[PositionStoreKey, PositionLimits] = {}
 
     def save(self, trade_id: str, signal_id: str, limits: PositionLimits) -> None:
         """Persist limits to the database and optional cache.
+
+        When ``raise_on_verification_failure`` is ``False`` (live), DB write and
+        verification errors are logged and swallowed so sizing can continue with
+        the in-memory cache.
 
         Args:
             trade_id: Unique trade identifier.
@@ -319,7 +334,8 @@ class DatabaseLimitsStore(LimitsStore):
             limits: Limit values to store.
 
         Raises:
-            StoreVerificationError: If post-save verification fails.
+            StoreVerificationError: If post-save verification fails and raising is enabled.
+            Exception: Propagates DB write errors when raising is enabled.
         """
         cache_key = _store_key(signal_id, trade_id)
         if self.use_cache:
@@ -328,34 +344,52 @@ class DatabaseLimitsStore(LimitsStore):
         if not self.PERSIST_TO_DB:
             return
 
-        store_position_limits(
-            delta_limit=limits.delta,
-            gamma_limit=limits.gamma,
-            vega_limit=limits.vega,
-            theta_limit=limits.theta,
-            trade_id=trade_id,
-            signal_id=signal_id,
-            strategy_name=self.strategy_name,
-            date=limits.creation_date,
-        )
-
-        if not self.verify_after_save:
-            return
-
-        errors = _collect_limits_verification_errors(
-            trade_id=trade_id,
-            signal_id=signal_id,
-            strategy_name=self.strategy_name,
-            expected=limits,
-        )
-        if errors:
-            self._cache.pop(cache_key, None)
-            _raise_store_verification_error(
-                "limits",
-                trade_id,
-                errors,
-                strategy_name=self.strategy_name,
+        try:
+            store_position_limits(
+                delta_limit=limits.delta,
+                gamma_limit=limits.gamma,
+                vega_limit=limits.vega,
+                theta_limit=limits.theta,
+                trade_id=trade_id,
                 signal_id=signal_id,
+                strategy_name=self.strategy_name,
+                date=limits.creation_date,
+            )
+
+            if not self.verify_after_save:
+                return
+
+            errors = _collect_limits_verification_errors(
+                trade_id=trade_id,
+                signal_id=signal_id,
+                strategy_name=self.strategy_name,
+                expected=limits,
+            )
+            if errors:
+                ## Live: keep cache so the session retains intended limits; log for ops
+                if self.raise_on_verification_failure:
+                    self._cache.pop(cache_key, None)
+                _handle_store_verification_failure(
+                    "limits",
+                    trade_id,
+                    errors,
+                    strategy_name=self.strategy_name,
+                    signal_id=signal_id,
+                    raise_on_failure=self.raise_on_verification_failure,
+                )
+        except Exception as exc:
+            if self.raise_on_verification_failure:
+                raise
+            ## Live: keep computed limits in cache; do not abort market watch
+            verification_logger.error(
+                "limits store save failed for trade_id=%s signal_id=%s "
+                "strategy_name=%s limits=%s error=%s",
+                trade_id,
+                signal_id,
+                self.strategy_name,
+                limits,
+                exc,
+                exc_info=True,
             )
 
     def get(self, trade_id: str, signal_id: str) -> Optional[PositionLimits]:
@@ -403,6 +437,7 @@ class DatabaseMetadataStore(MetadataStore):
         use_cache: bool = True,
         enabled: bool = True,
         verify_after_save: bool = True,
+        raise_on_verification_failure: bool = True,
         db: Optional[DatabaseAdapter] = None,
     ) -> None:
         """Initialize the database metadata store.
@@ -411,18 +446,25 @@ class DatabaseMetadataStore(MetadataStore):
             strategy_name: Strategy identifier used in ``position_metadata``.
             use_cache: When ``True``, cache reads and write-through saves locally.
             enabled: Value stored in the ``enabled`` column for new rows.
-            verify_after_save: Re-read the database after each write and raise on mismatch.
+            verify_after_save: Re-read the database after each write and check for mismatch.
+            raise_on_verification_failure: When ``True``, raise on mismatch or DB write
+                failure; when ``False`` (live), log and keep the in-memory cache.
             db: Optional database adapter override for testing.
         """
         self.strategy_name = strategy_name
         self.use_cache = use_cache
         self.enabled = enabled
         self.verify_after_save = verify_after_save
+        self.raise_on_verification_failure = raise_on_verification_failure
         self._db = db or DatabaseAdapter()
         self._cache: Dict[PositionStoreKey, Dict[str, Any]] = {}
 
     def save(self, trade_id: str, metadata: Any) -> None:
         """Persist metadata to ``position_metadata``.
+
+        When ``raise_on_verification_failure`` is ``False`` (live), DB write and
+        verification errors are logged with the metadata payload and swallowed so
+        ``on_new_position`` can continue.
 
         Args:
             trade_id: Unique trade identifier.
@@ -430,7 +472,8 @@ class DatabaseMetadataStore(MetadataStore):
 
         Raises:
             ValueError: If ``signal_id`` cannot be resolved from ``metadata``.
-            StoreVerificationError: If post-save verification fails.
+            StoreVerificationError: If post-save verification fails and raising is enabled.
+            Exception: Propagates DB write errors when raising is enabled.
         """
         metadata_dict = metadata_to_dict(metadata)
         metadata_date = _resolve_metadata_date(metadata, metadata_dict)
@@ -443,8 +486,53 @@ class DatabaseMetadataStore(MetadataStore):
         if not self.PERSIST_TO_DB:
             return
 
+        try:
+            self._persist_metadata_row(
+                trade_id=trade_id,
+                signal_id=signal_id,
+                metadata_date=metadata_date,
+                metadata_dict=metadata_dict,
+            )
+        except Exception as exc:
+            if self.raise_on_verification_failure:
+                raise
+            ## Live: keep in-process/cache metadata; log failed payload for ops replay
+            verification_logger.error(
+                "metadata store save failed for trade_id=%s signal_id=%s "
+                "strategy_name=%s metadata=%s error=%s",
+                trade_id,
+                signal_id,
+                self.strategy_name,
+                metadata_dict,
+                exc,
+                exc_info=True,
+            )
+            return
+
+    def _persist_metadata_row(
+        self,
+        *,
+        trade_id: str,
+        signal_id: str,
+        metadata_date: Union[datetime, date],
+        metadata_dict: Dict[str, Any],
+    ) -> None:
+        """Write and optionally verify one metadata row.
+
+        Args:
+            trade_id: Unique trade identifier.
+            signal_id: Originating signal identifier.
+            metadata_date: Metadata row date.
+            metadata_dict: Sanitized metadata payload.
+
+        Raises:
+            Exception: On DB write failure.
+            StoreVerificationError: If verification fails and raising is enabled.
+        """
         ticker = ticker_from_trade_id(trade_id)
         metadata_hash = compute_metadata_hash(metadata_dict)
+        ## NaN/Inf coerced to null inside _dumps_metadata_json (MySQL-safe JSON)
+        metadata_json = _dumps_metadata_json(metadata_dict)
         row = {
             POSITION_METADATA_SIGNAL_ID_COL: signal_id,
             "trade_id": trade_id,
@@ -452,7 +540,7 @@ class DatabaseMetadataStore(MetadataStore):
             "strategy_name": self.strategy_name,
             "date": metadata_date,
             "metadata_type": METADATA_TYPE_METADATA,
-            "metadata_dict": json.dumps(metadata_dict),
+            "metadata_dict": metadata_json,
             "metadata_hash": metadata_hash,
             "enabled": int(self.enabled),
         }
@@ -490,11 +578,13 @@ class DatabaseMetadataStore(MetadataStore):
                 metadata_date,
             )
         else:
+            ## _raise=True: do not pretend the insert succeeded when SQLHelpers swallows errors
             self._db.save_to_database(
                 db=PORTFOLIO_DATA_DB,
                 table_name=POSITION_METADATA_TABLE,
                 data=pd.DataFrame([row]),
                 filter_data=False,
+                _raise=True,
             )
             logger.info(
                 "Stored position metadata for trade_id=%s, strategy_name=%s, ticker=%s, date=%s",
@@ -517,13 +607,16 @@ class DatabaseMetadataStore(MetadataStore):
             expected_enabled=int(self.enabled),
         )
         if errors:
-            self._cache.pop(cache_key, None)
-            _raise_store_verification_error(
+            cache_key = _store_key(signal_id, trade_id)
+            if self.raise_on_verification_failure:
+                self._cache.pop(cache_key, None)
+            _handle_store_verification_failure(
                 "metadata",
                 trade_id,
                 errors,
                 strategy_name=self.strategy_name,
                 signal_id=signal_id,
+                raise_on_failure=self.raise_on_verification_failure,
             )
 
     def get(self, trade_id: str, signal_id: str) -> Optional[Dict[str, Any]]:
@@ -569,6 +662,7 @@ class DatabasePositionStore(PositionStore):
         use_cache: bool = True,
         metadata_enabled: bool = True,
         verify_after_save: bool = True,
+        raise_on_verification_failure: bool = True,
         db: Optional[DatabaseAdapter] = None,
     ) -> None:
         """Initialize combined database stores.
@@ -579,7 +673,9 @@ class DatabasePositionStore(PositionStore):
             default_moneyness: Fallback moneyness when loading limits from the database.
             use_cache: Enable in-memory caching for both stores.
             metadata_enabled: Value stored in the ``enabled`` column for metadata rows.
-            verify_after_save: Re-read the database after each write and raise on mismatch.
+            verify_after_save: Re-read the database after each write and check for mismatch.
+            raise_on_verification_failure: When ``True``, raise on mismatch; when ``False``
+                (live), log to the verification logger and keep cache.
             db: Optional database adapter override for testing.
         """
         adapter = db or DatabaseAdapter()
@@ -589,6 +685,7 @@ class DatabasePositionStore(PositionStore):
             default_moneyness=default_moneyness,
             use_cache=use_cache,
             verify_after_save=verify_after_save,
+            raise_on_verification_failure=raise_on_verification_failure,
             db=adapter,
         )
         self.metadata = DatabaseMetadataStore(
@@ -596,6 +693,7 @@ class DatabasePositionStore(PositionStore):
             use_cache=use_cache,
             enabled=metadata_enabled,
             verify_after_save=verify_after_save,
+            raise_on_verification_failure=raise_on_verification_failure,
             db=adapter,
         )
 
@@ -635,7 +733,7 @@ def build_position_store(
         default_dte: Fallback DTE applied when loading limits from the database.
         default_moneyness: Fallback moneyness applied when loading limits from the database.
         position_store: Optional explicit store override (wins over ``live``).
-        verify_after_save: Re-read the database after each write and raise on mismatch.
+        verify_after_save: Re-read the database after each write and check for mismatch.
 
     Returns:
         Configured ``PositionStore`` implementation.
@@ -653,11 +751,13 @@ def build_position_store(
     if live:
         if not strategy_name:
             raise ValueError("strategy_name is required when live=True")
+        ## Live must not abort market watch on verification; ops get a dedicated log
         return DatabasePositionStore(
             strategy_name=strategy_name,
             default_dte=default_dte,
             default_moneyness=default_moneyness,
             verify_after_save=verify_after_save,
+            raise_on_verification_failure=False,
         )
     return InMemoryPositionStore()
 
@@ -756,12 +856,69 @@ def compute_metadata_hash(metadata_dict: Dict[str, Any]) -> str:
     Returns:
         SHA-256 hex digest of the canonical JSON representation.
     """
-    payload = json.dumps(metadata_dict, sort_keys=True, default=_json_default)
+    payload = _dumps_metadata_json(metadata_dict, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _dumps_metadata_json(metadata_dict: Dict[str, Any], *, sort_keys: bool = False) -> str:
+    """Serialize metadata to MySQL-safe JSON.
+
+    Non-finite floats (NaN/Inf) are coerced to ``null`` before dump so
+    ``allow_nan=False`` never raises and MySQL accepts the column value.
+
+    Args:
+        metadata_dict: Metadata payload to encode.
+        sort_keys: When ``True``, sort object keys for stable hashing.
+
+    Returns:
+        JSON string safe for a MySQL JSON column.
+    """
+    sanitized = {key: _serialize_metadata_value(value) for key, value in metadata_dict.items()}
+    return json.dumps(
+        sanitized,
+        sort_keys=sort_keys,
+        default=_json_default,
+        allow_nan=False,
+    )
+
+
+def _is_non_finite_number(value: Any) -> bool:
+    """Return whether ``value`` is a non-finite numeric scalar (NaN/Inf/NA).
+
+    Args:
+        value: Candidate scalar.
+
+    Returns:
+        ``True`` when the value cannot be encoded as standard JSON number.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return not math.isfinite(float(value))
+    ## numpy scalars expose .item(); keep them out of invalid JSON NaN literals
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            native = item()
+            if isinstance(native, (int, float)) and not isinstance(native, bool):
+                return not math.isfinite(float(native))
+        except (TypeError, ValueError, OverflowError):
+            pass
+    try:
+        if value is not None and not isinstance(
+            value, (str, bytes, bool, dict, list, tuple, datetime, date)
+        ):
+            return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        pass
+    return False
 
 
 def _serialize_metadata_value(value: Any) -> Any:
     """Convert metadata values into JSON-safe primitives.
+
+    NaN/Inf/NA become ``None`` (JSON null) so MySQL JSON columns accept the
+    payload. Nested dicts and lists are sanitized recursively.
 
     Args:
         value: Metadata field value.
@@ -773,6 +930,12 @@ def _serialize_metadata_value(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _serialize_metadata_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_serialize_metadata_value(child) for child in value]
+    if _is_non_finite_number(value):
+        return None
     return value
 
 
@@ -927,45 +1090,44 @@ def _load_latest_metadata_row(
     return rows.iloc[0].to_dict()
 
 
-def _raise_store_verification_error(
+def _handle_store_verification_failure(
     store_type: str,
     trade_id: str,
     errors: List[str],
     *,
     strategy_name: Optional[str] = None,
     signal_id: Optional[str] = None,
+    raise_on_failure: bool = True,
 ) -> None:
-    """Log and raise a store verification failure.
+    """Log a store verification failure and optionally raise.
 
-    Recommended caller handling:
-        1. Log the exception with trade context for operations review.
-        2. Do not proceed with sizing or analysis for that trade in live mode.
-        3. Retry the save once if the failure looks transient (connection blip).
-        4. Escalate if repeated; do not silently substitute in-memory values live.
+    Live stores set ``raise_on_failure=False`` so market watch continues; the
+    dedicated verification logger records the mismatch for ops review.
 
     Args:
         store_type: Store label, e.g. ``limits`` or ``metadata``.
         trade_id: Trade identifier associated with the failed write.
         errors: Human-readable verification failure messages.
         strategy_name: Strategy identifier when the failure occurred in a DB store.
+        signal_id: Originating signal identifier when available.
+        raise_on_failure: When ``True``, raise ``StoreVerificationError`` after logging.
 
     Raises:
-        StoreVerificationError: Always raised with the supplied error details.
+        StoreVerificationError: When ``raise_on_failure`` is ``True``.
     """
-    logger.error(
-        "%s store verification failed for trade_id=%s signal_id=%s strategy_name=%s: %s",
-        store_type,
-        trade_id,
-        signal_id,
-        strategy_name,
-        "; ".join(errors),
+    message = (
+        f"{store_type} store verification failed for trade_id={trade_id} "
+        f"signal_id={signal_id} strategy_name={strategy_name}: {'; '.join(errors)}"
     )
-    raise StoreVerificationError(
-        store_type,
-        trade_id,
-        errors,
-        strategy_name=strategy_name,
-    )
+    if raise_on_failure:
+        logger.error(message)
+        raise StoreVerificationError(
+            store_type,
+            trade_id,
+            errors,
+            strategy_name=strategy_name,
+        )
+    verification_logger.error(message)
 
 
 def _collect_limits_verification_errors(
@@ -1189,7 +1351,12 @@ def _normalize_limit_value(value: Any) -> Optional[float]:
 
 
 def _limit_values_equal(expected: Optional[float], stored: Optional[float]) -> bool:
-    """Return whether two limit values are equivalent.
+    """Return whether two limit values are equivalent under DB truncation.
+
+    Exact closeness is tried first. Otherwise both values are rounded (half-up)
+    to the coarser decimal precision implied by either side, so e.g.
+    ``0.011384508341273985`` matches ``0.0113845``, ``0.0114``, ``0.011``, or
+    ``0.01``.
 
     Args:
         expected: Expected limit value.
@@ -1202,7 +1369,23 @@ def _limit_values_equal(expected: Optional[float], stored: Optional[float]) -> b
         return True
     if expected is None or stored is None:
         return False
-    return math.isclose(expected, stored, rel_tol=1e-9, abs_tol=1e-9)
+    if math.isclose(expected, stored, rel_tol=1e-9, abs_tol=1e-9):
+        return True
+
+    expected_dec = Decimal(str(expected))
+    stored_dec = Decimal(str(stored))
+    ## Higher exponent = fewer fractional digits (e.g. -2 coarser than -7)
+    coarse_exp = max(
+        expected_dec.normalize().as_tuple().exponent,
+        stored_dec.normalize().as_tuple().exponent,
+    )
+    if coarse_exp > 0:
+        coarse_exp = 0
+    quant = Decimal(10) ** coarse_exp
+    return (
+        expected_dec.quantize(quant, rounding=ROUND_HALF_UP)
+        == stored_dec.quantize(quant, rounding=ROUND_HALF_UP)
+    )
 
 
 def _normalize_row_date(value: Any) -> date:
