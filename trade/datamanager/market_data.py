@@ -814,7 +814,11 @@ class MarketTimeseries:
                     miss_start,
                     miss_end,
                 )
+            ## Keep concat so tip rows cut from disk cache still reach certify;
+            ## dedupe so overlapping reload (wide miss / full-history clip) cannot
+            ## flood L3 with DUPLICATE_INDEX.
             cached_data = pd.concat([cached_data, data]).sort_index()
+            cached_data = cached_data[~cached_data.index.duplicated(keep="last")]
 
         clipped = self._clip_to_date_range(cached_data, start, end).copy()
         return certify_market_factor_payload(
@@ -884,7 +888,10 @@ class MarketTimeseries:
                     miss_start,
                     miss_end,
                 )
+            ## Keep concat so tip rows cut from disk cache still reach certify;
+            ## dedupe so overlapping reload cannot flood L3 with DUPLICATE_INDEX.
             cached_data = pd.concat([cached_data, data]).sort_index()
+            cached_data = cached_data[~cached_data.index.duplicated(keep="last")]
         clipped = self._clip_to_date_range(cached_data, start, end)
         return certify_market_factor_payload(
             sym,
@@ -954,7 +961,10 @@ class MarketTimeseries:
                     miss_start,
                     miss_end,
                 )
+            ## Keep concat so tip rows cut from disk cache still reach certify;
+            ## dedupe so overlapping reload cannot flood L3 with DUPLICATE_INDEX.
             cached_data = pd.concat([cached_data, data]).sort_index()
+            cached_data = cached_data[~cached_data.index.duplicated(keep="last")]
 
         clipped = self._clip_to_date_range(cached_data, start, end, *args, **kwargs)
         return certify_market_factor_payload(
