@@ -138,7 +138,7 @@ class DonchianMomentumCog(BaseCog):
         logger.info(f"On new position: {state} for ticker {ticker} and date {date}")
         ## Get info on the date of the entry
         info = self.eq_strategy.info_on_date(ticker=ticker, current_date=lookup_date)
-        entry_delay_days = info.get("entry_delay_days", 0)
+        entry_delay_days = int(info["momentum_entry_delay_days"])
 
         ## Back up by entry_delay business days, then normalize to YYYY-MM-DD for index lookup
         date_minus_entry_delay = (
