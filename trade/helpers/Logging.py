@@ -1,3 +1,25 @@
+"""Environment-aware logger setup with refreshable handler registry.
+
+Provides ``setup_logger`` for console/file handlers whose log file name and
+format track ``ENVIRONMENT_CONTEXT``. Loggers created via ``setup_logger`` are
+tracked so ``refresh_all_loggers`` can rebuild handlers in place after the
+environment changes (same ``logging.getLogger`` singletons modules already hold).
+
+Core Functions:
+    setup_logger: Create or rebuild a named logger with env-aware handlers.
+    refresh_all_loggers: Rebuild every registered logger for the current env.
+    find_loggers_by_pattern / find_logger_names_by_pattern: Lookup helpers.
+
+Caching Strategy:
+    ``_LOGGER_REGISTRY`` maps logger name -> rebuild kwargs. Handlers are not
+    cached across env changes; refresh closes and recreates them.
+
+Usage:
+    >>> from trade.helpers.Logging import setup_logger
+    >>> logger = setup_logger("my_module")
+    >>> # set_environment_context(...) triggers refresh_all_loggers via dbase listener
+"""
+
 import logging
 import sys
 import os
@@ -5,37 +27,69 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from typing import List
+from typing import Any, Dict, List, Optional, Union
 from logging.handlers import TimedRotatingFileHandler
 
 load_dotenv()
+
+## logger_name -> kwargs needed to rebuild handlers after ENVIRONMENT_CONTEXT changes
+_LOGGER_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
 class TimezoneFormatter(logging.Formatter):
     """Custom formatter that converts timestamps to a specific timezone."""
 
     def __init__(self, fmt=None, datefmt=None, tz=None):
+        """Initialize formatter with optional IANA timezone name.
+
+        Args:
+            fmt: Log message format string.
+            datefmt: Date format string for ``asctime``.
+            tz: IANA timezone name (e.g. ``America/New_York``), or None for local.
+        """
         super().__init__(fmt, datefmt)
         self.tz = ZoneInfo(tz) if tz else None
 
     def converter(self, timestamp):
-        """Convert timestamp to timezone-aware datetime."""
+        """Convert timestamp to timezone-aware datetime.
+
+        Args:
+            timestamp: Unix timestamp from the log record.
+
+        Returns:
+            ``time.struct_time`` in the configured timezone (or UTC if unset).
+        """
         dt = datetime.fromtimestamp(timestamp, tz=ZoneInfo("UTC"))
         if self.tz:
             dt = dt.astimezone(self.tz)
         return dt.timetuple()
-    
+
 
 def find_logger_names_by_pattern(pattern: str) -> List[str]:
-    """Find all logger names that start with the given pattern."""
+    """Find all logger names that start with the given pattern.
+
+    Args:
+        pattern: Prefix matched against ``logging.Logger.manager.loggerDict`` keys.
+
+    Returns:
+        Logger names that start with ``pattern``.
+    """
     return [
-        name 
-        for name in logging.Logger.manager.loggerDict.keys() 
+        name
+        for name in logging.Logger.manager.loggerDict.keys()
         if name.startswith(pattern)
     ]
 
+
 def find_loggers_by_pattern(pattern: str) -> List[logging.Logger]:
-    """Find all loggers whose names start with the given pattern."""
+    """Find all loggers whose names start with the given pattern.
+
+    Args:
+        pattern: Prefix matched against registered logger names.
+
+    Returns:
+        Logger instances for names that start with ``pattern``.
+    """
     return [
         logging.getLogger(name)
         for name in logging.Logger.manager.loggerDict.keys()
@@ -43,9 +97,15 @@ def find_loggers_by_pattern(pattern: str) -> List[logging.Logger]:
     ]
 
 
-def find_project_root(current_path: Path, marker=".git"):
-    """
-    Find the current project root by looking for a marker file in the parent directories.
+def find_project_root(current_path: Path, marker: str = ".git") -> Union[Path, str]:
+    """Find the current project root by looking for a marker file in parent directories.
+
+    Args:
+        current_path: Path to start searching from.
+        marker: Directory/file name that marks the project root.
+
+    Returns:
+        Project root ``Path``, or ``WORK_DIR`` env value if no marker is found.
     """
     if isinstance(current_path, str):
         current_path = Path(current_path)
@@ -59,18 +119,12 @@ def find_project_root(current_path: Path, marker=".git"):
     return os.environ["WORK_DIR"]  # Default to current path if no marker is found
 
 
-def change_logger_stream_level(logger: logging.Logger, level: int):
-    """
-    Change the logger stream level.
+def change_logger_stream_level(logger: logging.Logger, level: int) -> None:
+    """Change the logger and its stream handlers to a new level.
 
-    params:
-    --------
-    logger: Logger object to change the stream level for.
-    level: New logging level (e.g., logging.INFO, logging.DEBUG).
-
-    returns:
-    --------
-    None
+    Args:
+        logger: Logger object to change the stream level for.
+        level: New logging level (e.g., logging.INFO, logging.DEBUG).
     """
     logger.setLevel(level)
     for handler in logger.handlers:
@@ -79,18 +133,19 @@ def change_logger_stream_level(logger: logging.Logger, level: int):
 
 
 def get_logger_base_location() -> Path:
-    """
-    Get the base location for log files.
+    """Get the base location for log files.
+
+    Returns:
+        ``{project_root}/logs`` as a ``Path``.
     """
     return Path(find_project_root(os.getcwd())) / "logs"
 
 
-def _get_current_environment() -> str | None:
-    """
-    Get current environment from shared database context.
+def _get_current_environment() -> Optional[str]:
+    """Get current environment from shared database context.
 
     Returns:
-        Environment string ('prod', 'test', 'test-{name}') or None if not set
+        Environment string ('prod', 'test', 'test-{name}') or None if not set.
     """
     try:
         from dbase.database.db_utils import ENVIRONMENT_CONTEXT
@@ -100,15 +155,52 @@ def _get_current_environment() -> str | None:
         return None
 
 
+def refresh_all_loggers(*args: Any, **kwargs: Any) -> None:
+    """Rebuild handlers on every logger previously created via ``setup_logger``.
+
+    Mutates existing ``logging.getLogger`` singletons in place so module-level
+    ``logger`` references keep writing with the current environment file/format.
+    Extra ``*args`` / ``**kwargs`` are ignored so this matches
+    ``register_on_environment_changed``'s ``(old_env, new_env)`` signature.
+
+    Args:
+        *args: Ignored; accepted for callback compatibility.
+        **kwargs: Ignored; accepted for callback compatibility.
+    """
+    for name, spec in list(_LOGGER_REGISTRY.items()):
+        setup_logger(
+            spec["filename"],
+            stream_log_level=spec["stream_log_level"],
+            file_log_level=spec["file_log_level"],
+            custom_logger_name=name,
+            timezone=spec["timezone"],
+            dir=spec["dir"],
+            remove_root=False,
+        )
+
+
+def _register_env_change_refresh() -> None:
+    """Register ``refresh_all_loggers`` with dbase when that package is available.
+
+    Soft-depends on FinanceDatabase so QuantTools still imports without dbase.
+    ``register_on_environment_changed`` de-dupes, so repeat calls are safe.
+    """
+    try:
+        from dbase.database.db_utils import register_on_environment_changed
+    except ImportError:
+        return
+    register_on_environment_changed(refresh_all_loggers)
+
+
 def setup_logger(
-    filename,
-    stream_log_level=None,
-    file_log_level=None,
-    log_file=None,
-    remove_root=True,
-    custom_logger_name=None,
-    timezone=None,
-    dir: str | Path = None,
+    filename: str,
+    stream_log_level: Optional[int] = None,
+    file_log_level: Optional[int] = None,
+    log_file: Optional[str] = None,
+    remove_root: bool = True,
+    custom_logger_name: Optional[str] = None,
+    timezone: Optional[str] = None,
+    dir: Optional[Union[str, Path]] = None,
 ) -> logging.Logger:
     """
     Set up a logger with console and file handlers, with environment-aware configuration.
@@ -121,6 +213,7 @@ def setup_logger(
         remove_root: If True, removes all root logger handlers before setup.
         custom_logger_name: Custom logger name. If None, uses filename.
         timezone: Timezone string (e.g., 'America/New_York') for timezone-aware timestamps.
+        dir: Optional log directory override. Defaults to project ``logs/``.
 
     Returns:
         logging.Logger: Configured logger with console and file handlers.
@@ -151,6 +244,16 @@ def setup_logger(
 
     if custom_logger_name is None:
         custom_logger_name = filename
+
+    ## Track rebuild kwargs so refresh_all_loggers can re-apply current env in place
+    _LOGGER_REGISTRY[custom_logger_name] = {
+        "filename": filename,
+        "stream_log_level": stream_log_level,
+        "file_log_level": file_log_level,
+        "timezone": timezone,
+        "dir": dir,
+    }
+
     # Remove all Root Handlers
     if remove_root:
         for handler in logging.root.handlers[:]:
@@ -240,6 +343,8 @@ def setup_logger(
 
     return logger
 
+
+_register_env_change_refresh()
 
 _logger = setup_logger("trade.helpers.Logging", stream_log_level=logging.INFO)
 _logger.info(f'Logging Root Directory: {Path(find_project_root(os.getcwd()))/"logs"}')
