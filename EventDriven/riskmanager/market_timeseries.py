@@ -735,7 +735,7 @@ class BacktestTimeseries(BacktestRunMixin):
 
         return position_data
 
-    def load_position_data(self, opttick, as_of_date=None) -> pd.DataFrame:  # noqa
+    def load_position_data(self, opttick) -> pd.DataFrame:  # noqa
         """
         Load position data for a given option tick.
 
@@ -751,7 +751,6 @@ class BacktestTimeseries(BacktestRunMixin):
             processed_option_data=self.options_cache,
             start=self.start_date,
             end=self.end_date,
-            as_of_date=as_of_date,
         )
         return data
 
@@ -830,12 +829,12 @@ class BacktestTimeseries(BacktestRunMixin):
         ## If there are no splits, we can just load the data
         if not to_adjust_split:
             logger.info(f"No splits or dividends to adjust for {opttick}, loading data directly")
-            data = self.load_position_data(opttick, as_of_date=check_date).copy()  ## Copy to avoid modifying the original data
+            data = self.load_position_data(opttick).copy()  ## Copy to avoid modifying the original data
+            ## Live diag: date omitted → NY today row lookup (not check_date).
             log_option_data_checkpoint(
                 "option_data_raw",
                 opttick=opttick,
                 data=data,
-                date=check_date,
             )
             data["adj_strike"] = meta["strike"]
             data["factor"] = 1.0
@@ -846,7 +845,6 @@ class BacktestTimeseries(BacktestRunMixin):
                 "option_data_windowed",
                 opttick=opttick,
                 data=data,
-                date=check_date,
             )
             self.adjusted_strike_cache[opttick] = self._ffill_adj_strike_business_days(
                 data["adj_strike"],
@@ -863,7 +861,6 @@ class BacktestTimeseries(BacktestRunMixin):
                 "option_data_ready",
                 opttick=opttick,
                 data=data,
-                date=check_date,
             )
             return data
 
@@ -898,7 +895,7 @@ class BacktestTimeseries(BacktestRunMixin):
 
                 # Load adjusted data
                 if adj_opttick not in self.options_cache:
-                    adj_data = self.load_position_data(adj_opttick, as_of_date=check_date).copy()
+                    adj_data = self.load_position_data(adj_opttick).copy()
                 else:
                     adj_data = self.options_cache[adj_opttick]
                 logger.info(f"Loaded data for adjusted option tick: {adj_opttick}")
@@ -924,7 +921,7 @@ class BacktestTimeseries(BacktestRunMixin):
                 segments.append(adj_data)
                 all_optticks.append(adj_opttick)
 
-        base_data = self.load_position_data(opttick, as_of_date=check_date).copy()
+        base_data = self.load_position_data(opttick).copy()
         base_data["adj_strike"] = meta["strike"]  ## Original strike
         base_data["factor"] = 1.0
         all_optticks.append(opttick)
@@ -939,11 +936,11 @@ class BacktestTimeseries(BacktestRunMixin):
         segments.insert(0, base_data)
         final_data = pd.concat(segments).sort_index()
         final_data = final_data[~final_data.index.duplicated(keep="last")]
+        ## Live diag: date omitted → NY today row lookup (not check_date).
         log_option_data_checkpoint(
             "option_data_raw",
             opttick=opttick,
             data=final_data,
-            date=check_date,
             note="split_adjusted",
         )
 
@@ -955,7 +952,6 @@ class BacktestTimeseries(BacktestRunMixin):
             "option_data_windowed",
             opttick=opttick,
             data=final_data,
-            date=check_date,
             note="split_adjusted",
         )
         self.adjusted_strike_cache[opttick] = self._ffill_adj_strike_business_days(
@@ -975,7 +971,6 @@ class BacktestTimeseries(BacktestRunMixin):
             "option_data_ready",
             opttick=opttick,
             data=final_data,
-            date=check_date,
             note="split_adjusted",
         )
         return final_data
