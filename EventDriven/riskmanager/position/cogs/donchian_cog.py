@@ -29,10 +29,12 @@ from EventDriven.riskmanager.actions import ROLL, Changes
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_moneyness_from_trade_id
 from EventDriven.riskmanager.position.cogs.limits import _LimitsMetaData
+from EventDriven.riskmanager.live_diag import log_live_checkpoint
 from EventDriven.riskmanager.sizer._utils import default_delta_limit, delta_position_sizing
 from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
 from trade.helpers.Logging import setup_logger
+from trade.helpers.helper import change_to_last_busday
 
 if TYPE_CHECKING:
     from EventDriven.riskmanager.position.stores.limits_store import PositionStore
@@ -110,12 +112,14 @@ class DonchianMomentumCog(BaseCog):
         Returns:
             None (this cog is for analysis and opinion generation, not direct action).
         """
+
         order = state.order
         request = state.request
         ticker = state.symbol
         undl_data = state.undl_at_time_data
         chain_spot = undl_data.chain_spot["close"]
         option_chain = state.at_time_data
+
         cash_available = (
             request.tick_cash if request.is_tick_cash_scaled else request.tick_cash * 100
         )  # Scale cash to match option notional if not already scaled
@@ -129,10 +133,33 @@ class DonchianMomentumCog(BaseCog):
 
         opt_price = option_chain.get_price()
         date = order["date"]
-        info = self.eq_strategy.info_on_date(ticker=ticker, current_date=date)
-        breakout_score = info.get("momentum_breakout_score", 0)
+        ## Strategy bars are calendar-indexed; order dates often carry EOD 16:00 and miss _dates_map.
+        lookup_date = pd.Timestamp(date).strftime("%Y-%m-%d")
+        logger.info(f"On new position: {state} for ticker {ticker} and date {date}")
+        ## Get info on the date of the entry
+        info = self.eq_strategy.info_on_date(ticker=ticker, current_date=lookup_date)
+        entry_delay_days = info.get("entry_delay_days", 0)
+
+        ## Back up by entry_delay business days, then normalize to YYYY-MM-DD for index lookup
+        date_minus_entry_delay = (
+            change_to_last_busday(
+                pd.Timestamp(date) - pd.offsets.BusinessDay(entry_delay_days),
+                time_of_day_aware=False,
+                eod_time=False,
+            )
+            .strftime("%Y-%m-%d")
+        )
+        info_on_entry_delay = self.eq_strategy.info_on_date(
+            ticker=ticker, current_date=date_minus_entry_delay
+        )
+        logger.info(f"Info on entry delay {date_minus_entry_delay}: {info_on_entry_delay}")
+        logger.info(f"Date: {lookup_date}, Date minus entry delay: {date_minus_entry_delay}")
+
+        ## Get the breakout score on the date of the entry delay
+        breakout_score = info_on_entry_delay.get("momentum_breakout_score", 0)
+        rvol = info_on_entry_delay.get("momentum_rvol", 0)
+
         delta = option_chain.delta
-        rvol = info.get("momentum_rvol", 0)
         scaler = self.get_momentum_scaler(
             breakout_score=breakout_score, rvol=rvol, min_mult=self.config.min_scale, max_mult=self.config.max_scale
         )
@@ -183,6 +210,24 @@ class DonchianMomentumCog(BaseCog):
 
         logger.info(
             f"Calculated delta limit: {scaled_limit:.4f}, resulting quantity: {q} lev: {self.config.sizing_lev}. Breakout Score: {breakout_score}, RVOL: {rvol}, Scaler: {scaler:.2f}. Trade ID: {order['data']['trade_id']} with option delta {delta:.4f}"
+        )
+        ## Live diag: Donchian consume-site (delta here is what sizing just used)
+        log_live_checkpoint(
+            "donchian_sized",
+            trade_id=order["data"]["trade_id"],
+            date=request.date,
+            data={
+                "delta": delta,
+                "delta_lmt": scaled_limit,
+                "tgt_delta": tgt_delta,
+                "price": opt_price,
+                "cash": cash_available,
+                "quantity": q,
+                "scaler": scaler,
+                "breakout_score": breakout_score,
+                "rvol": rvol,
+            },
+            note="post_size",
         )
         order["data"]["quantity"] = q
         metadata = _DonchianLimitsMetaData(

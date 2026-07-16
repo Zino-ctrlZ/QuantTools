@@ -560,8 +560,20 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
 
     This function retrieves the data for the given option tick using the new data loading method.
     It does not apply any splits or adjustments. It will only retrieve the data for the given option tick.
+
+    Live-diag checkpoints omit ``date`` so row lookup uses NY today (``ny_now().date()``).
     """
     import time
+
+    from EventDriven.riskmanager.live_diag import (
+        GREEK_ARTIFACT_COLUMNS,
+        OPTION_SPOT_ARTIFACT_COLUMNS,
+        SPOT_ARTIFACT_COLUMNS,
+        VOL_ARTIFACT_COLUMNS,
+        fields_at_current_date,
+        log_live_checkpoint,
+        log_option_data_checkpoint,
+    )
 
     ## Check if the option tick is already processed
     if opttick in processed_option_data:
@@ -591,16 +603,59 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     vol = new_data.vol.timeseries
     greeks, option_spot, s, y, r, vol = sync_date_index(greeks, option_spot, s, y, r, vol)
 
+    ## Live diag: per-artifact scalars before join (pinpoints greek vs quote vs vol vs spot).
+    ## date omitted → NY today via live_diag (not request/check_date).
+    log_live_checkpoint(
+        "greek_artifact_loaded",
+        trade_id=opttick,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(greeks, GREEK_ARTIFACT_COLUMNS),
+        },
+    )
+    log_live_checkpoint(
+        "option_spot_artifact_loaded",
+        trade_id=opttick,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(option_spot, OPTION_SPOT_ARTIFACT_COLUMNS),
+        },
+    )
+    log_live_checkpoint(
+        "vol_artifact_loaded",
+        trade_id=opttick,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(vol, VOL_ARTIFACT_COLUMNS),
+        },
+    )
+    ## Spot series is renamed to ``s`` below; log under that key for flag matching.
+    spot_for_diag = s.rename("s") if isinstance(s, pd.Series) else s
+    log_live_checkpoint(
+        "spot_artifact_loaded",
+        trade_id=opttick,
+        data={
+            "opttick": opttick,
+            **fields_at_current_date(spot_for_diag, SPOT_ARTIFACT_COLUMNS),
+        },
+    )
+
     ## set names properly
     start_time = time.time()
     s.name = "s"
     # y.name = "y"
     r.name = "r"
+    ## Joined column is Vol (capitalized later via case-insensitive lookup); raw artifact was iv.
     vol.name = "vol"
     data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
     data.columns = data.columns.str.capitalize()
     data = data.join(s).join(r).join(vol)#.join(y)
     logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
+    log_option_data_checkpoint(
+        "position_data_loaded",
+        opttick=opttick,
+        data=data,
+    )
     processed_option_data[opttick] = data
     return data
 
@@ -623,6 +678,8 @@ def load_position_data(opttick, processed_option_data, start, end, *args, **kwar
     This function retrieves the data for the given position ID. It applies any necessary splits or adjustments.
     It will retrieve the data for all option ticks in the position ID and concatenate them together.
     """
+    ## Swallow legacy as_of_date kwarg if callers still pass it (live_diag uses NY today).
+    kwargs.pop("as_of_date", None)
     return load_position_data_new(opttick, processed_option_data, start, end)
 
 

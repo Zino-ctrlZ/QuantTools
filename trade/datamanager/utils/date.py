@@ -18,7 +18,7 @@ from dbase.DataAPI.ThetaData import list_dates
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from pathlib import Path
 import os
-from typing import Tuple, List, Optional, Union
+from typing import Any, Iterable, List, Optional, Set, Tuple, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 from trade.datamanager.utils.equity_start_dates import get_start_date
 from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
@@ -26,6 +26,10 @@ from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
+
+## Cap dropped-date dumps; multi-year gaps only need a short sample.
+_SYNC_DROP_LOG_FULL_MAX = 20
+_SYNC_DROP_LOG_SAMPLE = 3
 
 ## This cache will be used to save the min trading date for each option tick
 ## This is to avoid calling API all the time
@@ -93,19 +97,97 @@ def _convert_date_to_datetime(date_input: Union[str, datetime]) -> datetime:
         return to_datetime(date_input).replace(hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute)
 
 
-def sync_date_index(*args) -> List[Union[pd.Series, pd.DataFrame]]:
-    """Synchronizes the date indices of multiple time series."""
+def _sync_series_label(ts: Union[pd.Series, pd.DataFrame], position: int) -> str:
+    """Label one sync arg by ``name`` when set, else by position.
+
+    Args:
+        ts: Series or DataFrame being synced.
+        position: Zero-based argument position in ``sync_date_index``.
+
+    Returns:
+        Short series label for log lines.
+    """
+    name = getattr(ts, "name", None)
+    if name is not None and str(name).strip():
+        return str(name)
+    return f"arg[{position}]"
+
+
+def _dates_for_log(dates: Iterable[Any]) -> str:
+    """Format dates for a short sync log line (truncate large sets).
+
+    Args:
+        dates: Index values to display.
+
+    Returns:
+        Sorted date strings, or a head/tail sample when longer than the cap.
+    """
+    if not dates:
+        return "[]"
+    normalized: List[Any] = []
+    for value in dates:
+        try:
+            normalized.append(pd.Timestamp(to_datetime(value)).date())
+        except (TypeError, ValueError):
+            normalized.append(str(value))
+    try:
+        ordered = sorted(set(normalized))
+    except TypeError:
+        ordered = sorted({str(x) for x in normalized})
+    if len(ordered) <= _SYNC_DROP_LOG_FULL_MAX:
+        return str([str(x) for x in ordered])
+    head = [str(x) for x in ordered[:_SYNC_DROP_LOG_SAMPLE]]
+    tail = [str(x) for x in ordered[-_SYNC_DROP_LOG_SAMPLE:]]
+    return f"{head}...(+{len(ordered) - 2 * _SYNC_DROP_LOG_SAMPLE})...{tail}"
+
+
+def sync_date_index(*args: Union[pd.Series, pd.DataFrame]) -> List[Union[pd.Series, pd.DataFrame]]:
+    """Intersect Series/DataFrame indexes onto their common dates.
+
+    Drops any date missing from at least one input. Logs the synced set (count +
+    range) and per-series dropped dates only.
+
+    Args:
+        *args: One or more non-None pandas Series or DataFrames to align.
+
+    Returns:
+        List of the same objects reindexed to the sorted common date set.
+
+    Raises:
+        ValueError: If any argument is ``None``.
+        TypeError: If any argument is not a Series or DataFrame.
+    """
     for i, ts in enumerate(args):
         if ts is None:
-            raise ValueError("All time series must be provided and not None. Found None at position {}".format(i))
+            raise ValueError(
+                "All time series must be provided and not None. Found None at position {}".format(i)
+            )
         if not isinstance(ts, (pd.Series, pd.DataFrame)):
             raise TypeError(
                 "All inputs must be pandas Series or DataFrame. Found {} at position {}".format(type(ts), i)
             )
-    date_indices = [set(ts.index) for ts in args if ts is not None]
-    common_dates = list(set.intersection(*date_indices))
-    synced_series = [ts.loc[common_dates] if ts is not None else None for ts in args]
-    synced_series = [ts.sort_index() if ts is not None else None for ts in synced_series]
+
+    labels = [_sync_series_label(ts, i) for i, ts in enumerate(args)]
+    date_indices: List[Set[Any]] = [set(ts.index) for ts in args]
+    common_dates_set = set.intersection(*date_indices) if date_indices else set()
+    common_dates = list(common_dates_set)
+
+    ## Only emit synced range + dates each series lost (skip empty drop lists).
+    dropped_by_series = {
+        label: _dates_for_log(index_set - common_dates_set)
+        for label, index_set in zip(labels, date_indices)
+        if index_set - common_dates_set
+    }
+    if common_dates_set:
+        synced_lo = min(pd.Timestamp(to_datetime(d)).date() for d in common_dates_set)
+        synced_hi = max(pd.Timestamp(to_datetime(d)).date() for d in common_dates_set)
+        synced_repr = f"n={len(common_dates_set)} [{synced_lo} .. {synced_hi}]"
+    else:
+        synced_repr = "n=0"
+    logger.info("sync_date_index synced=%s dropped=%s", synced_repr, dropped_by_series or "{}")
+
+    synced_series = [ts.loc[common_dates] for ts in args]
+    synced_series = [ts.sort_index() for ts in synced_series]
     return synced_series
 
 

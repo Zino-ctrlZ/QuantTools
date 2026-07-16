@@ -283,15 +283,36 @@ def mean_realized_vol(series: pd.Series, windows: tuple) -> pd.Series:
 
 
 def scaler(realized_vol_series: pd.Series, factor: float, window: int) -> pd.Series:
+    """Map realized-vol z-scores to a clipped leverage scaler series.
+
+    Keeps the input index (warm-up NaNs remain). Logging uses a dropped view so
+    early rolling NaNs do not dominate the tail printout.
+
+    Args:
+        realized_vol_series: Realized volatility timeseries.
+        factor: Peak scaler when z is near zero / negative.
+        window: Rolling window for mean/std of ``realized_vol_series``.
+
+    Returns:
+        Scaler series aligned to ``realized_vol_series.index``, clipped to
+        ``[0.5, factor]``.
+    """
     rolling_mean = realized_vol_series.rolling(window=window).mean()
     rolling_std = realized_vol_series.rolling(window=window).std()
     z = (realized_vol_series - rolling_mean) / rolling_std
-    # return factor / (1 + z.abs())
-    # return factor / (1 + np.exp(z))
-    if isinstance(z, pd.Series):
-        logger.info(f"z: \n{z.head(10).to_string()}")
-    scaler = np.clip(factor / (1 + np.exp(z)), 0.5, factor)
-    return scaler
+    ## Log finite z only; keep full-length z for clip so index stays aligned.
+    z_logged = z.dropna()
+    if isinstance(z_logged, (pd.Series, pd.DataFrame)):
+        logger.info(f"z: \n{z_logged.tail(10).to_string()}")
+        if z_logged.empty:
+            logger.info("z is empty after dropna (rolling warm-up)")
+    else:
+        logger.info(f"z: {z_logged}")
+    ## Use Series.clip so warm-up NaNs and the original index survive (np.clip drops them).
+    scaled = factor / (1 + np.exp(z))
+    if isinstance(scaled, pd.Series):
+        return scaled.clip(lower=0.5, upper=factor)
+    return pd.Series(np.clip(scaled, 0.5, factor), index=realized_vol_series.index)
 
 
 @dataclass

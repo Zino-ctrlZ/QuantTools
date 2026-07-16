@@ -7,23 +7,28 @@ missing current-date rows are searchable without dumping DataFrames. Disabled
 unless the process-global live flag is on (or an explicit ``enabled=True``
 override is passed).
 
+Row lookup and log stamps default to NY calendar today via ``ny_now().date()``.
+Callers may still pass an explicit ``date`` for tests or request-stamped stages.
+
 Core Functions:
     set_live_diag_enabled: Flip the process-global live-diag gate.
     is_live_diag_enabled: Read the live-diag gate.
     get_row_at_date: Safe current-date (or explicit date) row lookup.
     fields_at_current_date: Extract named columns from that row.
     log_live_checkpoint: Emit one ``live_chk`` log line.
+    log_option_data_checkpoint: Option-frame checkpoint with greek/quote/vol columns.
 
 Processing Flow:
     1. Live entry calls ``set_live_diag_enabled(True)``.
     2. Call sites pass a stage id + scalar ``data`` (or a frame via
        ``fields_at_current_date``).
     3. Helper no-ops when the gate is off; otherwise logs stage, ids, flags, data.
+    4. All helpers swallow unexpected errors so diagnostics never break the load path.
 
 Usage:
     >>> from EventDriven.riskmanager.live_diag import set_live_diag_enabled, log_live_checkpoint
     >>> set_live_diag_enabled(True)
-    >>> log_live_checkpoint("limits_sized", trade_id="&L:A..", date="2026-07-14", data={"delta": float("nan")})
+    >>> log_live_checkpoint("limits_sized", trade_id="&L:A..", data={"delta": float("nan")})
 """
 
 from __future__ import annotations
@@ -47,7 +52,11 @@ _FLAG_KEYS = frozenset(
     {
         "delta",
         "gamma",
+        "vega",
+        "theta",
+        "rho",
         "vol",
+        "iv",
         "midpoint",
         "price",
         "option_price",
@@ -55,8 +64,48 @@ _FLAG_KEYS = frozenset(
         "closeask",
         "delta_lmt",
         "quantity",
+        "s",
+        "r",
+        "y",
     }
 )
+
+## Full joined-frame set: greeks + IV (stored as Vol after load) + option chain quotes + spot.
+JOINED_OPTION_FIELD_COLUMNS = (
+    "Delta",
+    "Gamma",
+    "Vega",
+    "Theta",
+    "Rho",
+    "Vol",
+    "Midpoint",
+    "Closebid",
+    "Closeask",
+    "s",
+)
+
+## Alias used at leg_loaded (same contract as joined option legs).
+LEG_LOADED_FIELD_COLUMNS = JOINED_OPTION_FIELD_COLUMNS
+
+## Slimmer net-position snapshot after long-short; still includes chain spot ``s``.
+OPTION_TRADE_FIELD_COLUMNS = (
+    "Delta",
+    "Gamma",
+    "Vega",
+    "Theta",
+    "Vol",
+    "Midpoint",
+    "Closebid",
+    "Closeask",
+    "s",
+)
+
+## Raw datamanager artifact columns (lowercase) before the joined frame.
+GREEK_ARTIFACT_COLUMNS = ("delta", "gamma", "vega", "theta", "rho")
+OPTION_SPOT_ARTIFACT_COLUMNS = ("midpoint", "closebid", "closeask")
+VOL_ARTIFACT_COLUMNS = ("iv",)
+SPOT_ARTIFACT_COLUMNS = ("s",)
+
 
 DateLike = Union[datetime, date, str, pd.Timestamp]
 
@@ -96,6 +145,7 @@ def _resolve_current_date(date_value: Optional[DateLike] = None) -> pd.Timestamp
 
     Args:
         date_value: Explicit as-of date, or ``None`` for ``ny_now().date()``.
+            Live load-path callers omit this so lookup pins to today.
 
     Returns:
         Normalized pandas Timestamp at midnight.
@@ -126,58 +176,63 @@ def get_row_at_date(
     Returns:
         Single-row ``Series``, or ``None`` if not found.
     """
-    if data is None or getattr(data, "empty", True):
-        return None
-
-    from trade.helpers.helper import to_datetime
-
-    target = _resolve_current_date(date_value)
-    target_date = target.date()
-    index = data.index
-
-    row: Optional[Union[pd.Series, pd.DataFrame]] = None
     try:
-        if target in index:
-            row = data.loc[target]
-        elif target_date in index:
-            row = data.loc[target_date]
-        else:
-            ## String / mixed indexes: compare on calendar date without KeyError
-            try:
-                mask = pd.DatetimeIndex(to_datetime(index)).normalize() == target
-            except (TypeError, ValueError):
-                try:
-                    mask = pd.Index([to_datetime(x).date() for x in index]) == target_date
-                except (TypeError, ValueError):
-                    return None
-            if not bool(mask.any()):
-                return None
-            row = data.loc[mask]
-    except KeyError:
-        return None
-
-    if row is None:
-        return None
-    ## Duplicate labels → DataFrame; keep last observation for that calendar day
-    if isinstance(row, pd.DataFrame):
-        if row.empty:
+        if data is None or getattr(data, "empty", True):
             return None
-        return row.iloc[-1]
-    return row
+
+        from trade.helpers.helper import to_datetime
+
+        target = _resolve_current_date(date_value)
+        target_date = target.date()
+        index = data.index
+
+        row: Optional[Union[pd.Series, pd.DataFrame]] = None
+        try:
+            if target in index:
+                row = data.loc[target]
+            elif target_date in index:
+                row = data.loc[target_date]
+            else:
+                ## String / mixed indexes: compare on calendar date without KeyError
+                try:
+                    mask = pd.DatetimeIndex(to_datetime(index)).normalize() == target
+                except (TypeError, ValueError):
+                    try:
+                        mask = pd.Index([to_datetime(x).date() for x in index]) == target_date
+                    except (TypeError, ValueError):
+                        return None
+                if not bool(mask.any()):
+                    return None
+                row = data.loc[mask]
+        except KeyError:
+            return None
+
+        if row is None:
+            return None
+        ## Duplicate labels → DataFrame; keep last observation for that calendar day
+        if isinstance(row, pd.DataFrame):
+            if row.empty:
+                return None
+            return row.iloc[-1]
+        return row
+    except Exception:
+        ## Diag must never break the trading path
+        logger.exception("live_diag get_row_at_date failed")
+        return None
 
 
 def fields_at_current_date(
-    data: Optional[pd.DataFrame],
+    data: Optional[Union[pd.DataFrame, pd.Series]],
     columns: Iterable[str],
     date_value: Optional[DateLike] = None,
 ) -> Dict[str, Any]:
     """Extract named columns from the current-date row, with a found flag.
 
     Missing columns or a missing row yield ``None`` values. Column names are
-    matched case-insensitively against the frame.
+    matched case-insensitively against the frame. Accepts a Series (e.g. IV).
 
     Args:
-        data: Option/position timeseries DataFrame.
+        data: Option/position timeseries DataFrame or single-column Series.
         columns: Column names to pull (e.g. ``Delta``, ``Midpoint``).
         date_value: As-of date; defaults to current NY calendar date.
 
@@ -185,20 +240,75 @@ def fields_at_current_date(
         Dict of column → value, plus ``row_found`` (bool).
     """
     cols = list(columns)
-    row = get_row_at_date(data, date_value)
-    if row is None:
-        out: Dict[str, Any] = {c: None for c in cols}
+    try:
+        if isinstance(data, pd.Series):
+            series = data
+            row = get_row_at_date(series.to_frame(name=series.name or "value"), date_value)
+            if row is None:
+                out = {c: None for c in cols}
+                out["row_found"] = False
+                return out
+            name = series.name or "value"
+            out = {}
+            for col in cols:
+                if str(col).lower() == str(name).lower():
+                    out[col] = row.get(name, row.iloc[0] if len(row) else None)
+                else:
+                    out[col] = None
+            out["row_found"] = True
+            return out
+
+        row = get_row_at_date(data, date_value)
+        if row is None:
+            out = {c: None for c in cols}
+            out["row_found"] = False
+            return out
+
+        ## Case-insensitive map so Delta/delta both resolve after capitalize passes
+        lower_map = {str(name).lower(): name for name in row.index}
+        out = {}
+        for col in cols:
+            actual = lower_map.get(str(col).lower())
+            out[col] = None if actual is None else row.get(actual)
+        out["row_found"] = True
+        return out
+    except Exception:
+        logger.exception("live_diag fields_at_current_date failed")
+        out = {c: None for c in cols}
         out["row_found"] = False
         return out
 
-    ## Case-insensitive map so Delta/delta both resolve after capitalize passes
-    lower_map = {str(name).lower(): name for name in row.index}
-    out = {}
-    for col in cols:
-        actual = lower_map.get(str(col).lower())
-        out[col] = None if actual is None else row.get(actual)
-    out["row_found"] = True
-    return out
+
+def log_option_data_checkpoint(
+    stage: str,
+    *,
+    opttick: str,
+    data: Optional[pd.DataFrame] = None,
+    date: Optional[DateLike] = None,
+    columns: Iterable[str] = JOINED_OPTION_FIELD_COLUMNS,
+    note: str = "",
+    **extra: Any,
+) -> None:
+    """Emit one option-data checkpoint with greek / IV / chain-quote columns.
+
+    Args:
+        stage: Stable stage id (e.g. ``option_data_windowed``).
+        opttick: Option tick being processed.
+        data: Joined option timeseries frame.
+        date: As-of date for row lookup; ``None`` → NY today.
+        columns: Columns to pull from the current-date row.
+        note: Optional free-text qualifier.
+        **extra: Additional scalar payload keys merged into ``data``.
+    """
+    try:
+        payload: Dict[str, Any] = {
+            "opttick": opttick,
+            **fields_at_current_date(data, columns, date_value=date),
+            **extra,
+        }
+        log_live_checkpoint(stage, trade_id=opttick, date=date, data=payload, note=note)
+    except Exception:
+        logger.exception("live_diag log_option_data_checkpoint failed stage=%s", stage)
 
 
 def _value_flag(value: Any) -> str:
@@ -253,6 +363,8 @@ def log_live_checkpoint(
 ) -> None:
     """Log one live pipeline checkpoint, or no-op when diagnostics are off.
 
+    Never raises: failures are logged and swallowed so the trading path continues.
+
     Args:
         stage: Stable stage id (e.g. ``leg_loaded``, ``limits_sized``).
         trade_id: Position / trade id when known.
@@ -262,25 +374,28 @@ def log_live_checkpoint(
         level: Logging level for the line.
         enabled: Override the global gate; ``None`` uses ``is_live_diag_enabled``.
     """
-    if enabled is None:
-        enabled = is_live_diag_enabled()
-    if not enabled:
-        return
+    try:
+        if enabled is None:
+            enabled = is_live_diag_enabled()
+        if not enabled:
+            return
 
-    payload = _compact_payload(dict(data or {}))
-    as_of = _resolve_current_date(date)
-    flags = {
-        key: _value_flag(value)
-        for key, value in payload.items()
-        if str(key).lower() in _FLAG_KEYS
-    }
-    logger.log(
-        level,
-        "live_chk stage=%s trade_id=%s date=%s %s flags=%s data=%s",
-        stage,
-        trade_id,
-        as_of.strftime("%Y-%m-%d"),
-        note,
-        flags,
-        payload,
-    )
+        payload = _compact_payload(dict(data or {}))
+        as_of = _resolve_current_date(date)
+        flags = {
+            key: _value_flag(value)
+            for key, value in payload.items()
+            if str(key).lower() in _FLAG_KEYS
+        }
+        logger.log(
+            level,
+            "live_chk stage=%s trade_id=%s date=%s %s flags=%s data=%s",
+            stage,
+            trade_id,
+            as_of.strftime("%Y-%m-%d"),
+            note,
+            flags,
+            payload,
+        )
+    except Exception:
+        logger.exception("live_diag log_live_checkpoint failed stage=%s", stage)
