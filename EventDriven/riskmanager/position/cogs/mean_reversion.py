@@ -106,7 +106,9 @@ class MeanReversionSizerCog(BaseCog):
         cash_available = request.tick_cash
         opt_price = option_chain.get_price()
         date = order["date"]
-        info = self.eq_strategy.info_on_date(ticker=ticker, current_date=date)
+        ## Strategy bars are calendar-indexed; order dates often carry EOD 16:00 and miss _dates_map.
+        lookup_date = pd.Timestamp(date).strftime("%Y-%m-%d")
+        info = self.eq_strategy.info_on_date(ticker=ticker, current_date=lookup_date)
         z_raw = info["mean_reversion_indicators"]["zscore"]
         signal_id = SignalID(order["signal_id"])
         if "mean_reversion" not in signal_id.strategy_slug:
@@ -207,7 +209,9 @@ class MeanReversionSizerCog(BaseCog):
             float: Adjusted delta limit based on mean reversion scaling.
         """
 
-        info = self.eq_strategy.info_on_date(ticker=ticker, current_date=date)
+        info = self.eq_strategy.info_on_date(
+            ticker=ticker, current_date=pd.Timestamp(date).strftime("%Y-%m-%d")
+        )
         z_raw = info["mean_reversion_indicators"]["zscore"]
 
         ## scale z-score on the remainder of the distance to the minimum z-score threshold.
