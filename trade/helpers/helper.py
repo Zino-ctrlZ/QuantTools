@@ -44,6 +44,7 @@ import inspect
 from datetime import datetime
 from copy import deepcopy
 from trade.helpers.Logging import setup_logger
+from trade.helpers.cache_registry import write_cache_registry
 from trade.helpers.helper_types import OptionTickMetaData
 from pathlib import Path
 import os
@@ -420,10 +421,7 @@ class CustomCache(Cache):
             loc = str(self.dir)
             json_file.update({loc: self.expiry_date})
 
-            tmp = registry.with_suffix(".tmp")
-            with tmp.open("w") as f:
-                json.dump(json_file, f, default=str)
-            tmp.replace(registry)
+            write_cache_registry(registry, json_file)
 
     def keys(self):
         return list(self)
