@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 import os
 from trade.helpers.Logging import setup_logger
+from trade.helpers.cache_registry import write_cache_registry
 from dotenv import load_dotenv
 logger = setup_logger('trade.helpers.clear_cache', stream_log_level="DEBUG")
 load_dotenv()
@@ -41,10 +42,7 @@ def cleanup_expired_caches():
     
     # 5) write back updated registry if anything changed
     if changed:
-        tmp = REGISTRY.with_suffix(".tmp")
-        with tmp.open("w") as f:
-            json.dump(data, f, indent=2)
-        tmp.replace(REGISTRY)
+        write_cache_registry(REGISTRY, data, indent=2)
         logger.info(f"Updated cache registry after cleanup. Deleted {files_deleted} cache directories.")
     else:
         logger.info(f"No expired caches to delete on {today}.")
