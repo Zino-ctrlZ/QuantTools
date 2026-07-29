@@ -26,6 +26,9 @@ class Indicator:
     overlay: bool = False
     color: Optional[str] = "red"
     values: Optional[np.ndarray] = None
+    ## When False, make_bt_wrapper skips self.I(...) registration so leading NaNs
+    ## cannot delay backtesting.py's first Strategy.next() via indicator warmup.
+    plot_in_backtester: bool = True
 
     def __post_init__(self):
         if not isinstance(self.name, str):
@@ -38,6 +41,8 @@ class Indicator:
             raise TypeError("Indicator color must be a string or None.")
         if self.values is not None and not isinstance(self.values, np.ndarray):
             raise TypeError("Indicator values must be a numpy array or None.")
+        if not isinstance(self.plot_in_backtester, bool):
+            raise TypeError("Indicator plot_in_backtester must be a boolean.")
         if self.values is None:
             self.values = self.series.to_numpy(copy=False)
 
@@ -826,7 +831,14 @@ class StrategyBase(ABC):
         """
         raise NotImplementedError("Subclasses must implement should_close() method to return a TradeDecision object.")
 
-    def add_indicator(self, name: str, series: pd.Series, overlay: bool = False, color: Optional[str] = "red") -> None:
+    def add_indicator(
+        self,
+        name: str,
+        series: pd.Series,
+        overlay: bool = False,
+        color: Optional[str] = "red",
+        plot_in_backtester: bool = True,
+    ) -> None:
         """
         Add a technical indicator to the strategy for tracking and visualization.
 
@@ -838,14 +850,22 @@ class StrategyBase(ABC):
             overlay (bool, optional): If True, plot on main price chart. If False,
                 create separate subplot. Defaults to False.
             color (Optional[str], optional): Color for plotting. Defaults to "red".
+            plot_in_backtester (bool, optional): If True, register the series with
+                backtesting.py ``Strategy.I`` when ``plot_indicators=True``. Set
+                False for sparse / late-starting features so leading NaNs do not
+                delay the first ``Strategy.next`` call. Defaults to True.
 
         Example:
             sma_20 = self._df['close'].rolling(20).mean()
             self.add_indicator('SMA_20', sma_20, overlay=True, color='blue')
         """
-        # assumes you have an Indicator class somewhere
         self.indicators[name] = Indicator(
-            name=name, series=series, overlay=overlay, color=color, values=series.to_numpy(copy=False)
+            name=name,
+            series=series,
+            overlay=overlay,
+            color=color,
+            values=series.to_numpy(copy=False),
+            plot_in_backtester=plot_in_backtester,
         )
 
     def get_indicator(self, name: str) -> Any:
