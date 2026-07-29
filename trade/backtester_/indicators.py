@@ -1,3 +1,16 @@
+"""Indicator helpers for backtests and ATR trailing stops.
+
+Provides band/ATR dataframe builders and O(1) single-bar ATR trail updates.
+Live remake catch-up lives on ``LiveAtrTrailStrategyBase`` (in-memory walk).
+
+Core Functions:
+        compute_atr_loss: ATR distance series for trailing stops.
+        update_atr_trail_long: Single-bar long trail ratchet.
+        update_atr_trail_short: Single-bar short trail ratchet.
+"""
+
+from __future__ import annotations
+
 import pandas as pd
 import pandas_ta as ta
 from backtesting.lib import crossover # noqa: F401
@@ -5,6 +18,7 @@ from copy import deepcopy
 import numpy as np
 import warnings
 from typing import Optional
+
 warnings.filterwarnings("ignore")
 
 def create_bbands_dataframe(data, length=20, std=2) -> pd.DataFrame:

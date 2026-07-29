@@ -1,6 +1,16 @@
+"""Backtesting.py Strategy wrappers for StrategyBase brains.
+
+Builds a thin Strategy subclass that constructs a brain in ``init`` and
+delegates open/close decisions in ``next``. Indicators marked
+``plot_in_backtester=False`` are skipped when registering ``Strategy.I`` so
+sparse / late-starting feature series cannot delay the first ``next`` call via
+backtesting.py indicator warmup.
+"""
 
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+
 import pandas as pd
+
 from .data import PTDataset
 
 if TYPE_CHECKING:
@@ -49,6 +59,7 @@ def make_bt_wrapper(
     wrapper_name = name or f"BT_{brain_cls.__name__}"
 
     def _init(self):
+        """Construct the brain and optionally register plottable indicators."""
         # Build kwargs for brain init
         brain_kwargs = {}
         for k in brain_cls.bt_params.keys():
@@ -56,33 +67,48 @@ def make_bt_wrapper(
             if val is REQUIRED:
                 raise ValueError(f"{wrapper_name}: parameter '{k}' is REQUIRED but was not set.")
             brain_kwargs[k] = val
+        brain_kwargs["ticker"] = getattr(self, "_name", None)
+        if verbose:
+            print("Brain Kwargs: ", brain_kwargs)
+            print("Saved Name: ", getattr(self, "_name", None))
 
         # Build dataset for the brain
         ds = dataset_factory(self.data.df)
 
         # Pass start_date directly (Timestamp or None)
-        ticker_name = getattr(ds, "name", None) or getattr(ds, "ticker", None) or "NA"
         self.brain = brain_cls(
             data=ds,
             start_trading_date=self.start_date,
-            ticker=ticker_name,
+            ticker=brain_kwargs.pop("ticker"),
             **brain_kwargs,
         )
 
-        # Optional plotting
+        ## Only register indicators flagged for backtester plotting. Sparse /
+        ## late-starting series (e.g. setup features with long leading NaNs)
+        ## must stay out of Strategy.I — backtesting.py delays first next()
+        ## until every non-scatter I() indicator has a non-NaN value.
         if plot_indicators:
             for ind in getattr(self.brain, "indicators", {}).values():
+                if not getattr(ind, "plot_in_backtester", True):
+                    continue
                 try:
                     self.__setattr__(
                         ind.name,
-                        self.I(lambda s=ind.values: s, name=ind.name, overlay=ind.overlay),
+                        self.I(
+                            lambda s=ind.values: s,
+                            name=ind.name,
+                            overlay=ind.overlay,
+                        ),
                     )
                 except Exception:
                     pass
 
     def _next(self):
+        """Evaluate open/close decisions for the latest bar."""
         date = self.data.index[-1]
         open_decision = self.brain.should_open(date=date)
+        if verbose:
+            print(f"Open Decision: {open_decision.ok}, Date: {date}")
         if open_decision.ok:
             if verbose:
                 print(f"Opening position on {date} at price {self.data.Close[-1]}")
