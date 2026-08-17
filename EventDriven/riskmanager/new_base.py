@@ -352,15 +352,18 @@ class RiskManager(BacktestRunMixin):
         self.analysis_cache.clear()
         self.order_cache.clear()
         self.order_request_cache.clear()
+        self.market_data.pre_run_setup()
 
-    def clear_caches(self):
+    def clear_caches(self, include_persistent: bool = False):
         """
         Clears all caches used by the RiskManager.
         """
         if get_use_temp_cache():
             self.market_data.options_cache.clear()
             self.market_data.position_data_cache.clear()
-            get_persistent_cache().clear()  ## Ensures any caching with `.memoize` is cleared as well.
+            self.market_data.pre_run_setup()
+            if include_persistent:
+                get_persistent_cache().clear()  ## Ensures any caching with `.memoize` is cleared as well.
         else:
             logger.critical("USE_TEMP_CACHE set to False. Cache will not be cleared")
 
