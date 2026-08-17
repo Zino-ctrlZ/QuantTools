@@ -44,7 +44,7 @@ Mandatory for every Python file created or edited. Follow PEP 257 and Google-sty
 3. Blank line, then structured sections with trailing colons: Core Classes, Core Dataclasses, Core Functions, Processing Flow, Risk/Assumptions, Caching Strategy, Usage (as applicable).
 4. Usage section: short doctest-style snippet when practical.
 
-## Inline Comments
+## Inline Comments (Always-on)
 
 Docstrings are mandatory and describe **what** each unit does. Inline comments explain **why** and **where in the flow** — especially in orchestration and policy code.
 
