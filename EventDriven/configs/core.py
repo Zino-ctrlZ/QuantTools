@@ -296,7 +296,9 @@ class ScoringConfigs(BaseConfigs):
 
     # DTE
     target_dte: numbers.Number = 200
-    dte_tolerance: numbers.Number = 100
+    dte_tolerance: numbers.Number | None = 100
+    above_dte_tolerance: numbers.Number | None = None
+    below_dte_tolerance: numbers.Number | None = None
     dte_sigma: numbers.Number = 10
     dte_tilt: Literal["flat", "short", "long"] = "short"
 
@@ -318,6 +320,15 @@ class ScoringConfigs(BaseConfigs):
     # Theta burden
     theta_burden_max: numbers.Number = 0.03
     theta_burden_sigma: numbers.Number = 0.02
+
+    def __post_init__(self, ctx=None):
+        super().__post_init__(ctx)
+        if self.dte_tolerance is not None:
+            if self.above_dte_tolerance is not None or self.below_dte_tolerance is not None:
+                raise ValueError("dte_tolerance and above_dte_tolerance/below_dte_tolerance cannot be provided together.")
+        else:
+            if not all([self.above_dte_tolerance is not None, self.below_dte_tolerance is not None]):
+                raise ValueError("dte_tolerance is None, so both above_dte_tolerance and below_dte_tolerance must be provided.")
 
 
 @pydantic_dataclass
@@ -519,3 +530,75 @@ class DonchianMomentumCogConfig(BaseCogConfig):
     max_scale: float = 2.0
     dte_limit_enabled: bool = True
     dte_threshold: int = 15
+
+
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class ShortIdxEqCogConfig(BaseCogConfig):
+    """Configuration for ShortIdxEqCog.
+
+    Dollar-multiplier sizing for short Donchian equity index options, plus
+    optional profit-management analysis. ``trade_size`` is required. Multiplier
+    version 2 is not supported.
+
+    Effective trade size is ``min(tick_cash, config.trade_size)``. The default
+    quantity calculator is always ``trade_size * multiplier / 3`` scaled by
+    unscaled option close * 100. Pass a custom ``calculator(multiplier,
+    option_price, trade_size)`` on the cog when a different formula is needed.
+
+    ``enable_profit_roll`` and ``enable_profit_waterfall`` are mutually exclusive.
+    Both False skips analysis opinions.
+
+    Waterfall mode (``enable_profit_waterfall``): when PnL% vs initial premium
+    clears ``waterfall_profit_threshold``, qty 1 ROLLs; larger sizes CLOSE
+    ``ceil(initial_qty * waterfall_close_fraction)`` once. Optionally, the
+    crossing PnL also arms a multiplicative profit stop
+    (``crossing_pnl * waterfall_stop_loss_offset``) for the remaining
+    position, persisted in position metadata.
+    """
+
+    name: str = "ShortIdxEqCog"
+    enabled: bool = True
+    ## Required at cog construction; default None only because parent config fields have defaults.
+    trade_size: Optional[float] = None
+    multiplier_version: Optional[int] = None
+    enable_profit_roll: bool = False
+    enable_profit_waterfall: bool = False
+    roll_profit_threshold: float = 1.0
+    waterfall_profit_threshold: float = 1.0
+    waterfall_close_fraction: float = 0.5
+    enable_waterfall_stop_loss: bool = False
+    waterfall_stop_loss_offset: float = 0.5
+    strategy_slug_token: str = "short_donchian_equity"
+
+    def __post_init__(self, ctx=None):
+        """Validate required sizing and roll knobs.
+
+        Args:
+            ctx: Optional pydantic validation context forwarded to the base config.
+        """
+        super().__post_init__(ctx)
+        if self.trade_size is None or self.trade_size <= 0:
+            raise ValueError("trade_size is required and must be > 0")
+        if self.multiplier_version is not None and self.multiplier_version not in (1, 3):
+            raise ValueError(
+                "multiplier_version must be 1 or 3 when set; version 2 is not supported"
+            )
+        if self.enable_profit_roll and self.enable_profit_waterfall:
+            raise ValueError(
+                "enable_profit_roll and enable_profit_waterfall are mutually exclusive; "
+                "set at most one to True"
+            )
+        if self.roll_profit_threshold <= 0:
+            raise ValueError("roll_profit_threshold must be > 0")
+        if self.waterfall_profit_threshold <= 0:
+            raise ValueError("waterfall_profit_threshold must be > 0")
+        if not (0.0 < self.waterfall_close_fraction <= 1.0):
+            raise ValueError("waterfall_close_fraction must be in (0, 1]")
+        if self.waterfall_stop_loss_offset <= 0:
+            raise ValueError("waterfall_stop_loss_offset must be > 0")
+        if self.enable_waterfall_stop_loss and not self.enable_profit_waterfall:
+            raise ValueError(
+                "enable_waterfall_stop_loss requires enable_profit_waterfall=True"
+            )
+        if not self.strategy_slug_token:
+            raise ValueError("strategy_slug_token must be a non-empty string")
