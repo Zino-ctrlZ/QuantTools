@@ -21,6 +21,16 @@ Available Cogs:
         - DTE-based roll trigger detection
         - Strategy-slug exclusion checks for both sizing and analysis
 
+    ShortIdxEqCog (short_idx_eq.py):
+        - min(tick_cash, trade_size) * assign_dollar_multiplier sizing
+        - REQUIRED_SETUP_FEATURES snapshot at signal-id date
+        - Optional full PnL% ROLL (enable_profit_roll) or one-shot waterfall:
+          qty 1 ROLL / else CLOSE ceil(half) (enable_profit_waterfall)
+        - Optional metadata-backed waterfall profit stop for remaining quantity
+
+    pnl_utils.py:
+        - correct_position_pnl: ledger-backed PnL% for cogs (safe after partial SELL)
+
 Utilities:
     analyze_utils.py:
         - DTE calculation from position IDs
@@ -42,7 +52,7 @@ Design Pattern:
     - Opinion-based recommendation system
 
 Usage:
-    from EventDriven.riskmanager.position.cogs import PlainSizingCog, VectorizedCog
+    from EventDriven.riskmanager.position.cogs import PlainSizingCog, VectorizedCog, ShortIdxEqCog
     from EventDriven.riskmanager.position.cogs.analyze_utils import (
         get_dte_and_moneyness_from_trade_id
     )
@@ -54,6 +64,14 @@ See Also:
 
 from EventDriven.riskmanager.position.cogs.vectorized import VectorizedCog
 from EventDriven.riskmanager.position.cogs.plain_sizing import PlainSizingCog
-from EventDriven.configs.core import VectorizedCogConfig, PlainSizingCogConfig
+from EventDriven.riskmanager.position.cogs.short_idx_eq import ShortIdxEqCog
+from EventDriven.configs.core import VectorizedCogConfig, PlainSizingCogConfig, ShortIdxEqCogConfig
 
-__all__ = ["VectorizedCog", "VectorizedCogConfig", "PlainSizingCog", "PlainSizingCogConfig"]
+__all__ = [
+    "VectorizedCog",
+    "VectorizedCogConfig",
+    "PlainSizingCog",
+    "PlainSizingCogConfig",
+    "ShortIdxEqCog",
+    "ShortIdxEqCogConfig",
+]

@@ -975,6 +975,12 @@ class OptionSignalPortfolio(Portfolio):
                 entry_date = self._get_entry_date_for_position(position["position"]["trade_id"], signal_id)
                 trade_id = position["position"]["trade_id"]
                 qty = position["quantity"]
+                ## Open-book entry/pnl: book entry_price is a TOTAL (premium*qty*100).
+                ## After a partial SELL that total is NOT pro-rated while qty shrinks, so
+                ## entry_price/qty inflates and pnl = MV - full_entry is not remaining-only
+                ## unrealized. Cogs that need a stable return vs initial cost should use
+                ## correct_position_pnl from EventDriven.riskmanager.position.cogs.pnl_utils
+                ## (trade.total_pnl / buy_ledger initial notional) instead of these fields.
                 entry_price = position["entry_price"] / qty
                 current_position_data = self.risk_manager.market_data.get_at_time_position_data(
                     position_id=trade_id, date=date_str
@@ -1156,6 +1162,9 @@ class OptionSignalPortfolio(Portfolio):
         if fill_event.direction == "SELL":
             if fill_event.position is not None:
                 new_position_data["position"] = fill_event.position
+                ## ponytail: entry_price stays the original TOTAL while quantity shrinks;
+                ## pro-rate on SELL when open-book PositionState.pnl/entry must be honest.
+                ## Until then, cogs should use correct_position_pnl (pnl_utils) for ratios.
                 new_position_data["entry_price"] = self.current_positions[fill_event.symbol][fill_event.signal_id][
                     "entry_price"
                 ]
