@@ -114,6 +114,10 @@ def timeit(func):
         def my_function(x, y):
             return x + y
     """
+    try:
+        from dbase.database.db_utils import get_current_environment
+    except ImportError:
+        get_current_environment = lambda: "No environment found"
 
     def _serialize_arg(arg):
         """Convert argument to serializable format"""
@@ -155,9 +159,11 @@ def timeit(func):
                     "execution_time_in_seconds": execution_time,
                     "args": str(serialized_args),
                     "kwargs": str(serialized_kwargs),
+                    "environment": get_current_environment(),
                 }
 
                 _TIMEIT_BUCKET.append(metadata)
+                time_logger.info(f"{func.__name__} took {execution_time} seconds. Metadata: {metadata}")
 
             return result
 
