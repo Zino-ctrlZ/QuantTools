@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         PnLMonitorConfigConfigurable,
         VectorizedCogConfig,
         PlainSizingCogConfig,
+        ShortIdxEqCogConfig,
     )
 
 logger = setup_logger("EventDriven.configs.export_configs")
@@ -83,6 +84,7 @@ class ConfigsDict(TypedDict, total=False):
     PnLMonitorConfigConfigurable: "PnLMonitorConfigConfigurable"
     VectorizedCogConfig: "VectorizedCogConfig"
     PlainSizingCogConfig: "PlainSizingCogConfig"
+    ShortIdxEqCogConfig: "ShortIdxEqCogConfig"
 
 
 @dataclass
@@ -150,8 +152,12 @@ class RunConfigBundle:
 
         conf_bund_cls: ConfigsDict = {}  # type: ignore
         for label in confs.keys():
-            # Extract class name without _1, _2 suffixes
-            conf_name = label.split("_")[0] if "_" in label else label
+            ## Strip trailing _N instance suffix only (keep CamelCase names like ShortIdxEqCogConfig).
+            parts = label.rsplit("_", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                conf_name = parts[0]
+            else:
+                conf_name = label
             cls_module = importlib.import_module("EventDriven.configs.core")
             conf_cls = getattr(cls_module, conf_name)
             # Store with just the class name (no _1 suffix)

@@ -232,6 +232,13 @@ def setup_logger(
         FILE_LOG_LEVEL = 'INFO'
         PROPAGATE_TO_ROOT_LOGGER = 'False'
     """
+    ## Retry the dbase hook on every call: the module-level attempt runs while the
+    ## `trade` package is still initializing, so importing dbase there hits the
+    ## trade <-> dbase cycle and is swallowed as ImportError, leaving loggers stuck
+    ## with the environment tag they were born with. By the time any caller reaches
+    ## setup_logger, dbase is importable, so this is where registration sticks.
+    _register_env_change_refresh()
+
     project_root_log_dir = dir or get_logger_base_location()
 
     # If custom logger name is None, use filename:

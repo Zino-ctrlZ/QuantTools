@@ -27,6 +27,7 @@ CONFIG_CLASS_DESCRIPTIONS = {
     "PnLMonitorConfigConfigurable": "Explicit threshold-based PnL monitor config where each trigger is directly user-configurable.",
     "VectorizedCogConfig": "Config for a lightweight cog that monitors DTE thresholds using vectorized-friendly checks.",
     "PlainSizingCogConfig": "Config for a simple sizing cog with fallback one-lot behavior and optional strategy-token exclusions.",
+    "ShortIdxEqCogConfig": "Config for short-index-equity dollar-multiplier sizing and optional profit roll or waterfall with a metadata-backed profit stop.",
 }
 
 CONFIG_DEFINITIONS = {
@@ -184,7 +185,9 @@ CONFIG_DEFINITIONS = {
         "m_sigma": "Moneyness scoring sigma for gaussian weighting (default 0.2).",
         "m_tilt": "Moneyness tilt preference: 'otm', 'itm', or 'atm' (default 'otm').",
         "target_dte": "Target days to expiration for scoring (default 200).",
-        "dte_tolerance": "Allowed DTE deviation from target (default 100).",
+        "dte_tolerance": "Symmetric allowed DTE deviation from target when above/below are unset (default 100).",
+        "above_dte_tolerance": "Optional days allowed above target_dte; requires below_dte_tolerance and overrides dte_tolerance.",
+        "below_dte_tolerance": "Optional days allowed below target_dte; requires above_dte_tolerance and overrides dte_tolerance.",
         "dte_sigma": "DTE scoring sigma for gaussian weighting (default 10).",
         "dte_tilt": "DTE tilt preference: 'flat', 'short', or 'long' (default 'short').",
         "mid_min": "Minimum acceptable mid price (default 0.5).",
@@ -245,6 +248,21 @@ CONFIG_DEFINITIONS = {
         "dte_limit_enabled": "If True, this cog also enforces DTE-based checks for monitored positions.",
         "dte_threshold": "DTE cutoff used when dte_limit_enabled is True.",
         "exclude_strategy_slug_tokens": "Strategy slug tokens that bypass this cog; any match skips plain sizing logic for that strategy.",
+    },
+    "ShortIdxEqCogConfig": {
+        "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
+        "name": "Cog name used to register/identify the short-index-equity cog.",
+        "enabled": "If False, sizing and analysis for this cog are skipped.",
+        "trade_size": "Required dollar cap; effective size is min(tick_cash, trade_size).",
+        "multiplier_version": "Optional assign_dollar_multiplier version (1 or 3) applied only for the call, then restored.",
+        "enable_profit_roll": "If True, emit full ROLL when position PnL% exceeds roll_profit_threshold; mutually exclusive with enable_profit_waterfall.",
+        "enable_profit_waterfall": "If True, qty 1 ROLLs and larger sizes CLOSE ceil(initial_qty * waterfall_close_fraction) once when PnL% clears waterfall_profit_threshold; mutually exclusive with enable_profit_roll.",
+        "roll_profit_threshold": "PnL ratio versus entry premium that triggers an optional full profit roll (enable_profit_roll only).",
+        "waterfall_profit_threshold": "PnL ratio versus initial entry premium that triggers waterfall ROLL (qty 1) or one-time fractional CLOSE (qty > 1).",
+        "waterfall_close_fraction": "Fraction of initial_quantity to CLOSE on waterfall (qty > 1); close size is ceil(initial_qty * fraction). Default 0.5; use 1/3 or 0.25 for thirds/quarters.",
+        "enable_waterfall_stop_loss": "If True, arm a fixed profit stop when the waterfall threshold is first crossed and close the remaining position when PnL falls to it.",
+        "waterfall_stop_loss_offset": "Multiplier applied to PnL on the threshold-crossing look to set the waterfall profit stop; 0.5 turns 110% crossing PnL into a 55% stop.",
+        "strategy_slug_token": "Strategy slug token required for this cog to size or analyze a signal.",
     },
 }
 

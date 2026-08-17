@@ -1,4 +1,9 @@
 Running Todo:
+    ☐ Revisit pricing model performance:
+        ☐ Add some sort of performance testing tracker to test performance of the pricing model.
+        ☐ Add some sort of logging to track problematic pricing model performance on specific dates for some options
+        ☐ Test model attribution to gather large trade pnl fluctuations.
+        ☐ Test bump size effect on performance.
     ☐ Add thetadata & vol fitting config to option data config
     ☐ How do we handle reverse splits?
     ☐ Write a ChainDataManager

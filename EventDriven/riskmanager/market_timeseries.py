@@ -975,6 +975,22 @@ class BacktestTimeseries(BacktestRunMixin):
         )
         return final_data
     
+    def get_individual_legs_data_for_position(
+        self,
+        position_id: str,
+        check_date: Union[datetime, str],
+    ) -> dict[str, list[tuple[str, pd.DataFrame]]]:
+        """
+        Get the data for the individual legs of a position.
+        """
+        position_id = self._get_trade_id(position_id)
+        data_dict = {"L": [], "S": []}
+
+        for direction, opttick in position_id.legs:
+            leg_data = self.generate_option_data_for_trade(opttick, check_date)
+            data_dict[direction].append((opttick, leg_data))
+        return data_dict
+
     def _check_date_present_in_index(
         self,
         data: pd.DataFrame,

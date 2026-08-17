@@ -271,6 +271,8 @@ class OrderPicker:
             max_moneyness=configs.max_moneyness,
             target_dte=configs.target_dte,
             dte_tol=configs.dte_tolerance,
+            above_dte_tolerance=configs.above_dte_tolerance,
+            below_dte_tolerance=configs.below_dte_tolerance,
         )
 
         if chain.empty:

@@ -184,8 +184,7 @@ import functools
 from trade.assets.helpers.utils import swap_ticker
 from trade.datamanager.loaders import load_full_option_data
 
-# from trade.datamanager.vars import get_times_series
-from trade.datamanager._enums import DivType, OptionPricingModel # noqa
+from trade.datamanager._enums import DivType, OptionPricingModel  # noqa
 from trade.datamanager.utils.date import sync_date_index
 from trade.helpers.helper import generate_option_tick_new, parse_option_tick, CustomCache, change_to_last_busday
 from dbase.DataAPI.ThetaData import retrieve_bulk_open_interest, retrieve_chain_bulk
@@ -204,6 +203,7 @@ import signal
 from EventDriven._vars import get_use_temp_cache
 from .config import ffwd_data
 from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
+from trade.helpers.decorators import timeit # noqa
 
 
 ## Vars
@@ -225,7 +225,9 @@ logger.info("RISK MANAGER is Using New DataManager")
 
 ## Caches
 _TEMP_CACHE = CustomCache(location / "temp", fname="temp_cache", clear_on_exit=True)
-_PERSISTENT_CACHE = CustomCache(location, fname="persistent_cache", expire_days=30, size_limit=10e9) ## 10 GB size limit for persistent cache
+_PERSISTENT_CACHE = CustomCache(
+    location, fname="persistent_cache", expire_days=30, size_limit=10e9
+)  ## 10 GB size limit for persistent cache
 spot_cache = CustomCache(BASE, fname="spot", expire_days=45)
 
 ## Flags
@@ -424,12 +426,14 @@ def get_cache(name: str) -> CustomCache:
 
 
 # @dynamic_memoize
+@timeit
 def populate_cache_with_chain(
     tick,
     date,
     chain_spot=None,
     print_url=True,
     add_greeks=False,
+    force_persist: bool = False,
 ):
     """Fetch option chain data with datamanager-aligned today caching rules.
 
@@ -452,7 +456,7 @@ def populate_cache_with_chain(
     date_str = pd.to_datetime(date, format="%Y-%m-%d").strftime("%Y-%m-%d")
     key = (tick, date_str)
     chain_date = pd.to_datetime(date_str).date()
-    should_use_cache = chain_date < date_cls.today() or _should_save_today(max_date=chain_date)
+    should_use_cache = chain_date < date_cls.today() or _should_save_today(max_date=chain_date) or force_persist
     cache = get_persistent_cache()
 
     if should_use_cache and key in cache:
@@ -468,7 +472,9 @@ def populate_cache_with_chain(
         if not should_use_cache and key in cache:
             del cache[key]
 
-        chain = retrieve_chain_bulk(symbol=tick, start_date=date, end_date=date, end_time="16:00", option_type="C", print_url=False, exp = None)
+        chain = retrieve_chain_bulk(
+            symbol=tick, start_date=date, end_date=date, end_time="16:00", option_type="C", print_url=False, exp=None
+        )
         logger.info(f"Retrieved chain for {tick} on {date}")
 
         ## Retrieve OI
@@ -478,12 +484,8 @@ def populate_cache_with_chain(
         prev = change_to_last_busday((pd.to_datetime(date) - BDay(1))).strftime("%Y-%m-%d")
         oi = retrieve_bulk_open_interest(symbol=tick, exp=0, start_date=prev, end_date=prev, print_url=False)
 
-
-        
         ## Clip Chain
-        chain_clipped = (
-            chain.reset_index()
-        ) 
+        chain_clipped = chain.reset_index()
 
         chain_clipped = chain_clipped.merge(
             oi[["Root", "Expiration", "Strike", "Right", "Open_interest"]],
@@ -493,18 +495,15 @@ def populate_cache_with_chain(
 
         if PATCH_TICKERS:
             chain_clipped["Root"] = chain_clipped["Root"].apply(swap_ticker)
-        
+
         if should_use_cache:
             cache[key] = chain_clipped.copy()
         chain_clipped.columns = chain_clipped.columns.str.capitalize()
 
     ## Create ID
-    id_params = chain_clipped[
-        ["Root", "Right", "Expiration", "Strike"]
-    ].T.to_numpy()
+    id_params = chain_clipped[["Root", "Right", "Expiration", "Strike"]].T.to_numpy()
     ids = runThreads(generate_option_tick_new, id_params)
     chain_clipped["opttick"] = ids
-
 
     filter_opt = get_avoid_opticks(tick)
     chain_clipped["datetime"] = pd.to_datetime(date)
@@ -514,15 +513,6 @@ def populate_cache_with_chain(
         pd.to_datetime(chain_clipped["Expiration"]) - pd.to_datetime(chain_clipped["datetime"])
     ).dt.days
 
-    # ## Save to cache
-    # def save_to_cache(id, date, spot):
-    #     date = pd.to_datetime(date).strftime("%Y-%m-%d")
-    #     save_id = f"{id}_{date}"
-    #     if save_id not in get_cache("spot"):
-    #         spot_cache[save_id] = spot
-
-    # save_params = chain_clipped[["opttick", "datetime", "Midpoint"]].T.to_numpy()
-    # runThreads(save_to_cache, save_params)
 
     if chain_spot:
         chain_clipped["spot"] = chain_spot
@@ -543,7 +533,7 @@ def populate_cache_with_chain(
     chain_clipped[["iv", "delta", "gamma", "vega", "theta", "rho", "volga"]] = (
         np.nan
     )  # Placeholder for Greeks, to be filled in later when we have the data
-    
+
     return chain_clipped
 
 
@@ -649,7 +639,7 @@ def load_position_data_new(opttick, processed_option_data, start, end) -> pd.Dat
     vol.name = "vol"
     data = greeks.join(option_spot[["midpoint", "closeask", "closebid"]])
     data.columns = data.columns.str.capitalize()
-    data = data.join(s).join(r).join(vol)#.join(y)
+    data = data.join(s).join(r).join(vol)  # .join(y)
     logger.info(f"Data processing for {opttick} took {time.time() - start_time:.2f} seconds")
     log_option_data_checkpoint(
         "position_data_loaded",

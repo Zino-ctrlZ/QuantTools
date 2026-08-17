@@ -27,6 +27,7 @@ FREQ_MAP = {
     "quarterly": 3,
     "semiannual": 6,
     "annual": 12,
+    "bimonthly": 2,
 }
 
 
@@ -35,11 +36,11 @@ def classify_frequency(days):
     if 20 < days < 40:
         return "monthly"
     elif 50 < days < 80:
-        return "bi-monthly"
+        return "bimonthly"
     elif 80 < days < 110:
         return "quarterly"
     elif 170 < days < 200:
-        return "semi-annual"
+        return "semiannual"
     elif 330 < days < 370:
         return "annual"
     else:

@@ -2,35 +2,54 @@
 
 Provides quantity normalization, option attribution loading, and position-level
 PnL decomposition with trade-aware adjustments for fills, commissions, and
-slippage across a trade lifecycle.
+slippage across a trade lifecycle. Includes a static (no-Trade) path that
+uses caller-provided per-leg market timeseries instead of portfolio RM data.
 
 Core Dataclasses:
     QuantityTimeSeries: Daily quantity state and execution metadata.
-    BacktestPositionAttribution: Attribution output for a single trade.
+    BacktestPositionAttribution: Attribution output for a single trade/position.
+    LegTimeseries: One option leg market frame for the static path.
+    StaticPosition: Static hold specification (legs, window, costs).
+
+Core Classes:
+    PositionAttributionAnalyzer: Portfolio/Trade path.
+    StaticPositionAttributionAnalyzer: Static path (leg frames, no Trade).
 
 Core Functions:
     _get_trade_quantity_time_series: Builds daily quantity and cost series.
     create_position_attribution: Loads and combines leg-level attribution.
     compute_position_attribution: Applies quantity and trade adjustments.
     compute_backtest_position_attribution: End-to-end portfolio integration.
+    create_static_position_attribution: Unit attribution from leg frames.
+    compute_static_position_attribution: End-to-end static path.
 
-Processing Flow:
+Processing Flow (portfolio):
     1. Build trade quantity time series from buy/sell ledgers.
     2. Load and aggregate leg-level option attribution by date.
     3. Scale greek attribution by position quantity.
     4. Apply open/close trade PnL adjustments and transaction costs.
     5. Return normalized daily attribution components.
 
+Processing Flow (static):
+    1. Build OptionPnlPayload from caller leg frames (not portfolio RM).
+    2. Sum leg attribution via load_option_pnl_data (modern loader).
+    3. Synthetic open/close quantity series (no Trade ledgers).
+    4. Reuse compute_position_attribution for residual and open/close zeroing.
+    5. Commission and slippage_pct costs on open/close qty-change days.
+
 Usage:
     >>> analyzer = PositionAttributionAnalyzer(portfolio)
     >>> result = analyzer.analyze_trade(trade_id)
     >>> daily_attr = result.attribution
+    >>>
+    >>> static = StaticPositionAttributionAnalyzer(positions={pos.position_id: pos})
+    >>> static_result = static.analyze(pos.position_id)
 """
 
 
 from trade.helpers.helper import change_to_last_busday, to_datetime
 from pandas.tseries.offsets import BDay
-from typing import Callable, Union
+from typing import Callable, Dict, List, Mapping, Tuple, Union
 import pandas as pd
 from dataclasses import dataclass
 from functools import partial
@@ -43,7 +62,6 @@ from trade.assets.calculate.xmultiply_attr import load_option_pnl_data as load_o
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 from EventDriven.new_portfolio import OptionSignalPortfolio
-from typing import Tuple, Dict
 from tqdm import tqdm
 from trade.optionlib.config.defaults import OPTION_TIMESERIES_START_DATE
 
@@ -71,8 +89,8 @@ class QuantityTimeSeries(FrozenValidated):
     """
 
     tick: str
-    trade_id: TradeID
-    signal_id: SignalID
+    trade_id: Union[TradeID, str]
+    signal_id: Union[SignalID, str]
     daily_qty: pd.Series
     quantity_change: pd.Series
     exec_price: pd.Series
@@ -585,5 +603,551 @@ class PositionAttributionAnalyzer:
             return combined_df.drop(columns=["signal_id"]).groupby("trade_id").sum() * 100
 
         # Daily aggregation drops both IDs and sums across all trades/signals per date.
+        daily_df = combined_df.drop(columns=["signal_id", "trade_id"])
+        return daily_df.groupby(daily_df.index).sum() * 100
+
+
+# ---------------------------------------------------------------------------
+# Static path: caller leg frames, no Trade, reuse compute_position_attribution
+# ---------------------------------------------------------------------------
+
+_MARKET_GREEK_COLUMNS = ("Delta", "Gamma", "Vega", "Theta", "Rho", "Volga")
+
+
+def _normalize_leg_direction(direction: str) -> str:
+    """Normalize long/short direction tokens to ``"L"`` or ``"S"``.
+
+    Args:
+        direction: One of ``LONG``, ``L``, ``SHORT``, ``S`` (any case).
+
+    Returns:
+        ``"L"`` for long, ``"S"`` for short.
+
+    Raises:
+        ValueError: If direction is not recognized.
+    """
+    token = str(direction).strip().upper()
+    if token in {"L", "LONG"}:
+        return "L"
+    if token in {"S", "SHORT"}:
+        return "S"
+    raise ValueError(f"direction must be LONG/L or SHORT/S, got {direction!r}")
+
+
+def _leg_direction_sign(direction: str) -> int:
+    """Return +1 for long and -1 for short.
+
+    Args:
+        direction: Leg direction token.
+
+    Returns:
+        +1 for long legs, -1 for short legs.
+    """
+    return -1 if _normalize_leg_direction(direction) == "S" else 1
+
+
+def _normalize_frame_index(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of frame with a sorted DatetimeIndex.
+
+    Args:
+        frame: Input DataFrame.
+
+    Returns:
+        Frame with datetime index sorted ascending.
+    """
+    out = frame.copy()
+    out.index = pd.to_datetime(out.index)
+    return out.sort_index()
+
+
+def _lookup_frame_value(frame: pd.DataFrame, date: DATE_HINT, column: str) -> float:
+    """Look up a numeric column value on a date from a market frame.
+
+    Args:
+        frame: Market timeseries with DatetimeIndex.
+        date: Date to look up.
+        column: Column name.
+
+    Returns:
+        Float value at date.
+
+    Raises:
+        KeyError: If date or column is missing.
+    """
+    frame = _normalize_frame_index(frame)
+    ts = pd.to_datetime(date)
+    ## Prefer exact label match after normalizing both sides to timestamps.
+    if ts not in frame.index:
+        ## Allow string-normalized calendar labels present as midnight stamps.
+        day = ts.normalize()
+        if day in frame.index:
+            ts = day
+        else:
+            raise KeyError(f"date {ts.date()} not found in frame index for column {column!r}")
+    if column not in frame.columns:
+        raise KeyError(f"column {column!r} not found in frame")
+    return float(pd.to_numeric(frame.loc[ts, column], errors="coerce"))
+
+
+@dataclass(frozen=True)
+class LegTimeseries:
+    """One option leg market timeseries for static attribution.
+
+    Attributes:
+        opttick: Option OCC ticker for payload build / loader.
+        direction: ``LONG``/``L`` or ``SHORT``/``S``.
+        frame: Market option TS including Midpoint, capitalised greeks, and Vol/vol.
+    """
+
+    opttick: str
+    direction: str
+    frame: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        """Validate leg fields and normalize direction.
+
+        Raises:
+            ValueError: If frame is empty or direction is invalid.
+        """
+        if self.frame is None or self.frame.empty:
+            raise ValueError(f"LegTimeseries frame is empty for opttick={self.opttick!r}")
+        if not self.opttick:
+            raise ValueError("LegTimeseries.opttick is required")
+        object.__setattr__(self, "direction", _normalize_leg_direction(self.direction))
+        object.__setattr__(self, "frame", _normalize_frame_index(self.frame))
+
+    def __repr__(self) -> str:
+        """Return a short leg summary."""
+        return f"LegTimeseries(opttick={self.opttick!r}, direction={self.direction})"
+
+
+@dataclass(frozen=True)
+class StaticPosition:
+    """Static hold position built from per-leg market frames (no Trade).
+
+    Attributes:
+        position_id: Free-form position key (also used as trade_id in results).
+        legs: One or more :class:`LegTimeseries` legs.
+        entry_date: Open date for the synthetic hold.
+        exit_date: Close date for the synthetic hold.
+        quantity: Constant signed size after open. Defaults to 1.0.
+        commission: Absolute dollars per unit on open/close qty changes.
+            Defaults to 0.0. Applied via the same per-unit series mechanism as the
+            portfolio path.
+        slippage_pct: Fraction of structure mark charged as per-unit slippage on
+            open/close. Defaults to 0.0. Cost uses structure mark construction.
+        signal_id: Grouping label. Defaults to ``"default"``.
+    """
+
+    position_id: str
+    legs: List[LegTimeseries]
+    entry_date: DATE_HINT
+    exit_date: DATE_HINT
+    quantity: float = 1.0
+    commission: float = 0.0
+    slippage_pct: float = 0.0
+    signal_id: str = "default"
+
+    def __post_init__(self) -> None:
+        """Validate window, legs, and cost parameters.
+
+        Raises:
+            ValueError: If legs empty, dates invert, or quantity is zero.
+        """
+        if not self.position_id:
+            raise ValueError("StaticPosition.position_id is required")
+        if not self.legs:
+            raise ValueError("StaticPosition.legs must be non-empty")
+        entry = pd.to_datetime(self.entry_date)
+        exit_ = pd.to_datetime(self.exit_date)
+        if exit_ < entry:
+            raise ValueError(
+                f"exit_date ({exit_.date()}) must be on or after entry_date ({entry.date()})"
+            )
+        if float(self.quantity) == 0.0:
+            raise ValueError("StaticPosition.quantity must be non-zero")
+
+    def __repr__(self) -> str:
+        """Return a short position summary."""
+        return (
+            f"StaticPosition(position_id={self.position_id!r}, n_legs={len(self.legs)}, "
+            f"entry={self.entry_date}, exit={self.exit_date})"
+        )
+
+
+def _resolve_vol_series(frame: pd.DataFrame) -> pd.Series:
+    """Extract vol series from a market frame (``vol`` or ``Vol``).
+
+    Args:
+        frame: Market option DataFrame.
+
+    Returns:
+        Volatility series named ``vol``.
+
+    Raises:
+        ValueError: If neither vol column exists.
+    """
+    if "vol" in frame.columns:
+        series = frame["vol"]
+    elif "Vol" in frame.columns:
+        series = frame["Vol"]
+    else:
+        raise ValueError("Market frame must include 'vol' or 'Vol'")
+    if isinstance(series, pd.DataFrame):
+        series = series.iloc[:, 0]
+    series = pd.to_numeric(series, errors="coerce")
+    series.name = "vol"
+    return series
+
+
+def _payload_from_leg_frame(
+    leg: LegTimeseries,
+    payload_date: DATE_HINT,
+) -> OptionPnlPayload:
+    """Build OptionPnlPayload from a leg frame (portfolio RM substitute).
+
+    Same column mapping as create_position_attribution's portfolio payload path.
+
+    Args:
+        leg: Leg with market frame.
+        payload_date: Payload date; must equal today when calling load_option_pnl_data.
+
+    Returns:
+        OptionPnlPayload with vol, greeks, and Midpoint spot.
+
+    Raises:
+        ValueError: If required greek / Midpoint columns are missing.
+    """
+    frame = leg.frame
+    missing = [c for c in ("Midpoint",) + _MARKET_GREEK_COLUMNS if c not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"Leg frame for {leg.opttick!r} missing required columns: {missing}"
+        )
+
+    greeks = frame[list(_MARKET_GREEK_COLUMNS)].copy()
+    greeks.columns = ["delta", "gamma", "vega", "theta", "rho", "volga"]
+    for col in greeks.columns:
+        greeks[col] = pd.to_numeric(greeks[col], errors="coerce")
+
+    payload = OptionPnlPayload(
+        opttick=str(leg.opttick),
+        date=to_datetime(payload_date),
+    )
+    payload.vol = _resolve_vol_series(frame)
+    payload.greeks = greeks
+    payload.spot = pd.to_numeric(frame["Midpoint"], errors="coerce")
+    payload.spot.name = "spot"
+    return payload
+
+
+def structure_mark_at(
+    legs: List[LegTimeseries],
+    date: DATE_HINT,
+) -> float:
+    """Compute structure mark as signed sum of leg Midpoints on a date.
+
+    Used for synthetic exec prices and get_position_price on the static path,
+    and as the level for slippage_pct cost construction.
+
+    Args:
+        legs: Position legs.
+        date: Valuation date.
+
+    Returns:
+        Structure mark (premium units, same as Midpoint).
+
+    Raises:
+        KeyError: If Midpoint is missing for any leg on date.
+    """
+    total = 0.0
+    for leg in legs:
+        mid = _lookup_frame_value(leg.frame, date, "Midpoint")
+        total += _leg_direction_sign(leg.direction) * mid
+    return float(total)
+
+
+def create_static_position_attribution(position: StaticPosition) -> pd.DataFrame:
+    """Create unit multi-leg attribution from static position leg frames.
+
+    Same structure as :func:`create_position_attribution`, but builds payloads
+    from :class:`LegTimeseries` frames instead of portfolio RM data.
+
+    Args:
+        position: Static position specification.
+
+    Returns:
+        Combined unit attribution DataFrame (same shape as portfolio create).
+
+    Raises:
+        ValueError: If loader returns empty attribution for a leg.
+    """
+    entry_date = position.entry_date
+    exit_date = position.exit_date
+    entry_padding = max(
+        pd.to_datetime(entry_date) - pd.Timedelta(days=3),
+        to_datetime(OPTION_TIMESERIES_START_DATE),
+    )
+    exit_padding = to_datetime(pd.to_datetime(exit_date) + pd.Timedelta(days=3))
+
+    attribution_frames = []
+    for leg in position.legs:
+        payload = _payload_from_leg_frame(leg, payload_date=exit_padding)
+        loaded = load_option_pnl_data(
+            yesterday=entry_padding,
+            today=exit_padding,
+            opttick=leg.opttick,
+            payload=payload,
+        )
+        if loaded.attribution is None or loaded.attribution.empty:
+            raise ValueError(
+                f"load_option_pnl_data returned empty attribution for opttick={leg.opttick!r}"
+            )
+        leg_attr = loaded.attribution.copy()
+        ## Short legs flip unit components (portfolio create uses direction == "S").
+        if leg.direction == "S":
+            numeric = leg_attr.select_dtypes(include="number").columns
+            leg_attr[numeric] = leg_attr[numeric] * -1
+        attribution_frames.append(leg_attr)
+
+    combined = sum(attribution_frames)
+    return combined
+
+
+def _quantity_time_series_from_static(
+    position: StaticPosition,
+    index: pd.DatetimeIndex,
+) -> QuantityTimeSeries:
+    """Build synthetic QuantityTimeSeries for a static open/close hold.
+
+    Open on first index date, close on last when multi-day (same open/close
+    residual path as ledger fills). Per-unit commission is the constant
+    commission param; per-unit slippage is |slippage_pct * mark| on event days.
+
+    Args:
+        position: Static position (qty, costs, legs for marks).
+        index: Hold index (typically attribution dates from entry to exit).
+
+    Returns:
+        QuantityTimeSeries consumable by compute_position_attribution.
+
+    Raises:
+        ValueError: If index is empty.
+    """
+    if len(index) == 0:
+        raise ValueError("index must be non-empty for static quantity series")
+
+    idx = pd.DatetimeIndex(pd.to_datetime(index)).sort_values()
+    idx = idx[~idx.duplicated(keep="first")]
+    qty = float(position.quantity)
+
+    quantity_change = pd.Series(0.0, index=idx, dtype=float)
+    quantity_change.iloc[0] = qty
+    ## Multi-day holds close on the last day so fully_closed residual path runs.
+    if len(idx) > 1:
+        quantity_change.iloc[-1] = -qty
+
+    daily_qty = quantity_change.cumsum()
+    exec_price = pd.Series(0.0, index=idx, dtype=float)
+    commission = pd.Series(0.0, index=idx, dtype=float)
+    slippage = pd.Series(0.0, index=idx, dtype=float)
+
+    ## Event days only: populate exec + per-unit costs for open/close residual math.
+    event_dates = [idx[0]]
+    if len(idx) > 1:
+        event_dates.append(idx[-1])
+
+    for event in event_dates:
+        mark = structure_mark_at(position.legs, event)
+        exec_price.loc[event] = abs(mark)
+        commission.loc[event] = abs(float(position.commission))
+        slippage.loc[event] = abs(float(position.slippage_pct) * abs(mark))
+
+    tick = position.legs[0].opttick if position.legs else str(position.position_id)
+    return QuantityTimeSeries(
+        tick=str(tick),
+        trade_id=str(position.position_id),
+        signal_id=str(position.signal_id),
+        daily_qty=daily_qty,
+        quantity_change=quantity_change,
+        exec_price=exec_price,
+        commission=commission,
+        slippage=slippage,
+        trade_entry=idx.min(),
+        trade_exit=idx.max(),
+    )
+
+
+def _static_get_position_price(
+    legs: List[LegTimeseries],
+    _id: Union[TradeID, str],
+    date: DATE_HINT,
+    force: bool = False,
+) -> float:
+    """Price callable for compute_position_attribution on the static path.
+
+    Args:
+        legs: Position legs for mark construction.
+        _id: Unused trade id (kept for signature compatibility).
+        date: Valuation date.
+        force: Unused; kept for signature compatibility with portfolio partial.
+
+    Returns:
+        Structure mark on date.
+    """
+    del _id, force
+    return structure_mark_at(legs, date)
+
+
+def compute_static_position_attribution(
+    position: StaticPosition,
+) -> BacktestPositionAttribution:
+    """End-to-end static attribution for one StaticPosition.
+
+    Builds unit attribution from leg frames, synthetic open/close quantity
+    series, then reuses :func:`compute_position_attribution` so trade_pnl_adj
+    and open/close zeroing match the portfolio path.
+
+    Args:
+        position: Static hold specification including position_id.
+
+    Returns:
+        BacktestPositionAttribution with same columns as the portfolio path.
+    """
+    unit = create_static_position_attribution(position)
+    entry = pd.to_datetime(position.entry_date)
+    exit_ = pd.to_datetime(position.exit_date)
+    unit = unit.copy()
+    unit.index = pd.to_datetime(unit.index)
+    unit = unit.loc[entry:exit_]
+    if unit.empty:
+        raise ValueError(
+            f"No attribution rows for position_id={position.position_id!r} "
+            f"between {entry.date()} and {exit_.date()}"
+        )
+
+    qty_ts = _quantity_time_series_from_static(position, index=unit.index)
+    get_price = partial(_static_get_position_price, legs=position.legs)
+    computed = compute_position_attribution(
+        trade_id=position.position_id,
+        attribution=unit,
+        qty_ts=qty_ts,
+        get_position_price_func=get_price,
+    )
+    return BacktestPositionAttribution(
+        trade_id=str(position.position_id),
+        signal_id=str(position.signal_id),
+        qty=qty_ts,
+        attribution=computed,
+    )
+
+
+class StaticPositionAttributionAnalyzer:
+    """Analyzer for static holds from per-leg market frames (no portfolio/Trade).
+
+    Same workflow surface as :class:`PositionAttributionAnalyzer`:
+    analyze / analyze_all / convert_attribution_to_df. Results are
+    :class:`BacktestPositionAttribution` instances.
+    """
+
+    def __init__(self, positions: Mapping[str, StaticPosition]) -> None:
+        """Initialize with a mapping of position_id -> StaticPosition.
+
+        Args:
+            positions: Non-empty mapping. Keys should match each
+                ``StaticPosition.position_id`` (key is used for lookup).
+
+        Raises:
+            ValueError: If positions is empty.
+            TypeError: If a value is not StaticPosition.
+        """
+        if not positions:
+            raise ValueError("positions must be a non-empty mapping of StaticPosition")
+        resolved: Dict[str, StaticPosition] = {}
+        for key, value in positions.items():
+            if not isinstance(value, StaticPosition):
+                raise TypeError(
+                    f"positions[{key!r}] must be StaticPosition, got {type(value).__name__}"
+                )
+            resolved[str(key)] = value
+        self.positions = resolved
+        self.attribution_cache: Dict[str, BacktestPositionAttribution] = {}
+
+    def analyze(self, position_id: str, force: bool = False) -> BacktestPositionAttribution:
+        """Analyze one static position.
+
+        Args:
+            position_id: Key into ``positions``.
+            force: Recompute even if cached.
+
+        Returns:
+            BacktestPositionAttribution for the position.
+
+        Raises:
+            KeyError: If position_id is missing.
+        """
+        position_id = str(position_id)
+        if position_id not in self.positions:
+            raise KeyError(f"position_id {position_id!r} not found in positions")
+        if position_id not in self.attribution_cache or force:
+            self.attribution_cache[position_id] = compute_static_position_attribution(
+                self.positions[position_id]
+            )
+        return self.attribution_cache[position_id]
+
+    def analyze_all(self, force: bool = False) -> Dict[str, BacktestPositionAttribution]:
+        """Analyze all positions.
+
+        Args:
+            force: Recompute even if cached.
+
+        Returns:
+            Cache mapping position_id -> BacktestPositionAttribution.
+        """
+        for position_id in tqdm(self.positions.keys(), desc="Analyzing static positions"):
+            self.analyze(position_id, force=force)
+        return self.attribution_cache
+
+    def convert_attribution_to_df(
+        self,
+        groupby: str = "signal_id",
+        ignore_missing: bool = False,
+    ) -> pd.DataFrame:
+        """Convert cached attributions to a grouped summary DataFrame.
+
+        Same contract as :meth:`PositionAttributionAnalyzer.convert_attribution_to_df`.
+
+        Args:
+            groupby: ``signal_id``, ``trade_id``, or ``daily``.
+            ignore_missing: Skip missing cache entries if True.
+
+        Returns:
+            Aggregated attribution × 100.
+
+        Raises:
+            ValueError: If cache empty or missing required positions.
+            AssertionError: If groupby is invalid.
+        """
+        assert groupby in ["signal_id", "trade_id", "daily"], (
+            "groupby must be one of 'signal_id', 'trade_id', or 'daily'"
+        )
+        if not self.attribution_cache:
+            raise ValueError("No attributions computed yet. Please run analyze_all first.")
+        if not ignore_missing:
+            missing = [pid for pid in self.positions if pid not in self.attribution_cache]
+            if missing:
+                raise ValueError(f"Missing attributions for position_ids: {missing}")
+
+        records = []
+        for attr in self.attribution_cache.values():
+            df = attr.attribution.copy()
+            df["trade_id"] = attr.trade_id
+            df["signal_id"] = attr.signal_id
+            records.append(df)
+        combined_df = pd.concat(records)
+        if groupby == "signal_id":
+            return combined_df.drop(columns=["trade_id"]).groupby("signal_id").sum() * 100
+        if groupby == "trade_id":
+            return combined_df.drop(columns=["signal_id"]).groupby("trade_id").sum() * 100
         daily_df = combined_df.drop(columns=["signal_id", "trade_id"])
         return daily_df.groupby(daily_df.index).sum() * 100
