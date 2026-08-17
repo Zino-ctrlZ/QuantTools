@@ -34,7 +34,8 @@ OrderSchema Structure:
 
 Filtering Strategy:
     1. DTE Filtering:
-       - Contracts within [target_dte - dte_tolerance, target_dte + dte_tolerance]
+       - Window is [target_dte - below_dte_tolerance, target_dte + above_dte_tolerance]
+       - Symmetric dte_tol/dte_tolerance fills both sides when asymmetric bounds are unset
        - Relaxes on retry by expanding tolerance
 
     2. Moneyness Filtering:
@@ -166,10 +167,55 @@ def filter_contracts(
     min_moneyness: float = 0.5,
     max_moneyness: float = 1.5,
     increment=0.05,
-    dte_tol: int = 5,
+    dte_tol: int | None = 5,
     target_dte: int = 30,
+    above_dte_tolerance: int | None = None,
+    below_dte_tolerance: int | None = None,
 ) -> pd.DataFrame:
-    
+    """Filter an option chain by right, moneyness, and DTE window.
+
+    DTE bounds are ``[target_dte - below, target_dte + above]``. When both
+    ``above_dte_tolerance`` and ``below_dte_tolerance`` are set, they take
+    precedence over symmetric ``dte_tol``.
+
+    Args:
+        df: Option chain with at least ``right``, ``strike``, and ``dte``.
+        schema: Optional legacy OrderSchema/dict for fallback field lookup.
+        spot: Underlying spot used for moneyness.
+        option_type: ``'C'`` or ``'P'``; falls back to schema when omitted.
+        min_moneyness: Inclusive lower moneyness bound.
+        max_moneyness: Inclusive upper moneyness bound.
+        increment: Unused legacy moneyness-relaxation step.
+        dte_tol: Symmetric DTE tolerance used when asymmetric bounds are unset.
+        target_dte: Center of the DTE filter window.
+        above_dte_tolerance: Days allowed above ``target_dte``.
+        below_dte_tolerance: Days allowed below ``target_dte``.
+
+    Returns:
+        Filtered chain reset to a clean integer index. May be empty.
+
+    Raises:
+        ValueError: If no contracts match the requested right, or if DTE
+            tolerance inputs are incomplete/inconsistent.
+
+    Examples:
+        target_dte=90, below_dte_tolerance=45, above_dte_tolerance=120
+        keeps contracts with DTE in ``[45, 210]``.
+    """
+    ## Prefer asymmetric DTE window when either bound is set; both are required.
+    if above_dte_tolerance is not None or below_dte_tolerance is not None:
+        if above_dte_tolerance is None or below_dte_tolerance is None:
+            raise ValueError(
+                "Both above_dte_tolerance and below_dte_tolerance must be provided together."
+            )
+    elif dte_tol is not None:
+        above_dte_tolerance = dte_tol
+        below_dte_tolerance = dte_tol
+    else:
+        raise ValueError(
+            "Either dte_tol or both above_dte_tolerance and below_dte_tolerance must be provided."
+        )
+
     schema = schema or {}
     df = df.copy()
     right = option_type if option_type else schema.get("option_type")
@@ -183,28 +229,33 @@ def filter_contracts(
     else:
         df["moneyness"] = df["strike"] / spot
     target_dte = schema.get("target_dte", target_dte)
-    dte_tol = schema.get("dte_tolerance", dte_tol)
     filtered = pd.DataFrame()
     attempt = 0
     min_moneyness = schema.get("min_moneyness", min_moneyness)
     max_moneyness = schema.get("max_moneyness", max_moneyness)
     increment = schema.get("increment", increment)
 
-
+    dte_lo = target_dte - below_dte_tolerance
+    dte_hi = target_dte + above_dte_tolerance
     _filter = pd.Series([True] * len(df), index=df.index)
 
     ## Add DTE filter
-    _filter &= df["dte"].between(target_dte - dte_tol, target_dte + dte_tol)
+    _filter &= df["dte"].between(dte_lo, dte_hi)
 
     ## Add Moneyness filter. Convert to bounds based on increment
-    logger.info(f"Filtering contracts with strike range [{min_moneyness:.2f}, {max_moneyness:.2f}], dte range [{target_dte - dte_tol}, {target_dte + dte_tol}] on attempt {attempt + 1}")
+    logger.info(
+        f"Filtering contracts with strike range [{min_moneyness:.2f}, {max_moneyness:.2f}], "
+        f"dte range [{dte_lo}, {dte_hi}] on attempt {attempt + 1}"
+    )
     _filter &= df["moneyness"].between(min_moneyness, max_moneyness)
     filtered = df[_filter].copy()
     logger.info(f"Number of contracts after filtering: {len(filtered)}")
 
     if filtered.empty:
         logger.critical(
-            f"Failed to filter contracts: No contracts found for {right} with DTE {target_dte} ± {dte_tol} and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] after {attempt} attempts."
+            f"Failed to filter contracts: No contracts found for {right} with DTE "
+            f"[{dte_lo}, {dte_hi}] and strike range [{min_moneyness:.2f}, {max_moneyness:.2f}] "
+            f"after {attempt} attempts."
         )
     return filtered.reset_index(drop=True)
 

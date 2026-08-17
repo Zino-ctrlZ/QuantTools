@@ -109,7 +109,11 @@ def _order_builder_with_scoring(
     scored_chain = build_scored_chain(req=req, configs=configs)
     if scored_chain.empty:
         logger.warning(
-            f"Following are used for filtering but resulted in empty chain: min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}, spread_ratio_max={configs.pct_spread_max}, mid_price_range=({configs.mid_lower_limit}, {configs.mid_upper_limit})"
+            f"Following are used for filtering but resulted in empty chain: min_moneyness={configs.min_moneyness}, "
+            f"max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, "
+            f"dte_tolerance={configs.dte_tolerance}, above_dte_tolerance={configs.above_dte_tolerance}, "
+            f"below_dte_tolerance={configs.below_dte_tolerance}, spread_ratio_max={configs.pct_spread_max}, "
+            f"mid_price_range=({configs.mid_lower_limit}, {configs.mid_upper_limit})"
         )
         order = _extract_order_with_scoring_config(chain_row=pd.Series(), configs=configs)
         order["result"] = ResultsEnum.NO_CONTRACTS_FOUND.value
@@ -155,10 +159,15 @@ def build_scored_chain(req: OrderRequest, configs: ScoringConfigs) -> pd.DataFra
         max_moneyness=configs.max_moneyness,
         target_dte=configs.target_dte,
         dte_tol=configs.dte_tolerance,
+        above_dte_tolerance=configs.above_dte_tolerance,
+        below_dte_tolerance=configs.below_dte_tolerance,
     )
     if filtered.empty:
         logger.warning(
-            f"Filtering resulted in empty chain for {req.symbol} on {req.date}. Parameters used for filtering: option_type={req.option_type}, min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}"
+            f"Filtering resulted in empty chain for {req.symbol} on {req.date}. Parameters used for filtering: "
+            f"option_type={req.option_type}, min_moneyness={configs.min_moneyness}, max_moneyness={configs.max_moneyness}, "
+            f"target_dte={configs.target_dte}, dte_tolerance={configs.dte_tolerance}, "
+            f"above_dte_tolerance={configs.above_dte_tolerance}, below_dte_tolerance={configs.below_dte_tolerance}"
         )
         return filtered
 
