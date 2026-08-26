@@ -51,8 +51,8 @@ class ConfigsDict(TypedDict, total=False):
     """
     Type hints for all available config classes.
 
-    Keys are config class names (without _1, _2 suffixes).
-    Values are the actual config instances.
+    Primary instances are keyed by class name (``FooConfig_1`` → ``FooConfig``).
+    Extra instances keep their suffix (``FooConfig_2`` stays ``FooConfig_2``).
 
     Example:
         bundle.configs["ChainConfig"]  # Type: ChainConfig
@@ -152,16 +152,19 @@ class RunConfigBundle:
 
         conf_bund_cls: ConfigsDict = {}  # type: ignore
         for label in confs.keys():
-            ## Strip trailing _N instance suffix only (keep CamelCase names like ShortIdxEqCogConfig).
+            ## Resolve class from CamelCase name; keep storage key rules separate.
+            ## FooConfig_1 → store as FooConfig; FooConfig_2+ → keep FooConfig_N.
             parts = label.rsplit("_", 1)
             if len(parts) == 2 and parts[1].isdigit():
-                conf_name = parts[0]
+                conf_cls_name = parts[0]
+                instance_n = int(parts[1])
+                store_key = conf_cls_name if instance_n == 1 else label
             else:
-                conf_name = label
+                conf_cls_name = label
+                store_key = label
             cls_module = importlib.import_module("EventDriven.configs.core")
-            conf_cls = getattr(cls_module, conf_name)
-            # Store with just the class name (no _1 suffix)
-            conf_bund_cls[conf_name] = conf_cls(**confs[label])  # type: ignore
+            conf_cls = getattr(cls_module, conf_cls_name)
+            conf_bund_cls[store_key] = conf_cls(**confs[label])  # type: ignore
 
         ret = cls(
             run_name=data.get("run_name", ""),
@@ -189,13 +192,13 @@ class RunConfigBundle:
 
     def get(self, label: str) -> BaseConfigs:
         """
-        Get a config by label with proper type hints.
+        Get a config by storage label.
 
-        Since configs are stored by class name (without _1 suffix),
-        access them directly: bundle.get("ChainConfig")
+        Primary instances are keyed by class name (``ChainConfig_1`` loads as
+        ``ChainConfig``). Extra instances keep their suffix (``FooConfig_2``).
 
         Args:
-            label: The config class name (e.g., "ChainConfig", not "ChainConfig_1")
+            label: Storage key, e.g. ``"ChainConfig"`` or ``"ShortIdxEqCogConfig_2"``.
 
         Returns:
             The config instance with proper type hint from ConfigsDict
@@ -203,6 +206,7 @@ class RunConfigBundle:
         Example:
             >>> chain_config = bundle.get("ChainConfig")  # Returns ChainConfig instance
             >>> pm_config = bundle.get("PortfolioManagerConfig")
+            >>> mr_cog = bundle.get("ShortIdxEqCogConfig_2")
         """
         if label not in self.configs:
             raise KeyError(f"Config with label '{label}' not found. Available: {list(self.configs.keys())}")
