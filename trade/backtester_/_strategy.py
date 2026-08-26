@@ -1,5 +1,26 @@
+"""Provide the core strategy framework and lightweight entry-rule support.
+
+The module defines market indicators, trade and position records, and the
+base class used by backtest strategies. It also provides a thin rule filter
+whose rules evaluate a resolved strategy bar, plus an optional class-level
+filter-threshold bundle for regime gates that stay out of ``bt_params``.
+
+Core Classes:
+    Indicator: Registered indicator metadata and values.
+    Bar: Read-only access to one strategy bar, its ticker, and indicators.
+    RuleFilter: Collection of boolean rules evaluated for one bar.
+    FilterThresholds: Marker base for frozen strategy-specific threshold bundles.
+    StrategyBase: Shared lifecycle, state, simulation, and plotting behavior.
+
+Usage:
+    >>> strategy.rules.add(lambda bar: bar.ind("zscore") > 1.5)
+    >>> strategy.rules.check(index=10)
+    True
+    >>> MyStrategy.set_filter_thresholds(MyStrategy.FILTER_THRESHOLDS)
+"""
+
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Dict, Tuple
+from typing import Any, Callable, ClassVar, Optional, Dict, Tuple
 import inspect
 import pandas as pd
 from trade.backtester_.data import PTDataset
@@ -138,6 +159,99 @@ class PositionInfo:
         )
 
 
+class Bar:
+    """Expose a strategy's ticker and indicator values at one resolved bar."""
+
+    def __init__(self, strategy: "StrategyBase", index: int, date: pd.Timestamp) -> None:
+        """Initialize a resolved strategy bar.
+
+        Args:
+            strategy: Strategy that owns the ticker and indicators.
+            index: Resolved integer position in the strategy data.
+            date: Timestamp corresponding to ``index``.
+        """
+        self._strategy = strategy
+        self.index = index
+        self.date = date
+        self.ticker = strategy.ticker
+
+    def ind(self, name: str) -> Any:
+        """Return an indicator's value at this bar.
+
+        Args:
+            name: Registered indicator name.
+
+        Returns:
+            Indicator value at this bar.
+
+        Raises:
+            KeyError: If the strategy has no indicator registered as ``name``.
+        """
+        return self._strategy.indicators[name].values[self.index]
+
+
+Rule = Callable[[Bar], bool]
+
+
+class RuleFilter:
+    """Store rules and require every rule to pass for a strategy bar."""
+
+    def __init__(self, strategy: "StrategyBase") -> None:
+        """Initialize an empty rule collection for a strategy.
+
+        Args:
+            strategy: Strategy whose bars the rules evaluate.
+        """
+        self._strategy = strategy
+        self._rules: List[Rule] = []
+
+    def add(self, rule: Rule) -> None:
+        """Register a rule.
+
+        Args:
+            rule: Callable receiving a resolved ``Bar`` and returning a boolean.
+        """
+        self._rules.append(rule)
+
+    def check(
+        self,
+        *,
+        date: Optional[pd.Timestamp] = None,
+        index: Optional[int] = None,
+    ) -> bool:
+        """Return whether every registered rule passes.
+
+        An empty filter passes by default, preserving existing strategy behavior.
+
+        Args:
+            date: Date to resolve when ``index`` is omitted.
+            index: Bar position to resolve when ``date`` is omitted.
+
+        Returns:
+            ``True`` when all registered rules pass.
+        """
+        resolved_index, resolved_date = self._strategy._resolve(date=date, index=index)
+        bar = Bar(self._strategy, resolved_index, resolved_date)
+        return all(bool(rule(bar)) for rule in self._rules)
+
+
+@dataclass(frozen=True, slots=True)
+class FilterThresholds:
+    """Marker base for strategy-specific frozen filter-threshold bundles.
+
+    Concrete strategies subclass this dataclass with their regime / filter
+    fields and bind an instance on ``StrategyBase.FILTER_THRESHOLDS``. The
+    bundle stays out of ``bt_params`` and ``__init__``; callers mutate it via
+    ``set_filter_thresholds``.
+
+    Examples:
+        >>> @dataclass(frozen=True, slots=True)
+        ... class MyThresholds(FilterThresholds):
+        ...     zscore_min: float = 2.0
+        >>> MyStrategy.FILTER_THRESHOLDS = MyThresholds()
+    """
+
+
 class StrategyBase(ABC):
     """
     Abstract base class for trading strategies with built-in backtest parameter validation.
@@ -149,12 +263,16 @@ class StrategyBase(ABC):
     Subclasses MUST define:
         bt_params: Dict[str, Any] = {"param_name": default_or_REQUIRED, ...}
 
+    Optional class attribute for regime / entry filters (not part of ``bt_params``):
+        FILTER_THRESHOLDS: ClassVar[Optional[FilterThresholds]] = None
+
     Key Features:
     - Automatic parameter validation at class definition time
     - Efficient data access via numpy arrays for OHLCV data
     - Built-in indicator management system
     - Position tracking and state management with support for long/short positions
     - Simulation and visualization capabilities
+    - Optional class-level ``FilterThresholds`` getter / setter
 
     Data Structures:
     - TradeDecision: Dataclass returned by should_open() and should_close() containing:
@@ -165,6 +283,7 @@ class StrategyBase(ABC):
       - entry_price (float): Price at which position was opened
       - side (SideInt): Position side (SideInt.BUY or SideInt.SELL)
     - Side/SideInt: Enum types for position direction (BUY=1, SELL=-1)
+    - FilterThresholds: Marker base for frozen strategy-specific threshold bundles
 
     Methods to Override (Required):
     - setup(): Initialize indicators and strategy-specific state
@@ -189,6 +308,7 @@ class StrategyBase(ABC):
     - plot_signals(): Visualizes buy/sell signals
     - add_indicator(): Add indicators to the strategy
     - get_indicator(): Retrieve indicator values
+    - get_filter_thresholds() / set_filter_thresholds(): Class-level filter threshold access
 
     Attributes:
     - data (PTDataset): Market data container
@@ -198,7 +318,65 @@ class StrategyBase(ABC):
     - stop (Optional[float]): Stop-loss price level
     - indicators (Dict[str, Any]): Dictionary of strategy indicators
     - close, open, high, low, volume, dates: Numpy array properties for efficient data access
+    - FILTER_THRESHOLDS: Optional class-level frozen filter-threshold bundle
     """
+
+    ## Regime / entry filter thresholds; subclasses that use filters bind a
+    ## concrete FilterThresholds instance. Default None keeps strategies that
+    ## do not use this convention free of required configuration.
+    FILTER_THRESHOLDS: ClassVar[Optional[FilterThresholds]] = None
+
+    @classmethod
+    def get_filter_thresholds(cls) -> FilterThresholds:
+        """Return the class-level filter-threshold bundle.
+
+        Returns:
+            Current ``FilterThresholds`` bound to this class.
+
+        Raises:
+            AttributeError: If ``FILTER_THRESHOLDS`` is not configured (``None``).
+        """
+        thresholds = cls.FILTER_THRESHOLDS
+        if thresholds is None:
+            raise AttributeError(
+                f"{cls.__name__} has no FILTER_THRESHOLDS configured. "
+                "Assign a FilterThresholds subclass instance on the class, "
+                "or call set_filter_thresholds(...)."
+            )
+        return thresholds
+
+    @classmethod
+    def set_filter_thresholds(cls, thresholds: FilterThresholds) -> None:
+        """Replace the class-level filter-threshold bundle.
+
+        When ``FILTER_THRESHOLDS`` is already set, ``thresholds`` must be an
+        instance of that concrete type so momentum and mean-reversion bundles
+        cannot be swapped accidentally. When unset (``None``), any
+        ``FilterThresholds`` subclass instance is accepted.
+
+        Args:
+            thresholds: New frozen threshold bundle.
+
+        Raises:
+            TypeError: If ``thresholds`` is not a compatible ``FilterThresholds``.
+        """
+        if not isinstance(thresholds, FilterThresholds):
+            raise TypeError(
+                f"thresholds must be FilterThresholds, got {type(thresholds).__name__}."
+            )
+        current = cls.FILTER_THRESHOLDS
+        if current is not None:
+            expected = type(current)
+            if not isinstance(thresholds, expected):
+                raise TypeError(
+                    f"thresholds must be {expected.__name__}, got {type(thresholds).__name__}."
+                )
+        cls.FILTER_THRESHOLDS = thresholds
+
+    @property
+    def filter_thresholds(self) -> FilterThresholds:
+        """Return regime thresholds for this instance (class-level by default)."""
+        return self.get_filter_thresholds()
 
     def __init_subclass__(cls, **kwargs):
         """
@@ -292,6 +470,8 @@ class StrategyBase(ABC):
         self.position_info: Optional[PositionInfo] = PositionInfo()
         self.stop: Optional[float] = None
         self.indicators: Dict[str, Indicator] = {}
+        ## Rules exist before setup so subclasses can register them during setup.
+        self.rules = RuleFilter(self)
 
         # Cache index + numpy views for speed and consistent date handling
         self._df = self.data.data.copy()  # expects a DataFrame-like
@@ -453,11 +633,9 @@ class StrategyBase(ABC):
         if self._df.index.duplicated().any():
             raise ValueError("Input data contains duplicated index values. Please ensure the index is unique.")
 
-        if self._df.duplicated().any().any():
-            cols_with_dupes = self._df.columns[self._df.T.duplicated()].tolist()
+        if self._df.index.duplicated().any():   
             raise ValueError(
-                "Input data contains duplicated rows. Please ensure all rows are unique."
-                f" Duplicated columns: {cols_with_dupes}, Tick: {self.ticker}"
+                "Input data contains duplicated index values. Please ensure the index is unique."
             )
 
         self._df.columns = self._df.columns.str.lower()
