@@ -131,13 +131,11 @@ class FakeAssetStrategy:
             index: Optional integer index.
 
         Returns:
-            Configured multiplier, or 1.5 when version is 2.
+            Configured multiplier, or ``3`` when version is 2 or 3.
         """
         _, ts = self._resolve(date=date, index=index)
         self.last_multiplier_date = ts
-        if self.MULTIPLIER_VERSION == 2:
-            return 1.5
-        if self.MULTIPLIER_VERSION == 3:
+        if self.MULTIPLIER_VERSION in (2, 3):
             return 3
         return self.multiplier
 
@@ -145,13 +143,36 @@ class FakeAssetStrategy:
 class FakeMultiAssetStrategy:
     """Minimal MultiAssetStrategy stand-in exposing ``asset_strategies``."""
 
-    def __init__(self, strategies: Dict[str, FakeAssetStrategy]) -> None:
+    def __init__(self, strategies: Dict[str, Any]) -> None:
         """Store per-ticker fake strategies.
 
         Args:
             strategies: Mapping of ticker to fake asset strategy.
         """
         self.asset_strategies = strategies
+
+
+class FakeDualAssetStrategy:
+    """Composite stand-in that nests child strategies like DualShortStrategy."""
+
+    strategy_slug = "dual_short_strategy"
+
+    def __init__(
+        self,
+        *,
+        momentum: Optional[FakeAssetStrategy] = None,
+        mean_reversion: Optional[FakeAssetStrategy] = None,
+    ) -> None:
+        """Wire optional child strategies with distinct slugs.
+
+        Args:
+            momentum: Child used for ``short_donchian_equity`` signals.
+            mean_reversion: Child used for ``short_mean_reversion_equity`` signals.
+        """
+        self.momentum_strategy = momentum or FakeAssetStrategy(multiplier=3)
+        self.momentum_strategy.strategy_slug = "short_donchian_equity"
+        self.mean_reversion_strategy = mean_reversion or FakeAssetStrategy(multiplier=1)
+        self.mean_reversion_strategy.strategy_slug = "short_mean_reversion_equity"
 
 
 def _option_data(price: float = 2.5) -> AtTimePositionData:
@@ -288,8 +309,12 @@ def test_config_requires_positive_trade_size() -> None:
         ShortIdxEqCogConfig()
     with pytest.raises(ValueError, match="trade_size"):
         ShortIdxEqCogConfig(trade_size=0)
-    with pytest.raises(ValueError, match="version 2"):
-        ShortIdxEqCogConfig(trade_size=1000, multiplier_version=2)
+    with pytest.raises(ValueError, match="multiplier_version must be 1, 2, 3, or 4"):
+        ShortIdxEqCogConfig(trade_size=1000, multiplier_version=5)
+    cfg = ShortIdxEqCogConfig(trade_size=1000, multiplier_version=2)
+    assert cfg.multiplier_version == 2
+    cfg4 = ShortIdxEqCogConfig(trade_size=1000, multiplier_version=4)
+    assert cfg4.multiplier_version == 4
 
 
 def test_config_rejects_both_profit_flags() -> None:
@@ -305,7 +330,7 @@ def test_cog_requires_config() -> None:
 
 
 def test_default_calculator_sizes_from_multiplier_and_close() -> None:
-    """Default qty is trade_size * multiplier / 3 / (close * 100)."""
+    """Default qty is trade_size * multiplier / 3 / (close * 100 dollars)."""
     cog, asset = _make_cog(asset=FakeAssetStrategy(multiplier=3), multiplier_version=3)
     state = _new_position_state(option_price=2.5)
     cog.on_new_position(state)
@@ -314,6 +339,7 @@ def test_default_calculator_sizes_from_multiplier_and_close() -> None:
     assert asset.last_multiplier_date == pd.Timestamp(SIGNAL_DATE)
     meta = cog.position_metadata[TRADE_ID]
     assert meta.multiplier == 3
+    assert meta.option_price == pytest.approx(2.5)
     assert meta.tick_cash == pytest.approx(3000.0)
     assert meta.config_trade_size == pytest.approx(3000.0)
     assert meta.trade_size == pytest.approx(3000.0)
@@ -357,7 +383,26 @@ def test_custom_calculator_is_used() -> None:
     state = _new_position_state()
     cog.on_new_position(state)
     assert state.order["data"]["quantity"] == 6
-    assert seen["args"] == (3, 2.5, 3000.0)
+    ## option_price is dollar-scale (2.5 * 100) to match trade_size dollars.
+    assert seen["args"] == (3, 250.0, 3000.0)
+
+
+def test_calculator_money_args_are_same_dollar_scale() -> None:
+    """Calculator option_price and trade_size are both dollars."""
+
+    seen = {}
+
+    def _calc(multiplier: int, option_price: float, trade_size: float) -> int:
+        seen["option_price"] = option_price
+        seen["trade_size"] = trade_size
+        ## Same-scale formula: no extra * 100 on premium.
+        return int(trade_size * multiplier / 3 / option_price)
+
+    cog, _ = _make_cog(asset=FakeAssetStrategy(multiplier=3), calculator=_calc, trade_size=3000.0)
+    cog.on_new_position(_new_position_state(option_price=2.5))
+    assert seen["option_price"] == pytest.approx(250.0)
+    assert seen["trade_size"] == pytest.approx(3000.0)
+    assert cog.position_metadata[TRADE_ID].option_price == pytest.approx(2.5)
 
 
 def test_effective_trade_size_is_min_of_tick_cash_and_config() -> None:
@@ -393,6 +438,38 @@ def test_skips_non_matching_strategy_slug() -> None:
     cog.on_new_position(state)
     assert state.order["data"]["quantity"] == 0
     assert cog.position_metadata == {}
+
+
+def test_inspects_composite_child_for_multiplier() -> None:
+    """Composite ticker strategies route multiplier to the signal-matching child."""
+    momentum = FakeAssetStrategy(multiplier=3)
+    mean_reversion = FakeAssetStrategy(multiplier=1)
+    dual = FakeDualAssetStrategy(momentum=momentum, mean_reversion=mean_reversion)
+    cog, _ = _make_cog(tickers={TICKER: dual}, trade_size=3000.0)
+
+    ## Momentum signal -> child multiplier 3 -> qty floor(3000*3/3/250) = 12
+    state = _new_position_state(signal_id=SIGNAL_ID, option_price=2.5)
+    cog.on_new_position(state)
+    assert state.order["data"]["quantity"] == 12
+    assert momentum.last_multiplier_date == pd.Timestamp(SIGNAL_DATE)
+    assert mean_reversion.last_multiplier_date is None
+    assert cog.position_metadata[TRADE_ID].multiplier == 3
+
+    ## Mean-reversion signal -> child multiplier 1 -> qty floor(3000*1/3/250) = 4
+    mr_signal = f"short_mean_reversion_equity::{TICKER}20180615SHORT"
+    cog2, _ = _make_cog(
+        tickers={TICKER: dual},
+        trade_size=3000.0,
+        strategy_slug_token="short_mean_reversion_equity",
+    )
+    mean_reversion.last_multiplier_date = None
+    momentum.last_multiplier_date = None
+    state2 = _new_position_state(signal_id=mr_signal, option_price=2.5)
+    cog2.on_new_position(state2)
+    assert state2.order["data"]["quantity"] == 4
+    assert mean_reversion.last_multiplier_date == pd.Timestamp(SIGNAL_DATE)
+    assert momentum.last_multiplier_date is None
+    assert cog2.position_metadata[TRADE_ID].multiplier == 1
 
 
 def test_missing_ticker_raises_informative_error() -> None:
@@ -431,14 +508,18 @@ def test_class_level_multiplier_version_is_not_left_on_instance() -> None:
     assert asset.MULTIPLIER_VERSION == 1
 
 
-def test_version_two_on_strategy_is_rejected() -> None:
-    """Effective multiplier version 2 should raise before sizing."""
+def test_version_two_on_strategy_is_allowed() -> None:
+    """Effective multiplier version 2 should size like other integer versions."""
     asset = FakeAssetStrategy()
     asset.MULTIPLIER_VERSION = 2
     cog, _ = _make_cog(asset=asset)
-    with pytest.raises(ValueError, match="version 2"):
-        cog.on_new_position(_new_position_state())
+    state = _new_position_state(option_price=2.5)
+    cog.on_new_position(state)
+    assert state.order["data"]["quantity"] == 12
     assert asset.MULTIPLIER_VERSION == 2
+    meta = cog.position_metadata[TRADE_ID]
+    assert meta.multiplier == 3
+    assert meta.multiplier_version == 2
 
 
 def test_non_integer_multiplier_is_rejected() -> None:

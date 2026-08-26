@@ -537,13 +537,13 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     """Configuration for ShortIdxEqCog.
 
     Dollar-multiplier sizing for short Donchian equity index options, plus
-    optional profit-management analysis. ``trade_size`` is required. Multiplier
-    version 2 is not supported.
+    optional profit-management analysis. ``trade_size`` is required.
+    ``multiplier_version`` may be ``1``, ``2``, ``3``, or ``4`` when set.
 
     Effective trade size is ``min(tick_cash, config.trade_size)``. The default
-    quantity calculator is always ``trade_size * multiplier / 3`` scaled by
-    unscaled option close * 100. Pass a custom ``calculator(multiplier,
-    option_price, trade_size)`` on the cog when a different formula is needed.
+    quantity calculator is ``trade_size * multiplier / 3 / option_price``.
+    Custom ``calculator(multiplier, option_price, trade_size)`` args both use
+    dollar scale: ``trade_size`` in dollars and ``option_price`` as premium * 100.
 
     ``enable_profit_roll`` and ``enable_profit_waterfall`` are mutually exclusive.
     Both False skips analysis opinions.
@@ -579,10 +579,8 @@ class ShortIdxEqCogConfig(BaseCogConfig):
         super().__post_init__(ctx)
         if self.trade_size is None or self.trade_size <= 0:
             raise ValueError("trade_size is required and must be > 0")
-        if self.multiplier_version is not None and self.multiplier_version not in (1, 3):
-            raise ValueError(
-                "multiplier_version must be 1 or 3 when set; version 2 is not supported"
-            )
+        if self.multiplier_version is not None and self.multiplier_version not in (1, 2, 3, 4):
+            raise ValueError("multiplier_version must be 1, 2, 3, or 4 when set")
         if self.enable_profit_roll and self.enable_profit_waterfall:
             raise ValueError(
                 "enable_profit_roll and enable_profit_waterfall are mutually exclusive; "
