@@ -28,15 +28,15 @@ special_dividends:
       payment_date: "2024-01-12"
   EEM:
     - adjusted_ex_date: "2019-12-16"
-      amount: 0.266326
+      amount: 0.27 #0.266326
       payment_date: "2019-12-20"
   FXI:
     - adjusted_ex_date: "2023-06-07"
-      amount: 0.149
+      amount: 0.15 #0.149
       payment_date: "2023-06-13"
   KWEB:
     - adjusted_ex_date: "2021-12-29"
-      amount: 2.580389
+      amount: 2.58 #2.580389
       payment_date: "2021-12-31"
   TGT:
     - adjusted_ex_date: "2007-10-10"

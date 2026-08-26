@@ -9,7 +9,7 @@ from trade.backtester_.utils.aggregators import AggregatorParent
 from trade.helpers.Logging import setup_logger
 from ._strategy_patch import has_signal_collection, collect_signals_decorator, SignalCollector
 from .data import PTDataset  # noqa: F401
-from ._helper import make_bt_wrapper  # noqa: F401
+from ._helper import explode_trade_tags, make_bt_wrapper  # noqa: F401
 from ._strategy import StrategyBase
 
 logger = setup_logger("trade.backtester_.backtester_", stream_log_level="WARNING")
@@ -220,9 +220,10 @@ class PTBacktester(AggregatorParent):
             d.backtest._strategy = deepcopy(value)
 
     def run(self) -> pd.DataFrame:
-        """
-        Runs the backtest for each dataset in the list and returns a dataframe containing the results
+        """Run each dataset backtest and return a stats dataframe.
 
+        After each ``Backtest.run``, dict ``Tag`` payloads are exploded into
+        ``Entry_*`` columns and ``Tag`` is restored to ``signal_id``.
         """
         results = []
         for i, d in enumerate(self.datasets):
@@ -233,6 +234,9 @@ class PTBacktester(AggregatorParent):
                 for setting, value in d.param_settings.items():  ## Set the settings for the strategy, per dataset
                     setattr(self.strategy, setting, value)
             stats = d.backtest.run()
+            ## Tag is a dict at this point (signal_id + extra entry fields).
+            ## Explode extras to Entry_* and restore Tag to signal_id.
+            stats["_trades"] = explode_trade_tags(stats["_trades"])
             if self.start_overwrite:
                 stats["Start"] = pd.to_datetime(self.start_overwrite)
             stats["End"] = pd.to_datetime(stats["End"])

@@ -19,17 +19,21 @@ Core Functions:
 Processing Flow:
     1. Skip signals whose slug does not contain ``strategy_slug_token``.
     2. Resolve ticker strategy from ``MultiAssetStrategy.asset_strategies``.
-    3. Temporarily apply ``multiplier_version`` if set, call
+    3. Inspect that instance for a child matching ``SignalID.strategy_slug``
+       (composites like DualShortStrategy); use the match for multiplier and
+       setup-feature snapshot, else the ticker strategy itself.
+    4. Temporarily apply ``multiplier_version`` if set, call
        ``assign_dollar_multiplier`` on the signal-id date, then restore version.
-    4. Effective trade size is ``min(tick_cash, config.trade_size)`` (tick cash
+    5. Effective trade size is ``min(tick_cash, config.trade_size)`` (tick cash
        scaled to dollars when needed). Calculator receives
-       ``(multiplier, option_price, trade_size)`` and returns quantity.
-       Default: ``trade_size * multiplier / 3`` / (unscaled close * 100).
+       ``(multiplier, option_price, trade_size)`` with both money args in
+       dollars (option premium * 100) and returns quantity.
+       Default: ``trade_size * multiplier / 3 / option_price``.
        Qty 0 becomes 1.
-    5. Snapshot ``REQUIRED_SETUP_FEATURES`` values at signal-id date.
-    6. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
+    6. Snapshot ``REQUIRED_SETUP_FEATURES`` values at signal-id date.
+    7. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
        cog dict and ``PositionStore``.
-    7. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
+    8. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
        ``enable_profit_waterfall`` emits qty-1 ROLL or one-time ceil-half CLOSE
        vs ``waterfall_profit_threshold`` on initial cost basis. The waterfall
        can also arm a metadata-backed profit stop at crossing PnL times a fixed
@@ -78,7 +82,8 @@ class _ShortIdxEqMetaData:
     Stores the dollar-multiplier decision, resulting quantity, at-date
     ``REQUIRED_SETUP_FEATURES`` values, waterfall trim/roll state, armed stop
     level, and threshold/stop trigger event fields. ``trade_size`` is the
-    effective budget ``min(tick_cash, config_trade_size)``.
+    effective budget ``min(tick_cash, config_trade_size)``. ``option_price`` is
+    the raw per-share premium (not * 100); calculator calls receive dollars.
     """
 
     trade_id: str
@@ -219,8 +224,10 @@ class ShortIdxEqCog(BaseCog):
     """Size short-index-equity options and optionally manage profit via roll/waterfall.
 
     Expects a ``MultiAssetStrategy`` whose per-ticker strategies expose
-    ``assign_dollar_multiplier`` and ``REQUIRED_SETUP_FEATURES``. Only signals
-    whose slug contains ``config.strategy_slug_token`` are processed.
+    ``assign_dollar_multiplier`` and ``REQUIRED_SETUP_FEATURES``. Composite
+    ticker strategies may nest child strategies; the cog inspects for a child
+    whose ``strategy_slug`` matches the signal. Only signals whose slug
+    contains ``config.strategy_slug_token`` are processed.
     """
 
     default_config = ShortIdxEqCogConfig(trade_size=1.0)
@@ -241,8 +248,9 @@ class ShortIdxEqCog(BaseCog):
             eq_strategy: Multi-asset container used to look up ticker strategies.
             config: Runtime config. ``trade_size`` is required; do not omit this.
             calculator: Optional ``(multiplier, option_price, trade_size) -> quantity``
-                override. ``trade_size`` is the effective budget
-                ``min(tick_cash, config.trade_size)``.
+                override. Both ``option_price`` and ``trade_size`` are dollar-scale:
+                ``trade_size`` is ``min(tick_cash, config.trade_size)`` and
+                ``option_price`` is premium * 100 (one-contract notional).
             live: When ``True``, persist metadata via ``DatabasePositionStore``.
             position_store: Optional store override for testing.
             verify_after_save: Re-read the database after each write when ``live``.
@@ -306,12 +314,12 @@ class ShortIdxEqCog(BaseCog):
     def _default_calculator(self, multiplier: int, option_price: float, trade_size: float) -> int:
         """Return default contract quantity from dollar multiplier and option close.
 
-        Formula: ``floor((trade_size * multiplier / 3) / (option_price * 100))``.
-        Option close is unscaled, so contract notional is always * 100.
+        Formula: ``floor((trade_size * multiplier / 3) / option_price)``.
+        Both money args are dollar-scale (premium already * 100).
 
         Args:
             multiplier: Integer dollar multiplier from the asset strategy.
-            option_price: Unscaled option close / selected price.
+            option_price: Dollar notional of one contract (premium * 100).
             trade_size: Effective dollar budget ``min(tick_cash, config.trade_size)``.
 
         Returns:
@@ -320,7 +328,7 @@ class ShortIdxEqCog(BaseCog):
         if option_price is None or option_price <= 0 or trade_size <= 0:
             return 0
         allowed_trade_size = trade_size * multiplier / _DEFAULT_DIVISOR
-        return int(math.floor(allowed_trade_size / (option_price * _CONTRACT_MULTIPLIER)))
+        return int(math.floor(allowed_trade_size / option_price))
 
     def _is_target_strategy(self, signal_id: str) -> bool:
         """Return whether the signal belongs to the short Donchian equity slug.
@@ -359,6 +367,48 @@ class ShortIdxEqCog(BaseCog):
             )
         return strategies[ticker]
 
+    def _inspect_strategy_for_signal(self, asset_strat: Any, signal_id: str) -> Any:
+        """Return the strategy that owns this signal's slug for sizing lookups.
+
+        Single-strategy tickers are returned unchanged. Composites (for example
+        DualShortStrategy) keep children as instance attributes with their own
+        ``strategy_slug`` and ``assign_dollar_multiplier``; when the signal slug
+        matches a child, that child is used so momentum and mean-reversion each
+        get their own multiplier.
+
+        Args:
+            asset_strat: Per-ticker strategy from ``asset_strategies``.
+            signal_id: Raw signal identifier, optionally slug-prefixed.
+
+        Returns:
+            Matching child strategy when found, otherwise ``asset_strat``.
+        """
+        try:
+            slug = SignalID(signal_id).strategy_slug
+        except Exception:
+            logger.warning(
+                f"Unable to parse signal id {signal_id} for ShortIdxEqCog strategy inspect.",
+                exc_info=True,
+            )
+            return asset_strat
+        if not slug:
+            return asset_strat
+
+        ## Own slug match with a multiplier method — use the ticker strategy as-is.
+        own_slug = getattr(asset_strat, "strategy_slug", None)
+        if own_slug == slug and callable(getattr(asset_strat, "assign_dollar_multiplier", None)):
+            return asset_strat
+
+        ## Walk instance attrs for nested strategies that own this signal slug.
+        for value in getattr(asset_strat, "__dict__", {}).values():
+            child_slug = getattr(value, "strategy_slug", None)
+            if child_slug != slug:
+                continue
+            if callable(getattr(value, "assign_dollar_multiplier", None)):
+                return value
+
+        return asset_strat
+
     def _signal_lookup_date(self, signal_id: str) -> str:
         """Return YYYY-MM-DD for ``assign_dollar_multiplier`` from the signal id.
 
@@ -377,7 +427,8 @@ class ShortIdxEqCog(BaseCog):
     def _coerce_multiplier(self, raw: object, *, ticker: str, lookup_date: str) -> int:
         """Validate and coerce ``assign_dollar_multiplier`` output to int.
 
-        Version 2 style fractional multipliers are rejected.
+        Fractional multipliers are rejected; the default quantity formula
+        expects an integer dollar multiplier.
 
         Args:
             raw: Value returned by ``assign_dollar_multiplier``.
@@ -400,7 +451,7 @@ class ShortIdxEqCog(BaseCog):
         if not raw_float.is_integer():
             raise ValueError(
                 f"assign_dollar_multiplier for {ticker} on {lookup_date} returned non-integer "
-                f"{raw}. Version 2 style multipliers are not supported."
+                f"{raw}. Expected an integer multiplier."
             )
         return int(raw_float)
 
@@ -408,7 +459,7 @@ class ShortIdxEqCog(BaseCog):
         """Call ``assign_dollar_multiplier`` with an optional temporary version.
 
         Sets ``MULTIPLIER_VERSION`` only for the call when config requests it,
-        then restores the previous value. Version 2 is rejected.
+        then restores the previous value.
 
         Args:
             asset_strat: Per-ticker strategy exposing ``assign_dollar_multiplier``.
@@ -417,9 +468,6 @@ class ShortIdxEqCog(BaseCog):
 
         Returns:
             Tuple of ``(multiplier, effective_version)``.
-
-        Raises:
-            ValueError: If the effective multiplier version is 2.
         """
         instance_dict = getattr(asset_strat, "__dict__", {})
         had_instance_version = "MULTIPLIER_VERSION" in instance_dict
@@ -429,8 +477,6 @@ class ShortIdxEqCog(BaseCog):
             if version_overridden:
                 asset_strat.MULTIPLIER_VERSION = self.config.multiplier_version
             effective_version = getattr(asset_strat, "MULTIPLIER_VERSION", None)
-            if effective_version == 2:
-                raise ValueError(f"ShortIdxEqCog does not support multiplier version 2 for ticker {ticker!r}.")
             raw = asset_strat.assign_dollar_multiplier(date=lookup_date)
             multiplier = self._coerce_multiplier(raw, ticker=ticker, lookup_date=lookup_date)
             version_for_meta = int(effective_version) if effective_version is not None else 0
@@ -526,10 +572,12 @@ class ShortIdxEqCog(BaseCog):
         Process:
             1. Skip non-matching strategy slugs.
             2. Look up ticker strategy; error if missing.
-            3. Call ``assign_dollar_multiplier`` on signal-id date.
-            4. Effective trade size is ``min(tick_cash, config.trade_size)``.
-            5. Compute quantity via calculator; force 1 when it returns 0.
-            6. Snapshot setup-feature values and store metadata with waterfall fields.
+            3. Inspect for a child matching the signal strategy slug.
+            4. Call ``assign_dollar_multiplier`` on signal-id date.
+            5. Effective trade size is ``min(tick_cash, config.trade_size)``.
+            6. Scale option premium to dollars (* 100), then compute quantity via
+               calculator; force 1 when it returns 0.
+            7. Snapshot setup-feature values and store metadata with waterfall fields.
 
         Args:
             state: Newly created position container. Quantity is updated in place.
@@ -544,7 +592,10 @@ class ShortIdxEqCog(BaseCog):
             return
 
         ticker = state.symbol or SignalID(signal_id).ticker
-        asset_strat = self._resolve_asset_strategy(ticker)
+        asset_strat = self._inspect_strategy_for_signal(
+            self._resolve_asset_strategy(ticker),
+            signal_id,
+        )
         lookup_date = self._signal_lookup_date(signal_id)
         option_chain = state.at_time_data
         if option_chain is None:
@@ -552,7 +603,9 @@ class ShortIdxEqCog(BaseCog):
                 f"ShortIdxEqCog: at_time_data is missing for trade {order['data']['trade_id']}; "
                 "cannot source option close."
             )
+        ## Raw premium (per share); metadata keeps this. Calculator gets dollars.
         option_price = float(option_chain.get_price())
+        option_price_dollars = option_price * _CONTRACT_MULTIPLIER
         request = state.request
         tick_cash = self._scaled_tick_cash(float(request.tick_cash), request.is_tick_cash_scaled)
         config_trade_size = float(self.config.trade_size)
@@ -562,7 +615,8 @@ class ShortIdxEqCog(BaseCog):
             asset_strat, lookup_date=lookup_date, ticker=ticker
         )
         allowed_trade_size = trade_size * multiplier / _DEFAULT_DIVISOR
-        qty = int(self.calculator(multiplier, option_price, trade_size))
+        ## Both money args dollar-scale so custom calculators need no * 100.
+        qty = int(self.calculator(multiplier, option_price_dollars, trade_size))
         if qty <= 0:
             logger.info(
                 f"Quantity was {qty} for trade {order['data']['trade_id']} after ShortIdxEq sizing. Defaulting to 1."
