@@ -1,9 +1,63 @@
+"""Run the same StrategyBase subclass across a book of tickers.
+
+Each ticker owns its own strategy instance, data, and rule filter. Shared or
+per-ticker rules are added onto those existing filters rather than sharing one
+``RuleFilter`` object.
+
+Core Classes:
+    SimulationResults: Trades and equity curves keyed by ticker.
+    MultiAssetSignals: Open and close decisions for one date.
+    MultiAssetStrategy: Container that constructs and queries per-asset strategies.
+
+Core Functions:
+    _setup_strategy: Instantiate one ticker strategy with defaulted params.
+    _as_rule_list: Flatten a callable or nested lists of callables.
+
+Usage:
+    >>> multi.set_rules(lambda bar: bar.ind("zscore") > 1.5)
+    >>> multi.set_rules({"FXI": lambda bar: bar.ind("vix_pct_200ma") < 1.0})
+    >>> multi.set_rules([{"FXI": rule_a}, {"IWM": [rule_b, rule_c]}])
+"""
+
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Type, List
+from typing import Dict, Any, Optional, Sequence, Type, List, Union, Mapping
 import pandas as pd
 from trade.assets.Stock import DATE_HINT
-from trade.backtester_._strategy import StrategyBase, TradeDecision
+from trade.backtester_._strategy import Rule, RuleFilter, StrategyBase, TradeDecision
 from trade.backtester_.backtester_ import PTDataset
+
+
+TickerRules = Union[Rule, Sequence[Any]]
+RulesInput = Union[
+    Rule,
+    Sequence[Any],
+    Mapping[str, TickerRules],
+]
+
+
+def _as_rule_list(rules: Union[Rule, Sequence[Any]]) -> List[Rule]:
+    """Flatten a callable or nested lists of callables.
+
+    Args:
+        rules: One rule, a list of rules, or nested lists of rules.
+
+    Returns:
+        Flat list of rule callables.
+
+    Raises:
+        TypeError: If ``rules`` contains a dict or a non-callable item.
+    """
+    if callable(rules):
+        return [rules]
+    if isinstance(rules, dict):
+        raise TypeError("Ticker dicts must be passed at the top level of set_rules.")
+    if isinstance(rules, (list, tuple)):
+        flattened: List[Rule] = []
+        for item in rules:
+            flattened.extend(_as_rule_list(item))
+        return flattened
+    raise TypeError("rules must be a callable or a sequence of callables.")
+
 
 def _setup_strategy(
     strategy_class: Type[StrategyBase],
@@ -95,6 +149,7 @@ class MultiAssetStrategy:
         strategy_class (Type[StrategyBase]): The StrategyBase subclass to instantiate for each ticker
         data (Dict[str, PTDataset]): Dictionary mapping tickers to their PTDataset instances
         strategies (Dict[str, StrategyBase]): Dictionary of initialized strategy instances (auto-populated)
+        rules (Dict[str, RuleFilter]): Per-ticker rule filters on the child strategies
 
     Example:
         ```python
@@ -219,6 +274,80 @@ class MultiAssetStrategy:
         if ticker not in self.asset_strategies:
             raise KeyError(f"Strategy for ticker '{ticker}' not found")
         return self.asset_strategies[ticker]
+
+    @property
+    def rules(self) -> Dict[str, RuleFilter]:
+        """Return each asset's rule filter keyed by ticker.
+
+        Returns:
+            Mapping of ticker to that asset's ``RuleFilter``.
+        """
+        return {ticker: strategy.rules for ticker, strategy in self.asset_strategies.items()}
+
+    def _add_ticker_rules(self, rules: Mapping[str, TickerRules]) -> None:
+        """Add rules to the named tickers' filters.
+
+        Args:
+            rules: Mapping of ticker to one rule or nested lists of rules.
+
+        Raises:
+            KeyError: If a dict key is not an initialized ticker.
+        """
+        unknown = sorted(set(rules) - set(self.asset_strategies))
+        if unknown:
+            raise KeyError(f"Unknown ticker(s) for rules: {unknown}")
+        for ticker, ticker_rules in rules.items():
+            for rule in _as_rule_list(ticker_rules):
+                self.asset_strategies[ticker].rules.add(rule)
+
+    def _add_shared_rules(self, rules: Sequence[Rule]) -> None:
+        """Add the same rules to every asset filter.
+
+        Args:
+            rules: Flattened rule callables to broadcast.
+        """
+        for strategy in self.asset_strategies.values():
+            for rule in rules:
+                strategy.rules.add(rule)
+
+    def set_rules(self, rules: RulesInput) -> None:
+        """Add rules to per-asset filters.
+
+        A callable or list of callables is added to every ticker. Nested lists
+        are flattened. A dict adds rules only to the named tickers. A list of
+        dicts applies each dict in order. Mixed lists are allowed: dicts are
+        ticker-local, everything else is universe-wide.
+
+        Args:
+            rules: One rule, nested lists of rules, ``{ticker: rule|list}``,
+                or a list of those shapes.
+
+        Raises:
+            KeyError: If a dict key is not an initialized ticker.
+            TypeError: If ``rules`` is not a callable, sequence, or ticker dict.
+
+        Examples:
+            >>> multi.set_rules(lambda bar: bar.ind("zscore") > 1.5)
+            >>> multi.set_rules({"FXI": lambda bar: bar.ind("vix_pct_200ma") < 1.0})
+            >>> multi.set_rules([{"FXI": rule_a}, {"IWM": [rule_b, rule_c]}])
+            >>> multi.set_rules([[rule_a, rule_b], [rule_c]])
+        """
+        ## Add callables onto each asset's existing RuleFilter. Do not share one
+        ## RuleFilter instance: Bar is bound to a single strategy's ticker/indicators.
+        if isinstance(rules, dict):
+            self._add_ticker_rules(rules)
+            return
+        if callable(rules):
+            self._add_shared_rules(_as_rule_list(rules))
+            return
+        if isinstance(rules, (list, tuple)):
+            for item in rules:
+                if isinstance(item, dict):
+                    self._add_ticker_rules(item)
+                else:
+                    self._add_shared_rules(_as_rule_list(item))
+            return
+        raise TypeError("rules must be a callable, a sequence, or a ticker dict.")
 
     def get_combined_equity(self) -> pd.Series:
         """
