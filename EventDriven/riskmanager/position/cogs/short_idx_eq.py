@@ -655,7 +655,7 @@ class ShortIdxEqCog(BaseCog):
         )
         logger.info(
             f"ShortIdxEq sized trade {metadata.trade_id}: ticker={ticker}, signal_date={lookup_date}, "
-            f"multiplier={multiplier}, version={effective_version}, option_price={option_price}, "
+            f"multiplier={multiplier}, version={effective_version}, option_price={option_price}, effective_trade_size={option_price * qty:.2f}, "
             f"tick_cash={tick_cash:.2f}, config_trade_size={config_trade_size:.2f}, "
             f"trade_size={trade_size:.2f}, allowed_trade_size={allowed_trade_size:.2f}, quantity={qty}"
         )
