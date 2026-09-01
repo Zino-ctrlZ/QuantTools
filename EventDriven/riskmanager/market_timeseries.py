@@ -1001,7 +1001,7 @@ class BacktestTimeseries(BacktestRunMixin):
             return False
 
         check_ts = to_datetime(check_date)
-        if check_ts in data.index:
+        if check_ts.date() in data.index:
             return True
 
         resolved = to_datetime(check_date).date()

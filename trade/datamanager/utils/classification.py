@@ -50,9 +50,12 @@ import pandas as pd
 
 from trade.helpers.helper import to_datetime, generate_option_tick_new
 from trade import HOLIDAY_SET
+from trade.helpers.Logging import setup_logger
 from .date import LIST_DATE_CACHE
 from ..vars import get_enable_caching
 from dbase.DataAPI.ThetaData import list_dates
+
+logger = setup_logger("trade.datamanager.utils.classification")
 
 def get_option_dates(
     ticker: str,
@@ -84,7 +87,9 @@ def get_option_dates(
 
     ## Only use cache if option has expired, otherwise always fetch from source to capture new data availability
     if opttick in LIST_DATE_CACHE and option_has_expired:
-        return LIST_DATE_CACHE[opttick]["range"]
+        dates = LIST_DATE_CACHE[opttick]["range"]
+        logger.info(f"Using cached list of dates for {opttick}: {dates}")
+        return dates
 
     available_dates = list_dates(
         symbol=ticker,
@@ -92,7 +97,7 @@ def get_option_dates(
         right=right,
         exp=expiration,
     )
-    
+    logger.info(f"List of dates for {opttick}: {available_dates}")
 
     ## Only cache if option has expired
     if get_enable_caching() and option_has_expired:
@@ -102,6 +107,7 @@ def get_option_dates(
             "min_date": min(available_dates) if available_dates else None,
             "max_date": max(available_dates) if available_dates else None,
         }
+        
     return available_dates
 
 @dataclass

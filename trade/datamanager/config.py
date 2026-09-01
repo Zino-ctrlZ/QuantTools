@@ -26,7 +26,7 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     include_special_dividends: bool = False
     option_model: OptionPricingModel = OptionPricingModel.BINOMIAL
     volatility_model: VolatilityModel = VolatilityModel.MARKET
-    n_steps: int = 100 
+    n_steps: int = 250 
     undo_adjust: bool = True
     real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
     model_price: ModelPrice = ModelPrice.MIDPOINT
@@ -101,3 +101,9 @@ def setup_config_for_live() -> None:
 
     ## Always use quotes
     config.option_spot_endpoint_source = OptionSpotEndpointSource.QUOTE
+
+
+def switch_to_l3_certification() -> None:
+    """Switch to L3 certification."""
+    config = OptionDataConfig()
+    config.certification_level = CertificationLevel.L3

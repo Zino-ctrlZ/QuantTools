@@ -165,9 +165,10 @@ def apply_l3_fix(ctx: CertificationContext, finding: CertificationFinding) -> No
 
     if finding.code == IssueCode.MISSING_CALENDAR_DAY:
         logger.warning(
-            "L3: reindexing to business-day grid for opttick=%s key=%s.",
+            "L3: reindexing to business-day grid for opttick=%s key=%s checked_missing_dates=%s.",
             ctx.opttick,
             ctx.key,
+            effective_checked_missing_dates(ctx),
         )
         _fix_missing_calendar_days(ctx)
         return

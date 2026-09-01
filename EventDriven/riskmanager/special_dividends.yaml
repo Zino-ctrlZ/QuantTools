@@ -11,6 +11,8 @@ no_special_dividends:
   - NFLX
   - SPY
   - IWM
+  - GLD
+  - SLV
 
 special_dividends:
   COST:

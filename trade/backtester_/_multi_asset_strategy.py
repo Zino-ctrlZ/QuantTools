@@ -19,6 +19,7 @@ Usage:
     >>> multi.set_rules([{"FXI": rule_a}, {"IWM": [rule_b, rule_c]}])
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Sequence, Type, List, Union, Mapping
 import pandas as pd
@@ -67,25 +68,30 @@ def _setup_strategy(
     params: Dict[str, Any],
     tplusn: Optional[int] = 0
 ) -> StrategyBase:
-    """
-    Utility function to initialize a strategy instance with the given parameters.
+    """Instantiate one ticker strategy, filling missing keys from ``bt_params``.
+
+    Incoming ``params`` are copied first so default-filling cannot mutate the
+    caller's mapping (for example a WFA ``optimized_params`` packet).
 
     Args:
-        strategy_class (Type[StrategyBase]): The StrategyBase subclass to instantiate
-        data (PTDataset): The dataset for the strategy
-        start_date (str): The starting date for the strategy in 'YYYY-MM-DD' format
-        ticker (str): The ticker symbol for the strategy
-        params (Dict[str, Any]): Additional parameters to pass to the strategy's __init__
+        strategy_class: The StrategyBase subclass to instantiate.
+        data: The dataset for the strategy.
+        start_date: The starting date for the strategy in 'YYYY-MM-DD' format.
+        ticker: The ticker symbol for the strategy.
+        params: Additional parameters to pass to the strategy's ``__init__``.
+        tplusn: Optional execution lag forwarded to the strategy.
 
     Returns:
-        StrategyBase: An initialized instance of the specified strategy class
+        An initialized instance of the specified strategy class.
     """
+    ## Detach from caller ownership before writing class defaults into the dict.
+    params = deepcopy(params)
     default_params = strategy_class.bt_params
 
     ## Add default params to params if key is missing
     for key, value in default_params.items():
         if key not in params:
-            params[key] = value
+            params[key] = deepcopy(value)
     return strategy_class(
         data=data, start_trading_date=start_date, ticker=ticker, tplusn=tplusn, **params
 )
@@ -199,6 +205,11 @@ class MultiAssetStrategy:
         Raises:
             ValueError: If data is not provided for a ticker in params
         """
+        ## Copy ticker dicts so this container does not alias caller state
+        ## such as WalkForwardAnalysis stored_results optimized_params.
+        self.params = {
+            ticker: deepcopy(ticker_params) for ticker, ticker_params in self.params.items()
+        }
         for ticker, ticker_params in self.params.items():
             if ticker not in self.data:
                 raise ValueError(f"Data not provided for ticker: {ticker}")
@@ -212,21 +223,7 @@ class MultiAssetStrategy:
                 params=ticker_params
             )
             self.current_open_positions[ticker] = False
-            self.strategy_settings[ticker] = ticker_params
-
-            # default_params = self.strategy_class.bt_params
-
-            # ## Add default params to ticker_params if key is missing
-            # for key, value in default_params.items():
-            #     if key not in ticker_params:
-            #         ticker_params[key] = value
-
-            # # Initialize strategy with data, start_date, and ticker-specific params
-            # self.asset_strategies[ticker] = self.strategy_class(
-            #     data=self.data[ticker], start_trading_date=self.start_date, ticker=ticker, **ticker_params
-            # )
-            # self.current_open_positions[ticker] = False
-            # self.strategy_settings[ticker] = ticker_params
+            self.strategy_settings[ticker] = deepcopy(ticker_params)
 
     def reset_strategies(self):
         """
