@@ -10,6 +10,7 @@ Usage:
     Run with ``pytest trade/tests/test_multi_asset_rules.py``.
 """
 
+from copy import deepcopy
 from typing import Optional
 
 import pandas as pd
@@ -206,6 +207,58 @@ def test_set_rules_list_of_lists_is_shared() -> None:
     assert multi.rules["IWM"].check(index=0) is False
     assert multi.rules["FXI"].check(index=1) is True
     assert multi.rules["IWM"].check(index=1) is True
+
+
+class _DefaultedParamStrategy(_BlankRuleStrategy):
+    """Strategy with a class default used to detect in-place param mutation."""
+
+    bt_params = {"lookback": 20}
+
+    def __init__(
+        self,
+        data: PTDataset,
+        lookback: int = 20,
+        start_trading_date: Optional[str] = None,
+        ticker: Optional[str] = None,
+        tplusn: Optional[int | float] = 0,
+    ) -> None:
+        """Initialize with an extra lookback param copied from ``bt_params``.
+
+        Args:
+            data: Input OHLCV dataset.
+            lookback: Dummy parameter filled from ``bt_params`` when omitted.
+            start_trading_date: Optional first trading date.
+            ticker: Optional ticker override.
+            tplusn: Optional execution lag.
+        """
+        self.lookback = lookback
+        super().__init__(
+            data=data,
+            start_trading_date=start_trading_date,
+            ticker=ticker,
+            tplusn=tplusn,
+        )
+
+
+def test_constructor_does_not_mutate_caller_params() -> None:
+    """Default-filling must not write back into the caller's params mapping."""
+    caller_params = {"FXI": {}, "IWM": {}}
+    original = deepcopy(caller_params)
+
+    multi = MultiAssetStrategy(
+        name="param_copy_test",
+        start_date="2020-01-01",
+        params=caller_params,
+        strategy_class=_DefaultedParamStrategy,
+        data={"FXI": _make_dataset("FXI"), "IWM": _make_dataset("IWM")},
+        tplusn=0,
+    )
+
+    assert caller_params == original
+    assert caller_params["FXI"] is not multi.params["FXI"]
+    assert "lookback" not in caller_params["FXI"]
+    assert multi.asset_strategies["FXI"].lookback == 20
+    assert multi.asset_strategies["IWM"].lookback == 20
 
 
 def test_set_rules_flattens_nested_ticker_lists() -> None:
