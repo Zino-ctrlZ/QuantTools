@@ -10,6 +10,7 @@
     },
     "editor.formatOnSave": false,
     "python.terminal.useEnvFile": true,
+    "python.defaultInterpreterPath": "/Users/chiemelienwanisobi/miniconda3/envs/openbb_new_use/bin/python",
 
     // --- Cursor: Cursor Pyright ---
     // "python.languageServer": "None" disables MS Pylance/Jedi so Cursor Pyright runs.
@@ -54,7 +55,7 @@
     "python.linting.enabled": true,
     "python-envs.pythonProjects": [
         {
-            "path": "",
+            "path": ".",
             "envManager": "ms-python.python:conda",
             "packageManager": "ms-python.python:conda"
         }
