@@ -1,5 +1,5 @@
 from EventDriven.configs.base import pydantic_dataclass
-from pydantic import ConfigDict
+from pydantic import ConfigDict, StrictInt
 import numbers
 from typing import Union, Tuple, List, Literal, Dict, Optional
 from datetime import datetime, date
@@ -546,7 +546,8 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     dollar scale: ``trade_size`` in dollars and ``option_price`` as premium * 100.
 
     ``enable_profit_roll`` and ``enable_profit_waterfall`` are mutually exclusive.
-    Both False skips analysis opinions.
+    Both False skips profit-management opinions. DTE rolls are independent:
+    set ``dte_limit`` to an int to enable, or leave ``None`` (default) to disable.
 
     Waterfall mode (``enable_profit_waterfall``): when PnL% vs initial premium
     clears ``waterfall_profit_threshold``, qty 1 ROLLs; larger sizes CLOSE
@@ -569,6 +570,8 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     enable_waterfall_stop_loss: bool = False
     waterfall_stop_loss_offset: float = 0.5
     strategy_slug_token: str = "short_donchian_equity"
+    ## Python int enables DTE rolls (dte < dte_limit). None disables. No bool/float coerce.
+    dte_limit: Optional[StrictInt] = None
 
     def __post_init__(self, ctx=None):
         """Validate required sizing and roll knobs.
@@ -600,3 +603,8 @@ class ShortIdxEqCogConfig(BaseCogConfig):
             )
         if not self.strategy_slug_token:
             raise ValueError("strategy_slug_token must be a non-empty string")
+        if self.dte_limit is not None:
+            if type(self.dte_limit) is not int:
+                raise ValueError("dte_limit must be a Python int or None")
+            if self.dte_limit <= 0:
+                raise ValueError("dte_limit must be > 0 when set")
