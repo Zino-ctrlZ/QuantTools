@@ -38,6 +38,10 @@ Processing Flow:
        vs ``waterfall_profit_threshold`` on initial cost basis. The waterfall
        can also arm a metadata-backed profit stop at crossing PnL times a fixed
        multiplier. Both primary profit flags False emits nothing.
+    9. When ``config.dte_limit`` is an int, ``_analyze_roll_on_dte`` runs first.
+       If any DTE ROLL is emitted, analysis returns immediately. ``None``
+       (default) disables DTE rolling. Replacement orders still size via
+       ``on_new_position`` on the signal-id date.
 
 Usage:
     >>> cog = ShortIdxEqCog(eq_strategy=multi, config=ShortIdxEqCogConfig(trade_size=3000))
@@ -58,6 +62,7 @@ from EventDriven.configs.core import ShortIdxEqCogConfig
 from EventDriven.dataclasses.states import CogActions, NewPositionState, PositionAnalysisContext, PositionState
 from EventDriven.riskmanager.actions import CLOSE, Changes, ROLL
 from EventDriven.riskmanager.position.base import BaseCog
+from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_moneyness_from_trade_id
 from EventDriven.riskmanager.position.cogs.pnl_utils import correct_position_pnl
 from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
@@ -661,11 +666,23 @@ class ShortIdxEqCog(BaseCog):
         )
         self._store_metadata(metadata)
 
-    def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
-        """Emit ROLL or waterfall CLOSE/ROLL opinions based on config flags.
+    def _dte_roll_enabled(self) -> bool:
+        """Return whether DTE rolls are enabled via ``config.dte_limit``.
 
-        Both profit flags False returns empty opinions. Positions below the
-        active threshold are left untouched (no HOLD spam).
+        Enablement is the type of ``dte_limit`` itself: a Python ``int``
+        turns the check on, ``None`` turns it off.
+
+        Returns:
+            True when ``dte_limit`` is a Python ``int``.
+        """
+        return type(self.config.dte_limit) is int
+
+    def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
+        """Emit DTE ROLL or profit ROLL/CLOSE opinions based on config flags.
+
+        When ``dte_limit`` is an int, DTE rolls run first. Any DTE ROLL this
+        cycle is returned immediately; profit waterfall / full roll are skipped.
+        Otherwise profit waterfall and full profit roll remain mutually exclusive.
 
         Args:
             context: Portfolio snapshot for the current analysis cycle.
@@ -673,11 +690,89 @@ class ShortIdxEqCog(BaseCog):
         Returns:
             CogActions containing ROLL/CLOSE opinions, if any.
         """
+        if self._dte_roll_enabled():
+            dte_actions = self._analyze_roll_on_dte(context)
+            if dte_actions.opinions:
+                return dte_actions
+
         if self.config.enable_profit_waterfall:
             return self._analyze_waterfall(context)
         if self.config.enable_profit_roll:
             return self._analyze_full_roll(context)
         return CogActions(date=context.date, source_cog=self.name, opinions=[])
+
+    def _analyze_roll_on_dte(self, context: PositionAnalysisContext) -> CogActions:
+        """Emit ROLL when a position's DTE falls below ``config.dte_limit``.
+
+        Lifted from VectorizedCog: ``dte < dte_limit`` via
+        ``get_dte_and_moneyness_from_trade_id``, then ROLL remaining quantity
+        (``quantity_diff = -abs(qty)``, ``new_quantity = qty``). Replacement
+        orders are sized later in ``on_new_position`` from the signal-id date.
+
+        Args:
+            context: Portfolio snapshot for the current analysis cycle.
+
+        Returns:
+            CogActions containing DTE ROLL opinions, if any.
+        """
+        opinions: List[PositionState] = []
+        if not self._dte_roll_enabled():
+            logger.debug("DTE limit disabled; no roll checks performed")
+            return CogActions(date=context.date, source_cog=self.name, opinions=opinions)
+
+        last_updated, t_plus_n_bdays = self._analysis_schedule(context)
+        portfolio_meta = context.portfolio_meta
+        backtest_start = portfolio_meta.start_date
+        dte_limit = int(self.config.dte_limit)
+
+        for pos_state in context.portfolio.positions:
+            if not self._is_target_strategy(pos_state.signal_id):
+                continue
+            try:
+                dte, _ = get_dte_and_moneyness_from_trade_id(
+                    trade_id=pos_state.trade_id,
+                    check_date=pos_state.last_updated,
+                    check_price=pos_state.current_underlier_data.chain_spot["close"],
+                    start=backtest_start,
+                    is_backtest=portfolio_meta.is_backtest,
+                )
+
+                qty = pos_state.quantity
+
+                if dte < dte_limit:
+                    logger.info(
+                        f"Position {pos_state.trade_id}: DTE {dte} below threshold {dte_limit}. "
+                        f"Recommending ROLL."
+                    )
+                    ## quantity_diff = -abs(qty) signals close-first for live; new_quantity is remaining size.
+                    action = ROLL(
+                        trade_id=pos_state.trade_id,
+                        action=Changes(quantity_diff=-abs(qty), new_quantity=qty),
+                    )
+                    action.reason = (
+                        f"DTE {dte} below threshold {dte_limit}. Rolling to extend duration."
+                    )
+                    action.analysis_date = last_updated
+                    if last_updated is not None:
+                        action.effective_date = last_updated + t_plus_n_bdays
+                    action.verbose_info = (
+                        f"Analysis: {action.analysis_date} | Effective: {action.effective_date} | "
+                        f"Trade: {pos_state.trade_id} | DTE: {dte} | Threshold: {dte_limit}"
+                    )
+                    pos_state.action = action
+                    opinions.append(pos_state)
+                else:
+                    logger.debug(
+                        f"Position {pos_state.trade_id}: DTE {dte} >= threshold {dte_limit}. No action."
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"Error calculating DTE for position {pos_state.trade_id}: {exc}. Skipping roll check."
+                )
+                logger.warning("Stack trace: ", exc_info=True)
+                continue
+
+        return CogActions(date=context.date, source_cog=self.name, opinions=opinions)
 
     def _analysis_schedule(self, context: PositionAnalysisContext) -> tuple[Optional[pd.Timestamp], pd.offsets.BusinessDay]:
         """Return last-updated stamp and t+n business-day offset for action dating.

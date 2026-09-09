@@ -323,6 +323,26 @@ def test_config_rejects_both_profit_flags() -> None:
         ShortIdxEqCogConfig(trade_size=1000, enable_profit_roll=True, enable_profit_waterfall=True)
 
 
+def test_config_dte_limit_defaults_to_none() -> None:
+    """dte_limit is None by default, which disables DTE rolls."""
+    cfg = ShortIdxEqCogConfig(trade_size=1000)
+    assert cfg.dte_limit is None
+    cfg_on = ShortIdxEqCogConfig(trade_size=1000, dte_limit=30)
+    assert cfg_on.dte_limit == 30
+
+
+def test_config_rejects_invalid_dte_limit() -> None:
+    """dte_limit must be a positive Python int or None; no bool/float coerce."""
+    with pytest.raises(ValueError, match="dte_limit"):
+        ShortIdxEqCogConfig(trade_size=1000, dte_limit=0)
+    with pytest.raises(ValueError, match="dte_limit"):
+        ShortIdxEqCogConfig(trade_size=1000, dte_limit=-5)
+    with pytest.raises(Exception):
+        ShortIdxEqCogConfig(trade_size=1000, dte_limit=True)
+    with pytest.raises(Exception):
+        ShortIdxEqCogConfig(trade_size=1000, dte_limit=30.0)
+
+
 def test_cog_requires_config() -> None:
     """Cog construction without config should fail because trade_size is required."""
     with pytest.raises(TypeError, match="trade_size"):
@@ -544,6 +564,51 @@ def test_analyze_does_nothing_when_profit_roll_disabled() -> None:
     cog, _ = _make_cog()
     pos = _open_position(pnl=20.0, quantity=4, entry_price=2.5)
     actions = cog._analyze_impl(_analysis_context([pos]))
+    assert actions.opinions == []
+
+
+def test_analyze_roll_on_dte_disabled_when_limit_is_none() -> None:
+    """dte_limit=None should not emit DTE rolls even when DTE is low."""
+    cog, _ = _make_cog(dte_limit=None)
+    pos = _open_position(pnl=0.0, quantity=4, entry_price=2.5)
+    actions = cog._analyze_impl(_analysis_context([pos]))
+    assert actions.opinions == []
+
+
+def test_analyze_roll_on_dte_rolls_when_below_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DTE below dte_limit should ROLL remaining quantity, same as VectorizedCog."""
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.cogs.short_idx_eq.get_dte_and_moneyness_from_trade_id",
+        lambda **_kwargs: (20, []),
+    )
+    cog, _ = _make_cog(dte_limit=90)
+    pos = _open_position(pnl=0.0, quantity=4, entry_price=2.5)
+    actions = cog._analyze_impl(_analysis_context([pos]))
+    assert len(actions.opinions) == 1
+    action = actions.opinions[0].action
+    assert isinstance(action, ROLL)
+    assert action.action["quantity_diff"] == -4
+    assert action.action["new_quantity"] == 4
+    assert "DTE" in action.reason
+
+
+def test_analyze_roll_on_dte_skips_when_at_or_above_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DTE at/above dte_limit should not emit a roll."""
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.cogs.short_idx_eq.get_dte_and_moneyness_from_trade_id",
+        lambda **_kwargs: (82, []),
+    )
+    cog, _ = _make_cog(dte_limit=30)
+    pos = _open_position(pnl=0.0, quantity=4, entry_price=2.5)
+    actions = cog._analyze_impl(_analysis_context([pos]))
+    assert actions.opinions == []
+
+
+def test_analyze_roll_on_dte_skips_other_slugs() -> None:
+    """Non-matching strategy slugs should not DTE-roll."""
+    cog, _ = _make_cog(dte_limit=90)
+    other = _open_position(pnl=0.0, quantity=4, entry_price=2.5, signal_id=OTHER_SIGNAL_ID)
+    actions = cog._analyze_impl(_analysis_context([other]))
     assert actions.opinions == []
 
 

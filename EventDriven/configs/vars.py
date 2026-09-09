@@ -27,7 +27,7 @@ CONFIG_CLASS_DESCRIPTIONS = {
     "PnLMonitorConfigConfigurable": "Explicit threshold-based PnL monitor config where each trigger is directly user-configurable.",
     "VectorizedCogConfig": "Config for a lightweight cog that monitors DTE thresholds using vectorized-friendly checks.",
     "PlainSizingCogConfig": "Config for a simple sizing cog with fallback one-lot behavior and optional strategy-token exclusions.",
-    "ShortIdxEqCogConfig": "Config for short-index-equity dollar-multiplier sizing and optional profit roll or waterfall with a metadata-backed profit stop.",
+    "ShortIdxEqCogConfig": "Config for short-index-equity dollar-multiplier sizing, optional profit roll or waterfall with a metadata-backed profit stop, and optional DTE rolls.",
 }
 
 CONFIG_DEFINITIONS = {
@@ -263,6 +263,7 @@ CONFIG_DEFINITIONS = {
         "enable_waterfall_stop_loss": "If True, arm a fixed profit stop when the waterfall threshold is first crossed and close the remaining position when PnL falls to it.",
         "waterfall_stop_loss_offset": "Multiplier applied to PnL on the threshold-crossing look to set the waterfall profit stop; 0.5 turns 110% crossing PnL into a 55% stop.",
         "strategy_slug_token": "Strategy slug token required for this cog to size or analyze a signal.",
+        "dte_limit": "Days-to-expiration cutoff for optional DTE rolls. A Python int enables rolls when DTE is below this value; None (default) disables. Bools and floats are rejected.",
     },
 }
 

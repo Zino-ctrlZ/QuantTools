@@ -1,15 +1,21 @@
 """In-memory live ATR trail for daily-remade strategy instances.
 
-``stop_triggered`` ensures ``atr_trail`` is entry through TODAY-1 (last bar in
-data minus one), then computes ``self.stop`` from that series plus TODAY's bar.
-No SQL. Does not override ``open_action``.
+``stop_triggered`` treats the evaluation bar as TODAY: ``atr_trail`` is entry
+through that bar minus one, then ``self.stop`` is that bar's ATR step. No SQL.
+Does not override ``open_action``.
+
+Live remakes load data that ends on the check date, so the evaluation index
+equals ``self._n - 1``. Full-history ``simulate()`` must use the evaluation
+bar or the stop look-aheads to the sample end.
+
+Comment density: domain policy.
 
 Core Classes:
         LiveAtrTrailStrategyBase: Remake-safe ATR trail attribute + stop check.
 
 Usage:
         >>> strat.stop_triggered(date=check_date)
-        >>> strat.atr_trail  # entry .. TODAY-1
+        >>> strat.atr_trail  # entry .. check_date - 1
 """
 
 from __future__ import annotations
@@ -25,14 +31,15 @@ from trade.backtester_.indicators import update_atr_trail_long, update_atr_trail
 
 
 class LiveAtrTrailStrategyBase(StrategyBase, ABC):
-    """Live ATR trail: ``atr_trail`` through T-1, dynamic stop on today.
+    """Live ATR trail: ``atr_trail`` through evaluation T-1, stop on that bar.
 
     Subclasses must register loss under ``ATR_LOSS_INDICATOR``. Do not define
     ``stop_triggered`` on the child if you want this remake-safe behavior.
 
     Attributes:
         ATR_LOSS_INDICATOR: Name of the ATR-loss indicator.
-        atr_trail: Instance series from entry through T-1 (set in ``stop_triggered``).
+        atr_trail: Instance series from entry through evaluation T-1
+            (set in ``stop_triggered``).
     """
 
     ATR_LOSS_INDICATOR: ClassVar[str] = "atr_loss"
@@ -150,16 +157,21 @@ class LiveAtrTrailStrategyBase(StrategyBase, ABC):
         date: pd.Timestamp = None,
         index: Optional[int] = None,
     ) -> bool:
-        """Ensure ``atr_trail`` is entry..TODAY-1, then compute stop and test breach.
+        """Ensure ``atr_trail`` is entry..evaluation T-1, then test that bar.
 
-        TODAY is always the last bar in the loaded dataset — independent of the
-        ``date``/``index`` passed in. Rebuilds the trail only when missing or
-        not yet through TODAY-1. Then sets ``self.stop`` from the last
-        completed level plus TODAY's close/loss and compares the evaluation bar.
+        TODAY is the resolved evaluation bar, not the last row of the loaded
+        dataset. Rebuilds the trail when missing or not yet through T-1.
+        Then sets ``self.stop`` from that completed level plus TODAY's
+        close/loss and compares TODAY's close.
+
+        Live daily remakes pass ``check_date`` / ``run_date`` as the last bar
+        in data, so this matches the previous last-row contract. Backtests
+        that keep the full series must use the simulation bar or the stop
+        ratchets with later prices.
 
         Args:
-            date: Evaluation timestamp (breach check only).
-            index: Evaluation bar index (breach check only).
+            date: Evaluation timestamp (this bar is TODAY for the trail).
+            index: Evaluation bar index (this bar is TODAY for the trail).
 
         Returns:
             ``True`` when the evaluation bar breaches the trail; ``False`` if flat.
@@ -169,11 +181,12 @@ class LiveAtrTrailStrategyBase(StrategyBase, ABC):
             return False
 
         idx, _ = self._resolve(date=date, index=index)
-        today_idx = self._n - 1
+        ## Evaluation bar is TODAY. Last dataset row look-aheads in simulate().
+        today_idx = idx
         completed_end = today_idx - 1
         entry_idx, _ = self._resolve(date=self.position_info.entry_date, index=None)
 
-        ## Trail is always entry → TODAY-1 (not the caller's check date).
+        ## Trail is entry → evaluation T-1 (same as live when idx is last bar).
         if not self._atr_trail_covers_through(completed_end):
             if completed_end >= entry_idx:
                 self.atr_trail = self._build_atr_trail_to(completed_end)

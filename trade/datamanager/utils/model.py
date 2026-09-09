@@ -533,6 +533,9 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     _, start_date, end_date = _resolve_model_load_window(load_request)
     start_date = to_datetime(start_date)
     end_date = to_datetime(end_date)
+    ## Include the resolved fetch window on every factor log so empty-vendor
+    ## failures can be tied to the same range as the getter call.
+    date_range_log = f"start_date={start_date.date()}, end_date={end_date.date()}"
 
     load_info = {}
     start_time = time.time()
@@ -565,7 +568,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
     model_data = ModelResultPack()
 
     if d:
-        logger.info(f"Loading dividend data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading dividend data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         d_params = {
             "maturity_date": expiration,
@@ -582,7 +585,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_info["dividend_load_time"] = time.time() - start_time
 
     if r:
-        logger.info(f"Loading rates data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading rates data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         if _get_print_diagnostics():
             print(
@@ -596,7 +599,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_info["rates_load_time"] = time.time() - start_time
 
     if s:
-        logger.info(f"Loading spot data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading spot data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         if _get_print_diagnostics():
             print(
@@ -611,7 +614,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_info["spot_load_time"] = time.time() - start_time
 
     if f:
-        logger.info(f"Loading forward data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading forward data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         f_params = {
             "maturity_date": expiration,
@@ -631,7 +634,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         load_info["forward_load_time"] = time.time() - start_time
 
     if opt_spot:
-        logger.info(f"Loading option spot data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading option spot data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         opt_params = {
             "expiration": expiration,
@@ -651,7 +654,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         OPTION_SPOT = market_price
 
     if vol:
-        logger.info(f"Loading implied volatility data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading implied volatility data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         v_params = {
             "expiration": expiration,
@@ -680,7 +683,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
         model_data.vol = V
 
     if greek:
-        logger.info(f"Loading greek data for symbol: {symbol}, expiration: {expiration}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
+        logger.info(f"Loading greek data for symbol: {symbol}, expiration: {expiration}, {date_range_log}, dividend_type: {dividend_type}, undo_adjust: {load_request.undo_adjust}")
         start_time = time.time()
         grk_params = {
             "expiration": expiration,
@@ -731,7 +734,7 @@ def _load_model_data_timeseries(load_request: LoadRequest) -> ModelResultPack:
             (
                 "No data requested to load in _load_model_data_timeseries()."
                 f" Option: Symbol={symbol}, exp={expiration}, strike={load_request.strike} "
-                f"right={load_request.right}"
+                f"right={load_request.right}, {date_range_log}"
                 f" Load bools: d={d}, r={r}, s={s}, f={f}, opt_spot={opt_spot}, vol={vol}, greek={greek}"
             )
         )
