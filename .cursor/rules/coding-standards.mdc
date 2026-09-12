@@ -1,5 +1,5 @@
 ---
-description: Project coding standards — commits, type hints, dates, docstrings, comments, naming, dataclasses
+description: Project coding standards — commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses
 alwaysApply: true
 ---
 
@@ -14,6 +14,18 @@ When the user asks for a commit:
 - Keep unrelated concerns in separate commits.
 - Only commit when explicitly requested; never commit proactively.
 - Follow the detailed workflow in `.cursor/skills/commit-strategy/SKILL.md`.
+
+## Local sandbox (Always-On)
+
+When the user asks to sandbox, sandbox a file, or put something in a sandbox:
+
+- Write scratch, samples, throwaway scripts, and generated artifacts under the repo's `.sandbox/` directory (create it if missing).
+- Do not put sandbox output in `logs/`, repo roots, or other tracked paths.
+- `.sandbox/` is local-only. Never stage or commit it.
+- When creating a **new** `.sandbox/` in a repo, add `.sandbox/` to that repo's `.gitignore` in the same change (if the entry is missing). Do not wait until commit time.
+- Prefer a short subdirectory named for the task (e.g. `.sandbox/signals_table/`).
+
+This is **not** Cursor's OS command sandbox (`sandbox.json` / CLI `sandbox`). It is the gitignored scratch folder.
 
 ## Type Hints
 
