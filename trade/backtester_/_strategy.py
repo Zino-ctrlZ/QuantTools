@@ -20,7 +20,8 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, ClassVar, Optional, Dict, Tuple
+from copy import deepcopy
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
 import inspect
 import pandas as pd
 from trade.backtester_.data import PTDataset
@@ -873,6 +874,67 @@ class StrategyBase(ABC):
         """
         self.stop = None
         self.position_info = PositionInfo()
+
+    def _freeze_reset_state(self) -> Dict[str, Any]:
+        """Snapshot fields that ``reset`` clears so they can be restored.
+
+        Dual coordinators override ``reset`` to also clear child strategies.
+        This snapshot only covers the StrategyBase fields; callers that reset a
+        coordinator should freeze each child separately via ``get_daily_signals``.
+
+        Returns:
+            Mapping with ``stop`` and a deep copy of ``position_info``.
+        """
+        return {
+            "stop": deepcopy(self.stop),
+            "position_info": deepcopy(self.position_info),
+        }
+
+    def _restore_reset_state(self, snapshot: Dict[str, Any]) -> None:
+        """Restore ``stop`` and ``position_info`` after a temporary ``reset``.
+
+        Args:
+            snapshot: Mapping produced by ``_freeze_reset_state``.
+        """
+        self.stop = snapshot["stop"]
+        self.position_info = snapshot["position_info"]
+
+    def get_daily_signals(self) -> pd.DataFrame:
+        """Rebuild the open-signal history while flat, then restore live state.
+
+        Freezes ``stop`` / ``position_info``, resets so ``should_open`` is not
+        blocked by an existing lot, then calls ``should_open`` on every bar.
+        Live position state is restored even if a bar raises.
+
+        Returns:
+            DataFrame indexed by bar date with ``signal_id`` (from the
+            ``TradeDecision`` when ``ok``) and ``valid`` (``TradeDecision.ok``).
+
+        Examples:
+            >>> df = strategy.get_daily_signals()  # doctest: +SKIP
+            >>> df.columns.tolist()
+            ['signal_id', 'valid']
+        """
+        snapshot = self._freeze_reset_state()
+        self.reset()
+        rows: List[Dict[str, Any]] = []
+        try:
+            for i in range(self._n):
+                ts = self._index[i]
+                ## Skip bars before the strategy is allowed to trade
+                if self.start_date is not None and ts < self.start_date:
+                    rows.append({"signal_id": None, "valid": False})
+                    continue
+                decision = self.should_open(index=i)
+                rows.append(
+                    {
+                        "signal_id": str(decision.signal_id) if decision.ok else None,
+                        "valid": bool(decision.ok),
+                    }
+                )
+        finally:
+            self._restore_reset_state(snapshot)
+        return pd.DataFrame(rows, index=self._index)
 
     def reset_strategy_state(self):
         """
