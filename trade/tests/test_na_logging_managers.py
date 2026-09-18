@@ -21,7 +21,11 @@ from trade.datamanager.result import (
     SpotResult,
 )
 from trade.datamanager.utils.logging import MODEL_NA_LOGGER_NAME
-from trade.datamanager.utils.na_logging import log_retrieval_na
+from trade.datamanager.utils.na_logging import (
+    _normalize_log_value,
+    _timeseries_values_at_index,
+    log_retrieval_na,
+)
 from trade.helpers.Logging import get_logger_base_location
 
 
@@ -92,6 +96,44 @@ def test_log_retrieval_na_timeseries_duplicate_index_does_not_raise(na_log_basel
     )
     log_retrieval_na(data, manager="market_timeseries", method="synthetic", symbol="NVDA")
     _assert_new_na_log(na_log_baseline, label="TimeseriesData duplicate index")
+
+
+def test_normalize_log_value_duplicate_column_series() -> None:
+    """A Series from duplicate column labels unwraps to the last cell."""
+    value = pd.Series([float("nan"), 214.95], index=["open", "open"])
+    assert _normalize_log_value(value) == 214.95
+
+
+def test_log_retrieval_na_duplicate_columns_does_not_raise(na_log_baseline: int) -> None:
+    """OHLC+quote duplicate column names must not crash option-spot NA logging."""
+    idx = pd.to_datetime(["2020-02-04"])
+    ts = pd.DataFrame(
+        [[float("nan"), 214.95, 8.0, 214.95]],
+        index=idx,
+        columns=["open", "open", "bid_size", "midpoint"],
+    )
+    result = OptionSpotResult(symbol="TSLA", timeseries=ts)
+    log_retrieval_na(result, manager="option_spot", method="hist")
+    _assert_new_na_log(na_log_baseline, label="OptionSpot duplicate columns")
+    snapshot = _timeseries_values_at_index(ts, idx[0])
+    assert snapshot is not None
+    assert snapshot["open"] is None
+    assert snapshot["open#2"] == 214.95
+    assert snapshot["midpoint"] == 214.95
+
+
+def test_log_retrieval_na_swallows_snapshot_errors() -> None:
+    """Snapshot failures are logged instead of raising into the retrieval path."""
+    idx = pd.to_datetime(["2024-01-02"])
+    result = SpotResult(
+        symbol="TEST",
+        timeseries=pd.Series([float("nan")], index=idx, name="spot"),
+    )
+    with patch(
+        "trade.datamanager.utils.na_logging._log_na_snapshots",
+        side_effect=RuntimeError("snapshot boom"),
+    ):
+        log_retrieval_na(result, manager="spot", method="synthetic")
 
 
 def test_log_retrieval_na_timeseries_data_dispatch(na_log_baseline: int) -> None:

@@ -44,7 +44,6 @@ from trade.datamanager.config import OptionDataConfig
 from trade.datamanager.utils.date import DateRangePacket, DATE_HINT, _sync_date, is_available_on_date
 from trade.datamanager.utils.logging import get_logging_level
 from dbase.DataAPI.ThetaData import retrieve_eod_ohlc, quote_to_eod_patch, retrieve_quote_rt
-from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
 from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
@@ -510,6 +509,10 @@ class OptionSpotDataManager(BaseDataManager):
                 - close: Closing price
                 - volume: Trading volume
 
+        Raises:
+            ThetaDataNotFound: Vendor returned no data for this contract window
+                (ticker-split miss, listed-session raise, or empty fetch).
+
         Examples:
             >>> opt_mgr = OptionSpotDataManager("AAPL")
             >>> df = opt_mgr._query_thetadata_api(
@@ -526,36 +529,27 @@ class OptionSpotDataManager(BaseDataManager):
             - QUOTE endpoint: Uses quote_to_eod_patch (constructs OHLC from quotes)
             - Quote endpoint useful when EOD data not yet available
         """
-        # In a real implementation, this method would make HTTP requests to Thetadata's API.
-        try:
-            if endpoint_source == OptionSpotEndpointSource.EOD:
-                return retrieve_eod_ohlc(
-                    symbol=self.symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    strike=float(strike),
-                    exp=expiration,
-                    right=right,
-                )
-            else:
-                logger.info(
-                    f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
-                )
-                return quote_to_eod_patch(
-                    symbol=self.symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    strike=float(strike),
-                    exp=expiration,
-                    right=right,
-                    ohlc_format=True,
-                )
-        except ThetaDataNotFound:
-            logger.warning(
-                f"ThetaData returned no data for {self.symbol} {strike}{right} exp={expiration} "
-                f"from {start_date} to {end_date}. Returning empty DataFrame."
+        if endpoint_source == OptionSpotEndpointSource.EOD:
+            return retrieve_eod_ohlc(
+                symbol=self.symbol,
+                start_date=start_date,
+                end_date=end_date,
+                strike=float(strike),
+                exp=expiration,
+                right=right,
             )
-            return pd.DataFrame()
+        logger.info(
+            f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
+        )
+        return quote_to_eod_patch(
+            symbol=self.symbol,
+            start_date=start_date,
+            end_date=end_date,
+            strike=float(strike),
+            exp=expiration,
+            right=right,
+            ohlc_format=True,
+        )
 
     def rt(
         self,

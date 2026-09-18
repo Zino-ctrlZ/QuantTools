@@ -1,3 +1,10 @@
+"""Date-window helpers for DataManager option and equity requests.
+
+Clips requested start/end dates to vendor calendars, holidays, and EOD vs quote
+availability. Expired option ``list_dates`` calendars live in dbase
+(``LIST_DATE_CACHE`` is re-exported from there for ``clear_all_caches``).
+"""
+
 import pandas as pd
 from dataclasses import dataclass
 from datetime import datetime, date
@@ -5,19 +12,20 @@ from pandas.tseries.offsets import BDay
 from trade.helpers.helper import to_datetime, is_busday, is_USholiday, is_pre_market_hours, is_post_market_hours
 from trade.helpers.helper import ny_now
 from trade.optionlib.assets.dividend import SECONDS_IN_DAY, SECONDS_IN_YEAR  # noqa
-from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME, get_enable_caching
+from trade.datamanager.vars import TODAY_RELOAD_CUTOFF, MIN_TIME_BEFORE_REAL_TIME
 from trade.helpers.helper_types import DATE_HINT
 from trade.helpers.helper import time_distance_helper  # noqa
-from trade.helpers.helper import CustomCache, generate_option_tick_new
+from trade.helpers.helper import generate_option_tick_new
 from trade.datamanager._enums import OptionSpotEndpointSource
 from trade.helpers.helper import is_market_hours_today
 from trade.helpers.helper_types import is_iterable  # noqa
 from trade.helpers.Logging import setup_logger
 from trade.optionlib.utils.format import assert_equal_length  # noqa
-from dbase.DataAPI.ThetaData import list_dates
+from dbase.DataAPI.ThetaData.list_dates_cache import LIST_DATE_CACHE, get_listed_option_dates  # noqa: F401
+
+## LIST_DATE_CACHE is owned by dbase; re-exported so ``clear_all_caches`` still
+## drops expired option calendars together with DataManager caches.
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
-from pathlib import Path
-import os
 from typing import Any, Iterable, List, Optional, Set, Tuple, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 from trade.datamanager.utils.equity_start_dates import get_start_date
@@ -25,22 +33,9 @@ from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
-PATH = Path(os.environ["GEN_CACHE_PATH"]) / "dm_gen_cache"
-
 ## Cap dropped-date dumps; multi-year gaps only need a short sample.
 _SYNC_DROP_LOG_FULL_MAX = 20
 _SYNC_DROP_LOG_SAMPLE = 3
-
-## This cache will be used to save the min trading date for each option tick
-## This is to avoid calling API all the time
-
-
-LIST_DATE_CACHE = CustomCache(
-    location=PATH.as_posix(),
-    fname="list_date_cache",
-    clear_on_exit=False,
-    expire_days=365,
-)
 
 
 def _convert_expiration_to_datetime(expiration: Union[str, datetime]) -> datetime:
@@ -394,25 +389,14 @@ def _sync_date(
         # unless we fetched an explicit last-trade date from list_dates below.
         return timestamp_exp
 
-    if opttick in LIST_DATE_CACHE.keys():
-        logger.info(f"Using cached date range for {start_date} - {end_date} and option tick {opttick}")
-        cached_dates = LIST_DATE_CACHE.get(key=opttick)
-        min_date = to_datetime(cached_dates["min_date"])
-        max_date_raw = cached_dates.get("max_date")
-        max_date = to_datetime(max_date_raw) if max_date_raw is not None else _compute_max_allowable()
-
-        start_date = max(min_date, start_date)
-        end_date = min(max_date, end_date)
-        return _guard_rail_dates(start_date, end_date, min_date, max_date)
-
     logger.info(f"Fetching date range from Thetadata for {opttick}")
     try:
         dates = list(
-            list_dates(
-                symbol=symbol,
-                exp=expiration,
-                right=right,
+            get_listed_option_dates(
+                ticker=symbol,
                 strike=strike,
+                right=right,
+                expiration=expiration,
             )
         )
     except ThetaDataNotFound:
@@ -431,30 +415,8 @@ def _sync_date(
     start_date = max(min_trade_date, start_date)
     logger.info(f"Calculated date range for option spot timeseries: {start_date} to {end_date}")
 
-    # This is how far into the future we can get data for.
-    # For non-expired options, max changes with time, so do not persist it.
-    if is_expired:
-        max_allowable = max_trade_date
-        if get_enable_caching():
-            LIST_DATE_CACHE.set(
-                key=opttick,
-                value={
-                    "min_date": pd.Timestamp(min_trade_date),
-                    "max_date": pd.Timestamp(max_allowable),
-                    "range": dates,
-                },
-                expire=None,
-            )
-    else:
-        max_allowable = _compute_max_allowable()
-        if get_enable_caching():
-            LIST_DATE_CACHE.set(
-                key=opttick,
-                value={
-                    "min_date": pd.Timestamp(min_trade_date),
-                },
-                expire=None,
-            )
+    ## Live max is time-dependent; dbase caches the calendar only after expiration.
+    max_allowable = max_trade_date if is_expired else _compute_max_allowable()
 
     return _guard_rail_dates(start_date, end_date, min_trade_date, max_allowable, dates=dates)
 

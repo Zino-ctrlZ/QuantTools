@@ -7,6 +7,7 @@ certification repairs.
 Comment density: domain policy
 
 Core Functions:
+    _lowercase_dataframe_columns: Coerce DataFrame column labels to lowercase strings.
     _data_structure_sanitize: Structural-only cleanup before cache write or return.
 """
 
@@ -26,6 +27,33 @@ from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
 
 PANDAS_DATA_HINT = Union[pd.Series, pd.DataFrame]
+
+
+def _lowercase_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce DataFrame column labels to lowercase strings.
+
+    ``Index.str.lower()`` requires string values. Empty option-spot fetches assign
+    a DatetimeIndex onto ``pd.DataFrame()``, which leaves a ``RangeIndex`` of
+    columns. Partial-cache concat can also mix integer and string names.
+
+    Args:
+        df: Frame whose column labels should be lowercased.
+
+    Returns:
+        The same frame with lowercase string column labels, or unchanged when
+        there are no columns.
+    """
+    if len(df.columns) == 0:
+        return df
+    if isinstance(df.columns, pd.MultiIndex):
+        ## Flatten tuples so later OHLC lookups stay 1-level string names
+        df.columns = [
+            "_".join(str(part).lower() for part in tup if str(part) != "")
+            for tup in df.columns
+        ]
+        return df
+    df.columns = [str(name).lower() for name in df.columns]
+    return df
 
 
 def _data_structure_sanitize(
@@ -75,9 +103,9 @@ def _data_structure_sanitize(
     # Sort the index
     df = df.sort_index()
 
-    # if dataframe, lower case columns
+    ## Lowercase labels without Index.str — empty/integer/MultiIndex columns break .str
     if isinstance(df, pd.DataFrame):
-        df.columns = df.columns.str.lower()
+        df = _lowercase_dataframe_columns(df)
 
     # Filter by start and end dates
     df = df[(df.index.date >= to_datetime(start).date()) & (df.index.date <= to_datetime(end).date())]
