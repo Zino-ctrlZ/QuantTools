@@ -2,8 +2,9 @@
 
 The module defines market indicators, trade and position records, and the
 base class used by backtest strategies. It also provides a thin rule filter
-whose rules evaluate a resolved strategy bar, plus an optional class-level
-filter-threshold bundle for regime gates that stay out of ``bt_params``.
+whose rules evaluate a resolved strategy bar, plus optional class-level
+filter flags and a filter-threshold bundle for regime gates that stay out
+of ``bt_params``.
 
 Core Classes:
     Indicator: Registered indicator metadata and values.
@@ -17,6 +18,7 @@ Usage:
     >>> strategy.rules.check(index=10)
     True
     >>> MyStrategy.set_filter_thresholds(MyStrategy.FILTER_THRESHOLDS)
+    >>> MyStrategy.disable_filters()
 """
 
 from abc import ABC, abstractmethod
@@ -25,7 +27,6 @@ from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
 import inspect
 import pandas as pd
 from trade.backtester_.data import PTDataset
-from typing import List
 from dataclasses import dataclass
 import numpy as np
 from plotly.subplots import make_subplots
@@ -264,7 +265,8 @@ class StrategyBase(ABC):
     Subclasses MUST define:
         bt_params: Dict[str, Any] = {"param_name": default_or_REQUIRED, ...}
 
-    Optional class attribute for regime / entry filters (not part of ``bt_params``):
+    Optional class attributes for regime / entry filters (not part of ``bt_params``):
+        use_filters: ClassVar[bool] = True
         FILTER_THRESHOLDS: ClassVar[Optional[FilterThresholds]] = None
 
     Key Features:
@@ -273,6 +275,7 @@ class StrategyBase(ABC):
     - Built-in indicator management system
     - Position tracking and state management with support for long/short positions
     - Simulation and visualization capabilities
+    - Optional class-level ``use_filters`` getter / enable / disable
     - Optional class-level ``FilterThresholds`` getter / setter
 
     Data Structures:
@@ -309,6 +312,7 @@ class StrategyBase(ABC):
     - plot_signals(): Visualizes buy/sell signals
     - add_indicator(): Add indicators to the strategy
     - get_indicator(): Retrieve indicator values
+    - get_use_filters() / enable_filters() / disable_filters(): Class-level filter enable flag
     - get_filter_thresholds() / set_filter_thresholds(): Class-level filter threshold access
 
     Attributes:
@@ -319,13 +323,37 @@ class StrategyBase(ABC):
     - stop (Optional[float]): Stop-loss price level
     - indicators (Dict[str, Any]): Dictionary of strategy indicators
     - close, open, high, low, volume, dates: Numpy array properties for efficient data access
+    - use_filters: Class-level flag; when False, subclasses typically skip rule registration
     - FILTER_THRESHOLDS: Optional class-level frozen filter-threshold bundle
     """
+
+    ## When False, strategies that honor this flag skip entry-rule registration.
+    ## Default True preserves current filter-on behavior.
+    use_filters: ClassVar[bool] = True
 
     ## Regime / entry filter thresholds; subclasses that use filters bind a
     ## concrete FilterThresholds instance. Default None keeps strategies that
     ## do not use this convention free of required configuration.
     FILTER_THRESHOLDS: ClassVar[Optional[FilterThresholds]] = None
+
+    @classmethod
+    def get_use_filters(cls) -> bool:
+        """Return whether this strategy class applies entry filters.
+
+        Returns:
+            Current class-level ``use_filters`` flag.
+        """
+        return bool(cls.use_filters)
+
+    @classmethod
+    def enable_filters(cls) -> None:
+        """Turn on class-level entry filters."""
+        cls.use_filters = True
+
+    @classmethod
+    def disable_filters(cls) -> None:
+        """Turn off class-level entry filters."""
+        cls.use_filters = False
 
     @classmethod
     def get_filter_thresholds(cls) -> FilterThresholds:
@@ -465,7 +493,7 @@ class StrategyBase(ABC):
         # --- Core state ---
         self.data: PTDataset = data
         self.start_date = pd.Timestamp(start_trading_date) if start_trading_date else None
-        self.ticker = ticker
+        self.ticker = ticker.upper()
         self.tplusn = tplusn
 
         self.position_info: Optional[PositionInfo] = PositionInfo()

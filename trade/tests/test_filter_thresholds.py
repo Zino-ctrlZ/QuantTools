@@ -1,8 +1,9 @@
-"""Tests for StrategyBase filter-threshold ClassVar getters and setters.
+"""Tests for StrategyBase filter-threshold and use_filters ClassVar accessors.
 
 These tests lock the production convention: concrete threshold bundles subclass
 ``FilterThresholds``, bind on ``FILTER_THRESHOLDS``, and are mutated only via
-``set_filter_thresholds`` with concrete-type checking.
+``set_filter_thresholds`` with concrete-type checking. ``use_filters`` is a
+class-level bool toggled via ``enable_filters`` / ``disable_filters``.
 
 Usage:
     Run with ``pytest trade/tests/test_filter_thresholds.py``.
@@ -180,3 +181,26 @@ def test_instance_property_reads_class_thresholds() -> None:
     strategy = _AlphaStrategy(_make_dataset())
     assert strategy.filter_thresholds is _AlphaStrategy.get_filter_thresholds()
     assert isinstance(strategy.filter_thresholds, _AlphaThresholds)
+
+
+def test_use_filters_defaults_true() -> None:
+    """Unconfigured subclasses should apply filters by default."""
+    assert _BareStrategy.get_use_filters() is True
+    assert _BareStrategy.use_filters is True
+
+
+def test_enable_and_disable_filters_toggle_class_flag() -> None:
+    """Enable / disable should update the class attribute and getter."""
+    original = _BareStrategy.get_use_filters()
+    try:
+        _BareStrategy.disable_filters()
+        assert _BareStrategy.get_use_filters() is False
+        assert _BareStrategy.use_filters is False
+        _BareStrategy.enable_filters()
+        assert _BareStrategy.get_use_filters() is True
+        assert _BareStrategy.use_filters is True
+    finally:
+        if original:
+            _BareStrategy.enable_filters()
+        else:
+            _BareStrategy.disable_filters()
