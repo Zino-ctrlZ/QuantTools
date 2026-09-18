@@ -254,6 +254,7 @@ CONFIG_DEFINITIONS = {
         "name": "Cog name used to register/identify the short-index-equity cog.",
         "enabled": "If False, sizing and analysis for this cog are skipped.",
         "trade_size": "Required dollar cap; effective size is min(tick_cash, trade_size).",
+        "max_trade_size_multiplier": "Picker tick_cash cap is min(tick_cash, trade_size * this factor) (default 1.3).",
         "multiplier_version": "Optional assign_dollar_multiplier version (1 or 3) applied only for the call, then restored.",
         "enable_profit_roll": "If True, emit full ROLL when position PnL% exceeds roll_profit_threshold; mutually exclusive with enable_profit_waterfall.",
         "enable_profit_waterfall": "If True, qty 1 ROLLs and larger sizes CLOSE ceil(initial_qty * waterfall_close_fraction) once when PnL% clears waterfall_profit_threshold; mutually exclusive with enable_profit_roll.",
@@ -262,7 +263,7 @@ CONFIG_DEFINITIONS = {
         "waterfall_close_fraction": "Fraction of initial_quantity to CLOSE on waterfall (qty > 1); close size is ceil(initial_qty * fraction). Default 0.5; use 1/3 or 0.25 for thirds/quarters.",
         "enable_waterfall_stop_loss": "If True, arm a fixed profit stop when the waterfall threshold is first crossed and close the remaining position when PnL falls to it.",
         "waterfall_stop_loss_offset": "Multiplier applied to PnL on the threshold-crossing look to set the waterfall profit stop; 0.5 turns 110% crossing PnL into a 55% stop.",
-        "strategy_slug_token": "Strategy slug token required for this cog to size or analyze a signal.",
+        "strategy_slug_token": "Strategy slug token(s) required for this cog to size or analyze a signal. Accepts a string, tuple, or list; any token contained in the slug matches.",
         "dte_limit": "Days-to-expiration cutoff for optional DTE rolls. A Python int enables rolls when DTE is below this value; None (default) disables. Bools and floats are rejected.",
     },
 }

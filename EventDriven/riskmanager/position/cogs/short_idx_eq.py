@@ -15,36 +15,42 @@ Core Dataclasses:
 
 Core Functions:
     metadata_from_store_payload: Rebuild metadata from a PositionStore payload.
+    on_new_order_request: Cap ``tick_cash`` at ``min(tick_cash, trade_size * max_trade_size_multiplier)``.
 
 Processing Flow:
-    1. Skip signals whose slug does not contain ``strategy_slug_token``.
-    2. Resolve ticker strategy from ``MultiAssetStrategy.asset_strategies``.
-    3. Inspect that instance for a child matching ``SignalID.strategy_slug``
+    1. On ``on_new_order_request``, set ``tick_cash`` to
+       ``min(tick_cash, config.trade_size * config.max_trade_size_multiplier)``
+       (dollar-scaled) so the order picker mid cap is the smaller of available
+       cash and a modest premium over trade size.
+    2. Skip signals whose slug does not contain any ``strategy_slug_token``.
+    3. Resolve ticker strategy from ``MultiAssetStrategy.asset_strategies``.
+    4. Inspect that instance for a child matching ``SignalID.strategy_slug``
        (composites like DualShortStrategy); use the match for multiplier and
        setup-feature snapshot, else the ticker strategy itself.
-    4. Temporarily apply ``multiplier_version`` if set, call
+    5. Temporarily apply ``multiplier_version`` if set, call
        ``assign_dollar_multiplier`` on the signal-id date, then restore version.
-    5. Effective trade size is ``min(tick_cash, config.trade_size)`` (tick cash
+    6. Effective trade size is ``min(tick_cash, config.trade_size)`` (tick cash
        scaled to dollars when needed). Calculator receives
        ``(multiplier, option_price, trade_size)`` with both money args in
        dollars (option premium * 100) and returns quantity.
        Default: ``trade_size * multiplier / 3 / option_price``.
        Qty 0 becomes 1.
-    6. Snapshot ``REQUIRED_SETUP_FEATURES`` values at signal-id date.
-    7. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
+    7. Snapshot ``REQUIRED_SETUP_FEATURES`` values at signal-id date.
+    8. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
        cog dict and ``PositionStore``.
-    8. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
+    9. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
        ``enable_profit_waterfall`` emits qty-1 ROLL or one-time ceil-half CLOSE
        vs ``waterfall_profit_threshold`` on initial cost basis. The waterfall
        can also arm a metadata-backed profit stop at crossing PnL times a fixed
-       multiplier. Both primary profit flags False emits nothing.
-    9. When ``config.dte_limit`` is an int, ``_analyze_roll_on_dte`` runs first.
-       If any DTE ROLL is emitted, analysis returns immediately. ``None``
-       (default) disables DTE rolling. Replacement orders still size via
-       ``on_new_position`` on the signal-id date.
+       multiplier. Matching lots that do not ROLL or CLOSE emit HOLD.
+    10. When ``config.dte_limit`` is an int, ``_analyze_roll_on_dte`` runs first.
+       If any DTE ROLL is emitted, analysis returns immediately (non-rolling
+       matching lots HOLD). ``None`` (default) disables DTE rolling.
+       Replacement orders still size via ``on_new_position`` on the signal-id date.
 
 Usage:
     >>> cog = ShortIdxEqCog(eq_strategy=multi, config=ShortIdxEqCogConfig(trade_size=3000))
+    >>> cog.on_new_order_request(order_request)
     >>> cog.on_new_position(new_position_state)
 """
 
@@ -59,8 +65,9 @@ import numpy as np
 import pandas as pd
 
 from EventDriven.configs.core import ShortIdxEqCogConfig
+from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.states import CogActions, NewPositionState, PositionAnalysisContext, PositionState
-from EventDriven.riskmanager.actions import CLOSE, Changes, ROLL
+from EventDriven.riskmanager.actions import CLOSE, Changes, HOLD, ROLL
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_moneyness_from_trade_id
 from EventDriven.riskmanager.position.cogs.pnl_utils import correct_position_pnl
@@ -232,7 +239,7 @@ class ShortIdxEqCog(BaseCog):
     ``assign_dollar_multiplier`` and ``REQUIRED_SETUP_FEATURES``. Composite
     ticker strategies may nest child strategies; the cog inspects for a child
     whose ``strategy_slug`` matches the signal. Only signals whose slug
-    contains ``config.strategy_slug_token`` are processed.
+    contains any ``config.strategy_slug_token`` are processed.
     """
 
     default_config = ShortIdxEqCogConfig(trade_size=1.0)
@@ -316,6 +323,20 @@ class ShortIdxEqCog(BaseCog):
         """
         return min(tick_cash, float(self.config.trade_size))
 
+    def _picker_tick_cash(self, tick_cash: float) -> float:
+        """Return dollar tick cash for the order picker.
+
+        ``min(tick_cash, trade_size * max_trade_size_multiplier)``.
+
+        Args:
+            tick_cash: Dollar-scaled cash currently on the request.
+
+        Returns:
+            Dollar-scaled cash cap used as request ``tick_cash``.
+        """
+        max_trade_size = float(self.config.trade_size) * float(self.config.max_trade_size_multiplier)
+        return min(float(tick_cash), max_trade_size)
+
     def _default_calculator(self, multiplier: int, option_price: float, trade_size: float) -> int:
         """Return default contract quantity from dollar multiplier and option close.
 
@@ -336,20 +357,20 @@ class ShortIdxEqCog(BaseCog):
         return int(math.floor(allowed_trade_size / option_price))
 
     def _is_target_strategy(self, signal_id: str) -> bool:
-        """Return whether the signal belongs to the short Donchian equity slug.
+        """Return whether the signal slug matches any configured strategy token.
 
         Args:
             signal_id: Raw signal identifier, optionally slug-prefixed.
 
         Returns:
-            True when ``strategy_slug_token`` is contained in the parsed slug.
+            True when any ``strategy_slug_token`` is contained in the parsed slug.
         """
         try:
             slug = SignalID(signal_id).strategy_slug or ""
         except Exception:
             logger.warning(f"Unable to parse signal id {signal_id} for ShortIdxEqCog slug check.", exc_info=True)
             return False
-        return self.config.strategy_slug_token in slug
+        return any(token in slug for token in self.config.strategy_slug_token)
 
     def _resolve_asset_strategy(self, ticker: str):
         """Return the per-ticker strategy or raise an informative error.
@@ -571,6 +592,41 @@ class ShortIdxEqCog(BaseCog):
             self.position_metadata[trade_id] = metadata
         return metadata
 
+    def on_new_order_request(self, new_request_state: OrderRequest) -> None:
+        """Cap request ``tick_cash`` at trade size times the picker multiplier.
+
+        Runs before the order picker so chain scoring ``mid_upper_limit`` is
+        ``min(tick_cash, trade_size * max_trade_size_multiplier)``.
+        Quantity sizing still uses ``min(tick_cash, config.trade_size)``.
+
+        Args:
+            new_request_state: Incoming order request mutated in place.
+
+        Returns:
+            None.
+        """
+        if not self._is_target_strategy(new_request_state.signal_id):
+            logger.debug(
+                f"Skipping ShortIdxEqCog tick_cash override for non-matching signal "
+                f"{new_request_state.signal_id}."
+            )
+            return
+
+        ## Dollar-scaled so RiskManager.get_order does not * 100 again.
+        scaled_cash = self._scaled_tick_cash(
+            float(new_request_state.tick_cash), new_request_state.is_tick_cash_scaled
+        )
+        tick_cash = self._picker_tick_cash(scaled_cash)
+        new_request_state.tick_cash = tick_cash
+        new_request_state.is_tick_cash_scaled = True
+        logger.info(
+            f"ShortIdxEqCog set tick_cash={tick_cash:.2f} "
+            f"(min of scaled_cash={scaled_cash:.2f} and "
+            f"trade_size={float(self.config.trade_size):.2f} * "
+            f"max_trade_size_multiplier={float(self.config.max_trade_size_multiplier):.2f}) "
+            f"for signal {new_request_state.signal_id}."
+        )
+
     def on_new_position(self, state: NewPositionState) -> None:
         """Size a new short-index-equity option from dollar multiplier.
 
@@ -678,28 +734,31 @@ class ShortIdxEqCog(BaseCog):
         return type(self.config.dte_limit) is int
 
     def _analyze_impl(self, context: PositionAnalysisContext) -> CogActions:
-        """Emit DTE ROLL or profit ROLL/CLOSE opinions based on config flags.
+        """Emit DTE ROLL or profit ROLL/CLOSE/HOLD opinions based on config flags.
 
         When ``dte_limit`` is an int, DTE rolls run first. Any DTE ROLL this
         cycle is returned immediately; profit waterfall / full roll are skipped.
+        HOLD-only DTE results fall through so profit rules can still fire.
         Otherwise profit waterfall and full profit roll remain mutually exclusive.
+        Matching lots with no ROLL/CLOSE emit HOLD.
 
         Args:
             context: Portfolio snapshot for the current analysis cycle.
 
         Returns:
-            CogActions containing ROLL/CLOSE opinions, if any.
+            CogActions containing ROLL/CLOSE/HOLD opinions, if any.
         """
         if self._dte_roll_enabled():
             dte_actions = self._analyze_roll_on_dte(context)
-            if dte_actions.opinions:
+            ## Early-return on ROLL only. HOLD opinions must not skip waterfall.
+            if any(isinstance(pos.action, ROLL) for pos in dte_actions.opinions):
                 return dte_actions
 
         if self.config.enable_profit_waterfall:
             return self._analyze_waterfall(context)
         if self.config.enable_profit_roll:
             return self._analyze_full_roll(context)
-        return CogActions(date=context.date, source_cog=self.name, opinions=[])
+        return self._analyze_hold(context)
 
     def _analyze_roll_on_dte(self, context: PositionAnalysisContext) -> CogActions:
         """Emit ROLL when a position's DTE falls below ``config.dte_limit``.
@@ -713,7 +772,8 @@ class ShortIdxEqCog(BaseCog):
             context: Portfolio snapshot for the current analysis cycle.
 
         Returns:
-            CogActions containing DTE ROLL opinions, if any.
+            CogActions containing DTE ROLL opinions and HOLD for matching lots
+            still above the DTE limit.
         """
         opinions: List[PositionState] = []
         if not self._dte_roll_enabled():
@@ -763,7 +823,18 @@ class ShortIdxEqCog(BaseCog):
                     opinions.append(pos_state)
                 else:
                     logger.debug(
-                        f"Position {pos_state.trade_id}: DTE {dte} >= threshold {dte_limit}. No action."
+                        f"Position {pos_state.trade_id}: DTE {dte} >= threshold {dte_limit}. Holding."
+                    )
+                    opinions.append(
+                        self._hold_position(
+                            pos_state,
+                            context=context,
+                            last_updated=last_updated,
+                            t_plus_n_bdays=t_plus_n_bdays,
+                            reason=(
+                                f"DTE {dte} >= threshold {dte_limit}. No roll. Holding the position."
+                            ),
+                        )
                     )
             except Exception as exc:
                 logger.warning(
@@ -789,9 +860,70 @@ class ShortIdxEqCog(BaseCog):
         t_plus_n_bdays = pd.offsets.BusinessDay(max(t_plus_n, 1))
         return last_updated, t_plus_n_bdays
 
+    def _hold_position(
+        self,
+        pos_state: PositionState,
+        *,
+        context: PositionAnalysisContext,
+        last_updated: Optional[pd.Timestamp],
+        t_plus_n_bdays: pd.offsets.BusinessDay,
+        reason: str,
+    ) -> PositionState:
+        """Attach a HOLD opinion to ``pos_state`` and return it.
+
+        Args:
+            pos_state: Open position with no ROLL/CLOSE this cycle.
+            context: Current analysis context.
+            last_updated: Portfolio last-updated timestamp.
+            t_plus_n_bdays: Business-day offset for effective date.
+            reason: Human-readable HOLD reason.
+
+        Returns:
+            The same ``pos_state`` with ``action`` set to HOLD.
+        """
+        action = HOLD(
+            trade_id=pos_state.trade_id,
+            action=Changes(quantity_diff=0, new_quantity=pos_state.quantity),
+        )
+        self._stamp_action(
+            action,
+            context=context,
+            last_updated=last_updated,
+            t_plus_n_bdays=t_plus_n_bdays,
+            reason=reason,
+            verbose_info=f"Position {pos_state.trade_id} HOLD. {reason}",
+        )
+        pos_state.action = action
+        return pos_state
+
+    def _analyze_hold(self, context: PositionAnalysisContext) -> CogActions:
+        """Emit HOLD for matching lots when no profit ROLL/CLOSE path is enabled.
+
+        Args:
+            context: Portfolio snapshot for the current analysis cycle.
+
+        Returns:
+            CogActions containing HOLD opinions for matching strategy slugs.
+        """
+        opinions: List[PositionState] = []
+        last_updated, t_plus_n_bdays = self._analysis_schedule(context)
+        for pos_state in context.portfolio.positions:
+            if not self._is_target_strategy(pos_state.signal_id):
+                continue
+            opinions.append(
+                self._hold_position(
+                    pos_state,
+                    context=context,
+                    last_updated=last_updated,
+                    t_plus_n_bdays=t_plus_n_bdays,
+                    reason="No DTE roll or profit action. Holding the position.",
+                )
+            )
+        return CogActions(date=context.date, source_cog=self.name, opinions=opinions)
+
     def _stamp_action(
         self,
-        action: Union[CLOSE, ROLL],
+        action: Union[CLOSE, ROLL, HOLD],
         *,
         context: PositionAnalysisContext,
         last_updated: Optional[pd.Timestamp],
@@ -799,7 +931,7 @@ class ShortIdxEqCog(BaseCog):
         reason: str,
         verbose_info: str,
     ) -> None:
-        """Stamp analysis metadata onto a CLOSE/ROLL action.
+        """Stamp analysis metadata onto a CLOSE/ROLL/HOLD action.
 
         Args:
             action: Action to stamp.
@@ -822,7 +954,7 @@ class ShortIdxEqCog(BaseCog):
             context: Portfolio snapshot for the current analysis cycle.
 
         Returns:
-            CogActions containing ROLL opinions, if any.
+            CogActions containing ROLL/HOLD opinions.
         """
         opinions: List[PositionState] = []
         last_updated, t_plus_n_bdays = self._analysis_schedule(context)
@@ -833,6 +965,19 @@ class ShortIdxEqCog(BaseCog):
             ## Prefer ledger-backed % so partial closes do not inflate entry_price.
             pnl_pct = correct_position_pnl(pos_state).pnl_pct
             if pnl_pct <= self.config.roll_profit_threshold:
+                opinions.append(
+                    self._hold_position(
+                        pos_state,
+                        context=context,
+                        last_updated=last_updated,
+                        t_plus_n_bdays=t_plus_n_bdays,
+                        reason=(
+                            f"PnL is {pnl_pct:.2%} which is not greater than "
+                            f"{self.config.roll_profit_threshold:.2%} of entry price. "
+                            "Holding the position."
+                        ),
+                    )
+                )
                 continue
 
             logger.info(
@@ -950,7 +1095,7 @@ class ShortIdxEqCog(BaseCog):
             context: Portfolio snapshot for the current analysis cycle.
 
         Returns:
-            CogActions containing CLOSE/ROLL opinions, if any.
+            CogActions containing CLOSE/ROLL/HOLD opinions.
         """
         opinions: List[PositionState] = []
         last_updated, t_plus_n_bdays = self._analysis_schedule(context)
@@ -1010,9 +1155,33 @@ class ShortIdxEqCog(BaseCog):
             ## Waterfall is one-shot: once we ROLL (qty 1) or CLOSE half (qty > 1),
             ## half_closed stays True so later analysis cycles cannot trim again.
             if metadata.half_closed:
+                opinions.append(
+                    self._hold_position(
+                        pos_state,
+                        context=context,
+                        last_updated=last_updated,
+                        t_plus_n_bdays=t_plus_n_bdays,
+                        reason=(
+                            f"Waterfall already taken (PnL {pnl_pct:.2%} vs initial). "
+                            "Holding remaining quantity."
+                        ),
+                    )
+                )
                 continue
 
             if pnl_pct < threshold:
+                opinions.append(
+                    self._hold_position(
+                        pos_state,
+                        context=context,
+                        last_updated=last_updated,
+                        t_plus_n_bdays=t_plus_n_bdays,
+                        reason=(
+                            f"Waterfall threshold {threshold:.2%} not hit "
+                            f"(PnL {pnl_pct:.2%} vs initial). Holding the position."
+                        ),
+                    )
+                )
                 continue
 
             ## Latch threshold-crossing event before arming stop / emitting trim-or-roll.

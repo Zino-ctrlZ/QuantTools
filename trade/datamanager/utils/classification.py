@@ -14,8 +14,9 @@ Core Functions:
 
 Processing Flow:
     1. Build the full set of expected business dates from the valid window.
-    2. Fetch vendor ``list_dates`` calendar for the contract (live ThetaData API
-       for non-expired options; ``LIST_DATE_CACHE`` only for expired contracts).
+    2. Fetch vendor ``list_dates`` calendar for the contract via dbase
+       ``get_listed_option_dates`` (live API for non-expired options; disk cache
+       only for expired contracts).
     3. Mark dates with at least one non-NaN price column in ``fetched`` as observed.
     4. ``checked_missing`` = expected − vendor_listed − observed (see Meaning below).
 
@@ -48,14 +49,9 @@ from typing import List, Union
 
 import pandas as pd
 
-from trade.helpers.helper import to_datetime, generate_option_tick_new
+from trade.helpers.helper import to_datetime
 from trade import HOLIDAY_SET
-from trade.helpers.Logging import setup_logger
-from .date import LIST_DATE_CACHE
-from ..vars import get_enable_caching
-from dbase.DataAPI.ThetaData import list_dates
-
-logger = setup_logger("trade.datamanager.utils.classification")
+from dbase.DataAPI.ThetaData.list_dates_cache import get_listed_option_dates
 
 def get_option_dates(
     ticker: str,
@@ -65,8 +61,8 @@ def get_option_dates(
 ) -> List[datetime]:
     """Fetches the list of dates for which the API has option spot data for the given parameters.
 
-    For non-expired contracts this always calls live ThetaData ``list_dates`` (no
-    ``LIST_DATE_CACHE`` read). Only expired contracts may return a cached range.
+    Delegates to dbase ``get_listed_option_dates``. Live contracts always hit
+    ThetaData; only expired calendars may be served from disk.
 
     Args:
         ticker: The underlying symbol.
@@ -76,39 +72,12 @@ def get_option_dates(
     Returns:
         A list of datetime objects representing the dates for which option spot data is available.
     """
-
-    option_has_expired = expiration < datetime.now()
-    opttick = generate_option_tick_new(
-        symbol=ticker,
+    return get_listed_option_dates(
+        ticker=ticker,
         strike=strike,
         right=right,
-        exp=expiration,
+        expiration=expiration,
     )
-
-    ## Only use cache if option has expired, otherwise always fetch from source to capture new data availability
-    if opttick in LIST_DATE_CACHE and option_has_expired:
-        dates = LIST_DATE_CACHE[opttick]["range"]
-        logger.info(f"Using cached list of dates for {opttick}: {dates}")
-        return dates
-
-    available_dates = list_dates(
-        symbol=ticker,
-        strike=strike,
-        right=right,
-        exp=expiration,
-    )
-    logger.info(f"List of dates for {opttick}: {available_dates}")
-
-    ## Only cache if option has expired
-    if get_enable_caching() and option_has_expired:
-        LIST_DATE_CACHE[opttick] = {
-            "range": available_dates,
-            "last_updated": datetime.now(),
-            "min_date": min(available_dates) if available_dates else None,
-            "max_date": max(available_dates) if available_dates else None,
-        }
-        
-    return available_dates
 
 @dataclass
 class DateClassification:

@@ -140,7 +140,11 @@ class BaseDataManager(ABC):
 
     @classmethod
     def clear_all_caches(cls) -> None:
-        """Clears caches for all registered DataManager subclasses."""
+        """Clear registered DataManager caches plus dividend and list_dates caches.
+
+        ``LIST_DATE_CACHE`` is the dbase-owned expired-option calendar cache,
+        re-exported from ``trade.datamanager.utils.date``.
+        """
         from .market_data import MarketTimeseries
         from .market_data_helpers.dividends import DIVIDEND_CACHE
         from .utils.date import LIST_DATE_CACHE

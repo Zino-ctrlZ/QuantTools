@@ -1,19 +1,41 @@
-from dataclasses import dataclass
-from typing import List, Union
+"""OptionDataConfig singleton and live-setup helpers.
+
+Holds datamanager defaults. ``thetadata`` is the ThetaData v3 ``SETTINGS``
+singleton so quote/format policy is edited in place.
+
+Core Classes:
+    OptionDataConfig: Singleton runtime config for managers.
+    ThetaDataV3Controls: Re-exported ThetaData v3 settings object (via ``thetadata``).
+
+Core Functions:
+    setup_config_for_live: Apply live QUOTE / binomial / L3 defaults.
+    switch_to_l3_certification: Set certification to L3.
+
+Usage:
+    >>> from trade.datamanager.config import OptionDataConfig, ListedSessionNotFoundPolicy
+    >>> OptionDataConfig().thetadata.listed_session_not_found = ListedSessionNotFoundPolicy.RAISE
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Union, get_type_hints
+
+from typeguard import check_type
+
+from dbase.DataAPI.ThetaData.v3.vars import SETTINGS, ThetaDataV3Controls
 from trade.helpers.helper_types import SingletonMetaClass
-from trade.optionlib.config.types import (DiscreteDivGrowthModel, DivType,)
+from trade.optionlib.config.types import DiscreteDivGrowthModel, DivType
 from trade.optionlib.config.defaults import DIVIDEND_LOOKBACK_YEARS
 from ._enums import (
+    CertificationLevel,
     GreekType,
-    OptionSpotEndpointSource,
-    OptionPricingModel,
-    VolatilityModel,
-    RealTimeFallbackOption,
+    ListedSessionNotFoundPolicy,
     ModelPrice,
-    CertificationLevel
+    OptionPricingModel,
+    OptionSpotEndpointSource,
+    RealTimeFallbackOption,
+    VolatilityModel,
 )
-from typeguard import check_type
-from typing import get_type_hints
+
 
 @dataclass
 class OptionDataConfig(metaclass=SingletonMetaClass):
@@ -26,7 +48,7 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     include_special_dividends: bool = False
     option_model: OptionPricingModel = OptionPricingModel.BINOMIAL
     volatility_model: VolatilityModel = VolatilityModel.MARKET
-    n_steps: int = 250 
+    n_steps: int = 250
     undo_adjust: bool = True
     real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
     model_price: ModelPrice = ModelPrice.MIDPOINT
@@ -35,6 +57,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     is_live: bool = False
     certification_level: CertificationLevel = CertificationLevel.L2
     allow_rates_resample_on_missing: bool = False
+    ## Same object as dbase SETTINGS; mutate fields, do not replace the handle.
+    thetadata: ThetaDataV3Controls = field(default_factory=lambda: SETTINGS)
 
     def assert_valid(self) -> None:
         """Validates all configuration values against business rules."""
@@ -60,6 +84,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
         assert isinstance(self.n_steps, int) and self.n_steps > 0, "n_steps must be a positive integer."
         assert isinstance(self.undo_adjust, bool), "undo_adjust must be a boolean."
         assert isinstance(self.model_price, ModelPrice), "Invalid model_price. Expected ModelPrice Enum."
+        assert self.thetadata is SETTINGS, "thetadata must be the ThetaData v3 SETTINGS singleton."
+
     def __post_init__(self) -> None:
         """Validates configuration after initialization."""
         self.assert_valid()
@@ -80,7 +106,7 @@ def setup_config_for_live() -> None:
 
     ## Fix on fail
     config.certification_level = CertificationLevel.L3
-    
+
     ## Leave rates resampling off so certification can catch missing rates
     config.allow_rates_resample_on_missing = False
 
@@ -101,6 +127,9 @@ def setup_config_for_live() -> None:
 
     ## Always use quotes
     config.option_spot_endpoint_source = OptionSpotEndpointSource.QUOTE
+
+    ## Listed quote session with no tape: drop the day, keep the rest of the range
+    config.thetadata.listed_session_not_found = ListedSessionNotFoundPolicy.OMIT
 
 
 def switch_to_l3_certification() -> None:

@@ -1,0 +1,10 @@
+# Curated ticker -> sector overrides (Yahoo Finance sector labels).
+# Keys are uppercase tickers. Used before yfinance info.sector lookup.
+# Missing symbols are filled from yfinance on first lookup and saved here.
+# ETFs usually have no Yahoo sector; map those here or they persist as Unknown.
+AAPL: Technology
+AMD: Technology
+META: Communication Services
+NVDA: Technology
+QQQ: Technology
+TSLA: Consumer Cyclical

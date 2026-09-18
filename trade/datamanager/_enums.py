@@ -1,7 +1,36 @@
-from enum import Enum
+"""Datamanager configuration enums (interval, artifacts, pricing, ThetaData policy).
+
+Re-exports ThetaData ``ListedSessionNotFoundPolicy`` so callers can import it
+next to ``OptionDataConfig`` / other datamanager enums.
+
+Core Enums:
+    CertificationLevel: L1 log / L2 raise / L3 fix.
+    OptionSpotEndpointSource: EOD vs quote tape.
+    ListedSessionNotFoundPolicy: Omit or raise when a listed quote session has no tape.
+"""
+
+from enum import Enum, IntEnum
 from typing import Literal, get_args
-from trade.optionlib.config.types import DivType # noqa
-from enum import IntEnum
+
+from dbase.DataAPI.ThetaData.v3.vars import ListedSessionNotFoundPolicy, ThetaDataV3Controls
+from trade.optionlib.config.types import DivType  # noqa
+
+__all__ = [
+    "AVAILABLE_GREEKS",
+    "ArtifactType",
+    "CertificationLevel",
+    "GREEKS",
+    "GreekType",
+    "Interval",
+    "ListedSessionNotFoundPolicy",
+    "ModelPrice",
+    "OptionPricingModel",
+    "OptionSpotEndpointSource",
+    "RealTimeFallbackOption",
+    "SeriesId",
+    "ThetaDataV3Controls",
+    "VolatilityModel",
+]
 
 
 class CertificationLevel(IntEnum):

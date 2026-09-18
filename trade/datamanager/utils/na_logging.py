@@ -13,7 +13,8 @@ Processing Flow:
     4. Dispatch selects a type-specific logger (Result, ModelResultPack, TimeseriesData, etc.).
     5. Type-specific code collects NA datetime indices per component/field.
     6. ``_log_na_snapshots`` emits one pretty-printed INFO per NA index to
-       ``trade.datamanager.utils.model_na``.
+       ``trade.datamanager.utils.model_na``. Snapshot assembly errors are logged
+       and swallowed so forensics cannot abort retrieval.
 
 Core Functions:
     get_na_log_context: Build shared environment context for NA snapshots.
@@ -31,6 +32,7 @@ from dataclasses import fields
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
+import numpy as np
 import pandas as pd
 
 from trade.datamanager.result import ModelResultPack, Result
@@ -121,11 +123,45 @@ def _na_indices_in_timeseries(
 
 
 def _normalize_log_value(value: Any) -> Any:
-    """Convert pandas/numpy scalars to plain Python types for readable log output."""
-    if value is None or (not isinstance(value, (str, bytes)) and pd.isna(value)):
+    """Convert pandas/numpy scalars to plain Python types for readable log output.
+
+    Duplicate DataFrame columns make ``row[col]`` a Series. ``pd.isna`` on a
+    Series is an array, and ``bool(series)`` raises. Unwrap to the last
+    positional value so snapshot logging cannot abort retrieval.
+
+    Args:
+        value: Cell, Series, array, or enum from a timeseries row.
+
+    Returns:
+        JSON-friendly scalar, enum name/value map, or None for NA.
+    """
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return None
+        return {str(k): _normalize_log_value(v) for k, v in value.iloc[-1].items()}
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return None
+        ## Duplicate labels: keep last (same keep as index dedupe elsewhere).
+        return _normalize_log_value(value.iloc[-1])
+    if isinstance(value, np.ndarray):
+        if value.size == 0:
+            return None
+        return _normalize_log_value(value.reshape(-1)[-1])
+    if value is None:
         return None
-    if hasattr(value, "item"):
-        return value.item()
+    if isinstance(value, (str, bytes)):
+        return value
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (ValueError, TypeError):
+        pass
+    if hasattr(value, "item") and not isinstance(value, Enum):
+        try:
+            return value.item()
+        except (ValueError, AttributeError):
+            pass
     if isinstance(value, Enum):
         return {"name": value.name, "value": value.value}
     return value
@@ -152,7 +188,37 @@ def _timeseries_values_at_index(
     if isinstance(timeseries, pd.Series):
         label = timeseries.name or "value"
         return {label: _normalize_log_value(row)}
-    return {col: _normalize_log_value(row[col]) for col in row.index}
+    ## Positional cells so duplicate column names stay distinct in the snapshot.
+    mapping: Dict[str, Any] = {}
+    seen: Dict[str, int] = {}
+    for i, col in enumerate(row.index):
+        base = str(col)
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        key = base if n == 1 else f"{base}#{n}"
+        mapping[key] = _normalize_log_value(row.iloc[i])
+    return mapping
+
+
+def _run_na_log(action: Callable[[], None], *, manager: str, method: str) -> None:
+    """Run NA snapshot emission without failing the retrieval.
+
+    Args:
+        action: Logger body to execute.
+        manager: Manager label for the error line.
+        method: Method label for the error line.
+    """
+    try:
+        action()
+    except Exception as exc:
+        ## Forensics must not abort load_full_option_data / certify_manager_result.
+        na_logger.error(
+            "NA logging failed; continuing retrieval. manager=%s method=%s err=%s",
+            manager,
+            method,
+            exc,
+            exc_info=True,
+        )
 
 
 def _value_has_na(value: Any) -> bool:
@@ -232,19 +298,25 @@ def _model_result_components(
 
 def log_model_result_pack_na(packet: ModelResultPack) -> None:
     """Log NA values found in a ModelResultPack with full cross-factor context."""
-    result_components = _model_result_components(packet)
-    components: List[Tuple[str, Optional[Union[pd.Series, pd.DataFrame]], Dict[str, Any]]] = []
-    for name, result in result_components:
-        if result is None:
-            continue
-        components.append((name, result.timeseries, _serialize_dataclass_params(result)))
 
-    packet_params = _serialize_dataclass_params(packet, skip_fields=_RESULT_SKIP_FIELDS | _PACKET_NESTED_RESULT_FIELDS)
-    _log_na_snapshots(
-        log_label="Model timeseries NA detected",
-        params=packet_params,
-        components=components,
-    )
+    def _emit() -> None:
+        result_components = _model_result_components(packet)
+        components: List[Tuple[str, Optional[Union[pd.Series, pd.DataFrame]], Dict[str, Any]]] = []
+        for name, result in result_components:
+            if result is None:
+                continue
+            components.append((name, result.timeseries, _serialize_dataclass_params(result)))
+
+        packet_params = _serialize_dataclass_params(
+            packet, skip_fields=_RESULT_SKIP_FIELDS | _PACKET_NESTED_RESULT_FIELDS
+        )
+        _log_na_snapshots(
+            log_label="Model timeseries NA detected",
+            params=packet_params,
+            components=components,
+        )
+
+    _run_na_log(_emit, manager="model", method="pack")
 
 
 def log_result_na(
@@ -417,28 +489,36 @@ def log_retrieval_na(
     method: str,
     **context: Any,
 ) -> None:
-    """Dispatch NA logging for any supported datamanager retrieval return type."""
-    if isinstance(result, ModelResultPack):
-        log_model_result_pack_na(result)
-        return
-    if isinstance(result, Result):
-        log_result_na(result, manager=manager, method=method, **context)
-        return
+    """Dispatch NA logging for any supported datamanager retrieval return type.
 
-    ## ponytail: lazy import; avoids circular import with market_data at module load
-    from trade.datamanager.market_data import AtIndexResult, TimeseriesData
+    Exceptions from snapshot assembly are logged and swallowed so NA forensics
+    cannot abort certification or ``load_full_option_data``.
+    """
 
-    if isinstance(result, TimeseriesData):
-        log_timeseries_data_na(result, manager=manager, method=method, **context)
-        return
-    if isinstance(result, AtIndexResult):
-        log_at_index_result_na(result, manager=manager, method=method, **context)
-        return
-    if isinstance(result, pd.Series):
-        log_pandas_series_na(result, manager=manager, method=method, **context)
-        return
-    if isinstance(result, (int, float)) and not isinstance(result, bool):
-        log_scalar_na(result, manager=manager, method=method, **context)
+    def _emit() -> None:
+        if isinstance(result, ModelResultPack):
+            log_model_result_pack_na(result)
+            return
+        if isinstance(result, Result):
+            log_result_na(result, manager=manager, method=method, **context)
+            return
+
+        ## ponytail: lazy import; avoids circular import with market_data at module load
+        from trade.datamanager.market_data import AtIndexResult, TimeseriesData
+
+        if isinstance(result, TimeseriesData):
+            log_timeseries_data_na(result, manager=manager, method=method, **context)
+            return
+        if isinstance(result, AtIndexResult):
+            log_at_index_result_na(result, manager=manager, method=method, **context)
+            return
+        if isinstance(result, pd.Series):
+            log_pandas_series_na(result, manager=manager, method=method, **context)
+            return
+        if isinstance(result, (int, float)) and not isinstance(result, bool):
+            log_scalar_na(result, manager=manager, method=method, **context)
+
+    _run_na_log(_emit, manager=manager, method=method)
 
 
 def log_na_after_retrieval(manager: str) -> Callable[[F], F]:

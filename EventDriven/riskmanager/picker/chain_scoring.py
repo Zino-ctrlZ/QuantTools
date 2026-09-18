@@ -61,20 +61,23 @@ def dte_score(
         One of: 'flat', 'short', 'long'
     tilt_strength : float
         Preference strength when DTE is on one side of target.
+        Exact target DTE counts as the preferred side for 'short' and 'long'.
 
     Returns
     -------
     float
-        Score scaled to max about 10.
+        Score scaled to max about 10 before tilt (higher with a bonus tilt).
     """
     base = np.exp(-((dte - target_dte) ** 2) / (2 * sigma**2))
 
     if tilt == "flat":
         mult = 1.0
     elif tilt == "short":
-        mult = 1.0 + tilt_strength if dte < target_dte else 1.0 - tilt_strength
+        ## Inclusive: hitting target_dte is preferred, not haircut like longer DTE
+        mult = 1.0 + tilt_strength if dte <= target_dte else 1.0 - tilt_strength
     elif tilt == "long":
-        mult = 1.0 + tilt_strength if dte > target_dte else 1.0 - tilt_strength
+        ## Inclusive: hitting target_dte is preferred, not haircut like shorter DTE
+        mult = 1.0 + tilt_strength if dte >= target_dte else 1.0 - tilt_strength
     else:
         raise ValueError("tilt must be one of: 'flat', 'short', 'long'")
 
