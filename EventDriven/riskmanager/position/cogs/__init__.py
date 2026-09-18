@@ -26,6 +26,7 @@ Available Cogs:
         - REQUIRED_SETUP_FEATURES snapshot at signal-id date
         - Optional full PnL% ROLL (enable_profit_roll) or one-shot waterfall:
           qty 1 ROLL / else CLOSE ceil(half) (enable_profit_waterfall)
+        - HOLD when no ROLL/CLOSE fires for a matching lot
         - Optional metadata-backed waterfall profit stop for remaining quantity
 
     pnl_utils.py:

@@ -12,7 +12,7 @@ import pytest
 from EventDriven.configs.core import ShortIdxEqCogConfig
 from EventDriven.dataclasses.orders import OrderRequest
 from EventDriven.dataclasses.timeseries import AtTimePositionData
-from EventDriven.riskmanager.actions import CLOSE, ROLL
+from EventDriven.riskmanager.actions import CLOSE, HOLD, ROLL
 from EventDriven.riskmanager.position.cogs.short_idx_eq import (
     ShortIdxEqCog,
     metadata_from_store_payload,
@@ -303,6 +303,20 @@ def _make_cog(
     return cog, asset
 
 
+def _assert_single_hold(actions, *, trade_id: str = TRADE_ID) -> None:
+    """Assert analysis emitted one HOLD opinion for ``trade_id``.
+
+    Args:
+        actions: CogActions from ``_analyze_impl``.
+        trade_id: Expected trade id on the HOLD action.
+    """
+    assert len(actions.opinions) == 1
+    action = actions.opinions[0].action
+    assert isinstance(action, HOLD)
+    assert action.trade_id == trade_id
+    assert action.action["quantity_diff"] == 0
+
+
 def test_config_requires_positive_trade_size() -> None:
     """trade_size must be provided and greater than zero."""
     with pytest.raises(ValueError, match="trade_size"):
@@ -315,6 +329,9 @@ def test_config_requires_positive_trade_size() -> None:
     assert cfg.multiplier_version == 2
     cfg4 = ShortIdxEqCogConfig(trade_size=1000, multiplier_version=4)
     assert cfg4.multiplier_version == 4
+    assert cfg.max_trade_size_multiplier == pytest.approx(1.3)
+    with pytest.raises(ValueError, match="max_trade_size_multiplier"):
+        ShortIdxEqCogConfig(trade_size=1000, max_trade_size_multiplier=0)
 
 
 def test_config_rejects_both_profit_flags() -> None:
@@ -341,6 +358,36 @@ def test_config_rejects_invalid_dte_limit() -> None:
         ShortIdxEqCogConfig(trade_size=1000, dte_limit=True)
     with pytest.raises(Exception):
         ShortIdxEqCogConfig(trade_size=1000, dte_limit=30.0)
+
+
+def test_config_normalizes_strategy_slug_token_string_tuple_list() -> None:
+    """strategy_slug_token accepts a string, tuple, or list and stores a token tuple."""
+    from_str = ShortIdxEqCogConfig(trade_size=1000)
+    assert from_str.strategy_slug_token == ("short_donchian_equity",)
+
+    from_tuple = ShortIdxEqCogConfig(
+        trade_size=1000,
+        strategy_slug_token=("short_donchian_equity", "short_mean_reversion_equity"),
+    )
+    assert from_tuple.strategy_slug_token == (
+        "short_donchian_equity",
+        "short_mean_reversion_equity",
+    )
+
+    from_list = ShortIdxEqCogConfig(
+        trade_size=1000,
+        strategy_slug_token=["short_mean_reversion_equity"],
+    )
+    assert from_list.strategy_slug_token == ("short_mean_reversion_equity",)
+
+    with pytest.raises(ValueError, match="strategy_slug_token"):
+        ShortIdxEqCogConfig(trade_size=1000, strategy_slug_token="")
+    with pytest.raises(ValueError, match="strategy_slug_token"):
+        ShortIdxEqCogConfig(trade_size=1000, strategy_slug_token=[])
+    with pytest.raises(ValueError, match="strategy_slug_token"):
+        ShortIdxEqCogConfig(trade_size=1000, strategy_slug_token=("short_donchian_equity", ""))
+    with pytest.raises(ValueError, match="strategy_slug_token"):
+        ShortIdxEqCogConfig(trade_size=1000, strategy_slug_token=123)  # type: ignore[arg-type]
 
 
 def test_cog_requires_config() -> None:
@@ -425,6 +472,76 @@ def test_calculator_money_args_are_same_dollar_scale() -> None:
     assert cog.position_metadata[TRADE_ID].option_price == pytest.approx(2.5)
 
 
+def test_on_new_order_request_caps_tick_cash_at_trade_size_times_multiplier() -> None:
+    """Request cash is min(tick_cash, trade_size * max_trade_size_multiplier)."""
+    cog, _ = _make_cog(trade_size=600.0)
+    request = OrderRequest(
+        date=datetime(2018, 6, 20),
+        symbol=TICKER,
+        option_type="p",
+        max_close=5,
+        tick_cash=1000.0,
+        direction="SHORT",
+        signal_id=SIGNAL_ID,
+        is_tick_cash_scaled=True,
+    )
+    cog.on_new_order_request(request)
+    assert request.tick_cash == pytest.approx(780.0)
+    assert request.is_tick_cash_scaled is True
+
+
+def test_on_new_order_request_keeps_tick_cash_when_below_max_trade_size() -> None:
+    """Available cash below trade_size * multiplier is left as the cap."""
+    cog, _ = _make_cog(trade_size=600.0)
+    request = OrderRequest(
+        date=datetime(2018, 6, 20),
+        symbol=TICKER,
+        option_type="p",
+        max_close=5,
+        tick_cash=500.0,
+        direction="SHORT",
+        signal_id=SIGNAL_ID,
+        is_tick_cash_scaled=True,
+    )
+    cog.on_new_order_request(request)
+    assert request.tick_cash == pytest.approx(500.0)
+
+
+def test_on_new_order_request_respects_custom_max_trade_size_multiplier() -> None:
+    """Custom max_trade_size_multiplier scales the picker cash ceiling."""
+    cog, _ = _make_cog(trade_size=600.0, max_trade_size_multiplier=1.0)
+    request = OrderRequest(
+        date=datetime(2018, 6, 20),
+        symbol=TICKER,
+        option_type="p",
+        max_close=5,
+        tick_cash=1000.0,
+        direction="SHORT",
+        signal_id=SIGNAL_ID,
+        is_tick_cash_scaled=True,
+    )
+    cog.on_new_order_request(request)
+    assert request.tick_cash == pytest.approx(600.0)
+
+
+def test_on_new_order_request_skips_non_matching_slug() -> None:
+    """Non-matching signals keep original tick_cash."""
+    cog, _ = _make_cog(trade_size=600.0)
+    request = OrderRequest(
+        date=datetime(2018, 6, 20),
+        symbol=TICKER,
+        option_type="p",
+        max_close=5,
+        tick_cash=1000.0,
+        direction="SHORT",
+        signal_id=OTHER_SIGNAL_ID,
+        is_tick_cash_scaled=False,
+    )
+    cog.on_new_order_request(request)
+    assert request.tick_cash == pytest.approx(1000.0)
+    assert request.is_tick_cash_scaled is False
+
+
 def test_effective_trade_size_is_min_of_tick_cash_and_config() -> None:
     """Sizing budget should cap at the smaller of tick cash and config trade_size."""
     cog, _ = _make_cog(asset=FakeAssetStrategy(multiplier=3), trade_size=3000.0)
@@ -458,6 +575,21 @@ def test_skips_non_matching_strategy_slug() -> None:
     cog.on_new_position(state)
     assert state.order["data"]["quantity"] == 0
     assert cog.position_metadata == {}
+
+
+def test_matches_any_token_when_strategy_slug_token_is_collection() -> None:
+    """Tuple/list tokens match if any token is contained in the signal slug."""
+    tokens = ("short_donchian_equity", "short_mean_reversion_equity")
+    cog, _ = _make_cog(strategy_slug_token=tokens)
+    donchian_state = _new_position_state(option_price=2.5)
+    cog.on_new_position(donchian_state)
+    assert donchian_state.order["data"]["quantity"] == 12
+
+    mr_signal = f"short_mean_reversion_equity::{TICKER}20180615SHORT"
+    cog_list, _ = _make_cog(strategy_slug_token=list(tokens))
+    mr_state = _new_position_state(signal_id=mr_signal, option_price=2.5)
+    cog_list.on_new_position(mr_state)
+    assert mr_state.order["data"]["quantity"] == 12
 
 
 def test_inspects_composite_child_for_multiplier() -> None:
@@ -560,19 +692,19 @@ def test_uses_signal_id_date_not_order_date() -> None:
 
 
 def test_analyze_does_nothing_when_profit_roll_disabled() -> None:
-    """Default enable_profit_roll=False should return no opinions."""
+    """Default enable_profit_roll=False should HOLD matching lots."""
     cog, _ = _make_cog()
     pos = _open_position(pnl=20.0, quantity=4, entry_price=2.5)
     actions = cog._analyze_impl(_analysis_context([pos]))
-    assert actions.opinions == []
+    _assert_single_hold(actions)
 
 
 def test_analyze_roll_on_dte_disabled_when_limit_is_none() -> None:
-    """dte_limit=None should not emit DTE rolls even when DTE is low."""
+    """dte_limit=None should HOLD rather than DTE-roll even when DTE is low."""
     cog, _ = _make_cog(dte_limit=None)
     pos = _open_position(pnl=0.0, quantity=4, entry_price=2.5)
     actions = cog._analyze_impl(_analysis_context([pos]))
-    assert actions.opinions == []
+    _assert_single_hold(actions)
 
 
 def test_analyze_roll_on_dte_rolls_when_below_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -592,8 +724,31 @@ def test_analyze_roll_on_dte_rolls_when_below_limit(monkeypatch: pytest.MonkeyPa
     assert "DTE" in action.reason
 
 
+def test_analyze_dte_hold_does_not_skip_waterfall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DTE above limit must fall through so waterfall can still CLOSE."""
+    monkeypatch.setattr(
+        "EventDriven.riskmanager.position.cogs.short_idx_eq.get_dte_and_moneyness_from_trade_id",
+        lambda **_kwargs: (82, []),
+    )
+    cog, _ = _make_cog(
+        dte_limit=30,
+        enable_profit_waterfall=True,
+        waterfall_profit_threshold=1.0,
+    )
+
+    def _calc(_m: int, _p: float, _t: float) -> int:
+        return 3
+
+    cog.calculator = _calc
+    cog.on_new_position(_new_position_state(option_price=2.5))
+    pos = _open_position(pnl=7.5, quantity=3, entry_price=2.5)
+    actions = cog._analyze_impl(_analysis_context([pos]))
+    assert len(actions.opinions) == 1
+    assert isinstance(actions.opinions[0].action, CLOSE)
+
+
 def test_analyze_roll_on_dte_skips_when_at_or_above_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DTE at/above dte_limit should not emit a roll."""
+    """DTE at/above dte_limit should HOLD, then fall through (no profit flags)."""
     monkeypatch.setattr(
         "EventDriven.riskmanager.position.cogs.short_idx_eq.get_dte_and_moneyness_from_trade_id",
         lambda **_kwargs: (82, []),
@@ -601,7 +756,7 @@ def test_analyze_roll_on_dte_skips_when_at_or_above_limit(monkeypatch: pytest.Mo
     cog, _ = _make_cog(dte_limit=30)
     pos = _open_position(pnl=0.0, quantity=4, entry_price=2.5)
     actions = cog._analyze_impl(_analysis_context([pos]))
-    assert actions.opinions == []
+    _assert_single_hold(actions)
 
 
 def test_analyze_roll_on_dte_skips_other_slugs() -> None:
@@ -623,12 +778,12 @@ def test_analyze_rolls_when_pnl_above_threshold() -> None:
 
 
 def test_analyze_skips_below_threshold_and_other_slugs() -> None:
-    """Below-threshold names and non-matching slugs should not emit opinions."""
+    """Below-threshold names HOLD; non-matching slugs emit nothing."""
     cog, _ = _make_cog(enable_profit_roll=True, roll_profit_threshold=1.0)
     below = _open_position(pnl=8.0, quantity=4, entry_price=2.5)
     other = _open_position(pnl=20.0, quantity=4, entry_price=2.5, signal_id=OTHER_SIGNAL_ID)
     actions = cog._analyze_impl(_analysis_context([below, other]))
-    assert actions.opinions == []
+    _assert_single_hold(actions)
 
 
 def test_new_position_seeds_waterfall_metadata_fields() -> None:
@@ -729,8 +884,8 @@ def test_waterfall_qty1_rolls_at_threshold_and_marks_taken() -> None:
     assert stored["half_closed"] is True
     assert stored["threshold_triggered"] is True
 
-    ## Do not re-fire
-    assert cog._analyze_impl(_analysis_context([pos])).opinions == []
+    ## Do not re-fire ROLL; remaining lot HOLDs.
+    _assert_single_hold(cog._analyze_impl(_analysis_context([pos])))
 
 
 def test_waterfall_sells_half_once_and_does_not_resell() -> None:
@@ -755,9 +910,9 @@ def test_waterfall_sells_half_once_and_does_not_resell() -> None:
     assert meta.half_closed is True
     assert meta.new_quantity == 1
 
-    ## Even at higher PnL, do not sell again
+    ## Even at higher PnL, do not sell again; remaining lot HOLDs.
     pos_after = _open_position(pnl=100.0, quantity=1, entry_price=2.5)
-    assert cog._analyze_impl(_analysis_context([pos_after])).opinions == []
+    _assert_single_hold(cog._analyze_impl(_analysis_context([pos_after])))
     stored = cog._position_store.get_metadata(TRADE_ID, SIGNAL_ID)
     assert stored["half_closed"] is True
 
@@ -860,9 +1015,9 @@ def test_waterfall_profit_stop_uses_crossing_pnl_and_closes_remaining() -> None:
     assert metadata.stop_triggered_pct is None
     assert metadata.stop_triggered_date is None
 
-    ## Above the stored stop, the remaining contract stays open.
+    ## Above the stored stop, the remaining contract HOLDs.
     above_stop = _open_position(pnl=4.2, quantity=1, entry_price=2.5)
-    assert cog._analyze_impl(_analysis_context([above_stop])).opinions == []
+    _assert_single_hold(cog._analyze_impl(_analysis_context([above_stop])))
 
     ## At 55% vs frozen initial cost, close all remaining quantity exactly once.
     at_stop = _open_position(pnl=4.125, quantity=1, entry_price=2.5)
@@ -876,7 +1031,7 @@ def test_waterfall_profit_stop_uses_crossing_pnl_and_closes_remaining() -> None:
     assert metadata.stop_triggered is True
     assert metadata.stop_triggered_pct == pytest.approx(0.55)
     assert metadata.stop_triggered_date == datetime(2018, 7, 1)
-    assert cog._analyze_impl(_analysis_context([at_stop])).opinions == []
+    _assert_single_hold(cog._analyze_impl(_analysis_context([at_stop])))
 
     stored = cog._position_store.get_metadata(TRADE_ID, SIGNAL_ID)
     rebuilt = metadata_from_store_payload(stored)
@@ -961,12 +1116,12 @@ def test_waterfall_stop_stable_after_trim_via_trade_ledger() -> None:
     assert meta.waterfall_stop_pnl_pct == pytest.approx(0.55)
 
     ## Same mark after trim: buy_ledger.quantity stays 4 (initial), total_pnl still
-    ## ~1100 -> 110%, comfortably above the 55% stop. No action.
+    ## ~1100 -> 110%, comfortably above the 55% stop. Remaining lot HOLDs.
     held = _open_position(
         pnl=1050.0, quantity=2, entry_price=500.0,
         trades=_make_trade(total_pnl=1100.0, avg_price=250.0, quantity=4),
     )
-    assert cog._analyze_impl(_analysis_context([held])).opinions == []
+    _assert_single_hold(cog._analyze_impl(_analysis_context([held])))
 
     ## total_pnl falls to 550 -> 55% vs initial cost 1000 -> stop fires, closes all.
     giveback = _open_position(
@@ -982,7 +1137,7 @@ def test_waterfall_stop_stable_after_trim_via_trade_ledger() -> None:
 
 
 def test_waterfall_respects_custom_threshold() -> None:
-    """Below waterfall_profit_threshold should emit nothing."""
+    """Below waterfall_profit_threshold should HOLD; at threshold CLOSE."""
     cog, _ = _make_cog(enable_profit_waterfall=True, waterfall_profit_threshold=1.5)
 
     def _calc(_m: int, _p: float, _t: float) -> int:
@@ -993,7 +1148,7 @@ def test_waterfall_respects_custom_threshold() -> None:
 
     ## initial cost = 10; pnl 10 -> 100% < 150%
     pos = _open_position(pnl=10.0, quantity=4, entry_price=2.5)
-    assert cog._analyze_impl(_analysis_context([pos])).opinions == []
+    _assert_single_hold(cog._analyze_impl(_analysis_context([pos])))
 
     ## pnl 15 -> 150% fires ceil(4/2)=2
     pos_hit = _open_position(pnl=15.0, quantity=4, entry_price=2.5)

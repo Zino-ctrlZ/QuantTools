@@ -532,6 +532,39 @@ class DonchianMomentumCogConfig(BaseCogConfig):
     dte_threshold: int = 15
 
 
+def _normalize_strategy_slug_tokens(
+    value: Union[str, Tuple[str, ...], List[str]],
+) -> Tuple[str, ...]:
+    """Coerce a strategy slug token input into a non-empty tuple of strings.
+
+    A single string becomes a one-element tuple so later matching iterates
+    tokens, not characters. Tuple and list inputs are copied in order.
+
+    Args:
+        value: String token or a tuple/list of string tokens.
+
+    Returns:
+        Non-empty tuple of non-empty strings.
+
+    Raises:
+        ValueError: If ``value`` is not a string/tuple/list, is empty, or
+            contains a non-string or empty token.
+    """
+    if isinstance(value, str):
+        tokens: Tuple[str, ...] = (value,)
+    elif isinstance(value, (list, tuple)):
+        tokens = tuple(value)
+    else:
+        raise ValueError("strategy_slug_token must be a string, tuple, or list")
+
+    if not tokens:
+        raise ValueError("strategy_slug_token must be a non-empty string, tuple, or list")
+    for token in tokens:
+        if not isinstance(token, str) or not token:
+            raise ValueError("strategy_slug_token values must be non-empty strings")
+    return tokens
+
+
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ShortIdxEqCogConfig(BaseCogConfig):
     """Configuration for ShortIdxEqCog.
@@ -545,6 +578,11 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     Custom ``calculator(multiplier, option_price, trade_size)`` args both use
     dollar scale: ``trade_size`` in dollars and ``option_price`` as premium * 100.
 
+    ``on_new_order_request`` caps picker ``tick_cash`` at
+    ``min(tick_cash, trade_size * max_trade_size_multiplier)`` (default 1.3)
+    so chain scoring can accept contracts slightly above the sizing budget
+    without exceeding available cash.
+
     ``enable_profit_roll`` and ``enable_profit_waterfall`` are mutually exclusive.
     Both False skips profit-management opinions. DTE rolls are independent:
     set ``dte_limit`` to an int to enable, or leave ``None`` (default) to disable.
@@ -555,12 +593,18 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     crossing PnL also arms a multiplicative profit stop
     (``crossing_pnl * waterfall_stop_loss_offset``) for the remaining
     position, persisted in position metadata.
+
+    ``strategy_slug_token`` may be a string or a tuple/list of strings. The cog
+    processes a signal when the parsed slug contains any configured token.
+    After validation the field is stored as a tuple of non-empty strings.
     """
 
     name: str = "ShortIdxEqCog"
     enabled: bool = True
     ## Required at cog construction; default None only because parent config fields have defaults.
     trade_size: Optional[float] = None
+    ## Picker cash cap = min(tick_cash, trade_size * this factor). Sizing still uses trade_size.
+    max_trade_size_multiplier: float = 1.3
     multiplier_version: Optional[int] = None
     enable_profit_roll: bool = False
     enable_profit_waterfall: bool = False
@@ -569,7 +613,7 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     waterfall_close_fraction: float = 0.5
     enable_waterfall_stop_loss: bool = False
     waterfall_stop_loss_offset: float = 0.5
-    strategy_slug_token: str = "short_donchian_equity"
+    strategy_slug_token: Union[str, Tuple[str, ...], List[str]] = "short_donchian_equity"
     ## Python int enables DTE rolls (dte < dte_limit). None disables. No bool/float coerce.
     dte_limit: Optional[StrictInt] = None
 
@@ -582,6 +626,8 @@ class ShortIdxEqCogConfig(BaseCogConfig):
         super().__post_init__(ctx)
         if self.trade_size is None or self.trade_size <= 0:
             raise ValueError("trade_size is required and must be > 0")
+        if self.max_trade_size_multiplier <= 0:
+            raise ValueError("max_trade_size_multiplier must be > 0")
         if self.multiplier_version is not None and self.multiplier_version not in (1, 2, 3, 4):
             raise ValueError("multiplier_version must be 1, 2, 3, or 4 when set")
         if self.enable_profit_roll and self.enable_profit_waterfall:
@@ -601,8 +647,7 @@ class ShortIdxEqCogConfig(BaseCogConfig):
             raise ValueError(
                 "enable_waterfall_stop_loss requires enable_profit_waterfall=True"
             )
-        if not self.strategy_slug_token:
-            raise ValueError("strategy_slug_token must be a non-empty string")
+        self.strategy_slug_token = _normalize_strategy_slug_tokens(self.strategy_slug_token)
         if self.dte_limit is not None:
             if type(self.dte_limit) is not int:
                 raise ValueError("dte_limit must be a Python int or None")
