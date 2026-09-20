@@ -12,6 +12,8 @@ description: >-
 
 Do **not** patch, refactor, or "try a likely fix" until the original failure has been recreated.
 
+**Raise site is not fault.** DataManager raising does not mean DataManager is at fault. Classify **fault of** (who broke the contract), then handle that layer — not the messenger.
+
 **Focus on root cause fixing instead of front end patches.** After the defect is isolated, propose (and apply, if asked) the change at the layer that actually broke the contract — adapter mapping, `LoadRequest` dates, cache key, certification, dbase shaping, vendor params. Do not paper over the symptom in the caller, notebook, try/except, empty-frame default, or a one-off skip for this trade id.
 
 Scratch scripts and dumps go in QuantTools `.sandbox/datamanager-debug/` (gitignored). Do not write debug artifacts under `logs/` or tracked paths.
@@ -24,9 +26,10 @@ Task Progress:
 - [ ] 2. Investigate the trade id that created the error
 - [ ] 3. Recreate the exact error
 - [ ] 4. Iteratively pinpoint (one layer at a time)
-- [ ] 5. If code structure: locate the structural defect
-- [ ] 6. If ThetaData API: hit the vendor URL directly
-- [ ] 7. Classify and report (fix only if the user asked)
+- [ ] 5. Three-boundary check (manager call / retrieve_* / direct URL)
+- [ ] 6. Classify: raised at vs fault of
+- [ ] 7. Handle by fault (fix only if the user asked)
+- [ ] 8. Report
 ```
 
 ## 1. Capture
@@ -93,10 +96,52 @@ Outside → inside:
 6. **dbase wrappers** — `retrieve_eod_ohlc`, `quote_to_eod_patch`, `retrieve_quote_rt`, `retrieve_ohlc`, `list_dates` (`dbase.DataAPI.ThetaData`; not in this repo — `inspect.getfile`).
 7. **HTTP ThetaData** — raw URL against the terminal (see [thetadata-direct.md](references/thetadata-direct.md)).
 
-Typical split:
+Peel finds **raised at**. It does not decide **fault of**. Continue to the three-boundary check.
 
-- Exception or empty **before** any network / `retrieve_*` → treat as **code structure**.
-- `ThetaDataNotFound` (vendor **472**), other ThetaData status codes, empty vendor payload, timeouts → treat as **ThetaData API** and do the direct URL call. Do not stop at the Python wrapper.
+## 5. Three-boundary check
+
+Same identity and window at three boundaries (after recreate; cache bypassed):
+
+1. Public DataManager / `load_full_option_data` call.
+2. `retrieve_eod_ohlc` / `retrieve_ohlc` / `list_dates` **kwargs + return**.
+3. Direct terminal URL (see § Direct URL).
+
+Do the direct URL whenever the peel reaches `retrieve_*`, empty/472, or a certification fail. Do not stop at the Python wrapper. Do not treat “exception before network” as a skip of (3) if `retrieve_*` was never reached for a reason other than a proven caller/adapter kwargs bug.
+
+## 6. Classify: raised at vs fault of
+
+**DataManager raising does not mean DataManager is at fault.** Fault is the first layer that produced something the next layer is entitled to reject. Everything above that is a messenger.
+
+Certification is a **detector**, not a fault bucket:
+
+- L1/L2/L3 fail on empty/NA → usually **returned data / response**
+- Fail after a good vendor payload → **DataManager** (over-strict or wrong window)
+- Fail after a good URL and a bad DataFrame → **dbase tooling**
+
+### Fault buckets
+
+| Fault of | Contract that broke |
+|---|---|
+| **Caller** | TFP-Algo / notebook / analyzer passed the wrong identity or window (strike, right `"C"`/`"P"` vs `"call"`/`"put"`, exp, dates) **before** QuantTools rewrote it. |
+| **DataManager** | QuantTools built a bad request, reused a bad cache key, mapped the adapter wrong, clipped dates incorrectly, or treated a *valid* empty/partial as a crash. |
+| **ThetaData dbase tooling** | FinanceDatabase `retrieve_*` / `list_dates` / `quote_to_eod_patch` / `raise_thetadata_exception` shaped, parsed, or patched so the DataFrame/exception is not what the terminal said. |
+| **Returned data / response** | Terminal (or true empty tape) answered **this exact request** with no rows, vendor **472**, or junk that the wrapper passed through faithfully. |
+
+Keep **caller** explicit. Fold it into DataManager **only** when `LoadRequest` / `_sync_date` / adapter rewrote identity.
+
+### Discriminator
+
+| 1 Manager | 2 Wrapper | 3 URL | Fault of |
+|---|---|---|---|
+| bad kwargs vs trade id / opttick | — | — | **Caller** (or DataManager if QuantTools rewrote them) |
+| raises / empty / cert fail | rows that match the request | rows | **DataManager** |
+| raises / empty | empty / wrong exception / wrong shape | rows or matching vendor status | **dbase tooling** |
+| raises / empty / cert fail | empty / 472 / same junk | empty / 472 / same junk | **Returned data / response** |
+| raises on empty index | empty DF, 200 + no rows | empty / 472 | **Returned data / response** (raise in DataManager is allowed) |
+
+Empty after `list_dates` clip: **DataManager** if we rewrote a window the vendor calendar cannot serve; **returned data** if the contract has no sessions for the requested window.
+
+Do not call missing tape HTTP 404. Use inner status + exception (§ ThetaData error names).
 
 ## ThetaData error names
 
@@ -125,19 +170,45 @@ When talking about a failure, use **status code + Python exception** from `dbase
 
 Say: vendor **472** / `ThetaDataNotFound`. Never call missing tape a 404.
 
-## 5. Code structure
+## 7. Fault handling
 
-If the failure is in QuantTools (or dbase parameter shaping), **find** the defect:
+Handle **fault of**, not exception type. DataManager **may raise** on returned-data faults; that raise can be correct. Do not patch the messenger.
 
-- Trace the reproduced kwargs through the call stack; do not guess from architecture docs alone.
-- Check adapter mappings, `LoadRequest` date policy, cache keys vs identity fields, date guardrails vs vendor calendar, certification preflight vs sanitizers, singleton `INSTANCES` reuse.
-- Quote file + function + the rule that was violated.
-- Do not implement a fix unless the user asked. Recreate after any change.
-- When a fix is in scope: **root cause, not a front-end patch.** A caller guard, extra `fillna`, swallowing `ThetaDataNotFound`, or skipping the failing trade is not a fix.
+Do not implement a change unless the user asked. Recreate after any change.
 
-## 6. ThetaData API → direct URL
+### Caller
 
-If the issue is from the ThetaData API, **try a direct call through the URL** (curl/`httpx`/`requests`), bypassing `dbase` and datamanager.
+Fix the call site (trade id → opttick / strike / right / exp / window). Do not add QuantTools guards, skips, or `fillna` for this contract.
+
+### DataManager
+
+Fix in QuantTools at the violating rule: adapter mapping, `LoadRequest` dates, cache key vs identity, `_sync_date` / `list_dates` policy, empty-index assumption, certification vs sanitizers, `INSTANCES` reuse.
+
+Trace the reproduced kwargs through the call stack; do not guess from architecture docs alone. Quote file + function + the rule that was violated.
+
+Not a fix: caller try/except, swallowing `ThetaDataNotFound`, skipping this trade id, empty-frame default, notebook workaround.
+
+### ThetaData dbase tooling
+
+Stop QuantTools work. Fix in FinanceDatabase (`inspect.getfile` on `retrieve_*`). Do not compensate in QuantTools (second strike×1000, local status-code map, “if empty try v2”).
+
+Direct URL is mandatory. Without boundary (3) you cannot tell dbase from vendor.
+
+### Returned data / response
+
+Not a code bug by default. Do **not** invent rows in DataManager.
+
+| Subtype | Handling |
+|---|---|
+| True no-tape (URL and wrapper agree: **472** / empty) | Propagate absence (`ThetaDataNotFound`, classified missing dates, NA log). Use `fall_back_option` / listed-session rules **only if already the contract**. |
+| Faithful but unusable payload (wrong dtypes, future session, HTTP 200 + inner error passed as DF) | Prefer wrapper raising the mapped Theta exception (if mapping is wrong → **dbase**). If the vendor sent junk, certification **rejects**; do not sanitize into a fake series. Vendor/ticket, not a QuantTools reshape. |
+| Partial tape (some dates missing, some NA columns) | Classification + NA logging + certification level. Tightening L2/L3 is a DataManager **policy** change. Filling holes is a workaround unless the holes are from a bad window (then DataManager). |
+
+Live trading (fail closed vs fallback vs NA row) is TFP-Algo product policy. This skill does not invent a QuantTools default beyond **do not fabricate**.
+
+## Direct URL
+
+When the three-boundary check needs the terminal, **call the URL directly** (curl/`httpx`/`requests`), bypassing `dbase` and datamanager.
 
 Build the same path/query the wrapper would use. Strike on v2 hist option endpoints is typically **price × 1000** as an integer (`150.0` → `150000`). Dates are `YYYYMMDD`.
 
@@ -149,16 +220,17 @@ curl -sS -D - "http://127.0.0.1:25510/v2/hist/option/eod?root=AAPL&exp=20250620&
 
 Interpret:
 
-| Direct URL | Wrapper / manager | Meaning |
+| Direct URL | Wrapper / manager | Fault of |
 |---|---|---|
-| Terminal refused / timeout | any | ThetaData process not reachable |
-| Vendor **472** / `ThetaDataNotFound` or empty body | wrapper `ThetaDataNotFound` or empty DF | no tape for that request, not manager cache |
-| URL returns rows, wrapper empty/raises | Python | **code structure** in dbase or datamanager mapping |
-| URL and wrapper both empty | — | likely no data for that contract/window |
+| Terminal refused / timeout | any | ThetaData process not reachable (ops / returned response) |
+| Vendor **472** / empty body | wrapper `ThetaDataNotFound` or empty DF | **Returned data / response** (not manager cache) |
+| URL returns rows, wrapper empty/raises | kwargs at wrapper were correct | **dbase tooling** |
+| URL returns rows, wrapper empty/raises | manager kwargs were wrong | **DataManager** (or caller) |
+| URL and wrapper both empty / both 472 | — | **Returned data / response** |
 
 URL recipes, v2 vs v3, and how to extract the wrapper's URL: [thetadata-direct.md](references/thetadata-direct.md).
 
-## 7. Report
+## 8. Report
 
 ```markdown
 ## Recreated
@@ -166,19 +238,27 @@ URL recipes, v2 vs v3, and how to extract the wrapper's URL: [thetadata-direct.m
 - Call: <exact API + kwargs recovered from the failure — not a stand-in>
 - Symptom: ...
 
-## Layer
-- Isolated at: caller | adapter | LoadRequest/dates | manager/cache | certification | dbase | ThetaData HTTP
+## Raised at
+- caller | adapter | LoadRequest/dates | manager/cache | certification | dbase | ThetaData HTTP
+
+## Fault of
+- caller | DataManager | ThetaData dbase tooling | returned data/response
+
+## Boundaries
+- Manager: <kwargs + symptom>
+- retrieve_*: <kwargs + return / exception>
+- Direct URL: <command, inner status, body summary>  OR  not reached (and why)
 
 ## Evidence
-- Structure: <file, function, broken rule>  OR  none
-- Direct URL: <command, status, body summary>  OR  not applicable
+- Broken rule: <file, function>  OR  none (data absence / vendor junk)
 
 ## Cause
-- One sentence.
+- One sentence: raised in X because Y (fault of Z).
 
-## Fix
-- Root cause change at the isolated layer (do not apply unless asked).
-- Rejected front-end patches: <caller/notebook/try-except/skip-this-trade workarounds that would hide the same defect>
+## Handling
+- caller fix | QuantTools fix | FinanceDatabase fix | no code fix (propagate / certify / vendor)
+- Do not apply unless asked.
+- Rejected messenger patches: <try/except, skip-this-trade, fillna, empty default>
 ```
 
 ## Additional resources

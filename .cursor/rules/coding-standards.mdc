@@ -1,5 +1,5 @@
 ---
-description: Project coding standards — commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses
+description: Project coding standards — commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses, utils placement
 alwaysApply: true
 ---
 
@@ -128,6 +128,30 @@ rates = rates.ffill()
 ```
 
 **Review cue (tier B/C):** Could a new developer follow the pipeline — including edge cases — without opening every helper? If not, add plain-English flow comments.
+
+## Utils placement and organization
+
+Do not default new helpers into a grab-bag `utils.py` or `utils/` package. Place them in this order:
+
+1. **Cross-package / reusable.** If another module or package would reasonably import it (dates, logging, cache, pricing, parse, types), put it in `trade.helpers`, not beside the first caller.
+   - Small, general functions that fit existing helper themes go in `trade.helpers.helper` (e.g. `to_datetime`).
+   - A coherent concern with its own surface gets a dedicated module in `trade.helpers` (e.g. `Logging.py`, `parse.py`, `cache_registry.py`) — do not grow `helper.py` into a junk drawer.
+2. **Package-local.** If it is only meaningful inside the current package or sub-package, add it to that package’s **core** (existing `core.py` or the package’s primary public module). Keep it next to the domain that owns the types and invariants.
+3. **Caller-local.** If neither bar is met (one-off transform, private glue, no second caller in sight), keep it in the module being written as a private helper (`_` prefix). Do not create a `utils` module for a single function.
+
+When extracting later: promote caller-local → package core as soon as a second module in the same package needs it; promote package core → `trade.helpers` as soon as a second package needs it.
+
+```python
+# ❌ BAD — generic datetime helper dumped in the caller's utils
+# trade/datamanager/utils/dates.py
+def to_datetime(value): ...
+
+# ✅ GOOD — shared helper lives in trade.helpers
+from trade.helpers.helper import to_datetime
+
+# ❌ BAD — datamanager-only alignment rule in trade.helpers.helper
+# ✅ GOOD — stays in datamanager core / that sub-package's core API
+```
 
 ## Naming Conventions
 
