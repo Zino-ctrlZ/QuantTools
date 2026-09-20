@@ -263,7 +263,7 @@ CONFIG_DEFINITIONS = {
         "waterfall_close_fraction": "Fraction of initial_quantity to CLOSE on waterfall (qty > 1); close size is ceil(initial_qty * fraction). Default 0.5; use 1/3 or 0.25 for thirds/quarters.",
         "enable_waterfall_stop_loss": "If True, arm a fixed profit stop when the waterfall threshold is first crossed and close the remaining position when PnL falls to it.",
         "waterfall_stop_loss_offset": "Multiplier applied to PnL on the threshold-crossing look to set the waterfall profit stop; 0.5 turns 110% crossing PnL into a 55% stop.",
-        "strategy_slug_token": "Strategy slug token(s) required for this cog to size or analyze a signal. Accepts a string, tuple, or list; any token contained in the slug matches.",
+        "strategy_slug_token": "Strategy slug token(s) required for this cog to size or analyze a signal. Accepts a string, tuple, or list; the parsed signal slug must equal a token exactly.",
         "dte_limit": "Days-to-expiration cutoff for optional DTE rolls. A Python int enables rolls when DTE is below this value; None (default) disables. Bools and floats are rejected.",
     },
 }

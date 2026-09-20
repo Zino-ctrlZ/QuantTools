@@ -595,7 +595,7 @@ class ShortIdxEqCogConfig(BaseCogConfig):
     position, persisted in position metadata.
 
     ``strategy_slug_token`` may be a string or a tuple/list of strings. The cog
-    processes a signal when the parsed slug contains any configured token.
+    processes a signal when the parsed slug exactly equals any configured token.
     After validation the field is stored as a tuple of non-empty strings.
     """
 

@@ -22,7 +22,7 @@ Processing Flow:
        ``min(tick_cash, config.trade_size * config.max_trade_size_multiplier)``
        (dollar-scaled) so the order picker mid cap is the smaller of available
        cash and a modest premium over trade size.
-    2. Skip signals whose slug does not contain any ``strategy_slug_token``.
+    2. Skip signals whose slug does not exactly equal any ``strategy_slug_token``.
     3. Resolve ticker strategy from ``MultiAssetStrategy.asset_strategies``.
     4. Inspect that instance for a child matching ``SignalID.strategy_slug``
        (composites like DualShortStrategy); use the match for multiplier and
@@ -59,7 +59,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -239,7 +239,7 @@ class ShortIdxEqCog(BaseCog):
     ``assign_dollar_multiplier`` and ``REQUIRED_SETUP_FEATURES``. Composite
     ticker strategies may nest child strategies; the cog inspects for a child
     whose ``strategy_slug`` matches the signal. Only signals whose slug
-    contains any ``config.strategy_slug_token`` are processed.
+    exactly equals any ``config.strategy_slug_token`` are processed.
     """
 
     default_config = ShortIdxEqCogConfig(trade_size=1.0)
@@ -356,21 +356,39 @@ class ShortIdxEqCog(BaseCog):
         allowed_trade_size = trade_size * multiplier / _DEFAULT_DIVISOR
         return int(math.floor(allowed_trade_size / option_price))
 
+    def _strategy_slug_tokens(self) -> Tuple[str, ...]:
+        """Return configured tokens as a tuple of full slugs.
+
+        A lone string is one token. Iterating the string itself would match
+        letters (``'s' in 'short_equities'``).
+
+        Returns:
+            Token tuple, or empty if the field is missing.
+        """
+        raw = self.config.strategy_slug_token
+        if isinstance(raw, str):
+            return (raw,) if raw else ()
+        if isinstance(raw, (list, tuple)):
+            return tuple(raw)
+        return ()
+
     def _is_target_strategy(self, signal_id: str) -> bool:
-        """Return whether the signal slug matches any configured strategy token.
+        """Return whether the signal slug equals any configured strategy token.
 
         Args:
             signal_id: Raw signal identifier, optionally slug-prefixed.
 
         Returns:
-            True when any ``strategy_slug_token`` is contained in the parsed slug.
+            True when the parsed slug exactly equals a ``strategy_slug_token``.
         """
         try:
             slug = SignalID(signal_id).strategy_slug or ""
         except Exception:
             logger.warning(f"Unable to parse signal id {signal_id} for ShortIdxEqCog slug check.", exc_info=True)
             return False
-        return any(token in slug for token in self.config.strategy_slug_token)
+        if not slug:
+            return False
+        return slug in self._strategy_slug_tokens()
 
     def _resolve_asset_strategy(self, ticker: str):
         """Return the per-ticker strategy or raise an informative error.
