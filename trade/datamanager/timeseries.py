@@ -314,6 +314,6 @@ class TimeseriesDataManager:
         return TimeseriesAdapter(
             manager=self._option_spot_manager,
             rt_method="rt",
-            get_at_time_method="get_option_spot_at_time",
+            get_at_time_method="get_option_spot",
             get_timeseries_method="get_option_spot_timeseries",
         )

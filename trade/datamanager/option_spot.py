@@ -1,19 +1,32 @@
 """Option spot price data management with Thetadata API integration.
 
-This module provides the OptionSpotDataManager class for retrieving and caching
-option contract spot prices from Thetadata API. Supports both EOD (end-of-day)
-and Quote endpoints with intelligent partial caching.
+Retrieves and caches option contract OHLC from ThetaData EOD or Quote. A one-day
+timeseries window is point-in-time: it routes to ``get_option_spot`` so a missing
+session can fall back inside the lookback instead of failing sanitize.
 
-Typical usage:
-    >>> opt_spot_mgr = OptionSpotDataManager("AAPL")
-    >>> result = opt_spot_mgr.get_option_spot_timeseries(
-    ...     start_date="2025-01-01",
-    ...     end_date="2025-01-31",
-    ...     strike=150.0,
-    ...     expiration="2025-06-20",
-    ...     right="C"
-    ... )
-    >>> prices = result.daily_option_spot
+Comment density: orchestration
+
+Processing Flow:
+        1. ``get_option_spot_timeseries`` — if start and end are the same calendar
+           date, delegate to ``get_option_spot`` (at-time).
+        2. Else sync dates, fetch, classify, cache, then ``_data_structure_sanitize``.
+        3. ``certify_manager_result`` runs only after sanitize succeeds.
+        4. ``get_option_spot`` fetches a 10 B-day window at L1, then clips with
+           ``resolve_value_at_date``.
+
+Core Classes:
+        OptionSpotDataManager: EOD/QUOTE option OHLC manager.
+
+Usage:
+        >>> opt_spot_mgr = OptionSpotDataManager("AAPL")
+        >>> result = opt_spot_mgr.get_option_spot_timeseries(
+        ...     start_date="2025-01-01",
+        ...     end_date="2025-01-31",
+        ...     strike=150.0,
+        ...     expiration="2025-06-20",
+        ...     right="C"
+        ... )
+        >>> prices = result.daily_option_spot
 """
 
 from datetime import datetime
@@ -48,6 +61,19 @@ from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.utils import _handle_opttick_param
 
 logger = setup_logger("trade.datamanager.option_spot", stream_log_level=get_logging_level())
+
+
+def _same_calendar_date(start: Union[datetime, str], end: Union[datetime, str]) -> bool:
+    """Return True when start and end fall on the same calendar date.
+
+    Args:
+        start: Window start.
+        end: Window end.
+
+    Returns:
+        True when both timestamps share a calendar date.
+    """
+    return to_datetime(start).date() == to_datetime(end).date()
 
 
 class OptionSpotDataManager(BaseDataManager):
@@ -287,9 +313,29 @@ class OptionSpotDataManager(BaseDataManager):
             - Automatically adjusts date range to available data bounds
             - EOD endpoint: Historical end-of-day data
             - QUOTE endpoint: Constructed from quote data (fallback for recent dates)
+            - Same start and end date routes to ``get_option_spot`` (at-time lookback)
+            - Sanitize runs before certification; empty one-day clips raise
+              ``EmptyDataException`` if not routed
         """
         if endpoint_source is None:
             endpoint_source = self.CONFIG.option_spot_endpoint_source
+
+        ## One-day window is at-time. A listed 472 would sanitize to empty and
+        ## never reach certification; lookback + fallback handles that session.
+        if _same_calendar_date(start_date, end_date):
+            logger.info(
+                "get_option_spot_timeseries start=end=%s; routing to get_option_spot.",
+                to_datetime(start_date).date(),
+            )
+            return self.get_option_spot(
+                date=start_date,
+                strike=strike,
+                expiration=expiration,
+                right=right,
+                opttick=opttick,
+                endpoint_source=endpoint_source,
+                model_price=model_price,
+            )
 
         result = OptionSpotResult()
         result.symbol = self.symbol

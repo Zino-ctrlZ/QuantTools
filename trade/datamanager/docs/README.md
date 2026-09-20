@@ -57,6 +57,14 @@ Timeseries returns from certified managers pass through **L1 / L2 / L3** structu
 certification at the return boundary (`certify_manager_result`). Cache stores
 post-sanitize, **pre-certify** data; L3 repairs are not persisted.
 
+**Return pipeline (order matters):**
+
+1. Fetch vendor data.
+2. **`_data_structure_sanitize`** — clip/shape the window. Does **not** ffill, dedupe, or reindex. Empty after clip raises `EmptyDataException` here, so certification never runs.
+3. **`certify_manager_result`** — L1 log / L2 raise / L3 ffill. Ffill cannot invent an empty frame.
+
+**Same-day timeseries:** `get_option_spot_timeseries(start_date=end_date)` is point-in-time. It routes to `get_option_spot` (10 B-day lookback, L1, `USE_LAST_AVAILABLE`). A listed session that 472s then falls back instead of dying in sanitize. Prefer `get_at_time` / `as_of` when you want one date.
+
 | Level | Behavior |
 |-------|----------|
 | **L1** | Log issues; return data as-is |
