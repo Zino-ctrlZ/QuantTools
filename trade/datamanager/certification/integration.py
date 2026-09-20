@@ -8,10 +8,12 @@ Sets ``Result.is_certified`` when the certifier completes (distinct from
 Comment density: orchestration
 
 Processing Flow:
-    1. Attach cache key when missing.
-    2. ``log_retrieval_na`` on post-sanitize, pre-certify ``result`` (forensics before L3 fixes).
-    3. ``DataCertificationManager.certify_result`` — structural audit / fix / raise.
-    4. Mark ``is_certified`` on successful completion.
+    1. Managers sanitize first (``_data_structure_sanitize``). Empty clips raise
+       ``EmptyDataException`` and never call this helper — L3 cannot ffill nothing.
+    2. Attach cache key when missing.
+    3. ``log_retrieval_na`` on post-sanitize, pre-certify ``result`` (forensics before L3 fixes).
+    4. ``DataCertificationManager.certify_result`` — structural audit / fix / raise.
+    5. Mark ``is_certified`` on successful completion.
 
 Core Functions:
     certify_manager_result: Log NAs, certify, and mark the result as seen by certifier.

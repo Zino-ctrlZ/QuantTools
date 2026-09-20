@@ -64,9 +64,10 @@ def _data_structure_sanitize(
 ) -> PANDAS_DATA_HINT:
     """Apply structural-only cleanup to a timeseries before cache or return.
 
-    Does not dedupe, reindex to a B-day grid, or forward-fill. Duplicate indices,
-    calendar gaps, and unexplained NaNs are handled by the certification pipeline
-    (L2 raise / L3 fix).
+    Runs **before** certification. Does not dedupe, reindex to a B-day grid, or
+    forward-fill. Duplicate indices, calendar gaps, and unexplained NaNs are
+    handled by the certification pipeline (L2 raise / L3 fix). An empty clip
+    raises here, so L3 never sees an empty frame to ffill.
 
     Args:
         df: Input timeseries indexed by date/datetime.

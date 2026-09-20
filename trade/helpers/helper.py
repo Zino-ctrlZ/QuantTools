@@ -1832,6 +1832,54 @@ def parse_option_tick(tick: str) -> OptionTickComponents:
     }
 
 
+def option_leg_is_expired(
+    opt_id: Optional[Union[str, OptionTickComponents, OptionTickMetaData, Dict[str, Any]]] = None,
+    option_meta: Optional[Union[OptionTickComponents, OptionTickMetaData, Dict[str, Any]]] = None,
+    as_of: Optional[Union[datetime, date]] = None,
+) -> bool:
+    """Return True when an option leg has no remaining tape.
+
+    Accepts either an option tick (``opt_id``) or parsed metadata with
+    ``exp_date``. Equity options stop at the close on expiry day. A listed
+    session before market close on expiry is still live; after that (or any
+    later calendar day) it is dead.
+
+    Args:
+        opt_id: Option tick such as ``TSLA20260918C395``. Ignored when
+            ``option_meta`` is provided. A metadata mapping may also be passed
+            in this slot.
+        option_meta: Parsed tick dict (``exp_date`` required).
+        as_of: Clock to evaluate against. Defaults to ``ny_now()``.
+
+    Returns:
+        True when the contract is past expiration.
+
+    Raises:
+        ValueError: If neither ``opt_id`` nor ``option_meta`` is provided, or
+            metadata has no ``exp_date``.
+    """
+    if option_meta is None and isinstance(opt_id, dict):
+        option_meta = opt_id
+        opt_id = None
+    if option_meta is None:
+        if not opt_id:
+            raise ValueError("Provide opt_id or option_meta")
+        option_meta = parse_option_tick(opt_id)
+    exp_raw = option_meta.get("exp_date")
+    if exp_raw is None:
+        raise ValueError("option_meta must include exp_date")
+    now = as_of if as_of is not None else ny_now()
+    exp_date = to_datetime(exp_raw).date()
+    today = now.date() if isinstance(now, datetime) else to_datetime(now).date()
+    if exp_date < today:
+        return True
+    ## Expiry-day close: snapshot/quote is gone after MARKET_CLOSE.
+    now_time = now.time() if isinstance(now, datetime) else MARKET_CLOSE.time()
+    if exp_date == today and now_time >= MARKET_CLOSE.time():
+        return True
+    return False
+
+
 def generate_option_tick_new(symbol, right, exp, strike) -> str:
     from datetime import datetime
 

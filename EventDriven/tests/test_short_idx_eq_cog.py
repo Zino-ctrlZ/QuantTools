@@ -578,7 +578,7 @@ def test_skips_non_matching_strategy_slug() -> None:
 
 
 def test_matches_any_token_when_strategy_slug_token_is_collection() -> None:
-    """Tuple/list tokens match if any token is contained in the signal slug."""
+    """Tuple/list tokens match when the signal slug equals any token."""
     tokens = ("short_donchian_equity", "short_mean_reversion_equity")
     cog, _ = _make_cog(strategy_slug_token=tokens)
     donchian_state = _new_position_state(option_price=2.5)
@@ -590,6 +590,20 @@ def test_matches_any_token_when_strategy_slug_token_is_collection() -> None:
     mr_state = _new_position_state(signal_id=mr_signal, option_price=2.5)
     cog_list.on_new_position(mr_state)
     assert mr_state.order["data"]["quantity"] == 12
+
+
+def test_folder_slug_does_not_match_sleeve_token() -> None:
+    """Prod folder slug is not a sleeve token, even if assigned as a raw string."""
+    cog, _ = _make_cog()
+    ## short_equities _setup assigns a string after config init.
+    cog.config.strategy_slug_token = "short_donchian_equity"
+    state = _new_position_state(
+        signal_id=f"short_equities::{TICKER}20180615SHORT",
+        option_price=2.5,
+    )
+    cog.on_new_position(state)
+    assert state.order["data"]["quantity"] == 0
+    assert cog.position_metadata == {}
 
 
 def test_inspects_composite_child_for_multiplier() -> None:
