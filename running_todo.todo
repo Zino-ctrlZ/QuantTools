@@ -19,6 +19,7 @@ Running Todo:
     ☐ Add slippage pnl to live attribution
     ☐ Aggregator should take trades & equity data only
     ☐ Switch to TimeseriesDataManager for pnl attribution
+    ☐ Add MySql in the pipeline for data storage
     ☐ Discontinue xmultiply_attr.py
     ☐ Move all vol and pricing logic to use the new OptLib
         ☐ Eg FillOptimizer
