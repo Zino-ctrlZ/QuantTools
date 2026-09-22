@@ -1,9 +1,33 @@
 ---
-description: Project coding standards — commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses, utils placement
+description: Project coding standards — complete-English replies, commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses, utils placement, SQL/dbase
 alwaysApply: true
 ---
 
 # Coding Standards
+
+## Written communication (Always-On)
+
+Write to the user in complete English sentences. Do not use telegraphic notes, label-colon dumps, or chat shorthand as the main explanation.
+
+- Prefer a short paragraph that states what happened, why it matters, and what to do next.
+- You may still use a short list after that paragraph. Each bullet must be a full sentence.
+- Code identifiers, file paths, URLs, status codes, and table names stay in backticks. Surround them with ordinary words.
+- Do not lean on abbreviations such as NA, EOD, DoD, PnL, or env unless you have already spelled the term out once in that reply.
+- Do not write status lines like `rows=2 dates=Fri+Mon` or `fault of dbase tooling`. Say the same thing in prose.
+
+```text
+# ❌ BAD
+- Recreated: load_option_pnl_data Fri–Mon → Monday total_pnl NA
+- Fault of: dbase tooling. Switcher dropped Mon. URL inner 200.
+
+# ✅ GOOD
+I recreated the live profit-and-loss load for Friday through Monday.
+Monday total profit and loss is missing because our ThetaData wrapper
+throws away Monday’s end-of-day print, even though the vendor URL
+returns that row successfully (inner status 200).
+```
+
+This rule is for chat replies, commit messages you propose, and pull request summaries. It does not require expanding every comment in code into a paragraph.
 
 ## Commit Requests (Always-On)
 
@@ -152,6 +176,31 @@ from trade.helpers.helper import to_datetime
 # ❌ BAD — datamanager-only alignment rule in trade.helpers.helper
 # ✅ GOOD — stays in datamanager core / that sub-package's core API
 ```
+
+## Database use and management (SQL)
+
+All MySQL access goes through FinanceDatabase `dbase/database`. Search that package first (`SQLHelpers`, `db_utils`, `db_management`, `connection_cleanup`) before writing SQL glue.
+
+- **Do not** open connections, engines, or sessions in QuantTools / TFP-Algo / configs if a helper already exists: no `sqlalchemy.create_engine`, `mysql.connector.connect`, `pymysql.connect`, or hand-built DSNs.
+- Use the existing tools: `DatabaseAdapter`, `get_engine`, `query_database`, `execute_query`, `store_SQL_data`, `dynamic_batch_update`, `list_tables_from_db`, `create_table_from_schema`, `get_database_name`, `Database` constants.
+- Pass **logical** base names (`portfolio_data`, `Database.PORTFOLIO_DATA`, …). Name resolution and pooling stay in `dbase/database`.
+- Stand up a new connection **only** when no function in `dbase/database` can carry out the task. In that case, add the primitive there first, then call it — do not duplicate connection setup beside the caller.
+
+```python
+# ❌ BAD
+engine = create_engine(f"mysql+mysqlconnector://{user}:{pw}@{host}/{db}")
+conn = mysql.connector.connect(host=host, user=user, password=pw, database=db)
+
+# ✅ GOOD
+from dbase.database.SQLHelpers import DatabaseAdapter, get_engine, query_database
+from dbase.database.db_utils import Database
+
+db = DatabaseAdapter()
+engine = get_engine(Database.PORTFOLIO_DATA)
+df = query_database(Database.PORTFOLIO_DATA, "trades", "SELECT * FROM trades LIMIT 10")
+```
+
+For environment layout and MCP SQL, follow FinanceDatabase `.cursor/skills/tfp-db/SKILL.md`.
 
 ## Naming Conventions
 
