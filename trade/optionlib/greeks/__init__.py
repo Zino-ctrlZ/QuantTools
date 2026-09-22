@@ -41,9 +41,6 @@ def vectorized_market_greeks_bsm(
     elif len(option_type) != len(ticks):
         raise ValueError("option_type must be a single string or a list of strings with the same length as ticks.")
     
-    # Convert valuation_dates and end_dates to Timedelta
-    # T = [time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))]
-
     # Calculate the Greeks using the specified style
     if greek_style == 'analytic':
         greeks = _ptched_bsm_for_analytical(

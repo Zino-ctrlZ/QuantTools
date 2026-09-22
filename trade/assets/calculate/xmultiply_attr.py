@@ -253,13 +253,22 @@ def load_option_pnl_data(
             f"Got opttick='{opttick}', payload.opttick='{payload_opttick}'."
         )
 
-    if payload is not None and payload.date != today:
-        raise ValueError(f"Provided 'payload.date' must equal 'today'. Got payload.date={payload.date}, today={today}.")
+    ## Normalize before compare / BDay math; callers may pass date or Timestamp.
+    today = to_datetime(today)
+    yesterday = to_datetime(yesterday)
+    if payload is not None and to_datetime(payload.date).date() != today.date():
+        raise ValueError(
+            f"Provided 'payload.date' must equal 'today'. "
+            f"Got payload.date={payload.date}, today={today}."
+        )
 
     option_meta = parse_option_tick(effective_opttick)
 
     ## Back up yesterday by 1BDAY to ensure inclusive data retrieval
-    yesterday = max(change_to_last_busday(yesterday - BDay(1)), to_datetime(OPTION_TIMESERIES_START_DATE))
+    yesterday = max(
+        change_to_last_busday(yesterday - BDay(1)),
+        to_datetime(OPTION_TIMESERIES_START_DATE),
+    )
     ts = get_symbol_timeseries(option_meta["ticker"])
 
     provided_vol = payload.vol if payload is not None else None
@@ -375,7 +384,7 @@ def calculate_pnl_decomposition(
     greeks = payload.greeks.copy()
     dod_change = payload.dod_change.copy()
 
-    ## This serves as moving yesterday's greeks to today. In other to align with DoD changes
+    ## Move yesterday's greeks onto today's index so they align with DoD changes.
     greeks["shifted_date"] = greeks.index.to_series().shift(-1)
     greeks = greeks.reset_index().set_index("shifted_date")
     delta_pnl = (dod_change["asset_spot_change"] * greeks["delta"]).dropna()
@@ -393,11 +402,12 @@ def calculate_pnl_decomposition(
     theta_pnl.name = "theta_pnl"
 
     if "vanna" not in greeks.columns:
-        vanna_pnl = pd.Series(
-            dtype=float, data=0.0, index=vega_pnl.index
-        )  # Placeholder for vanna PnL, currently set to empty series
+        ## Missing vanna contributes zero rather than nullifying total_pnl.
+        vanna_pnl = pd.Series(dtype=float, data=0.0, index=vega_pnl.index)
     else:
-        vanna_pnl = (dod_change["asset_spot_change"] * dod_change["vol_change"] * greeks["vanna"] * 100).dropna()
+        vanna_pnl = (
+            dod_change["asset_spot_change"] * dod_change["vol_change"] * greeks["vanna"] * 100
+        ).dropna()
     vanna_pnl.name = "vanna_pnl"
 
     ## 0.5 * (Δσ_pct)^2 * volga_stored  ==  0.5 * (Δσ_decimal)^2 * volga_raw
