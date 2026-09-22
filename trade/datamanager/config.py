@@ -27,6 +27,7 @@ from trade.optionlib.config.types import DiscreteDivGrowthModel, DivType
 from trade.optionlib.config.defaults import DIVIDEND_LOOKBACK_YEARS
 from ._enums import (
     CertificationLevel,
+    GreekComputationMethod,
     GreekType,
     ListedSessionNotFoundPolicy,
     ModelPrice,
@@ -48,6 +49,8 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
     include_special_dividends: bool = False
     option_model: OptionPricingModel = OptionPricingModel.BINOMIAL
     volatility_model: VolatilityModel = VolatilityModel.MARKET
+    ## BSM only: closed-form vs finite-diff. Binomial always uses numerical tree bumps.
+    greek_computation_method: GreekComputationMethod = GreekComputationMethod.NUMERICAL
     n_steps: int = 250
     undo_adjust: bool = True
     real_time_fallback_option: RealTimeFallbackOption = RealTimeFallbackOption.USE_LAST_AVAILABLE
@@ -78,6 +81,9 @@ class OptionDataConfig(metaclass=SingletonMetaClass):
         assert isinstance(
             self.volatility_model, VolatilityModel
         ), "Invalid volatility_model. Expected VolatilityModel Enum."
+        assert isinstance(
+            self.greek_computation_method, GreekComputationMethod
+        ), "Invalid greek_computation_method. Expected GreekComputationMethod Enum."
         assert isinstance(
             self.real_time_fallback_option, RealTimeFallbackOption
         ), "Invalid real_time_fallback_option. Expected RealTimeFallbackOption Enum."

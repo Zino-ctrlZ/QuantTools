@@ -1,9 +1,12 @@
-"""Greek data manager for computing option sensitivities (delta, gamma, vega, theta, rho).
+"""Greek data manager for computing option sensitivities (delta, gamma, vega, theta, rho, volga, vanna).
 
 This module provides the GreekDataManager class for calculating option greeks using
 various pricing models (Black-Scholes-Merton, Cox-Ross-Rubinstein binomial). It handles
 the complete workflow including data loading, caching, model selection, and result
 formatting.
+
+Unit conventions, bump sizes, and attribution formulas for each greek are documented in
+``trade/optionlib/greeks/greek_model_doc.md``.
 
 Key Features:
     - Multiple pricing models: BSM, CRR binomial
@@ -11,7 +14,7 @@ Key Features:
     - Discrete and continuous dividend treatments
     - Automatic data loading and caching
     - Real-time and historical greek calculation
-    - Configurable greek selection (compute only needed greeks)
+    - Configurable greek selection (compute only needed greeks); default set includes vanna
 
 Typical Usage:
     >>> from trade.datamanager.greeks import GreekDataManager
@@ -63,9 +66,15 @@ from trade.datamanager.utils.vol_helpers import (
 )
 from trade.datamanager.utils.date import sync_date_index
 from trade.datamanager.utils.model import _load_model_data_timeseries, LoadRequest
-from trade.datamanager.utils.greeks_helpers import _prepare_greeks_to_compute, _get_prefilled_greek_result_set
+from trade.datamanager.utils.greeks_helpers import (
+    _prepare_greeks_to_compute,
+    _get_prefilled_greek_result_set,
+    _greek_column_names,
+    _missing_greek_columns,
+)
 from trade.datamanager._enums import (
     GreekType,
+    GreekComputationMethod,
     ModelPrice,
     OptionPricingModel,
     OptionSpotEndpointSource,
@@ -77,6 +86,8 @@ from trade.datamanager._enums import (
 )
 from trade.optionlib.greeks.numerical.binomial import binomial_tree_greeks
 from trade.optionlib.greeks.numerical.black_scholes import vectorized_black_scholes_greeks
+from trade.optionlib.core.black_scholes_math import black_scholes_analytic_greeks_vectorized
+from trade.optionlib.assets.forward import time_distance_helper
 from trade.optionlib.assets.dividend import (
     vectorized_discrete_pv,
     get_vectorized_continuous_dividends,
@@ -94,6 +105,109 @@ from trade.datamanager.utils.point_in_time import resolve_value_at_date
 from trade import MARKET_CLOSE
 
 logger = setup_logger(UTILS_LOGGER_NAME, stream_log_level=get_logging_level())
+
+
+def _bsm_numerical_greeks_dict(
+    *,
+    S: pd.Series,
+    K: list,
+    F: pd.Series,
+    r: pd.Series,
+    sigma: pd.Series,
+    valuation_dates: list,
+    end_dates: list,
+    option_type: list,
+    dividend_type: str,
+    div_amount,
+) -> dict:
+    """Finite-difference BSM greeks via ``vectorized_black_scholes_greeks``."""
+    return vectorized_black_scholes_greeks(
+        S=S,
+        K=K,
+        F=F,
+        r=r,
+        sigma=sigma,
+        valuation_dates=valuation_dates,
+        end_dates=end_dates,
+        option_type=option_type,
+        dividend_type=dividend_type,
+        div_amount=div_amount,
+    )
+
+
+def _bsm_analytical_greeks_dict(
+    *,
+    F: pd.Series,
+    K: list,
+    r: pd.Series,
+    sigma: pd.Series,
+    valuation_dates: list,
+    end_dates: list,
+    option_type: list,
+) -> dict:
+    """Closed-form BSM greeks via ``black_scholes_analytic_greeks_vectorized``."""
+    T = time_distance_helper(start=valuation_dates, end=end_dates)
+    return black_scholes_analytic_greeks_vectorized(
+        F=F,
+        K=K,
+        T=T,
+        r=r,
+        sigma=sigma,
+        option_type=option_type,
+    )
+
+
+def _compute_bsm_greeks_dict(
+    *,
+    method: GreekComputationMethod,
+    S: pd.Series,
+    K: list,
+    F: pd.Series,
+    r: pd.Series,
+    sigma: pd.Series,
+    valuation_dates: list,
+    end_dates: list,
+    option_type: list,
+    dividend_type: str,
+    div_amount,
+) -> dict:
+    """Dispatch BSM greeks to numerical (FD) or analytical closed form."""
+    if method == GreekComputationMethod.ANALYTICAL:
+        return _bsm_analytical_greeks_dict(
+            F=F,
+            K=K,
+            r=r,
+            sigma=sigma,
+            valuation_dates=valuation_dates,
+            end_dates=end_dates,
+            option_type=option_type,
+        )
+    if method == GreekComputationMethod.NUMERICAL:
+        return _bsm_numerical_greeks_dict(
+            S=S,
+            K=K,
+            F=F,
+            r=r,
+            sigma=sigma,
+            valuation_dates=valuation_dates,
+            end_dates=end_dates,
+            option_type=option_type,
+            dividend_type=dividend_type,
+            div_amount=div_amount,
+        )
+    raise ValueError(f"Unsupported greek computation method: {method}")
+
+
+def _resolve_greek_computation_method(
+    market_model: OptionPricingModel,
+    method: Optional[GreekComputationMethod],
+) -> GreekComputationMethod:
+    """Resolve greek method; binomial always forces numerical tree bumps."""
+    resolved = method or OptionDataConfig().greek_computation_method
+    if market_model == OptionPricingModel.BINOMIAL:
+        ## CRR path has no closed-form greek surface; ignore analytical requests
+        return GreekComputationMethod.NUMERICAL
+    return resolved
 
 
 class GreekDataManager(BaseDataManager):
@@ -180,6 +294,7 @@ class GreekDataManager(BaseDataManager):
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
         certification_level: Optional[CertificationLevel] = None,
+        greek_computation_method: Optional[GreekComputationMethod] = None,
     ) -> GreekResultSet:
         """Returns daily option greeks timeseries using specified pricing model.
 
@@ -206,6 +321,8 @@ class GreekDataManager(BaseDataManager):
             market_model: OptionPricingModel.BSM or BINOMIAL. Defaults to CONFIG setting.
             model_price: Which price to use (CLOSE, OPEN, MIDPOINT). Defaults to CONFIG setting.
             undo_adjust: If True, uses split-adjusted prices.
+            greek_computation_method: For BSM/EURO_EQIV, ``ANALYTICAL`` or ``NUMERICAL``.
+                Binomial always uses numerical. Defaults to CONFIG setting.
 
         Returns:
             GreekResultSet containing DataFrame with computed greeks as columns and
@@ -261,6 +378,9 @@ class GreekDataManager(BaseDataManager):
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
         market_model = market_model or self.CONFIG.option_model
         vol_model = VolatilityModel.MARKET
+        greek_computation_method = _resolve_greek_computation_method(
+            market_model, greek_computation_method
+        )
 
         result = _get_prefilled_greek_result_set(
             key=None,
@@ -313,6 +433,7 @@ class GreekDataManager(BaseDataManager):
                 undo_adjust=undo_adjust,
                 model_price=model_price,
                 certification_level=certification_level,
+                greek_computation_method=greek_computation_method,
             )
         else:
             raise ValueError(f"Unsupported market model: {market_model}")
@@ -395,6 +516,8 @@ class GreekDataManager(BaseDataManager):
         ## Also allows user to specify greeks_to_compute at function call level which can get hidden as calls become nested.
         greeks_to_compute = greeks_to_compute or self.CONFIG.greeks_to_compute
         greeks_to_compute = _prepare_greeks_to_compute(greeks_to_compute)
+        ## Tree resolution must match vol CRR IV (CONFIG.n_steps); include in cache key
+        n_steps = self.CONFIG.n_steps
         key = self.make_key(
             symbol=self.symbol,
             interval=Interval.EOD,
@@ -408,6 +531,7 @@ class GreekDataManager(BaseDataManager):
             expiration=expiration,
             strike=strike,
             right=right,
+            n_steps=n_steps,
         )
         result.key = key
         result.model_price = model_price
@@ -415,16 +539,27 @@ class GreekDataManager(BaseDataManager):
         cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
+        greek_cols = _greek_column_names(greeks_to_compute)
+        ## Full date hit can still lack new greeks (e.g. vanna); recompute and rewrite cache
         if early_return:
-            result.timeseries = cached_data[greeks_to_compute]
-            return _certify_option_model_result(
-                result,
-                start_date,
-                end_date,
-                cache_key=key,
-                checked_missing_dates=checked_missing_dates,
-                certification_level=certification_level,
+            missing_cols = _missing_greek_columns(cached_data, greeks_to_compute)
+            if not missing_cols:
+                result.timeseries = cached_data[greek_cols]
+                return _certify_option_model_result(
+                    result,
+                    start_date,
+                    end_date,
+                    cache_key=key,
+                    checked_missing_dates=checked_missing_dates,
+                    certification_level=certification_level,
+                )
+            logger.info(
+                "Cached greeks missing columns %s for key %s; recomputing.",
+                missing_cols,
+                key,
             )
+            early_return = None
+            is_partial = False
 
         expiration_ts = to_datetime(expiration)
         expiration_ts = expiration_ts.replace(
@@ -469,14 +604,14 @@ class GreekDataManager(BaseDataManager):
                 end_dates=to_datetime([expiration_ts] * len(S), format="%Y-%m-%d"),
             )
 
-        ## Now compute greeks
+        ## Now compute greeks (n_steps from CONFIG; same resolution as CRR IV)
         greeks_res_dict = binomial_tree_greeks(
             K=[strike] * len(S),
             expiration=[expiration_ts] * len(S),
             sigma=vol,
             S=S,
             r=r,
-            N=[100] * len(S),
+            N=[n_steps] * len(S),
             dividend_type=[dividend_type.value] * len(S),
             div_amount=d,
             option_type=[right] * len(S),
@@ -485,9 +620,9 @@ class GreekDataManager(BaseDataManager):
             american=[True] * len(S),
         )
 
-        ## Remove "models" key if exists
-        if "models" in greeks_res_dict:
-            del greeks_res_dict["models"]
+        ## Drop model object payloads; keep only numeric greek columns for cache / timeseries
+        for _model_key in ("models", "model"):
+            greeks_res_dict.pop(_model_key, None)
 
         greeks_df = pd.DataFrame(greeks_res_dict, index=S.index)
 
@@ -502,7 +637,7 @@ class GreekDataManager(BaseDataManager):
             end_str,
             checked_missing_dates=checked_missing_dates,
         )
-        result.timeseries = greeks_df[greeks_to_compute]
+        result.timeseries = greeks_df[greek_cols]
 
         return _certify_option_model_result(
             result,
@@ -533,13 +668,15 @@ class GreekDataManager(BaseDataManager):
         model_price: Optional[ModelPrice] = None,
         undo_adjust: bool = True,
         certification_level: Optional[CertificationLevel] = None,
+        greek_computation_method: Optional[GreekComputationMethod] = None,
     ) -> GreekResultSet:
         """Compute option greeks using Black-Scholes-Merton model.
 
-        Internal method that calculates daily option sensitivities using closed-form BSM
-        formulas. Only supports European-style greeks. Automatically loads required data
-        (forward, spot, rates, dividends, implied volatilities) if not provided. Uses
-        caching for efficient reuse.
+        Internal method that calculates daily option sensitivities using either
+        finite-difference BSM greeks (``NUMERICAL``) or closed-form analytic greeks
+        (``ANALYTICAL``). Only supports European-style greeks. Automatically loads
+        required data (forward, spot, rates, dividends, implied volatilities) if not
+        provided. Uses caching for efficient reuse.
 
         Note: BSM model computes all greeks simultaneously, so caching stores the complete
         set even if only specific greeks are requested.
@@ -561,6 +698,7 @@ class GreekDataManager(BaseDataManager):
             endpoint_source: Option data source for volatility calculation.
             model_price: Which price to use (CLOSE, OPEN, MIDPOINT).
             undo_adjust: If True, uses split-adjusted prices.
+            greek_computation_method: ``NUMERICAL`` (FD) or ``ANALYTICAL`` (closed form).
 
         Returns:
             GreekResultSet containing DataFrame with computed greeks as columns and
@@ -583,6 +721,9 @@ class GreekDataManager(BaseDataManager):
         ## endpoint_source & div_type will resolved at `get_timeseries` level; the frontend function.
         endpoint_source = endpoint_source or self.CONFIG.option_spot_endpoint_source
         model_price = model_price or self.CONFIG.model_price
+        greek_computation_method = _resolve_greek_computation_method(
+            OptionPricingModel.BSM, greek_computation_method
+        )
         result = result or GreekResultSet()
         result, dividend_type, endpoint_source, start_str, end_str, start_date, end_date = (
             _prepare_vol_calculation_setup(
@@ -591,6 +732,7 @@ class GreekDataManager(BaseDataManager):
         )
 
         greeks_to_compute = _prepare_greeks_to_compute(greeks_to_compute)
+        ## Include method in key so analytical vs numerical caches do not collide
         key = self.make_key(
             symbol=self.symbol,
             interval=Interval.EOD,
@@ -604,6 +746,7 @@ class GreekDataManager(BaseDataManager):
             expiration=expiration,
             strike=strike,
             right=right,
+            greek_computation_method=greek_computation_method,
         )
         result.key = key
         result.model_price = model_price
@@ -612,16 +755,27 @@ class GreekDataManager(BaseDataManager):
         cached_data, is_partial, start_date, end_date, early_return, checked_missing_dates = _handle_cache_for_vol(
             self, key, start_date, end_date, result, optional_name="greeks"
         )
+        greek_cols = _greek_column_names(greeks_to_compute)
+        ## Full date hit can still lack new greeks (e.g. vanna); recompute and rewrite cache
         if early_return:
-            result.timeseries = cached_data[greeks_to_compute]
-            return _certify_option_model_result(
-                result,
-                start_date,
-                end_date,
-                cache_key=key,
-                checked_missing_dates=checked_missing_dates,
-                certification_level=certification_level,
+            missing_cols = _missing_greek_columns(cached_data, greeks_to_compute)
+            if not missing_cols:
+                result.timeseries = cached_data[greek_cols]
+                return _certify_option_model_result(
+                    result,
+                    start_date,
+                    end_date,
+                    cache_key=key,
+                    checked_missing_dates=checked_missing_dates,
+                    certification_level=certification_level,
+                )
+            logger.info(
+                "Cached greeks missing columns %s for key %s; recomputing.",
+                missing_cols,
+                key,
             )
+            early_return = None
+            is_partial = False
 
         request = self._create_load_request(
             start_date=start_date,
@@ -676,8 +830,8 @@ class GreekDataManager(BaseDataManager):
                 div_rates=d.values, _valuation_dates=f.index.tolist(), _end_dates=[expiration_ts] * len(f)
             )
 
-        ## Now compute greeks
-        greeks_res_dict = vectorized_black_scholes_greeks(
+        greeks_res_dict = _compute_bsm_greeks_dict(
+            method=greek_computation_method,
             S=s,
             K=[strike] * len(s),
             F=f,
@@ -689,9 +843,9 @@ class GreekDataManager(BaseDataManager):
             dividend_type=dividend_type.value,
             div_amount=pv_divs,
         )
-        ## Remove "models" key if exists
-        if "models" in greeks_res_dict:
-            del greeks_res_dict["models"]
+        ## Drop model object payloads; keep only numeric greek columns for cache / timeseries
+        for _model_key in ("models", "model"):
+            greeks_res_dict.pop(_model_key, None)
 
         greeks_df = pd.DataFrame(greeks_res_dict, index=s.index)
 
@@ -706,7 +860,7 @@ class GreekDataManager(BaseDataManager):
             end_str,
             checked_missing_dates=checked_missing_dates,
         )
-        result.timeseries = greeks_df[greeks_to_compute]
+        result.timeseries = greeks_df[greek_cols]
 
         return _certify_option_model_result(
             result,
@@ -736,6 +890,7 @@ class GreekDataManager(BaseDataManager):
         undo_adjust: bool = True,
         fallback_option: Optional[RealTimeFallbackOption] = None,
         model_price: Optional[ModelPrice] = None,
+        greek_computation_method: Optional[GreekComputationMethod] = None,
     ) -> GreekResultSet:
         """Get option greeks at a specific point in time.
 
@@ -768,6 +923,7 @@ class GreekDataManager(BaseDataManager):
                 undo_adjust=undo_adjust,
                 model_price=model_price,
                 certification_level=CertificationLevel.L1,
+                greek_computation_method=greek_computation_method,
             )
 
         row, meta = resolve_value_at_date(
@@ -817,6 +973,7 @@ class GreekDataManager(BaseDataManager):
         undo_adjust: bool = True,
         fallback_option: Optional[RealTimeFallbackOption] = None,
         model_price: Optional[ModelPrice] = None,
+        greek_computation_method: Optional[GreekComputationMethod] = None,
     ) -> GreekResultSet:
         """Get real-time option greeks using current market data.
 
@@ -839,6 +996,7 @@ class GreekDataManager(BaseDataManager):
             fallback_option: How to handle market closed (USE_LAST_AVAILABLE, NAN, ZERO).
                 Defaults to CONFIG setting.
             model_price: Which price to use (CLOSE, OPEN, MIDPOINT). Defaults to CONFIG setting.
+            greek_computation_method: For BSM, analytical vs numerical. Defaults to CONFIG.
 
         Returns:
             GreekResultSet containing single-row DataFrame with computed greeks as columns,
@@ -890,6 +1048,7 @@ class GreekDataManager(BaseDataManager):
             undo_adjust=undo_adjust,
             fallback_option=fallback_option,
             model_price=model_price,
+            greek_computation_method=greek_computation_method,
         )
         res.rt = True
         return res
