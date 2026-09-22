@@ -25,7 +25,7 @@ from pandas.tseries.offsets import BDay
 
 from trade.helpers.helper import parse_option_tick, change_to_last_busday
 from trade.assets.calculate.data_classes import OptionPnlPayload, SymbolPayload
-from trade.assets.calculate.xmultiply_attr_v2 import load_option_pnl_data
+from trade.assets.calculate.xmultiply_attr import load_option_pnl_data
 from trade.datamanager import (
     SpotDataManager,
     RatesDataManager,

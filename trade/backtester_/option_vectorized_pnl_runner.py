@@ -22,7 +22,7 @@ from typing import Dict, List, Any
 
 import pandas as pd
 
-from trade.assets.calculate.xmultiply_attr_v2 import load_option_pnl_data
+from trade.assets.calculate.xmultiply_attr import load_option_pnl_data
 from trade.backtester_.option_vectorized_retrieval import OptionVectorizedRetrievalResult
 from trade.helpers.helper import generate_option_tick_new as generate_opttick_new, to_datetime
 
