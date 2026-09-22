@@ -576,7 +576,7 @@ class OptionSpotDataManager(BaseDataManager):
             - Quote endpoint useful when EOD data not yet available
         """
         if endpoint_source == OptionSpotEndpointSource.EOD:
-            return retrieve_eod_ohlc(
+            fetched = retrieve_eod_ohlc(
                 symbol=self.symbol,
                 start_date=start_date,
                 end_date=end_date,
@@ -584,18 +584,26 @@ class OptionSpotDataManager(BaseDataManager):
                 exp=expiration,
                 right=right,
             )
-        logger.info(
-            f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
-        )
-        return quote_to_eod_patch(
-            symbol=self.symbol,
-            start_date=start_date,
-            end_date=end_date,
-            strike=float(strike),
-            exp=expiration,
-            right=right,
-            ohlc_format=True,
-        )
+        else:
+            logger.info(
+                f"Fetching option spot data from Thetadata Quote endpoint for {self.symbol} from {start_date} to {end_date}."
+            )
+            fetched = quote_to_eod_patch(
+                symbol=self.symbol,
+                start_date=start_date,
+                end_date=end_date,
+                strike=float(strike),
+                exp=expiration,
+                right=right,
+                ohlc_format=True,
+            )
+        ## Midnight-normalize at the Theta boundary so partial-cache merge can
+        ## exact-dedupe against already-normalized cache rows (quote/EOD often
+        ## arrive as 16:00; dedupe-then-default_timestamp left calendar-day dups).
+        if fetched is not None and not fetched.empty:
+            fetched = fetched.copy()
+            fetched.index = default_timestamp(fetched.index)
+        return fetched
 
     def rt(
         self,

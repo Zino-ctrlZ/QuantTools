@@ -9,7 +9,8 @@ clipped at-time return.
 Comment density: orchestration
 
 Processing Flow:
-    1. Compute lookback window ``[as_of - lookback_bdays, as_of]`` (business days).
+    1. Compute lookback window ``[as_of - lookback_bdays, as_of]`` (pandas B-days),
+       then ``change_to_last_busday`` the start so U.S. holidays are not requested.
     2. ``fetch_timeseries(start, end)`` — manager pulls and certifies at L1.
     3. ``extract_timeseries`` — Series or DataFrame from the manager result.
     4. ``_resolve_from_window`` — exact date, else fallback within the window.
@@ -40,6 +41,7 @@ from pandas.tseries.offsets import BDay
 
 from trade.datamanager._enums import CertificationLevel, RealTimeFallbackOption
 from trade.datamanager.utils.date import is_available_on_date
+from trade.helpers.helper import change_to_last_busday
 from trade.helpers.helper_types import DATE_HINT
 
 
@@ -75,6 +77,10 @@ def _lookback_window_bounds(
 ) -> tuple[str, str, datetime]:
     """Return ``(start_str, end_str, requested_dt)`` for the last N B-days through ``as_of``.
 
+    Pandas ``BDay`` skips weekends only. After the offset, roll the start back with
+    ``change_to_last_busday`` so U.S. holidays (already in ``HOLIDAY_SET``) are not
+    requested as the window open — e.g. Labor Day after a 10-day lookback.
+
     Args:
         as_of: Requested valuation date.
         lookback_bdays: Business days to look back from ``as_of`` (inclusive end).
@@ -83,7 +89,13 @@ def _lookback_window_bounds(
         Start string, end string (``as_of``), and normalized requested datetime.
     """
     requested_dt = pd.to_datetime(as_of).normalize()
-    start_str = (requested_dt - BDay(lookback_bdays)).strftime("%Y-%m-%d")
+    ## BDay counts weekdays; holiday-aware roll so start is a listed trading day.
+    start_dt = change_to_last_busday(
+        requested_dt - BDay(lookback_bdays),
+        time_of_day_aware=False,
+        eod_time=False,
+    )
+    start_str = pd.Timestamp(start_dt).normalize().strftime("%Y-%m-%d")
     end_str = requested_dt.strftime("%Y-%m-%d")
     return start_str, end_str, requested_dt
 
