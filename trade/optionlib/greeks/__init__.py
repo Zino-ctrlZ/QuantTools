@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import List, Union
+from typing import List
 from .numerical.black_scholes import vectorized_market_greeks_numerical
 from .analytical.black_scholes import _ptched_bsm_for_analytical
-from ..assets.forward import time_distance_helper
 from trade.helpers.Logging import setup_logger
+
+## Unit / bump / attribution conventions: see trade/optionlib/greeks/greek_model_doc.md
 logger = setup_logger('trade.optionlib.greeks.__init__')
 
 def vectorized_market_greeks_bsm(
@@ -39,9 +40,6 @@ def vectorized_market_greeks_bsm(
     elif len(option_type) != len(ticks):
         raise ValueError("option_type must be a single string or a list of strings with the same length as ticks.")
     
-    # Convert valuation_dates and end_dates to Timedelta
-    T = [time_distance_helper(end=end_dates[i], start=valuation_dates[i]) for i in range(len(end_dates))]
-
     # Calculate the Greeks using the specified style
     if greek_style == 'analytic':
         greeks = _ptched_bsm_for_analytical(

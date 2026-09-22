@@ -304,6 +304,7 @@ def _sync_date(
         - Constrains start_date to max(requested_start, min_available_date)
         - Constrains end_date to min(requested_end, max_available_date)
         - Prevents requesting dates outside available data range
+        - Calendar snap compares session dates, not full datetimes (list_dates are midnight)
         - EOD: pre-market and market hours cap at previous B-day (EOD not published yet)
         - QUOTE: pre-market caps at previous B-day; during/post session allows today
     """
@@ -327,7 +328,19 @@ def _sync_date(
         max_trade_date: datetime,
         dates: Optional[list] = None,
     ) -> Tuple[datetime, datetime]:
-        """Ensures start_date and end_date are within min_trade_date and max_trade_date."""
+        """Clamp and snap the request window to the vendor calendar.
+
+        Args:
+            start_date: Requested window start (may include market-close time).
+            end_date: Requested window end.
+            min_trade_date: Earliest listed session from ``list_dates``.
+            max_trade_date: Latest allowable session for this request.
+            dates: Vendor ``list_dates`` sessions (midnight timestamps).
+
+        Returns:
+            Adjusted ``(start_date, end_date)``. Calendar membership uses
+            ``.date()`` so a listed day with a non-midnight clock time is kept.
+        """
 
         if start_date < min_trade_date:
             logger.warning(
@@ -342,20 +355,42 @@ def _sync_date(
         if start_date > end_date:
             start_date = end_date
 
-        ## Check if date range is present in the list of dates, if provided
+        ## Snap bounds missing from the vendor calendar (today may stay as end).
+        ## Compare calendar dates only: list_dates are midnight, but callers often
+        ## pass market-close times (e.g. 16:00 from change_to_last_busday). Datetime
+        ## equality falsely treats a listed session as missing, and abs-nearest then
+        ## jumps to the next midnight (16:00 is 8h from next day, 16h from same day).
         if dates is not None:
-            available_dates = set(to_datetime(dates))
-            if start_date not in available_dates:
-                logger.warning(
-                    f"Adjusted start_date {start_date.date()} is not in available dates. Adjusting to nearest available date. opttick: {opttick}"
+            available_by_date = {
+                pd.Timestamp(to_datetime(d)).date(): pd.Timestamp(to_datetime(d)).to_pydatetime()
+                for d in dates
+            }
+            available_calendar = set(available_by_date)
+            requested_start = start_date
+            requested_end = end_date
+            if start_date.date() not in available_calendar:
+                nearest = min(
+                    available_calendar,
+                    key=lambda d: abs((d - start_date.date()).days),
                 )
-                start_date = min(available_dates, key=lambda d: abs(d - start_date))
+                start_date = available_by_date[nearest]
             end_is_not_today = end_date.date() != ny_now().date()
-            if end_date not in available_dates and end_is_not_today:
-                logger.warning(
-                    f"Adjusted end_date {end_date.date()} is not in available dates. Adjusting to nearest available date. opttick: {opttick}"
+            if end_date.date() not in available_calendar and end_is_not_today:
+                nearest = min(
+                    available_calendar,
+                    key=lambda d: abs((d - end_date.date()).days),
                 )
-                end_date = min(available_dates, key=lambda d: abs(d - end_date))
+                end_date = available_by_date[nearest]
+            if start_date != requested_start or end_date != requested_end:
+                logger.warning(
+                    "Date(s) not in available dates. Adjusting start to %s, end to %s "
+                    "(requested start %s, end %s). opttick: %s",
+                    start_date.date(),
+                    end_date.date(),
+                    requested_start.date(),
+                    requested_end.date(),
+                    opttick,
+                )
         return start_date, end_date
 
     is_premarket = is_pre_market_hours()

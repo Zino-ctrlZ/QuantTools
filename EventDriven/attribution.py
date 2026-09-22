@@ -57,8 +57,8 @@ from trade.datamanager.utils.date import DATE_HINT
 from EventDriven.types import TradeID, SignalID
 from trade.helpers.helper_types import FrozenValidated
 from EventDriven.trade import Trade
-from trade.assets.calculate.xmultiply_attr_v2 import load_option_pnl_data, OptionPnlPayload
-from trade.assets.calculate.xmultiply_attr import load_option_pnl_data as load_option_pnl_data_v1
+from trade.assets.calculate.xmultiply_attr import load_option_pnl_data
+from trade.assets.calculate.data_classes import OptionPnlPayload
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.market_timeseries import BacktestTimeseries
 from EventDriven.new_portfolio import OptionSignalPortfolio
@@ -250,10 +250,9 @@ def _get_trade_quantity_time_series(
 
 
 def create_position_attribution(
-    trade_id: TradeID, 
-    entry_date: DATE_HINT, 
-    exit_date: DATE_HINT, 
-    v1: bool = False,
+    trade_id: TradeID,
+    entry_date: DATE_HINT,
+    exit_date: DATE_HINT,
     portfolio: OptionSignalPortfolio = None,
 ) -> pd.DataFrame:
     """Create a position attribution DataFrame for a given trade ID.
@@ -265,40 +264,35 @@ def create_position_attribution(
         trade_id: The TradeID for which to create the position attribution.
         entry_date: The entry date of the trade (padded back 3 days for data loading).
         exit_date: The exit date of the trade (padded forward 3 days for data loading).
-        v1: If True, uses the v1 attribution loader. Defaults to False.
+        portfolio: Portfolio whose risk manager supplies option market series.
 
     Returns:
         A DataFrame containing the position attribution for the given trade ID.
     """
     def _get_payload(opttick: str) -> OptionPnlPayload:
         """Helper function to load the option PnL payload with risk data for a given option tick."""
-        if v1: 
-            return None
-        else:
-            pay_load = OptionPnlPayload(
-                opttick=opttick,
-                date=to_datetime(entry_date),
-            )
-            opt_data = portfolio.risk_manager.market_data.generate_option_data_for_trade(opttick=opttick, check_date=entry_date)
-            pay_load.vol = opt_data["vol"]
+        pay_load = OptionPnlPayload(
+            opttick=opttick,
+            date=to_datetime(entry_date),
+        )
+        opt_data = portfolio.risk_manager.market_data.generate_option_data_for_trade(opttick=opttick, check_date=entry_date)
+        pay_load.vol = opt_data["vol"]
 
-            greeks = opt_data[["Delta", "Gamma", "Vega", "Theta", "Rho", "Volga"]]
-            greeks.columns = ["delta", "gamma", "vega", "theta", "rho", "volga"]
-            option_spot = opt_data["Midpoint"]
-            pay_load.greeks = greeks
-            pay_load.spot = option_spot
-            return pay_load
+        greeks = opt_data[["Delta", "Gamma", "Vega", "Theta", "Rho", "Volga"]]
+        greeks.columns = ["delta", "gamma", "vega", "theta", "rho", "volga"]
+        option_spot = opt_data["Midpoint"]
+        pay_load.greeks = greeks
+        pay_load.spot = option_spot
+        return pay_load
+
     legs = trade_id.legs
     attribution_frames = []
     entry_padding = max(pd.to_datetime(entry_date) - pd.Timedelta(days=3), to_datetime(OPTION_TIMESERIES_START_DATE))
     exit_padding = pd.to_datetime(exit_date) + pd.Timedelta(days=3)
     for direction, opttick in legs:
-        if v1:
-            attribution = load_option_pnl_data_v1(yesterday=entry_padding, today=exit_padding, opttick=opttick)
-        else:
-            payload = _get_payload(opttick)
-            payload.date = to_datetime(exit_padding)
-            attribution = load_option_pnl_data(yesterday=entry_padding, today=exit_padding, opttick=opttick, payload=payload)
+        payload = _get_payload(opttick)
+        payload.date = to_datetime(exit_padding)
+        attribution = load_option_pnl_data(yesterday=entry_padding, today=exit_padding, opttick=opttick, payload=payload)
         if direction == "S":
             attribution.attribution *= -1
         attribution_frames.append(attribution.attribution)
@@ -499,7 +493,7 @@ def compute_backtest_position_attribution(
     # Create initial attribution for the position)
     trade_entry = qty_ts.trade_entry
     trade_exit = qty_ts.trade_exit
-    attr = create_position_attribution(trade_id=trade_id, entry_date=trade_entry, exit_date=trade_exit, v1=False, portfolio=portfolio)
+    attr = create_position_attribution(trade_id=trade_id, entry_date=trade_entry, exit_date=trade_exit, portfolio=portfolio)
     attr = attr.loc[trade_entry:trade_exit]
 
     # Make partial function for getting position price with market data from the portfolio's risk manager

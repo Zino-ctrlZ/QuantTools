@@ -1,4 +1,5 @@
 Running Todo:
+    ☐ Long term switch option interest to multiplier of max size: max size = max_cash/option_spot. min_open_interest = set_min_oi if set_min_oi is not None else max_sze * oi_multiplier.
     ☐ Revisit pricing model performance:
         ☐ Add some sort of performance testing tracker to test performance of the pricing model.
         ☐ Add some sort of logging to track problematic pricing model performance on specific dates for some options
@@ -19,6 +20,7 @@ Running Todo:
     ☐ Add slippage pnl to live attribution
     ☐ Aggregator should take trades & equity data only
     ☐ Switch to TimeseriesDataManager for pnl attribution
+    ☐ Add MySql in the pipeline for data storage
     ☐ Discontinue xmultiply_attr.py
     ☐ Move all vol and pricing logic to use the new OptLib
         ☐ Eg FillOptimizer

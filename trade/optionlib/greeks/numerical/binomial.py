@@ -138,5 +138,6 @@ def binomial_tree_greeks(
         'theta': np.array([model.theta() for model in models]),
         'rho': np.array([model.rho() for model in models]),
         'volga': np.array([model.volga() for model in models]),
+        'vanna': np.array([model.vanna() for model in models]),
         'model': np.array([model for model in models]),
     }

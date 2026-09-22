@@ -150,7 +150,6 @@ def vectorized_black_scholes_greeks(
             "dividend_type": dividend_type,
             "div_amount": div_amount,  # Placeholder, will be ignored in the patched function
         },
-        dx_thresh=0.00001,
         method="central",  # Use backward method for finite differences
     )
     greeks = finite_estimator.all_first_order()

@@ -46,9 +46,9 @@ def _prepare_greeks_to_compute(
     if greeks_to_compute is None:
         greeks_to_compute = GreekType.GREEKS
     
-    ## Expand GREEKS to all greek types
+    ## Expand GREEKS to all greek types (sentinel only excluded)
     if greeks_to_compute == GreekType.GREEKS:
-        greeks_to_compute = list(set(GreekType) - {GreekType.GREEKS, GreekType.VANNA})
+        greeks_to_compute = list(set(GreekType) - {GreekType.GREEKS})
     
     ## Validate greek_to_compute is list/tuple/set of GreekType
     if not isinstance(greeks_to_compute, (list, np.ndarray, set, tuple)):
@@ -63,4 +63,23 @@ def _prepare_greeks_to_compute(
 
     return list(greeks_to_compute)
 
-    
+
+def _greek_column_names(greeks_to_compute: Iterable[GreekType]) -> List[str]:
+    """Normalize ``GreekType`` values to DataFrame column names."""
+    return [g.value if isinstance(g, GreekType) else str(g) for g in greeks_to_compute]
+
+
+def _missing_greek_columns(cached_data, greeks_to_compute: Iterable[GreekType]) -> List[str]:
+    """Return requested greek columns absent from a cached frame.
+
+    Args:
+        cached_data: Cached greeks DataFrame (or None).
+        greeks_to_compute: Requested greek types.
+
+    Returns:
+        Column names that are missing; empty if the cache covers the request.
+    """
+    if cached_data is None or getattr(cached_data, "empty", True):
+        return _greek_column_names(greeks_to_compute)
+    have = {str(c) for c in cached_data.columns}
+    return [c for c in _greek_column_names(greeks_to_compute) if c not in have]

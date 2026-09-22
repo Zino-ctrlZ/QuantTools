@@ -1442,7 +1442,8 @@ opttick = 'AAPL240621C00150000'  # AAPL June 21, 2024 $150 Call
 yesterday = datetime(2024, 3, 30)
 today = datetime(2024, 3, 31)
 
-# Load option P&L data (loads market data for Greeks and attribution)
+# Load option P&L data via TimeseriesDataManager (loads market data for Greeks and attribution)
+# Incomplete greeks are filled with 0 so total_pnl stays numeric
 payload = load_option_pnl_data(
     yesterday=yesterday,
     today=today,

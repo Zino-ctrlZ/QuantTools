@@ -15,16 +15,20 @@ Core Functions:
 
 Processing Flow:
     1. Receive a position analysis context from PositionAnalyzer.
-    2. Compute per-position PnL ratio: pnl / (entry_price * quantity).
-    3. Apply rule set in priority order:
+    2. Skip lots when ``signal_slug_prefixes`` is set and the SignalID slug
+       does not match; unset prefixes analyze every lot.
+    3. Compute per-position PnL ratio: pnl / (entry_price * quantity).
+    4. Apply rule set in priority order:
        - Take-profit partial close when PnL ratio > 50% and quantity > 1.
        - Roll when PnL ratio > 100% and roll criteria are satisfied.
        - Optional stop-loss close when PnL ratio <= -70%.
        - Otherwise HOLD.
-    4. Stamp analysis metadata (date/reason/effective_date) on actions.
-    5. Return CogActions with the resulting opinions.
+    5. Stamp analysis metadata (date/reason/effective_date) on actions.
+    6. Return CogActions with the resulting opinions.
 
 Risk/Assumptions:
+    - Optional ``signal_slug_prefixes`` on ``PnLMonitorConfigConfigurable``
+      defaults to unset so existing YAML/property configs are unchanged.
     - PnL thresholds are static and percentage-based.
     - Effective dates are delayed by business days using t_plus_n.
     - Stop-loss branch is disabled by default (enable_stop_loss=False).
@@ -68,6 +72,7 @@ import math
 import pandas as pd
 from EventDriven.dataclasses.states import NewPositionState
 from EventDriven.dataclasses.orders import OrderRequest
+from EventDriven.types import SignalID
 from trade.helpers.Logging import setup_logger
 from EventDriven.riskmanager.position.base import BaseCog
 from EventDriven.dataclasses.states import PositionAnalysisContext, CogActions, PositionState
@@ -117,6 +122,40 @@ class PnLMonitorCog(BaseCog):
         super().__init__(config)
         self.config: PnlMonitorConfig | PnLMonitorConfigConfigurable = config
 
+    def _signal_slug_prefixes(self) -> Tuple[str, ...]:
+        """Return configured SignalID.strategy_slug prefixes.
+
+        ``PnlMonitorConfig`` has no prefixes field. Unset, empty, or missing
+        means every slug (behavior before this filter existed).
+
+        Returns:
+            Prefix strings. Empty tuple means no filtering.
+        """
+        raw = getattr(self.config, "signal_slug_prefixes", None)
+        if not raw:
+            return ()
+        if isinstance(raw, str):
+            return (raw,) if raw else ()
+        return tuple(str(p) for p in raw if p)
+
+    def _allows_signal_id(self, signal_id: Optional[str]) -> bool:
+        """Return whether this cog should act on ``signal_id``.
+
+        Args:
+            signal_id: Stored or requested SignalID string.
+
+        Returns:
+            True when prefixes are unset or the SignalID slug starts with one.
+            Missing signal_id is denied only when a filter is configured.
+        """
+        prefixes = self._signal_slug_prefixes()
+        if not prefixes:
+            return True
+        if not signal_id:
+            return False
+        slug = SignalID(signal_id).strategy_slug or ""
+        return any(slug.startswith(prefix) for prefix in prefixes)
+
     def on_new_position(self, new_position_state: NewPositionState) -> None:
         """Handle a newly created position state.
 
@@ -160,6 +199,9 @@ class PnLMonitorCog(BaseCog):
         Returns:
             None.
         """
+        ## Unset prefixes: every request (legacy). Dummy sets donchian_momentum.
+        if not self._allows_signal_id(new_request_state.signal_id):
+            return
         logger.info(
             f"Received new order request for {new_request_state.symbol} with signal ID {new_request_state.signal_id}. Monitoring PnL for this request."
         )
@@ -224,7 +266,8 @@ class PnLMonitorCog(BaseCog):
         """Evaluate each open position and emit HOLD, CLOSE, or ROLL opinions.
 
         Decision flow per position:
-            1. Compute pnl ratio against cost basis.
+            1. Skip when a prefix filter is set and the lot slug does not match.
+            2. Compute pnl ratio against cost basis.
             2. If pnl ratio is above lock-in threshold and quantity > 1,
                partially CLOSE to secure gains.
             3. Else if pnl ratio is above roll threshold and roll conditions
@@ -260,6 +303,9 @@ class PnLMonitorCog(BaseCog):
         t_plus_n_bdays = pd.offsets.BusinessDay(max(t_plus_n, 1))
         is_cash_stop_loss = self.config.stop_loss_cash_threshold is not None
         for pos_state in positions:
+            ## Skip lots whose slug is outside the optional prefix filter.
+            if not self._allows_signal_id(pos_state.signal_id):
+                continue
             pl_pct = (
                 pos_state.pnl / (pos_state.entry_price * pos_state.quantity)
                 if pos_state.entry_price * pos_state.quantity != 0

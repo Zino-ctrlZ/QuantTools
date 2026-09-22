@@ -20,6 +20,7 @@ __all__ = [
     "ArtifactType",
     "CertificationLevel",
     "GREEKS",
+    "GreekComputationMethod",
     "GreekType",
     "Interval",
     "ListedSessionNotFoundPolicy",
@@ -96,6 +97,13 @@ class GreekType(str, Enum):
     VOLGA = "volga"
     VANNA = "vanna"
     RHO = "rho"
+
+
+class GreekComputationMethod(str, Enum):
+    """How BSM greeks are computed (binomial always uses numerical tree bumps)."""
+
+    ANALYTICAL = "analytical"
+    NUMERICAL = "numerical"
 
 class OptionSpotEndpointSource(Enum):
     """

@@ -232,6 +232,7 @@ CONFIG_DEFINITIONS = {
         "stop_loss_cash_threshold": "Optional cash-based stop-loss threshold; mutually exclusive with stop_loss_pct when stop-loss is enabled.",
         "max_trade_dollar_size": "Optional cap on trade dollar size; with lvl 1 it enforces constant-size capped mode, with lvl 2 it caps base cash before profit increment.",
         "profit_lock_in_lvl": "Lock-in mode selector (1=constant-size when max is set, otherwise tick-cash lock-in; 2=requires max_trade_dollar_size and allows capped-base plus profit increment).",
+        "signal_slug_prefixes": "Optional SignalID.strategy_slug prefixes this cog may act on. None or empty means all slugs (legacy default).",
     },
     "VectorizedCogConfig": {
         "run_name": "A name identifier for this run/session, used to tag and track configuration across backtest runs.",
