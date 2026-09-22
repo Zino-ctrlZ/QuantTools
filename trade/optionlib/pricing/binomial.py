@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Tuple, Iterable
 import numpy as np
-from typing import Tuple, Iterable
 from numba import njit
 from numba import types
 from numba.typed import List as _List
@@ -11,7 +10,7 @@ from trade.helpers.helper import Scalar, to_datetime
 from trade.helpers.threads import runThreads
 from trade import MARKET_CLOSE
 from ..utils.format import assert_equal_length
-from ..config.defaults import DAILY_BASIS
+from ..config.defaults import DAILY_BASIS, resolve_greek_bump
 from ..assets.forward import time_distance_helper
 from ..assets.dividend import (
     DividendSchedule,
@@ -467,13 +466,21 @@ class BinomialBase(ABC):
     def gamma(self):
         pass
 
+    @abstractmethod
+    def price(self):
+        """Return the option price; required by shared numerical greek helpers."""
+        pass
+
     def pricing_warning(self):
-        """
-        Warning message for pricing issues.
-        This method can be overridden in subclasses to provide specific warnings.
+        """Log at debug when greeks run before ``price()`` (callers usually self-heal).
+
+        Batch tree greeks bump protected attrs (e.g. ``sigma`` in ``volga``/``vanna``),
+        which resets ``priced`` via ``__setattr__``; the next greek then hits this path
+        even though it will call ``price()`` itself. Keep at debug to avoid live spam.
         """
         if not self.priced:
-            logger.warning("Option has not been priced yet. Please call the price() method first.")
+            ## Callers (delta/gamma/volga/…) typically call price() next; not a hard failure
+            logger.debug("Option has not been priced yet. Please call the price() method first.")
 
     def reset_pricing_variables(self):
         """
@@ -482,17 +489,31 @@ class BinomialBase(ABC):
         self.tree = []
         self.option_values = []
         self.stock_tree = []
+        ## Drop cached continuation values so delta/gamma cannot reuse a stale tree
+        if hasattr(self, "V1"):
+            delattr(self, "V1")
+        if hasattr(self, "V2"):
+            delattr(self, "V2")
+        self.priced = False
         self.init_parameters()
         self.build_tree()
 
-    def _tree_numerical(self, attr, dx_thresh=0.01):
-        """
-        Calculate the numerical value of a Greek (delta, gamma, etc.) using the binomial tree.
-        This method is used for numerical approximation of Greeks.
+    def _tree_numerical(self, attr: str, bump: Optional[float] = None) -> float:
+        """First-order central FD of price w.r.t. ``attr`` on the tree.
+
+        Args:
+            attr: Attribute name to bump (``sigma``, ``r``, ``T``, …).
+            bump: Absolute step override; ``None`` uses ``resolve_greek_bump``.
+
+        Returns:
+            Approximate ∂V/∂attr.
         """
         self.pricing_warning()
         actual_value = getattr(self, attr)
-        bump = actual_value * dx_thresh
+        ## Per-factor policy: additive vol/rate, dedicated theta, etc.
+        if bump is None:
+            bump = float(resolve_greek_bump(attr, actual_value))
+        bump = max(abs(bump), 1e-12)
         up_bump = actual_value + bump
         down_bump = actual_value - bump
 
@@ -507,14 +528,21 @@ class BinomialBase(ABC):
 
         return (price_up - price_down) / (2 * bump)
 
-    def _tree_numerical_second_order(self, attr, dx_thresh=0.01):
-        """
-        Calculate the second-order numerical value of a Greek using the binomial tree.
-        This method is used for numerical approximation of second-order Greeks.
+    def _tree_numerical_second_order(self, attr: str, bump: Optional[float] = None) -> float:
+        """Second-order central FD of price w.r.t. ``attr`` on the tree.
+
+        Args:
+            attr: Attribute name to bump.
+            bump: Absolute step override; ``None`` uses ``resolve_greek_bump``.
+
+        Returns:
+            Approximate ∂²V/∂attr².
         """
         self.pricing_warning()
         actual_value = getattr(self, attr)
-        bump = actual_value * dx_thresh
+        if bump is None:
+            bump = float(resolve_greek_bump(attr, actual_value))
+        bump = max(abs(bump), 1e-12)
         up_bump = actual_value + bump
         down_bump = actual_value - bump
 
@@ -532,41 +560,130 @@ class BinomialBase(ABC):
 
         return (price_up - 2 * price_mid + price_down) / (bump**2)
 
-    def theta(self, dx_thresh=0.0001):
-        """
-        Calculate the theta of the option using the binomial tree.
-        Theta is the change in option price with respect to a change in time to expiration.
-        Returns:
-        Theta value as a float.
-        """
-        return -self._tree_numerical("T", dx_thresh) / DAILY_BASIS
+    def _tree_numerical_cross(
+        self,
+        attr1: str,
+        attr2: str,
+        bump1: Optional[float] = None,
+        bump2: Optional[float] = None,
+    ) -> float:
+        """Mixed second-order FD ∂²V/(∂attr1 ∂attr2) with per-factor bumps.
 
-    def vega(self, dx_thresh=0.0001):
-        """
-        Calculate the vega of the option using the binomial tree.
-        Vega is the change in option price with respect to a change in volatility.
-        Returns:
-        Vega value as a float.
-        """
-        return self._tree_numerical("sigma", dx_thresh) / 100
+        Args:
+            attr1: First attribute name.
+            attr2: Second attribute name.
+            bump1: Absolute step for ``attr1``; ``None`` resolves from config.
+            bump2: Absolute step for ``attr2``; ``None`` resolves from config.
 
-    def rho(self, dx_thresh=0.0001):
-        """
-        Calculate the rho of the option using the binomial tree.
-        Rho is the change in option price with respect to a change in risk-free interest rate.
         Returns:
-        Rho value as a float.
+            Approximate mixed derivative.
         """
-        return self._tree_numerical("r", dx_thresh) / 100
+        x = getattr(self, attr1)
+        y = getattr(self, attr2)
 
-    def volga(self, dx_thresh=0.0001):
-        """
-        Calculate the volga of the option using the binomial tree.
-        Volga is the change in vega with respect to a change in volatility.
+        dx = float(resolve_greek_bump(attr1, x) if bump1 is None else bump1)
+        dy = float(resolve_greek_bump(attr2, y) if bump2 is None else bump2)
+        dx = max(abs(dx), 1e-12)
+        dy = max(abs(dy), 1e-12)
+
+        if dx == 0 or dy == 0:
+            raise ValueError("Numerical bump cannot be zero.")
+
+        try:
+            setattr(self, attr1, x + dx)
+            setattr(self, attr2, y + dy)
+            pp = self.price()
+
+            setattr(self, attr1, x + dx)
+            setattr(self, attr2, y - dy)
+            pm = self.price()
+
+            setattr(self, attr1, x - dx)
+            setattr(self, attr2, y + dy)
+            mp = self.price()
+
+            setattr(self, attr1, x - dx)
+            setattr(self, attr2, y - dy)
+            mm = self.price()
+
+        finally:
+            setattr(self, attr1, x)
+            setattr(self, attr2, y)
+
+        return (pp - pm - mp + mm) / (4 * dx * dy)
+
+    def theta(self, bump: Optional[float] = None) -> float:
+        """Tree theta in Price-Sensitivity Units (per calendar day).
+
+        Args:
+            bump: Absolute time step in years; ``None`` uses ``THETA_BUMP_SIZE``.
+
         Returns:
-        Volga value as a float.
+            Theta per day.
         """
-        return self._tree_numerical_second_order("sigma", dx_thresh) / 100**2
+        return -self._tree_numerical("T", bump=bump) / DAILY_BASIS
+
+    def vega(self, bump: Optional[float] = None) -> float:
+        """Tree vega in Price-Sensitivity Units (per 1 vol point).
+
+        Args:
+            bump: Absolute vol step; ``None`` uses additive bump config.
+
+        Returns:
+            Vega per 1 percentage point of vol.
+        """
+        return self._tree_numerical("sigma", bump=bump) / 100
+
+    def rho(self, bump: Optional[float] = None) -> float:
+        """Tree rho in Price-Sensitivity Units (per 1 rate point).
+
+        Args:
+            bump: Absolute rate step; ``None`` uses additive bump config.
+
+        Returns:
+            Rho per 1 percentage point of rate.
+        """
+        return self._tree_numerical("r", bump=bump) / 100
+
+    def volga(self, bump: Optional[float] = None) -> float:
+        """Tree volga in Price-Sensitivity Units (per (1 vol point)²).
+
+        Args:
+            bump: Absolute vol step; ``None`` uses additive bump config.
+
+        Returns:
+            Volga per (1 percentage point)² of vol.
+        """
+        return self._tree_numerical_second_order("sigma", bump=bump) / 100**2
+
+    def vanna(self, bump: Optional[float] = None) -> float:
+        """Calculate vanna as ∂delta/∂σ (≡ ∂²V/(∂S ∂σ)).
+
+        Price-cross finite differences on the CRR tree are ill-conditioned and
+        overstate the mixed derivative; bumping vol and reading tree delta matches
+        analytic BS vanna. Returned per 1 percentage-point change in volatility.
+
+        Args:
+            bump: Absolute vol step; ``None`` uses additive bump config.
+        """
+        self.pricing_warning()
+        actual_sigma = self.sigma
+        if bump is None:
+            bump = float(resolve_greek_bump("sigma", actual_sigma))
+        bump = max(abs(bump), 1e-12)
+        try:
+            self.sigma = actual_sigma + bump
+            self.price()
+            delta_up = self.delta()
+
+            self.sigma = actual_sigma - bump
+            self.price()
+            delta_down = self.delta()
+        finally:
+            self.sigma = actual_sigma
+
+        raw = (delta_up - delta_down) / (2.0 * bump)
+        return raw / 100
 
     def __setattr__(self, name, value):
         protected = [

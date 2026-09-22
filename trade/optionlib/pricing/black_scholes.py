@@ -8,7 +8,7 @@ from ..assets.forward import (
     time_distance_helper
 )
 from ..config.defaults import (
-    DAILY_BASIS
+    DAILY_BASIS,
 )
 from ..utils.format import (
     option_inputs_assert,
@@ -224,7 +224,6 @@ class BlackScholes:
                 'S': spot_price,  # Including spot price for delta calculation
                 'option_type': self.option_type
             },
-            dx_thresh=0.00001,
             method='central'  # Use backward method for finite differences
         )
 
@@ -421,7 +420,6 @@ class MarketBlackScholes(BlackScholes):
                 'S': self.spot_price,  # Including spot price for delta calculation
                 'option_type': self.option_type
             },
-            dx_thresh=0.00001,
             method='central'  # Use backward method for finite differences
         )
 

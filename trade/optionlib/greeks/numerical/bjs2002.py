@@ -35,7 +35,6 @@ def bjs2002_numerical_greeks(
             'option_type': option_type,
             'q': None
         },
-        dx_thresh = 0.00001,
         method = 'backward',
     )
     greeks = finite_estimator.all_first_order()

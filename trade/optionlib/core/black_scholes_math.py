@@ -38,12 +38,14 @@ def black_scholes_analytic_greeks_vectorized(F, K, T, r, sigma, option_type="c")
     )
     theta = - (F * nd1 * sigma) / (2 * np.sqrt(T)) \
             - r * K * df * np.where(is_call, norm.cdf(d2), norm.cdf(-d2))
+    vanna = -np.exp(-r * T) * norm.pdf(d1) * d2 / sigma # noqa
 
     return {
         "delta": delta,
         "gamma": gamma,
         "vega": vega / 100,
         "volga": volga / 100**2,
+        "vanna": vanna / 100,
         "rho": rho / 100,
         "theta": theta/DAILY_BASIS
     }
