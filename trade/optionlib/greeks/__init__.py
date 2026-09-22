@@ -2,7 +2,6 @@ from datetime import datetime
 from typing import List
 from .numerical.black_scholes import vectorized_market_greeks_numerical
 from .analytical.black_scholes import _ptched_bsm_for_analytical
-from ..assets.forward import time_distance_helper # noqa
 from trade.helpers.Logging import setup_logger
 
 ## Unit / bump / attribution conventions: see trade/optionlib/greeks/greek_model_doc.md
