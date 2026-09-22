@@ -420,8 +420,10 @@ class PnlMonitorConfig(BaseCogConfig):
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class PnLMonitorConfigConfigurable(BaseCogConfig):
-    """
-    Configurable version of PnLMonitorConfig that allows dynamic adjustment of thresholds.
+    """Configurable PnL monitor thresholds.
+
+    ``signal_slug_prefixes`` is optional. None or empty means every SignalID
+    (same as ``PnlMonitorConfig``, which has no prefix field).
     """
 
     name: str = "PnLMonitorCog"
@@ -438,6 +440,7 @@ class PnLMonitorConfigConfigurable(BaseCogConfig):
         None  # Optional dynamic property for maximum trade dollar size based on market conditions or portfolio risk
     )
     profit_lock_in_lvl: int = 1  # Default to enabling profit lock-in for tick cash only
+    signal_slug_prefixes: Optional[Union[str, Tuple[str, ...], List[str]]] = None  # None/empty = all slugs (legacy)
 
     def __post_init__(self, ctx=None):
         super().__post_init__(ctx)
