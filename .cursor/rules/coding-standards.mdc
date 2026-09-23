@@ -1,5 +1,5 @@
 ---
-description: Project coding standards — complete-English replies, commits, sandbox scratch, type hints, dates, docstrings, comments, naming, dataclasses, utils placement, SQL/dbase
+description: Project coding standards — complete-English replies, commits, sandbox scratch, type hints, dates, system-critical logging, docstrings, comments, naming, dataclasses, utils placement, SQL/dbase
 alwaysApply: true
 ---
 
@@ -63,6 +63,29 @@ This is **not** Cursor's OS command sandbox (`sandbox.json` / CLI `sandbox`). It
 - **Always use `to_datetime` from `trade.helpers.helper`** — never `datetime.strptime()` or `pd.to_datetime()` directly.
 - Import: `from trade.helpers.helper import to_datetime`
 - Handles single values and iterables; tries `%Y-%m-%d` first, then lets pandas guess; supports optional `format`.
+
+## System-critical logging (Always-On)
+
+When a failure can **break or infect many downstream systems** (shared caches, market factors, certification, portfolio attribution, EOD loads), do not rely only on a local module logger.
+
+- Call `log_critical_issue` from `trade` so the event lands in the centralized critical log (`logs/system_critical.log`, env-suffixed in non-prod).
+- Import: `from trade import log_critical_issue` (or `system_critical_logger` if you need the logger handle directly).
+- Pass `source=` (module/function) and `extra=` (tickers, dates, counts) so ops can triage without re-running.
+- Use for vendor stubs, cache poison, cascading data-integrity failures — **not** for routine per-row or expected empty-result warnings.
+
+```python
+# ❌ BAD — only local logger; easy to miss when many systems go red
+logger.warning("yfinance NaN close for %s", tick)
+
+# ✅ GOOD — centralized critical sink for high blast-radius issues
+from trade import log_critical_issue
+
+log_critical_issue(
+    "yfinance returned NaN close; spot cache may poison undl DoD and certification",
+    source="retrieve_timeseries",
+    extra={"tick": tick, "nan_dates": nan_dates},
+)
+```
 
 ## Docstrings (Always-On for Python)
 
@@ -153,7 +176,7 @@ rates = rates.ffill()
 
 **Review cue (tier B/C):** Could a new developer follow the pipeline — including edge cases — without opening every helper? If not, add plain-English flow comments.
 
-## Utils placement and organization
+## Utils placement and organization (Always-On)
 
 Do not default new helpers into a grab-bag `utils.py` or `utils/` package. Place them in this order:
 

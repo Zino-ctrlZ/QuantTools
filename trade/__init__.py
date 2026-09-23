@@ -1,9 +1,18 @@
 ## Initialisation of the trade package
+"""Trade package bootstrap: holidays, pricing config, exit handlers, critical logging.
+
+Core Functions:
+    log_critical_issue: Write a high-blast-radius failure to the centralized critical log.
+    register_signal / get_pricing_config: Process lifecycle and pricing defaults.
+
+Comment density: orchestration.
+"""
 import os
 import signal
 import json
 import warnings
 import atexit
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 import pandas as pd
 import pandas_market_calendars as mcal # type: ignore
@@ -29,6 +38,54 @@ EXIT_HANDLERS = []  # Handlers for normal program exit
 _ATEXIT_REGISTERED = False
 OWNER_PID = os.getpid()
 logger = setup_logger("trade.__init__", stream_log_level="WARNING")
+
+## Centralized CRITICAL/ERROR sink for issues that can poison many downstream systems
+## (spot cache, undl DoD, certification, Discord attribution, EOD loads). File:
+## ``logs/system_critical.log`` (env-suffixed in non-prod).
+system_critical_logger = setup_logger(
+    "system_critical",
+    stream_log_level="ERROR",
+    file_log_level="ERROR",
+    custom_logger_name="system_critical_logger",
+)
+
+
+def log_critical_issue(
+    message: str,
+    *,
+    source: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    exc_info: bool = False,
+) -> None:
+    """Log a system-critical issue to the centralized critical log file.
+
+    Use when a failure can break or infect many downstream systems — vendor data
+    stubs, cache poison, certification aborts that cascade — not for routine
+    per-row warnings.
+
+    Args:
+        message: Human-readable description of the issue and blast radius.
+        source: Optional module or function name (e.g. ``retrieve_timeseries``).
+        extra: Optional structured context (tickers, dates, counts).
+        exc_info: If True, attach exception traceback from the current context.
+
+    Examples:
+        >>> from trade import log_critical_issue
+        >>> log_critical_issue(
+        ...     "yfinance returned NaN close; spot cache may poison undl DoD",
+        ...     source="retrieve_timeseries",
+        ...     extra={"tick": "TSLA", "nan_dates": ["2026-09-22"]},
+        ... )
+    """
+    parts: list[str] = []
+    if source:
+        parts.append(f"[{source}]")
+    parts.append(message)
+    if extra:
+        parts.append(f"extra={extra}")
+    system_critical_logger.critical(" ".join(parts), exc_info=exc_info)
+
+
 cleanup_expired_caches()
 
 
