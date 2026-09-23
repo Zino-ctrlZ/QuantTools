@@ -750,6 +750,103 @@ def filter_zeros(data):
 @backoff.on_exception(
     backoff.expo, (OpenBBEmptyData, YFinanceEmptyData), max_tries=5, logger=logger
 )
+def _session_dates_from_index(index: pd.DatetimeIndex) -> List:
+    """Calendar dates for a Yahoo OHLCV index (tz-safe).
+
+    Args:
+        index: DatetimeIndex from ``yf.download`` / history.
+
+    Returns:
+        List of ``datetime.date`` values aligned to ``index``.
+    """
+    return [pd.Timestamp(ts).date() for ts in index]
+
+
+def _repair_yfinance_nan_close_sessions(
+    data: pd.DataFrame,
+    tick: str,
+    query_data,
+    interval: str,
+) -> pd.DataFrame:
+    """Replace NaN-close session rows with one-session Yahoo pulls.
+
+    Multi-day Yahoo chart responses often leave Close null on the tip bar while a
+    short ``start=session, end=session+1 BDay`` request returns the real close.
+    When calendar today is in ``data`` with NaN close — or the tip session is NaN —
+    drop the stub row and splice in the short-session requery.
+
+    Args:
+        data: Full-range OHLCV frame (lowercase columns) from the wide download.
+        tick: Equity ticker.
+        query_data: Callable ``(start, end, tick, interval) -> DataFrame``.
+        interval: Bar interval passed through to ``query_data``.
+
+    Returns:
+        Frame with repaired session rows when short-session pulls succeed;
+        otherwise the original frame (or partially repaired).
+    """
+    if data is None or data.empty or "close" not in data.columns:
+        return data
+    if not data["close"].isna().any():
+        return data
+
+    ## Lazy import: avoid trade<->helper cycle at module import time.
+    from trade import log_critical_issue
+
+    today = ny_now().date()
+    tip_day = pd.Timestamp(data.index.max()).date()
+    session_dates = _session_dates_from_index(data.index)
+    nan_days = sorted(
+        {
+            session_dates[i]
+            for i, is_nan in enumerate(data["close"].isna().tolist())
+            if is_nan
+        }
+    )
+    ## Calendar today stub (intraday / post-close) and tip-session lag on multi-day pulls.
+    repair_days = [d for d in nan_days if d == today or d == tip_day]
+    if not repair_days:
+        return data
+
+    repaired = data
+    for session_day in repair_days:
+        session_start = session_day.strftime("%Y-%m-%d")
+        ## Exclusive yfinance end: session + 1 business day includes that session only.
+        session_end = (pd.Timestamp(session_day) + BDay(1)).strftime("%Y-%m-%d")
+        tip = query_data(
+            start=session_start, end=session_end, tick=tick, interval=interval
+        )
+
+        if tip is None or tip.empty or "close" not in tip.columns or tip["close"].isna().all():
+            log_critical_issue(
+                "yfinance short-session repair failed; Close still missing after "
+                "one-day requery.",
+                source="retrieve_timeseries._repair_yfinance_nan_close_sessions",
+                extra={
+                    "tick": tick,
+                    "session_start": session_start,
+                    "session_end_exclusive": session_end,
+                    "tip_empty": tip is None or tip.empty,
+                },
+            )
+            continue
+
+        ## Drop stub session row(s), attach requeried bar, keep a clean sorted index.
+        keep = [d != session_day for d in _session_dates_from_index(repaired.index)]
+        repaired = pd.concat([repaired.loc[keep], tip], axis=0).sort_index()
+        repaired = repaired[~repaired.index.duplicated(keep="last")]
+        logger.info(
+            "Repaired yfinance NaN close for %s on %s via short-session pull "
+            "(end exclusive %s); new close=%s",
+            tick,
+            session_start,
+            session_end,
+            float(tip["close"].iloc[-1]),
+        )
+
+    return repaired
+
+
 def retrieve_timeseries(
     tick, start, end, interval="1d", provider="yfinance", spot_type="close", **kwargs
 ) -> pd.DataFrame:
@@ -842,6 +939,31 @@ def retrieve_timeseries(
                     data.index.max().date(),
                     len(data),
                 )
+                ## Yahoo multi-day chart responses often leave today's Close null while
+                ## a one-session pull returns the real close. Log, then short-session repair.
+                if "close" in data.columns and data["close"].isna().any():
+                    nan_dates = [
+                        d.strftime("%Y-%m-%d")
+                        for d in pd.to_datetime(data.index[data["close"].isna()]).tolist()
+                    ]
+                    ## Lazy import: avoid trade<->helper cycle at module import time.
+                    from trade import log_critical_issue
+
+                    log_critical_issue(
+                        "yfinance returned NaN close on daily bars; attempting "
+                        "short-session repair for today/tip stub rows.",
+                        source="retrieve_timeseries",
+                        extra={
+                            "tick": tick,
+                            "nan_dates": nan_dates,
+                            "query_start": str(start),
+                            "query_end_exclusive": str(pd.to_datetime(end).date()),
+                            "spot_type": spot_type,
+                        },
+                    )
+                    data = _repair_yfinance_nan_close_sessions(
+                        data, tick=tick, query_data=query_data, interval=interval
+                    )
 
             ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
             if data.empty:
