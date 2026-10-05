@@ -118,12 +118,14 @@ def is_pre_market_hours() -> bool:
     now = ny_now().time()
     return now < MARKET_OPEN.time()
 
+
 def is_post_market_hours() -> bool:
     """
     Check if the current time in New York is within post-market hours (4:00 PM to 8:00 PM) on a business day.
     """
     now = ny_now().time()
     return now > MARKET_CLOSE.time()
+
 
 def is_market_hours_today() -> bool:
     """
@@ -137,6 +139,7 @@ def is_market_hours_today() -> bool:
         return False
 
     return not (is_pre_market_hours() or is_post_market_hours())
+
 
 def assert_member_of_enum(value: Any, enum_class: Enum) -> None:
     """
@@ -236,49 +239,27 @@ class CustomCache(Cache):
 
         # 1. Check dir & create cache
         fname = str(fname) if fname else shortuuid.random(length=8)
-        dir = (
-            Path(location) / fname
-            if location
-            else Path(os.environ.get("WORK_DIR")) / ".cache" / fname
-        )
+        dir = Path(location) / fname if location else Path(os.environ.get("WORK_DIR")) / ".cache" / fname
 
-        # 1.1 If clear_on_exit is True, dir becomes a folder ending with _tmp and each new instance is a randomly generated subfolder within it. 
+        # 1.1 If clear_on_exit is True, dir becomes a folder ending with _tmp and each new instance is a randomly generated subfolder within it.
         # This is to ensure that multiple instances of CustomCache with clear_on_exit=True do not interfere with each other and can be safely cleared on exit without affecting other caches.
         if clear_on_exit:
             dir = dir.with_name(f"{dir.name}_tmp") / shortuuid.random(length=8)
-            
+
         self.dir = dir
         self.fname = fname
-        self.expiry_date = (
-            (datetime.today() + relativedelta(days=expire_days))
-            .date()
-            .strftime("%Y-%m-%d")
-        )
-        self._register_location = (
-            f"{os.environ['WORK_DIR']}/trade/helpers/clear_dirs.json"
-        )
+        self.expiry_date = (datetime.today() + relativedelta(days=expire_days)).date().strftime("%Y-%m-%d")
+        self._register_location = f"{os.environ['WORK_DIR']}/trade/helpers/clear_dirs.json"
         self._owner_pid = os.getpid()  # <- track creator
 
         ## Avoid non path like objects
         if isinstance(log_path, (str, os.PathLike)):
             log_path = Path(log_path)
         elif log_path is None:
-            log_path = (
-                Path(os.environ.get("WORK_DIR"))
-                / "trade"
-                / "helpers"
-                / "cache_clear_log.txt"
-            )
+            log_path = Path(os.environ.get("WORK_DIR")) / "trade" / "helpers" / "cache_clear_log.txt"
         else:
-            logger.error(
-                f"log_path must be str, Path or None, not {type(log_path)}, recieved {log_path}"
-            )
-            log_path = str(
-                Path(os.environ.get("WORK_DIR"))
-                / "trade"
-                / "helpers"
-                / "cache_clear_log.txt"
-            )
+            logger.error(f"log_path must be str, Path or None, not {type(log_path)}, recieved {log_path}")
+            log_path = str(Path(os.environ.get("WORK_DIR")) / "trade" / "helpers" / "cache_clear_log.txt")
 
         self.__log_path = log_path
         os.makedirs(dir, exist_ok=True)
@@ -317,9 +298,7 @@ class CustomCache(Cache):
             fname=self.fname,
             log_path=str(self.log_path),
             clear_on_exit=self.clear_on_exit,
-            expire_days=(
-                pd.to_datetime(self.expiry_date).date() - datetime.today().date()
-            ).days,
+            expire_days=(pd.to_datetime(self.expiry_date).date() - datetime.today().date()).days,
             size_limit=self.size_limit,
             cull_limit=self.cull_limit,
             data=dict(self.items()),
@@ -461,15 +440,11 @@ class CustomCache(Cache):
 
     def __repr__(self):
         sample_keys = list(self)[:10]
-        return (
-            f"<CustomCache({self.dir}): {len(self)} entries; sample_keys={sample_keys}>"
-        )
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample_keys={sample_keys}>"
 
     def __str__(self):
         sample = dict(list(self.items())[:10])
-        return (
-            f"<CustomCache({self.dir}): {len(self)} entries; sample={pformat(sample)}>"
-        )
+        return f"<CustomCache({self.dir}): {len(self)} entries; sample={pformat(sample)}>"
 
     def setdefault(self, key, default):
         if key not in self:
@@ -518,9 +493,7 @@ def str_to_bool(value: str) -> bool:
     elif value.lower() in ["false", "0", "no"]:
         return False
     else:
-        raise ValueError(
-            "Invalid boolean string. Expected 'True', 'False', '1', '0', 'yes', or 'no'."
-        )
+        raise ValueError("Invalid boolean string. Expected 'True', 'False', '1', '0', 'yes', or 'no'.")
 
 
 def check_all_days_available(x, _start, _end):
@@ -536,9 +509,7 @@ def check_all_days_available(x, _start, _end):
     """
     date_range = bus_range(_start, _end, freq="1B")
     dates_available = x.Datetime
-    missing_dates_second_check = [
-        x for x in date_range if x not in pd.DatetimeIndex(dates_available)
-    ]
+    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
     return all(x in pd.DatetimeIndex(dates_available) for x in date_range)
 
 
@@ -554,28 +525,18 @@ def check_missing_dates(x, _start, _end):
         list: List of missing business days in the range.
     """
     if "Datetime" not in x.columns:
-        logger.warning(
-            f"DataFrame does not contain 'Datetime' column. Will default to index"
-        )
+        logger.warning(f"DataFrame does not contain 'Datetime' column. Will default to index")
         x["Datetime"] = x.index
     date_range = bus_range(_start, _end, freq="1B")
     dates_available = x.Datetime
-    missing_dates_second_check = [
-        x for x in date_range if x not in pd.DatetimeIndex(dates_available)
-    ]
-    missing_dates_third_check = [
-        x for x in missing_dates_second_check if x not in HOLIDAY_SET
-    ]
-    missing_dates_fourth_check = [
-        x for x in missing_dates_third_check if x.weekday() < 5
-    ]
+    missing_dates_second_check = [x for x in date_range if x not in pd.DatetimeIndex(dates_available)]
+    missing_dates_third_check = [x for x in missing_dates_second_check if x not in HOLIDAY_SET]
+    missing_dates_fourth_check = [x for x in missing_dates_third_check if x.weekday() < 5]
     x.drop(columns=["Datetime"], inplace=True, errors="ignore")
     return missing_dates_fourth_check
 
 
-def get_missing_dates(
-    x: pd.Series | pd.DataFrame, _start: datetime, _end: datetime
-) -> List[datetime]:
+def get_missing_dates(x: pd.Series | pd.DataFrame, _start: datetime, _end: datetime) -> List[datetime]:
     """
     Check for missing business days in the Series or DataFrame x within the specified date range. This also skips US market holidays.
     It also ensures there are no weekends
@@ -586,9 +547,7 @@ def get_missing_dates(
     Returns:
         list: List of missing business days in the range.
     """
-    assert isinstance(x.index, pd.DatetimeIndex), (
-        "DataFrame index must be a DatetimeIndex"
-    )
+    assert isinstance(x.index, pd.DatetimeIndex), "DataFrame index must be a DatetimeIndex"
     date_range = bus_range(_start, _end, freq="1B")
     dates_available = x.index
 
@@ -640,21 +599,11 @@ def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
     """Check for errors in the input parameters for the vol backout function"""
     import numbers
 
-    assert isinstance(sigma, numbers.Number), (
-        f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
-    )
-    assert isinstance(K, numbers.Number), (
-        f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
-    )
-    assert isinstance(S0, numbers.Number), (
-        f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
-    )
-    assert isinstance(r, numbers.Number), (
-        f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
-    )
-    assert isinstance(q, numbers.Number), (
-        f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
-    )
+    assert isinstance(sigma, numbers.Number), f"Recieved '{type(sigma)}' for sigma. Expected 'int' or 'float'"
+    assert isinstance(K, numbers.Number), f"Recieved '{type(K)}' for K. Expected 'int' or 'float'"
+    assert isinstance(S0, numbers.Number), f"Recieved '{type(S0)}' for S0. Expected 'int' or 'float'"
+    assert isinstance(r, numbers.Number), f"Recieved '{type(r)}' for r. Expected 'int' or 'float'"
+    assert isinstance(q, numbers.Number), f"Recieved '{type(q)}' for q. Expected 'int' or 'float'"
     assert isinstance(market_price, numbers.Number), (
         f"Recieved '{type(market_price)}' for market_price. Expected 'int' or 'float'"
     )
@@ -677,14 +626,7 @@ def vol_backout_errors(sigma, K, S0, T, r, q, market_price, flag):
     if flag not in ["c", "p"]:
         raise ValueError("Flag must be 'c' for call or 'p' for put.")
 
-    if (
-        pd.isna(sigma)
-        or pd.isna(K)
-        or pd.isna(S0)
-        or pd.isna(r)
-        or pd.isna(q)
-        or pd.isna(market_price)
-    ):
+    if pd.isna(sigma) or pd.isna(K) or pd.isna(S0) or pd.isna(r) or pd.isna(q) or pd.isna(market_price):
         raise ValueError("Input values cannot be NaN.")
 
 
@@ -692,17 +634,13 @@ def save_vol_resolve(opt_tick, datetime, vol_resolve, agg="eod"):
     """Utility function to save vol_resolve to json file"""
     import os, json
 
-    with open(
-        f"{os.environ['WORK_DIR']}/trade/helpers/vol_resolve_{agg}.json", "r"
-    ) as f:
+    with open(f"{os.environ['WORK_DIR']}/trade/helpers/vol_resolve_{agg}.json", "r") as f:
         data = json.load(f)
     datetime = pd.to_datetime(datetime).strftime("%Y-%m-%d")
     data.setdefault(datetime, {})
     data[datetime][opt_tick] = {}
     data[datetime][opt_tick]["VolResolve"] = vol_resolve
-    with open(
-        f"{os.environ['WORK_DIR']}/trade/helpers/vol_resolve_{agg}.json", "w"
-    ) as f:
+    with open(f"{os.environ['WORK_DIR']}/trade/helpers/vol_resolve_{agg}.json", "w") as f:
         json.dump(data, f)
 
 
@@ -747,9 +685,7 @@ def filter_zeros(data):
     return data.ffill()
 
 
-@backoff.on_exception(
-    backoff.expo, (OpenBBEmptyData, YFinanceEmptyData), max_tries=5, logger=logger
-)
+@backoff.on_exception(backoff.expo, (OpenBBEmptyData, YFinanceEmptyData), max_tries=5, logger=logger)
 def _session_dates_from_index(index: pd.DatetimeIndex) -> List:
     """Calendar dates for a Yahoo OHLCV index (tz-safe).
 
@@ -796,13 +732,7 @@ def _repair_yfinance_nan_close_sessions(
     today = ny_now().date()
     tip_day = pd.Timestamp(data.index.max()).date()
     session_dates = _session_dates_from_index(data.index)
-    nan_days = sorted(
-        {
-            session_dates[i]
-            for i, is_nan in enumerate(data["close"].isna().tolist())
-            if is_nan
-        }
-    )
+    nan_days = sorted({session_dates[i] for i, is_nan in enumerate(data["close"].isna().tolist()) if is_nan})
     ## Calendar today stub (intraday / post-close) and tip-session lag on multi-day pulls.
     repair_days = [d for d in nan_days if d == today or d == tip_day]
     if not repair_days:
@@ -813,14 +743,11 @@ def _repair_yfinance_nan_close_sessions(
         session_start = session_day.strftime("%Y-%m-%d")
         ## Exclusive yfinance end: session + 1 business day includes that session only.
         session_end = (pd.Timestamp(session_day) + BDay(1)).strftime("%Y-%m-%d")
-        tip = query_data(
-            start=session_start, end=session_end, tick=tick, interval=interval
-        )
+        tip = query_data(start=session_start, end=session_end, tick=tick, interval=interval)
 
         if tip is None or tip.empty or "close" not in tip.columns or tip["close"].isna().all():
             log_critical_issue(
-                "yfinance short-session repair failed; Close still missing after "
-                "one-day requery.",
+                "yfinance short-session repair failed; Close still missing after one-day requery.",
                 source="retrieve_timeseries._repair_yfinance_nan_close_sessions",
                 extra={
                     "tick": tick,
@@ -836,8 +763,7 @@ def _repair_yfinance_nan_close_sessions(
         repaired = pd.concat([repaired.loc[keep], tip], axis=0).sort_index()
         repaired = repaired[~repaired.index.duplicated(keep="last")]
         logger.info(
-            "Repaired yfinance NaN close for %s on %s via short-session pull "
-            "(end exclusive %s); new close=%s",
+            "Repaired yfinance NaN close for %s on %s via short-session pull (end exclusive %s); new close=%s",
             tick,
             session_start,
             session_end,
@@ -866,12 +792,9 @@ def retrieve_timeseries(
     """
     if spot_type == "chain_price" or spot_type == "chain_spot":
         ## chain_spot always downloads full history for split factors, then clips to request.
-        full_end = (change_to_last_busday(datetime.today()) + BDay(1)).strftime(
-            "%Y-%m-%d"
-        )
+        full_end = (change_to_last_busday(datetime.today()) + BDay(1)).strftime("%Y-%m-%d")
         logger.info(
-            "chain_spot yfinance full-history fetch for %s: download=1960-01-01..%s "
-            "then clip to requested=%s..%s",
+            "chain_spot yfinance full-history fetch for %s: download=1960-01-01..%s then clip to requested=%s..%s",
             tick,
             full_end,
             start,
@@ -919,9 +842,7 @@ def retrieve_timeseries(
                     columns={"Stock Splits": "split_ratio", "Dividends": "dividends"},
                     inplace=True,
                 )
-                data = data.loc[
-                    :, ~data.columns.duplicated()
-                ]  ## For some reason columns are duplicated sometimes
+                data = data.loc[:, ~data.columns.duplicated()]  ## For some reason columns are duplicated sometimes
                 data.columns = data.columns.str.lower()
                 return data
 
@@ -930,8 +851,7 @@ def retrieve_timeseries(
             ## Surface raw vendor span before inclusive-end clip (partial reloads use this path).
             if data is not None and not data.empty:
                 logger.info(
-                    "yfinance download span for %s: query_start=%s query_end_exclusive=%s "
-                    "raw_returned=%s..%s rows=%s",
+                    "yfinance download span for %s: query_start=%s query_end_exclusive=%s raw_returned=%s..%s rows=%s",
                     tick,
                     start,
                     pd.to_datetime(end).date(),
@@ -943,8 +863,7 @@ def retrieve_timeseries(
                 ## a one-session pull returns the real close. Log, then short-session repair.
                 if "close" in data.columns and data["close"].isna().any():
                     nan_dates = [
-                        d.strftime("%Y-%m-%d")
-                        for d in pd.to_datetime(data.index[data["close"].isna()]).tolist()
+                        d.strftime("%Y-%m-%d") for d in pd.to_datetime(data.index[data["close"].isna()]).tolist()
                     ]
                     ## Lazy import: avoid trade<->helper cycle at module import time.
                     from trade import log_critical_issue
@@ -967,9 +886,7 @@ def retrieve_timeseries(
 
             ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
             if data.empty:
-                raise YFinanceEmptyData(
-                    f"OpenBB returned empty data for {tick} with {provider} provider"
-                )
+                raise YFinanceEmptyData(f"OpenBB returned empty data for {tick} with {provider} provider")
 
             ## Retry logic for missing split_ratio column
             if "split_ratio" not in data.columns:
@@ -986,9 +903,7 @@ def retrieve_timeseries(
 
                     ## Retry up to 3 times
                     while retry_counter < 3:
-                        data = query_data(
-                            start=start, end=end, tick=tick, interval=interval
-                        )
+                        data = query_data(start=start, end=end, tick=tick, interval=interval)
 
                         ## If found, break
                         if "split_ratio" in data.columns:
@@ -1007,14 +922,9 @@ def retrieve_timeseries(
             ## Filter Data within range
             data = data[
                 (data.index.date >= pd.to_datetime(start).date())
-                & (
-                    data.index.date
-                    <= (pd.to_datetime(end) - relativedelta(days=1)).date()
-                )
+                & (data.index.date <= (pd.to_datetime(end) - relativedelta(days=1)).date())
             ]
-        except (
-            Exception
-        ) as e:  ## Unnecessary placeholder, I know. Will look for best idea for this.
+        except Exception as e:  ## Unnecessary placeholder, I know. Will look for best idea for this.
             raise e
 
         data["split_ratio"].replace(0, 1, inplace=True)
@@ -1182,9 +1092,7 @@ class compare_dates:
         return date_inbetween(date, start, end, inclusive)
 
 
-def print_cprofile_internal_time_share(
-    _stats, top_n=20, sort_by="tottime", full_name=False
-):
+def print_cprofile_internal_time_share(_stats, top_n=20, sort_by="tottime", full_name=False):
     """
     Print top n functions by internal (self) time, with their share of total self time.
     """
@@ -1260,11 +1168,7 @@ def find_split_dates_within_range(tick: str, start: str, end: str):
     """
     data = retrieve_timeseries(tick, "1900-01-01", end, "1d")
     data = data[data.index.date >= pd.to_datetime(start).date()]
-    return list(
-        data[data["is_split_date"] == True]["split_ratio"]
-        .to_frame()
-        .itertuples(name=None)
-    )
+    return list(data[data["is_split_date"] == True]["split_ratio"].to_frame().itertuples(name=None))
 
 
 def printmd(string):
@@ -1296,16 +1200,10 @@ def assert_equal_length(*args, names: list = None):
     lengths = [len(arg) for arg in args]
     if len(set(lengths)) != 1:
         if names is not None:
-            name_length_pairs = ", ".join(
-                f"{name}: {length}" for name, length in zip(names, lengths)
-            )
-            raise ValueError(
-                f"Input lists must have the same length. Lengths are: {name_length_pairs}"
-            )
+            name_length_pairs = ", ".join(f"{name}: {length}" for name, length in zip(names, lengths))
+            raise ValueError(f"Input lists must have the same length. Lengths are: {name_length_pairs}")
         else:
-            raise ValueError(
-                f"Input lists must have the same length. Lengths are: {lengths}"
-            )
+            raise ValueError(f"Input lists must have the same length. Lengths are: {lengths}")
     return True
 
 
@@ -1314,9 +1212,7 @@ def time_distance_helper(
     end: Union[DATE_HINT, Iterable[DATE_HINT]],
 ) -> Union[float, np.ndarray]:
     """Calculates time distance in years between two dates."""
-    initial_is_iterable = is_iterable(start, include_str=False) or is_iterable(
-        end, include_str=False
-    )
+    initial_is_iterable = is_iterable(start, include_str=False) or is_iterable(end, include_str=False)
     ## Ensure iterable
     if not is_iterable(start, include_str=False):
         start = [start]
@@ -1373,9 +1269,7 @@ def binomial(
             today = datetime.today()
             start = today.strftime("%Y-%m-%d")
     if tick is not None:
-        logger.info(
-            f"This is no longer supported. Please pass in S0 and y directly. Ticker passed: {tick}"
-        )
+        logger.info(f"This is no longer supported. Please pass in S0 and y directly. Ticker passed: {tick}")
         # if y is None:
         #     y = stock.div_yield()
         # if S0 is None:
@@ -1424,9 +1318,7 @@ def binomial(
     return C[0]
 
 
-def implied_vol_bs_helper(
-    S0, K, T, r, market_price, flag="c", tol=1e-3, exp_date="2024-03-08"
-):
+def implied_vol_bs_helper(S0, K, T, r, market_price, flag="c", tol=1e-3, exp_date="2024-03-08"):
     """Compute the implied volatility of a European Option
     S0: initial stock price
     K:  strike price
@@ -1538,9 +1430,7 @@ def volga(S, K, r, T, sigma, flag, q):
         else:
             volga = (d1 * d2 * S * np.exp(-q * T) * norm.cdf(-d1) * np.sqrt(T)) / sigma
     else:
-        raise ValueError(
-            "Invalid Option Type. Only 'C' for Call and 'P' for Put are available."
-        )
+        raise ValueError("Invalid Option Type. Only 'C' for Call and 'P' for Put are available.")
     return volga
 
 
@@ -1557,9 +1447,7 @@ def vanna(S, K, r, T, sigma, flag, q):
         else:
             vanna = -(d2 * np.exp(-q * T) * norm.cdf(-d1)) / sigma
     else:
-        raise ValueError(
-            "Invalid Option Type. Only 'C' for Call and 'P' for Put are available."
-        )
+        raise ValueError("Invalid Option Type. Only 'C' for Call and 'P' for Put are available.")
     return vanna
 
 
@@ -1712,15 +1600,11 @@ def optionPV_helper(
         )
 
         # Black-Scholes-Merton Process (with dividend yield)
-        bsm_process = ql.BlackScholesMertonProcess(
-            spot_handle, dividend_ts, risk_free_ts, volatility_ts
-        )
+        bsm_process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, risk_free_ts, volatility_ts)
 
         if model == "mcs":
             # Monte Carlo Pricing (Longstaff-Schwartz)
-            monte_carlo_engine = ql.MCAmericanEngine(
-                bsm_process, "PseudoRandom", timeSteps=250, requiredSamples=10000
-            )
+            monte_carlo_engine = ql.MCAmericanEngine(bsm_process, "PseudoRandom", timeSteps=250, requiredSamples=10000)
             american_option = ql.VanillaOption(payoff, exercise)
             american_option.setPricingEngine(monte_carlo_engine)
             monte_carlo_price = american_option.NPV()
@@ -1821,9 +1705,7 @@ def IV_handler(*args, **kwargs):
         return 0.0
 
 
-def binomial_implied_vol(
-    price, S, K, r, exp_date, option_type, pricing_date, dividend_yield
-):
+def binomial_implied_vol(price, S, K, r, exp_date, option_type, pricing_date, dividend_yield):
     """
     Calculate the implied volatility of an option using the binomial tree model.
 
@@ -1895,13 +1777,9 @@ def binomial_implied_vol(
 
 def generate_option_tick(symbol, right, exp, strike):
     exp = to_datetime(exp).strftime("%Y-%m-%d")
-    assert right.upper() in ["P", "C"], (
-        f"Recieved '{right}' for right. Expected 'P' or 'C'"
-    )
+    assert right.upper() in ["P", "C"], f"Recieved '{right}' for right. Expected 'P' or 'C'"
     assert isinstance(exp, str), f"Recieved '{type(exp)}' for exp. Expected 'str'"
-    assert isinstance(strike, (float)), (
-        f"Recieved '{type(strike)}' for strike. Expected 'float'"
-    )
+    assert isinstance(strike, (float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"
 
     tick_date = pd.to_datetime(exp).strftime("%Y%m%d")
     if str(strike)[-1] == "0":
@@ -2005,15 +1883,9 @@ def option_leg_is_expired(
 def generate_option_tick_new(symbol, right, exp, strike) -> str:
     from datetime import datetime
 
-    assert right.upper() in ["P", "C"], (
-        f"Recieved '{right}' for right. Expected 'P' or 'C'"
-    )
-    assert isinstance(exp, (str, datetime)), (
-        f"Recieved '{type(exp)}' for exp. Expected 'str'"
-    )
-    assert isinstance(strike, (float)), (
-        f"Recieved '{type(strike)}' for strike. Expected 'float'"
-    )
+    assert right.upper() in ["P", "C"], f"Recieved '{right}' for right. Expected 'P' or 'C'"
+    assert isinstance(exp, (str, datetime)), f"Recieved '{type(exp)}' for exp. Expected 'str'"
+    assert isinstance(strike, (float)), f"Recieved '{type(strike)}' for strike. Expected 'float'"
 
     tick_date = pd.to_datetime(exp).strftime("%Y%m%d")
     if str(strike)[-1] == "0":
@@ -2061,9 +1933,7 @@ def to_datetime(
     if ny_utc and custom_tz:
         raise ValueError("Pass only one of 'ny_utc' or 'custom_tz'.")
 
-    is_scalar = isinstance(
-        date_input, (str, datetime, date, pd.Timestamp, np.datetime64)
-    )
+    is_scalar = isinstance(date_input, (str, datetime, date, pd.Timestamp, np.datetime64))
 
     if not is_scalar:
         if format:
@@ -2097,11 +1967,7 @@ def to_datetime(
                 dt = datetime.strptime(date_input, "%Y-%m-%d")
             except ValueError:
                 result = pd.to_datetime(date_input)
-                dt = (
-                    result.to_pydatetime()
-                    if isinstance(result, pd.Timestamp)
-                    else result
-                )
+                dt = result.to_pydatetime() if isinstance(result, pd.Timestamp) else result
     else:
         raise TypeError(f"Unsupported date_input type: {type(date_input)}")
 
@@ -2158,10 +2024,7 @@ def not_trading_day(date: str | datetime, time_aware: bool = False) -> bool:
 
     ## Time Check only if time != 00:00:00
     elif pd.to_datetime(date).time() != pd.Timestamp("00:00:00").time():
-        if (
-            pd.to_datetime(date).time() < open_time
-            or pd.to_datetime(date).time() > close_time
-        ):
+        if pd.to_datetime(date).time() < open_time or pd.to_datetime(date).time() > close_time:
             ret_bool = True
         else:
             ret_bool = False
@@ -2343,9 +2206,7 @@ def change_to_last_busday(
     max_iterations = 10  # Prevent infinite loops
     iterations = 0
 
-    while (
-        not is_busday(end_dt) or is_USholiday(end_dt)
-    ) and iterations < max_iterations:
+    while (not is_busday(end_dt) or is_USholiday(end_dt)) and iterations < max_iterations:
         if offset == 0:
             # Try to find nearest business day (prefer backward)
             end_dt = end_dt - BDay(1)
