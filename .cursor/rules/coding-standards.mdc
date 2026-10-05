@@ -29,6 +29,17 @@ returns that row successfully (inner status 200).
 
 This rule is for chat replies, commit messages you propose, and pull request summaries. It does not require expanding every comment in code into a paragraph.
 
+### End-of-task summary format
+
+When finishing a code change, structure the final reply in this order:
+
+1. **Outcome paragraph.** One or two sentences: what now works, plus any blocker that stops it working in practice.
+2. **What changed.** Bullets, one per file or concern, each a full sentence naming the file and why it changed.
+3. **How it was verified.** A short paragraph naming what was run and what it showed, including pre-existing failures that were not touched.
+4. **Decision for you** (only if one exists). State the problem in plain terms first, then the concrete options and what each one means.
+5. **Other things to know.** Caveats, data-quality limits, and follow-ups the user may want, each with the reason it matters.
+6. Close by stating commit status (for example, "Nothing is committed yet.").
+
 ## Commit Requests (Always-On)
 
 When the user asks for a commit:
