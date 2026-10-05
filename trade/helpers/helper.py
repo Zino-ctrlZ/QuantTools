@@ -685,7 +685,6 @@ def filter_zeros(data):
     return data.ffill()
 
 
-@backoff.on_exception(backoff.expo, (OpenBBEmptyData, YFinanceEmptyData), max_tries=5, logger=logger)
 def _session_dates_from_index(index: pd.DatetimeIndex) -> List:
     """Calendar dates for a Yahoo OHLCV index (tz-safe).
 
@@ -698,23 +697,56 @@ def _session_dates_from_index(index: pd.DatetimeIndex) -> List:
     return [pd.Timestamp(ts).date() for ts in index]
 
 
+def _query_alpaca_daily(start: str, end: str, tick: str, interval: str) -> pd.DataFrame:
+    """Alpaca daily bars shaped like ``retrieve_timeseries``'s yfinance ``query_data``.
+
+    Args:
+        start: Inclusive start date (``YYYY-MM-DD``).
+        end: Exclusive end date (``YYYY-MM-DD``).
+        tick: Equity ticker.
+        interval: Ignored; Alpaca fallback only serves daily bars.
+
+    Returns:
+        Frame with lowercase OHLCV columns plus ``dividends`` / ``split_ratio``,
+        indexed by tz-naive session dates. ``volume`` is NaN (see inline note).
+        Empty when Alpaca has no bars.
+    """
+    ## Lazy import: alpaca_helper imports to_datetime from this module.
+    from trade.helpers.alpaca_helper import alpaca_stock_history
+
+    data = alpaca_stock_history(tick, start=start, end=end)
+    data = data.rename(columns={"Stock Splits": "split_ratio", "Dividends": "dividends"})
+    data.columns = data.columns.str.lower()
+    ## Default feed is IEX, whose volume is a small slice of consolidated volume.
+    ## Blank it so the repair step backfills from prior Yahoo sessions instead.
+    data["volume"] = np.nan
+    ## yfinance daily index is tz-naive midnight; strip NY tz so spliced rows concat and sort cleanly.
+    if not data.empty:
+        data.index = data.index.tz_localize(None)
+    return data
+
+
 def _repair_yfinance_nan_close_sessions(
     data: pd.DataFrame,
     tick: str,
     query_data,
     interval: str,
 ) -> pd.DataFrame:
-    """Replace NaN-close session rows with one-session Yahoo pulls.
+    """Replace NaN-close session rows with short re-pulls from a fallback source.
 
-    Multi-day Yahoo chart responses often leave Close null on the tip bar while a
-    short ``start=session, end=session+1 BDay`` request returns the real close.
-    When calendar today is in ``data`` with NaN close — or the tip session is NaN —
-    drop the stub row and splice in the short-session requery.
+    Multi-day Yahoo chart responses often leave Close null on a tip bar. A short
+    re-query of that session (Alpaca for daily bars, Yahoo otherwise) recovers
+    the close. Once calendar today has started, ``end=session+1 BDay`` may equal
+    today and return empty / NaN for the prior session, so the exclusive end is
+    ``max(session+1 BDay, today+1 BDay)``. Only the target session row (non-NaN
+    Close) is spliced back so today's tip stub is not reattached. A NaN volume on
+    the re-pulled row is filled with the mean volume of the 5 prior sessions.
 
     Args:
         data: Full-range OHLCV frame (lowercase columns) from the wide download.
         tick: Equity ticker.
-        query_data: Callable ``(start, end, tick, interval) -> DataFrame``.
+        query_data: Callable ``(start, end, tick, interval) -> DataFrame`` used for
+            the re-pull. Exceptions it raises are logged and treated as a failed repair.
         interval: Bar interval passed through to ``query_data``.
 
     Returns:
@@ -738,16 +770,38 @@ def _repair_yfinance_nan_close_sessions(
     if not repair_days:
         return data
 
+    ## Yahoo exclusive end must clear calendar today when repairing a prior tip;
+    ## session+1 BDay alone often lands on today and returns empty after the open.
+    today_end_exclusive = (pd.Timestamp(today) + BDay(1)).date()
+
     repaired = data
     for session_day in repair_days:
         session_start = session_day.strftime("%Y-%m-%d")
-        ## Exclusive yfinance end: session + 1 business day includes that session only.
-        session_end = (pd.Timestamp(session_day) + BDay(1)).strftime("%Y-%m-%d")
-        tip = query_data(start=session_start, end=session_end, tick=tick, interval=interval)
-
-        if tip is None or tip.empty or "close" not in tip.columns or tip["close"].isna().all():
+        session_end_exclusive = max(
+            (pd.Timestamp(session_day) + BDay(1)).date(),
+            today_end_exclusive,
+        )
+        session_end = session_end_exclusive.strftime("%Y-%m-%d")
+        ## Fallback vendor errors (auth, rate limit, network) must not sink the whole pull;
+        ## the row keeps its NaN close and downstream NaN checks still fire.
+        try:
+            tip = query_data(start=session_start, end=session_end, tick=tick, interval=interval)
+        except Exception as e:
             log_critical_issue(
-                "yfinance short-session repair failed; Close still missing after one-day requery.",
+                "Short-session repair requery raised; Close still missing.",
+                source="retrieve_timeseries._repair_yfinance_nan_close_sessions",
+                extra={
+                    "tick": tick,
+                    "session_start": session_start,
+                    "session_end_exclusive": session_end,
+                    "error": repr(e),
+                },
+            )
+            continue
+
+        if tip is None or tip.empty or "close" not in tip.columns:
+            log_critical_issue(
+                "Short-session repair failed; Close still missing after one-day requery.",
                 source="retrieve_timeseries._repair_yfinance_nan_close_sessions",
                 extra={
                     "tick": tick,
@@ -758,21 +812,48 @@ def _repair_yfinance_nan_close_sessions(
             )
             continue
 
+        ## Wider end can include today (often NaN Close); keep only the repaired session.
+        tip_session_mask = [d == session_day for d in _session_dates_from_index(tip.index)]
+        tip_session = tip.loc[tip_session_mask]
+        tip_session = tip_session[tip_session["close"].notna()]
+        if tip_session.empty:
+            log_critical_issue(
+                "Short-session repair failed; Close still missing after one-day requery.",
+                source="retrieve_timeseries._repair_yfinance_nan_close_sessions",
+                extra={
+                    "tick": tick,
+                    "session_start": session_start,
+                    "session_end_exclusive": session_end,
+                    "tip_empty": False,
+                    "session_row_missing_or_nan": True,
+                },
+            )
+            continue
+
+        ## Untrusted fallback volume (NaN) is replaced by the mean of the 5 prior sessions
+        ## already in the frame. Narrow pulls with no prior rows leave volume NaN.
+        # ponytail: uses only rows in this pull; fetch extra Yahoo history if short pulls need volume
+        if tip_session["volume"].isna().any():
+            prior_mask = [d < session_day for d in _session_dates_from_index(repaired.index)]
+            prior_volume = repaired.loc[prior_mask, "volume"].dropna().tail(5)
+            tip_session = tip_session.assign(volume=prior_volume.mean() if not prior_volume.empty else np.nan)
+
         ## Drop stub session row(s), attach requeried bar, keep a clean sorted index.
         keep = [d != session_day for d in _session_dates_from_index(repaired.index)]
-        repaired = pd.concat([repaired.loc[keep], tip], axis=0).sort_index()
+        repaired = pd.concat([repaired.loc[keep], tip_session], axis=0).sort_index()
         repaired = repaired[~repaired.index.duplicated(keep="last")]
         logger.info(
-            "Repaired yfinance NaN close for %s on %s via short-session pull (end exclusive %s); new close=%s",
+            "Repaired yfinance NaN close for %s on %s via short-session fallback pull (end exclusive %s); new close=%s",
             tick,
             session_start,
             session_end,
-            float(tip["close"].iloc[-1]),
+            float(tip_session["close"].iloc[-1]),
         )
 
     return repaired
 
 
+@backoff.on_exception(backoff.expo, (OpenBBEmptyData, YFinanceEmptyData), max_tries=5, logger=logger)
 def retrieve_timeseries(
     tick, start, end, interval="1d", provider="yfinance", spot_type="close", **kwargs
 ) -> pd.DataFrame:
@@ -880,8 +961,11 @@ def retrieve_timeseries(
                             "spot_type": spot_type,
                         },
                     )
+                    ## Re-asking Yahoo often repeats the same NaN; Alpaca is an independent
+                    ## source for daily bars. Intraday stays on Yahoo (Alpaca helper is daily-only).
+                    repair_query = _query_alpaca_daily if interval == "1d" else query_data
                     data = _repair_yfinance_nan_close_sessions(
-                        data, tick=tick, query_data=query_data, interval=interval
+                        data, tick=tick, query_data=repair_query, interval=interval
                     )
 
             ## Check if data is empty. This raises YFinanceEmptyData for backoff to catch
