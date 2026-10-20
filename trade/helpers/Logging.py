@@ -155,6 +155,24 @@ def _get_current_environment() -> Optional[str]:
         return None
 
 
+_DEFAULT_LOG_BACKUP_COUNT = 3
+_LIVE_LOG_BACKUP_COUNT = 13  # midnight rotation: 13 backups + active file ≈ 14 days
+
+
+def _get_log_backup_count() -> int:
+    """Return ``TimedRotatingFileHandler`` backupCount for the current context.
+
+    ``LOG_BACKUP_DAYS`` overrides when set. Otherwise ``live`` registry env keeps
+    two weeks; all other environments keep the legacy three-day rotation window.
+    """
+    override = os.getenv("LOG_BACKUP_DAYS")
+    if override is not None and override.strip() != "":
+        return max(0, int(override))
+    if _get_current_environment() == "live":
+        return _LIVE_LOG_BACKUP_COUNT
+    return _DEFAULT_LOG_BACKUP_COUNT
+
+
 def refresh_all_loggers(*args: Any, **kwargs: Any) -> None:
     """Rebuild handlers on every logger previously created via ``setup_logger``.
 
@@ -224,7 +242,8 @@ def setup_logger(
         - Environment detected from dbase.database.SQLHelpers.ENVIRONMENT_CONTEXT if available
 
     Note:
-        Log files rotate daily at midnight (3 backups). Handlers are cleaned on autoreload.
+        Log files rotate daily at midnight (``live`` env: 13 backups; else 3; override via
+        ``LOG_BACKUP_DAYS``). Handlers are cleaned on autoreload.
         Console Logging & File Logging Can be configured using STREAM_LOG_LEVEL and FILE_LOG_LEVEL in environment variables.
         Propagate to root logger can be set using PROPAGATE_TO_ROOT_LOGGER in environment variables.
         Example:
@@ -340,7 +359,9 @@ def setup_logger(
 
     # Optional: Create a file handler (logs to a file)
     if log_file:
-        file_handler = TimedRotatingFileHandler(log_file, when="midnight", interval=1, backupCount=3)
+        file_handler = TimedRotatingFileHandler(
+            log_file, when="midnight", interval=1, backupCount=_get_log_backup_count()
+        )
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_log_level)
         logger.addHandler(file_handler)
