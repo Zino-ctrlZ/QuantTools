@@ -139,6 +139,28 @@ class FakeAssetStrategy:
             return 3
         return self.multiplier
 
+    def additional_on_entry_info(
+        self, *, date: pd.Timestamp = None, index: int = None
+    ) -> Dict[str, Any]:
+        """Return indicator plus setup-feature values at the entry bar.
+
+        Args:
+            date: Lookup date forwarded by the cog.
+            index: Optional integer index.
+
+        Returns:
+            Entry-info mapping including ``zscore`` and setup features.
+        """
+        idx, _ = self._resolve(date=date, index=index)
+        info: Dict[str, Any] = {"zscore": -2.1, "sector": "Technology"}
+        for name in REQUIRED_SETUP_FEATURES:
+            ind = self.indicators.get(name)
+            if ind is None:
+                info[name] = float("nan")
+                continue
+            info[name] = float(ind.values[idx])
+        return info
+
 
 class FakeMultiAssetStrategy:
     """Minimal MultiAssetStrategy stand-in exposing ``asset_strategies``."""
@@ -416,6 +438,8 @@ def test_default_calculator_sizes_from_multiplier_and_close() -> None:
     stored = cog._position_store.get_metadata(TRADE_ID, SIGNAL_ID)
     assert stored is not None
     assert stored["new_quantity"] == 12
+    assert stored["setup_features_at_date"]["zscore"] == pytest.approx(-2.1)
+    assert stored["setup_features_at_date"]["sector"] == "Technology"
     assert stored["setup_features_at_date"]["uup_close_vs_sma_200"] == pytest.approx(0.03)
     assert stored["setup_features_at_date"]["usdcnh_ret_20d"] == pytest.approx(0.02)
     assert stored["setup_features_at_date"]["vix_level"] == pytest.approx(18.5)
