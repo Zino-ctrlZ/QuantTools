@@ -139,6 +139,11 @@ class FakeAssetStrategy:
             return 3
         return self.multiplier
 
+    def info_on_date(self, *, date: pd.Timestamp = None, index: int = None) -> Dict[str, Any]:
+        """Return bar diagnostics not duplicated on the entry hook."""
+        idx, _ = self._resolve(date=date, index=index)
+        return {"close": 412.5, "is_open_signal": True}
+
     def additional_on_entry_info(
         self, *, date: pd.Timestamp = None, index: int = None
     ) -> Dict[str, Any]:
@@ -438,6 +443,8 @@ def test_default_calculator_sizes_from_multiplier_and_close() -> None:
     stored = cog._position_store.get_metadata(TRADE_ID, SIGNAL_ID)
     assert stored is not None
     assert stored["new_quantity"] == 12
+    assert stored["setup_features_at_date"]["close"] == pytest.approx(412.5)
+    assert stored["setup_features_at_date"]["is_open_signal"] is True
     assert stored["setup_features_at_date"]["zscore"] == pytest.approx(-2.1)
     assert stored["setup_features_at_date"]["sector"] == "Technology"
     assert stored["setup_features_at_date"]["uup_close_vs_sma_200"] == pytest.approx(0.03)

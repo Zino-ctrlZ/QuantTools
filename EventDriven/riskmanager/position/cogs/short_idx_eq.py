@@ -36,8 +36,9 @@ Processing Flow:
        dollars (option premium * 100) and returns quantity.
        Default: ``trade_size * multiplier / 3 / option_price``.
        Qty 0 becomes 1.
-    7. Snapshot ``additional_on_entry_info`` at signal-id date (indicators plus
-       setup features); store under ``setup_features_at_date`` for schema stability.
+    7. Snapshot ``info_on_date`` merged with ``additional_on_entry_info`` at
+       signal-id date (entry hook wins key collisions); store under
+       ``setup_features_at_date`` for schema stability.
     8. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
        cog dict and ``PositionStore``.
     9. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
@@ -582,13 +583,53 @@ class ShortIdxEqCog(BaseCog):
                         if prev_version is not None:
                             asset_strat.MULTIPLIER_VERSION = prev_version
 
-    def _snapshot_entry_info(self, asset_strat: Any, lookup_date: str) -> Dict[str, Any]:
-        """Snapshot ``additional_on_entry_info`` at the signal-id date.
+    def _call_strategy_info_hook(
+        self,
+        asset_strat: Any,
+        lookup_date: str,
+        hook_name: str,
+    ) -> Dict[str, Any]:
+        """Invoke one strategy info hook and return a JSON-safe dict.
 
-        Prefer the strategy's entry-info hook so indicators (for example
-        ``zscore``) are frozen with setup features. When the hook is missing,
-        fall back to ``REQUIRED_SETUP_FEATURES`` indicator values so older
-        sleeves still persist a feature map.
+        Args:
+            asset_strat: Per-ticker (or child) strategy used for sizing.
+            lookup_date: Signal-id date as ``YYYY-MM-DD``.
+            hook_name: ``info_on_date`` or ``additional_on_entry_info``.
+
+        Returns:
+            Coerced mapping, or empty when the hook is missing or fails.
+        """
+        hook = getattr(asset_strat, hook_name, None)
+        if not callable(hook):
+            return {}
+        try:
+            raw = hook(date=lookup_date)
+        except Exception:
+            logger.warning(
+                "%s failed for date %s; skipping hook output.",
+                hook_name,
+                lookup_date,
+                exc_info=True,
+            )
+            return {}
+        if not isinstance(raw, dict):
+            logger.warning(
+                "%s returned %s for date %s; expected dict.",
+                hook_name,
+                type(raw).__name__,
+                lookup_date,
+            )
+            return {}
+        return {str(key): _json_safe_entry_value(value) for key, value in raw.items()}
+
+    def _snapshot_entry_info(self, asset_strat: Any, lookup_date: str) -> Dict[str, Any]:
+        """Snapshot merged ``info_on_date`` and ``additional_on_entry_info``.
+
+        ``info_on_date`` supplies bar diagnostics (for example raw ``close``);
+        ``additional_on_entry_info`` supplies entry metadata and setup features
+        via ``merge_entry_info``. Entry-hook keys override ``info_on_date`` on
+        collision. When both hooks are absent, fall back to
+        ``REQUIRED_SETUP_FEATURES`` indicator values for older sleeves.
 
         Args:
             asset_strat: Per-ticker (or child) strategy used for sizing.
@@ -597,27 +638,15 @@ class ShortIdxEqCog(BaseCog):
         Returns:
             JSON-safe mapping stored on ``setup_features_at_date``.
         """
-        entry_fn = getattr(asset_strat, "additional_on_entry_info", None)
-        if callable(entry_fn):
-            try:
-                raw = entry_fn(date=lookup_date)
-            except Exception:
-                logger.warning(
-                    "additional_on_entry_info failed for date %s; storing empty entry snapshot.",
-                    lookup_date,
-                    exc_info=True,
-                )
-                return {}
-            if not isinstance(raw, dict):
-                logger.warning(
-                    "additional_on_entry_info returned %s for date %s; expected dict.",
-                    type(raw).__name__,
-                    lookup_date,
-                )
-                return {}
-            return {str(key): _json_safe_entry_value(value) for key, value in raw.items()}
+        merged: Dict[str, Any] = {}
+        merged.update(self._call_strategy_info_hook(asset_strat, lookup_date, "info_on_date"))
+        merged.update(
+            self._call_strategy_info_hook(asset_strat, lookup_date, "additional_on_entry_info")
+        )
+        if merged:
+            return merged
 
-        ## Legacy sleeves without additional_on_entry_info: indicator-only snapshot.
+        ## Legacy sleeves without entry hooks: indicator-only snapshot.
         feature_names = tuple(getattr(asset_strat, "REQUIRED_SETUP_FEATURES", ()) or ())
         if not feature_names:
             return {}
@@ -725,7 +754,7 @@ class ShortIdxEqCog(BaseCog):
             5. Effective trade size is ``min(tick_cash, config.trade_size)``.
             6. Scale option premium to dollars (* 100), then compute quantity via
                calculator; force 1 when it returns 0.
-            7. Snapshot ``additional_on_entry_info`` and store metadata with waterfall fields.
+            7. Snapshot merged entry info hooks and store metadata with waterfall fields.
 
         Args:
             state: Newly created position container. Quantity is updated in place.
