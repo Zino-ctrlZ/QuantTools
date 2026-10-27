@@ -76,6 +76,7 @@ from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_mone
 from EventDriven.riskmanager.position.cogs.pnl_utils import correct_position_pnl
 from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
+from trade.backtester_._strategy import StrategyBase
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 
@@ -583,35 +584,23 @@ class ShortIdxEqCog(BaseCog):
                         if prev_version is not None:
                             asset_strat.MULTIPLIER_VERSION = prev_version
 
-    def _call_strategy_info_hook(
+    def _coerce_strategy_info_dict(
         self,
-        asset_strat: Any,
-        lookup_date: str,
+        raw: Any,
+        *,
         hook_name: str,
+        lookup_date: str,
     ) -> Dict[str, Any]:
-        """Invoke one strategy info hook and return a JSON-safe dict.
+        """Normalize one strategy info hook return value for JSON storage.
 
         Args:
-            asset_strat: Per-ticker (or child) strategy used for sizing.
+            raw: Return value from ``info_on_date`` or ``additional_on_entry_info``.
+            hook_name: Hook label for log messages.
             lookup_date: Signal-id date as ``YYYY-MM-DD``.
-            hook_name: ``info_on_date`` or ``additional_on_entry_info``.
 
         Returns:
-            Coerced mapping, or empty when the hook is missing or fails.
+            JSON-safe mapping, or empty when ``raw`` is not a dict.
         """
-        hook = getattr(asset_strat, hook_name, None)
-        if not callable(hook):
-            return {}
-        try:
-            raw = hook(date=lookup_date)
-        except Exception:
-            logger.warning(
-                "%s failed for date %s; skipping hook output.",
-                hook_name,
-                lookup_date,
-                exc_info=True,
-            )
-            return {}
         if not isinstance(raw, dict):
             logger.warning(
                 "%s returned %s for date %s; expected dict.",
@@ -622,63 +611,56 @@ class ShortIdxEqCog(BaseCog):
             return {}
         return {str(key): _json_safe_entry_value(value) for key, value in raw.items()}
 
-    def _snapshot_entry_info(self, asset_strat: Any, lookup_date: str) -> Dict[str, Any]:
+    def _snapshot_entry_info(self, asset_strat: StrategyBase, lookup_date: str) -> Dict[str, Any]:
         """Snapshot merged ``info_on_date`` and ``additional_on_entry_info``.
 
-        ``info_on_date`` supplies bar diagnostics (for example raw ``close``);
-        ``additional_on_entry_info`` supplies entry metadata and setup features
-        via ``merge_entry_info``. Entry-hook keys override ``info_on_date`` on
-        collision. When both hooks are absent, fall back to
-        ``REQUIRED_SETUP_FEATURES`` indicator values for older sleeves.
+        ``StrategyBase`` defines both hooks; ``info_on_date`` supplies bar
+        diagnostics and ``additional_on_entry_info`` supplies entry metadata
+        (including setup features from ``merge_entry_info``). Entry-hook keys
+        override ``info_on_date`` on collision.
 
         Args:
-            asset_strat: Per-ticker (or child) strategy used for sizing.
+            asset_strat: Per-ticker (or child) ``StrategyBase`` used for sizing.
             lookup_date: Signal-id date as ``YYYY-MM-DD``.
 
         Returns:
             JSON-safe mapping stored on ``setup_features_at_date``.
         """
         merged: Dict[str, Any] = {}
-        merged.update(self._call_strategy_info_hook(asset_strat, lookup_date, "info_on_date"))
-        merged.update(
-            self._call_strategy_info_hook(asset_strat, lookup_date, "additional_on_entry_info")
-        )
-        if merged:
-            return merged
-
-        ## Legacy sleeves without entry hooks: indicator-only snapshot.
-        feature_names = tuple(getattr(asset_strat, "REQUIRED_SETUP_FEATURES", ()) or ())
-        if not feature_names:
-            return {}
         try:
-            idx, _ = asset_strat._resolve(date=lookup_date)
+            on_date_raw = asset_strat.info_on_date(date=lookup_date)
         except Exception:
             logger.warning(
-                "Unable to resolve entry-info date %s on asset strategy. "
-                "Storing empty REQUIRED_SETUP_FEATURES fallback.",
+                "info_on_date failed for date %s; skipping bar snapshot.",
                 lookup_date,
                 exc_info=True,
             )
-            return {name: None for name in feature_names}
+            on_date_raw = {}
+        merged.update(
+            self._coerce_strategy_info_dict(
+                on_date_raw,
+                hook_name="info_on_date",
+                lookup_date=lookup_date,
+            )
+        )
 
-        indicators = getattr(asset_strat, "indicators", {}) or {}
-        snapshot: Dict[str, Any] = {}
-        for name in feature_names:
-            ind = indicators.get(name)
-            if ind is None:
-                snapshot[name] = None
-                continue
-            values = getattr(ind, "values", None)
-            try:
-                if values is None:
-                    snapshot[name] = None
-                elif isinstance(values, pd.Series):
-                    snapshot[name] = _json_safe_entry_value(values.iloc[idx])
-                else:
-                    snapshot[name] = _json_safe_entry_value(values[idx])
-            except Exception:
-                snapshot[name] = None
-        return snapshot
+        try:
+            entry_raw = asset_strat.additional_on_entry_info(date=lookup_date)
+        except Exception:
+            logger.warning(
+                "additional_on_entry_info failed for date %s; skipping entry snapshot.",
+                lookup_date,
+                exc_info=True,
+            )
+            entry_raw = {}
+        merged.update(
+            self._coerce_strategy_info_dict(
+                entry_raw,
+                hook_name="additional_on_entry_info",
+                lookup_date=lookup_date,
+            )
+        )
+        return merged
 
     def _store_metadata(self, metadata: _ShortIdxEqMetaData) -> None:
         """Persist metadata in-process and through the configured store.
@@ -773,6 +755,16 @@ class ShortIdxEqCog(BaseCog):
             self._resolve_asset_strategy(ticker),
             signal_id,
         )
+        trade_id = order["data"]["trade_id"]
+        if not isinstance(asset_strat, StrategyBase):
+            logger.error(
+                "ShortIdxEqCog refusing sizing for trade %s: strategy for ticker %s "
+                "is %s, expected StrategyBase subclass.",
+                trade_id,
+                ticker,
+                type(asset_strat).__name__,
+            )
+            return
         lookup_date = self._signal_lookup_date(signal_id)
         option_chain = state.at_time_data
         if option_chain is None:

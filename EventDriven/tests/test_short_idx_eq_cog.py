@@ -26,6 +26,8 @@ from EventDriven.dataclasses.states import (
 )
 from EventDriven.types import Order, OrderData
 from EventDriven.trade import Trade
+from trade.backtester_._strategy import StrategyBase
+from trade.backtester_.data import PTDataset
 from trade.datamanager.market_data import AtIndexResult
 
 
@@ -64,9 +66,31 @@ class FakeIndicator:
         self.values = np.asarray(values, dtype=float)
 
 
-class FakeAssetStrategy:
+def _make_fake_dataset(
+    dates: List[str],
+    *,
+    close: float = 412.5,
+) -> PTDataset:
+    """Build OHLCV data aligned to ShortIdxEq test signal dates."""
+    index = pd.DatetimeIndex([pd.Timestamp(d) for d in dates])
+    count = len(index)
+    frame = pd.DataFrame(
+        {
+            "Open": np.full(count, close),
+            "High": np.full(count, close + 1.0),
+            "Low": np.full(count, close - 1.0),
+            "Close": np.full(count, close),
+            "Volume": np.full(count, 1_000, dtype=int),
+        },
+        index=index,
+    )
+    return PTDataset(TICKER, frame)
+
+
+class FakeAssetStrategy(StrategyBase):
     """Stand-in for ShortDonchianEquityFlat used by ShortIdxEqCog tests."""
 
+    bt_params: Dict[str, Any] = {}
     REQUIRED_SETUP_FEATURES = REQUIRED_SETUP_FEATURES
     MULTIPLIER_VERSION = 1
 
@@ -76,6 +100,7 @@ class FakeAssetStrategy:
         dates: Optional[List[str]] = None,
         feature_rows: Optional[List[Dict[str, float]]] = None,
         multiplier: float = 3,
+        close: float = 412.5,
     ) -> None:
         """Initialize a fake per-ticker strategy.
 
@@ -83,14 +108,11 @@ class FakeAssetStrategy:
             dates: Calendar dates present on the fake bar index.
             feature_rows: Per-date feature maps aligned with ``dates``.
             multiplier: Value returned by ``assign_dollar_multiplier``.
+            close: Underlying close stored on the fake OHLCV series.
         """
-        dates = dates or [SIGNAL_DATE, "2018-06-18", "2018-06-20"]
-        self._index = [pd.Timestamp(d) for d in dates]
-        self._dates_map = {ts: i for i, ts in enumerate(self._index)}
-        self._n = len(self._index)
         self.multiplier = multiplier
         self.last_multiplier_date: Optional[pd.Timestamp] = None
-        self.feature_rows = feature_rows or [
+        self._feature_rows = feature_rows or [
             {
                 "uup_close_vs_sma_200": 0.03,
                 "usdcnh_ret_20d": 0.02,
@@ -100,39 +122,62 @@ class FakeAssetStrategy:
             {},
             {},
         ]
-        self.indicators = {
-            name: FakeIndicator([row.get(name, np.nan) for row in self.feature_rows])
-            for name in REQUIRED_SETUP_FEATURES
-        }
+        dates = dates or [SIGNAL_DATE, "2018-06-18", "2018-06-20"]
+        super().__init__(
+            data=_make_fake_dataset(dates, close=close),
+            ticker=TICKER,
+            tplusn=0,
+        )
 
-    def _resolve(self, *, date: pd.Timestamp = None, index: int = None):
-        """Resolve date or index the same way StrategyBase does.
+    def setup(self) -> None:
+        """Register fake setup-feature indicators on the bar index."""
+        for name in REQUIRED_SETUP_FEATURES:
+            values = [
+                float(self._feature_rows[i].get(name, np.nan))
+                if i < len(self._feature_rows)
+                else float("nan")
+                for i in range(self._n)
+            ]
+            self.indicators[name] = FakeIndicator(values)
 
-        Args:
-            date: Optional lookup date.
-            index: Optional integer index.
+    def is_open_signal(
+        self,
+        *,
+        date: Optional[pd.Timestamp] = None,
+        index: Optional[int] = None,
+    ) -> bool:
+        """Return a deterministic open signal for snapshot tests."""
+        return True
 
-        Returns:
-            Tuple of ``(index, timestamp)``.
-        """
-        if index is not None:
-            return index, self._index[index]
-        ts = pd.Timestamp(date)
-        idx = self._dates_map.get(ts)
-        if idx is None:
-            raise KeyError(f"date {ts} not found in dataset index.")
-        return idx, ts
+    def is_close_signal(
+        self,
+        *,
+        date: Optional[pd.Timestamp] = None,
+        index: Optional[int] = None,
+    ) -> bool:
+        """Return no close signal."""
+        return False
 
-    def assign_dollar_multiplier(self, date: pd.Timestamp = None, index: int = None) -> float:
-        """Return the configured multiplier and record the lookup date.
+    def open_action(
+        self,
+        *,
+        signal_id: Optional[str] = None,
+        entry_price: Optional[float] = None,
+        side: Optional[int] = None,
+        date: pd.Timestamp = None,
+        index: int = None,
+    ) -> None:
+        """No-op open for sizing-only tests."""
+        return None
 
-        Args:
-            date: Lookup date forwarded by the cog.
-            index: Optional integer index.
+    def close_action(self, *, date: pd.Timestamp = None, index: int = None) -> None:
+        """No-op close for sizing-only tests."""
+        return None
 
-        Returns:
-            Configured multiplier, or ``3`` when version is 2 or 3.
-        """
+    def assign_dollar_multiplier(
+        self, date: pd.Timestamp = None, index: int = None
+    ) -> float:
+        """Return the configured multiplier and record the lookup date."""
         _, ts = self._resolve(date=date, index=index)
         self.last_multiplier_date = ts
         if self.MULTIPLIER_VERSION in (2, 3):
@@ -142,20 +187,12 @@ class FakeAssetStrategy:
     def info_on_date(self, *, date: pd.Timestamp = None, index: int = None) -> Dict[str, Any]:
         """Return bar diagnostics not duplicated on the entry hook."""
         idx, _ = self._resolve(date=date, index=index)
-        return {"close": 412.5, "is_open_signal": True}
+        return {"close": float(self.close[idx]), "is_open_signal": True}
 
     def additional_on_entry_info(
         self, *, date: pd.Timestamp = None, index: int = None
     ) -> Dict[str, Any]:
-        """Return indicator plus setup-feature values at the entry bar.
-
-        Args:
-            date: Lookup date forwarded by the cog.
-            index: Optional integer index.
-
-        Returns:
-            Entry-info mapping including ``zscore`` and setup features.
-        """
+        """Return indicator plus setup-feature values at the entry bar."""
         idx, _ = self._resolve(date=date, index=index)
         info: Dict[str, Any] = {"zscore": -2.1, "sector": "Technology"}
         for name in REQUIRED_SETUP_FEATURES:
@@ -421,6 +458,26 @@ def test_cog_requires_config() -> None:
     """Cog construction without config should fail because trade_size is required."""
     with pytest.raises(TypeError, match="trade_size"):
         ShortIdxEqCog(eq_strategy=FakeMultiAssetStrategy({TICKER: FakeAssetStrategy()}))
+
+
+def test_on_new_position_skips_non_strategy_base() -> None:
+    """Non-StrategyBase asset strategies must not be sized or snapshotted."""
+
+    class NotAStrategy:
+        """Minimal object with multiplier API but not a StrategyBase."""
+
+        def assign_dollar_multiplier(self, **kwargs: Any) -> float:
+            return 3
+
+    cog = ShortIdxEqCog(
+        eq_strategy=FakeMultiAssetStrategy({TICKER: NotAStrategy()}),
+        config=ShortIdxEqCogConfig(trade_size=3000),
+    )
+    state = _new_position_state(quantity=0)
+    cog.on_new_position(state)
+
+    assert state.order["data"]["quantity"] == 0
+    assert TRADE_ID not in cog.position_metadata
 
 
 def test_default_calculator_sizes_from_multiplier_and_close() -> None:
