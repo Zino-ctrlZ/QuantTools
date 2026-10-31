@@ -1,5 +1,5 @@
 ---
-description: Project coding standards — complete-English replies, commits, sandbox scratch, type hints, dates, system-critical logging, docstrings, comments, naming, dataclasses, utils placement, SQL/dbase
+description: Project coding standards — complete-English replies, commits, sandbox scratch, type hints, dates, module logging (setup_logger + __name__), system-critical logging, docstrings, comments, naming, dataclasses, utils placement, SQL/dbase
 alwaysApply: true
 ---
 
@@ -75,6 +75,48 @@ This is **not** Cursor's OS command sandbox (`sandbox.json` / CLI `sandbox`). It
 - Import: `from trade.helpers.helper import to_datetime`
 - Handles single values and iterables; tries `%Y-%m-%d` first, then lets pandas guess; supports optional `format`.
 
+## Module logging (Always-On for Python)
+
+Every Python module that does real work (orchestration, I/O, simulation, optimization, data loads) must have a module logger and use it.
+
+### Setup (required shape)
+
+```python
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger(__name__)
+```
+
+- Pass `__name__` so the logger name is the module path (e.g. `trade.backtester_.optimizer.engine`).
+- Do not invent ad-hoc logger name strings unless you have a deliberate shared logger (rare; document why).
+- Optional `stream_log_level=` / `file_log_level=` only when the module is known-noisy and console should stay quiet (e.g. `stream_log_level="WARNING"`).
+
+### Levels (use the right one)
+
+| Level | When |
+|---|---|
+| `DEBUG` | Fine-grained internals useful when diagnosing (per-batch sizes, path taken). Not per-bar in hot loops. |
+| `INFO` | Normal milestones: run start/end, counts, chosen path (flat vs book), winners. |
+| `WARNING` | Recoverable degradation: fell back to serial, no trial passed, truncated calendar. |
+| `ERROR` | Failed operation that the function handled or re-raised after logging context. |
+| `CRITICAL` | Process cannot continue meaningfully; prefer `log_critical_issue` when blast radius is system-wide (see below). |
+
+### Density
+
+- Prefer a few informative lines at boundaries (enter/exit, branch, aggregate counts) over logging inside tight loops.
+- Never log secrets, full credentials, or huge DataFrames; log shapes, keys, and counts instead.
+- Use `%s`-style lazy formatting (`logger.info("n=%s", n)`), not f-strings at the call site when values are expensive.
+
+### Multiprocessing / fork workers
+
+Forked workers inherit the parent's logger handlers. That is fine for occasional `WARNING` / `ERROR`.
+
+- **Do** log trial failures in workers at `WARNING` or `ERROR` (short message + exception text).
+- **Do** keep high-volume progress in the parent (`INFO` for grid size, workers, winner).
+- **Do not** call `setup_logger` again inside workers (duplicates handlers / can fight locks).
+- **Do not** `DEBUG`-log every trial from workers on large grids (I/O contention and interleaved lines).
+- Progress bars (`tqdm`) stay for interactive progress; logs are for durable records.
+
 ## System-critical logging (Always-On)
 
 When a failure can **break or infect many downstream systems** (shared caches, market factors, certification, portfolio attribution, EOD loads), do not rely only on a local module logger.
@@ -100,17 +142,43 @@ log_critical_issue(
 
 ## Docstrings (Always-On for Python)
 
-Mandatory for every Python file created or edited. Follow PEP 257 and Google-style sections.
+Mandatory for every Python file created or edited. Follow **PEP 257** and **Google-style** docstrings (summary line, blank line, then `Args` / `Returns` / `Raises` / `Examples` / `Attributes` / `Yields` / `Note` as applicable — not NumPy or epydoc layouts).
 
-- Every module, class, function, and method (including `__init__` and private helpers) must have a docstring with a concise summary line.
-- Add `Args`, `Returns`, and `Raises` when applicable; include `Examples` with executable usage when practical.
-- Keep docstrings factual; update stale docstrings in the same edited scope.
-- For detailed templates, use `.github/skills/docstring-standards/SKILL.md`.
+- Every module, class, function, and method (including `__init__` and private helpers) must have a docstring.
+- Start with a concise summary line ending with a period, then expand when the contract is non-obvious.
+- **Be informative.** Prefer a clear explanation over a one-liner that only restates the name. When behavior, defaults, edge cases, or caller obligations matter, spell them out in the body (and in `Args` / `Returns` / `Raises`) — verbose is correct when it prevents misuse.
+- Simple getters and one-line wrappers can stay short; orchestration, capital rules, book hooks, and data-path code should read like a colleague explaining the unit aloud.
+- Keep docstrings factual and aligned with the code; update stale docstrings in the same edited scope.
+- For templates and checklist, use `.github/skills/docstring-standards/SKILL.md`.
+
+```python
+# ❌ BAD — restates the name; Google sections missing where they apply
+def apply_buying_power(self, order, ts, notional):
+    """Apply buying power."""
+
+# ✅ GOOD — Google format; explains when it binds and what it returns
+def apply_buying_power(self, order, ts, notional, *, equity, gross_exposure):
+    """Fit an open inside leverage and cash limits, or skip / scale it.
+
+    The tighter of the two limits decides. ``buying_power_policy`` applies
+    the same way whichever limit binds. Shorts are not limited by ``min_cash``.
+
+    Args:
+        order: Pending open being sized.
+        ts: Fill date (for the skip log).
+        notional: Requested dollar size before caps.
+        equity: Current portfolio equity.
+        gross_exposure: Current gross position size.
+
+    Returns:
+        Notional to fill, or 0.0 when the open is skipped.
+    """
+```
 
 ### Module-Level Docstring Format
 
 1. One-sentence summary ending with a period.
-2. Blank line, then a 2–4 line overview paragraph.
+2. Blank line, then a 2–4 line overview paragraph (longer when the module owns a multi-step pipeline).
 3. Blank line, then structured sections with trailing colons: Core Classes, Core Dataclasses, Core Functions, Processing Flow, Risk/Assumptions, Caching Strategy, Usage (as applicable).
 4. Usage section: short doctest-style snippet when practical.
 

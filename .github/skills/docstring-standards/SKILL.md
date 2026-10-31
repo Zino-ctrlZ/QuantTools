@@ -4,11 +4,12 @@ Use this skill when adding or revising Python docstrings in QuantTools.
 
 ## Required Rules
 - Follow PEP 257.
-- Use Google-style docstrings.
+- Use **Google-style** docstrings only (summary line; then `Args` / `Returns` / `Raises` / `Examples` / `Attributes` / `Yields` / `Note` as needed — not NumPy or epydoc).
 - Add a module docstring as the first statement in every Python module.
 - Add docstrings for every class.
 - Add docstrings for every function and method, including `__init__` and private helpers.
-- Keep summary lines concise and imperative where possible.
+- Keep summary lines concise and end them with a period; expand in the body when behavior, defaults, edge cases, or caller obligations matter.
+- **Be informative.** Prefer a clear explanation over a one-liner that only restates the name. Verbose is correct when it prevents misuse (capital rules, orchestration, book hooks, data paths). Simple getters may stay short.
 - Keep docs aligned with implementation; do not leave stale descriptions.
 
 ## Required Sections
