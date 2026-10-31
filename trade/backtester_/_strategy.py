@@ -1,15 +1,14 @@
 """Provide the core strategy framework and lightweight entry-rule support.
 
-The module defines market indicators, trade and position records, and the
-base class used by backtest strategies. It also provides a thin rule filter
-whose rules evaluate a resolved strategy bar, plus optional class-level
-filter flags and a filter-threshold bundle for regime gates that stay out
-of ``bt_params``.
+The module defines trade and position records and the base class used by
+backtest strategies, plus optional class-level filter flags and a
+filter-threshold bundle for regime gates that stay out of ``bt_params``.
+Param validation, data loading, indicators, and rules come from the shared
+mixins in ``trade.backtester_.mixins`` (also used by portfolio books); their
+types are re-exported here so existing imports keep working.
 
 Core Classes:
-    Indicator: Registered indicator metadata and values.
-    Bar: Read-only access to one strategy bar, its ticker, and indicators.
-    RuleFilter: Collection of boolean rules evaluated for one bar.
+    Indicator, Bar, RuleFilter: Re-exported from ``mixins.market_data``.
     FilterThresholds: Marker base for frozen strategy-specific threshold bundles.
     StrategyBase: Shared lifecycle, state, simulation, and plotting behavior.
 
@@ -23,8 +22,7 @@ Usage:
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
-import inspect
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 import pandas as pd
 from trade.backtester_.data import PTDataset
 from dataclasses import dataclass
@@ -34,52 +32,37 @@ from EventDriven.types import PositionEffect, SignalID
 import plotly.graph_objects as go
 from pandas.tseries.offsets import BDay  # noqa
 from trade.helpers.helper import change_to_last_busday  # noqa
+from trade.backtester_.simulator import Simulator, StrategyKey, trade_records_to_legacy_events
 from ._types import Side, SideInt  # noqa
 from trade.backtester_.indicators import (
     compute_atr_loss,
     update_atr_trail_long,
     update_atr_trail_short,
 )
-
-
-@dataclass
-class Indicator:
-    name: str
-    series: pd.Series
-    overlay: bool = False
-    color: Optional[str] = "red"
-    values: Optional[np.ndarray] = None
-    ## When False, make_bt_wrapper skips self.I(...) registration so leading NaNs
-    ## cannot delay backtesting.py's first Strategy.next() via indicator warmup.
-    plot_in_backtester: bool = True
-
-    def __post_init__(self):
-        if not isinstance(self.name, str):
-            raise TypeError("Indicator name must be a string.")
-        if not isinstance(self.series, pd.Series):
-            raise TypeError("Indicator series must be a pandas Series.")
-        if not isinstance(self.overlay, bool):
-            raise TypeError("Indicator overlay must be a boolean.")
-        if self.color is not None and not isinstance(self.color, str):
-            raise TypeError("Indicator color must be a string or None.")
-        if self.values is not None and not isinstance(self.values, np.ndarray):
-            raise TypeError("Indicator values must be a numpy array or None.")
-        if not isinstance(self.plot_in_backtester, bool):
-            raise TypeError("Indicator plot_in_backtester must be a boolean.")
-        if self.values is None:
-            self.values = self.series.to_numpy(copy=False)
+## Re-exported: callers and pickles still name trade.backtester_._strategy.<Type>.
+from trade.backtester_.mixins.contract import ParamContractMixin
+from trade.backtester_.mixins.market_data import Bar, Indicator, MarketDataMixin, Rule, RuleFilter  # noqa: F401
 
 
 @dataclass
 class TradeDecision:
+    """A strategy's open or close decision for one bar, validated on construction."""
+
     ok: bool
     side: int
     pos_effect: Optional[PositionEffect] = None
     signal_id: Optional[SignalID] = None
     sideint: Optional[int] = None
     side_enum: Optional[Side] = None
+    multiplier: Optional[float] = 1.0
 
     def __post_init__(self):
+        """Validate field types and the fields an actionable decision requires.
+
+        Raises:
+            TypeError: If a field has the wrong type.
+            ValueError: If an ``ok`` decision is missing side, pos_effect, or a valid signal_id.
+        """
         if not isinstance(self.ok, (bool, np.bool_)):
             raise TypeError("TradeDecision.ok must be a boolean.")
         if not isinstance(self.side, int):
@@ -111,24 +94,37 @@ class TradeDecision:
                     "If ok is True, signal_id must be provided. If this is a close with no prior signal, set signal_id to N/A"
                 )
 
-            ## If Open signal_id must be parseable, if Close signal_id must be parseable or N/A
+            ## If Open signal_id must be parseable, if Close signal_id must be parseable or N/A.
+            ## A SignalID instance already parsed itself in __init__ (about 0.4 ms each, from
+            ## pd.to_datetime), so only plain strings are parsed here to validate them.
             if self.pos_effect == PositionEffect.OPEN:
                 if self.signal_id == "N/A":
                     raise ValueError("If pos_effect is OPEN, signal_id cannot be 'N/A'. It must be a valid SignalID.")
-                try:
-                    SignalID.parse(self.signal_id)
-                except Exception as e:
-                    raise ValueError(f"Invalid signal_id: {self.signal_id}") from e
+                self._validate_signal_id_str()
             elif self.pos_effect == PositionEffect.CLOSE:
                 if self.signal_id != "N/A":
-                    try:
-                        SignalID.parse(self.signal_id)
-                    except Exception as e:
-                        raise ValueError(f"Invalid signal_id: {self.signal_id}") from e
+                    self._validate_signal_id_str()
+       
+        ## Multiplier must be positive & non-zero
+        if self.multiplier is not None and self.multiplier <= 0:
+            raise ValueError("TradeDecision.multiplier must be positive and non-zero.")
 
         self.ok = bool(self.ok)
         self.sideint = int(self.side)
         self.side_enum = Side.LONG if self.sideint == 1 else Side.SHORT if self.sideint == -1 else None
+
+    def _validate_signal_id_str(self) -> None:
+        """Raise ValueError if ``signal_id`` is a plain string that does not parse as a SignalID.
+
+        Raises:
+            ValueError: If the string is not a valid signal id.
+        """
+        if isinstance(self.signal_id, SignalID):
+            return
+        try:
+            SignalID.parse(self.signal_id)
+        except Exception as e:
+            raise ValueError(f"Invalid signal_id: {self.signal_id}") from e
 
     def __bool__(self):
         return self.ok
@@ -161,82 +157,6 @@ class PositionInfo:
         )
 
 
-class Bar:
-    """Expose a strategy's ticker and indicator values at one resolved bar."""
-
-    def __init__(self, strategy: "StrategyBase", index: int, date: pd.Timestamp) -> None:
-        """Initialize a resolved strategy bar.
-
-        Args:
-            strategy: Strategy that owns the ticker and indicators.
-            index: Resolved integer position in the strategy data.
-            date: Timestamp corresponding to ``index``.
-        """
-        self._strategy = strategy
-        self.index = index
-        self.date = date
-        self.ticker = strategy.ticker
-
-    def ind(self, name: str) -> Any:
-        """Return an indicator's value at this bar.
-
-        Args:
-            name: Registered indicator name.
-
-        Returns:
-            Indicator value at this bar.
-
-        Raises:
-            KeyError: If the strategy has no indicator registered as ``name``.
-        """
-        return self._strategy.indicators[name].values[self.index]
-
-
-Rule = Callable[[Bar], bool]
-
-
-class RuleFilter:
-    """Store rules and require every rule to pass for a strategy bar."""
-
-    def __init__(self, strategy: "StrategyBase") -> None:
-        """Initialize an empty rule collection for a strategy.
-
-        Args:
-            strategy: Strategy whose bars the rules evaluate.
-        """
-        self._strategy = strategy
-        self._rules: List[Rule] = []
-
-    def add(self, rule: Rule) -> None:
-        """Register a rule.
-
-        Args:
-            rule: Callable receiving a resolved ``Bar`` and returning a boolean.
-        """
-        self._rules.append(rule)
-
-    def check(
-        self,
-        *,
-        date: Optional[pd.Timestamp] = None,
-        index: Optional[int] = None,
-    ) -> bool:
-        """Return whether every registered rule passes.
-
-        An empty filter passes by default, preserving existing strategy behavior.
-
-        Args:
-            date: Date to resolve when ``index`` is omitted.
-            index: Bar position to resolve when ``date`` is omitted.
-
-        Returns:
-            ``True`` when all registered rules pass.
-        """
-        resolved_index, resolved_date = self._strategy._resolve(date=date, index=index)
-        bar = Bar(self._strategy, resolved_index, resolved_date)
-        return all(bool(rule(bar)) for rule in self._rules)
-
-
 @dataclass(frozen=True, slots=True)
 class FilterThresholds:
     """Marker base for strategy-specific frozen filter-threshold bundles.
@@ -254,7 +174,7 @@ class FilterThresholds:
     """
 
 
-class StrategyBase(ABC):
+class StrategyBase(ParamContractMixin, MarketDataMixin, ABC):
     """
     Abstract base class for trading strategies with built-in backtest parameter validation.
 
@@ -307,7 +227,7 @@ class StrategyBase(ABC):
     - reset_strategy_state(): Reset position and stop-loss state
 
     Built-in Methods (Do Not Override):
-    - simulate(): Runs the backtest simulation
+    - simulate(): Runs the backtest simulation through a one-strategy ``Simulator``
     - plot_strategy_indicators(): Visualizes strategy performance
     - plot_signals(): Visualizes buy/sell signals
     - add_indicator(): Add indicators to the strategy
@@ -407,69 +327,10 @@ class StrategyBase(ABC):
         """Return regime thresholds for this instance (class-level by default)."""
         return self.get_filter_thresholds()
 
-    def __init_subclass__(cls, **kwargs):
-        """
-        Validates that subclasses properly define bt_params and __init__ signature.
-
-        This hook is automatically called when a subclass is created. It ensures:
-        1. bt_params exists and is a dictionary
-        2. All keys in bt_params correspond to parameters in __init__ (unless **kwargs is used)
-
-        Args:
-            **kwargs: Additional keyword arguments passed to parent __init_subclass__
-
-        Raises:
-            TypeError: If bt_params is missing, not a dict, or contains keys not in __init__
-        """
-        super().__init_subclass__(**kwargs)
-        must_have_in_init = [
-            "data",
-            "start_trading_date",
-            "ticker",
-            "tplusn",
-        ]
-        is_abstract = inspect.isabstract(cls)
-
-        # Don't enforce on the abstract base itself
-        if cls is StrategyBase or is_abstract:
-            return
-
-        # 1) bt_params must exist and be a dict
-        if not hasattr(cls, "bt_params"):
-            raise TypeError(f"{cls.__name__} must define class attribute bt_params (dict).")
-
-        if not isinstance(cls.bt_params, dict):
-            raise TypeError(f"{cls.__name__}.bt_params must be a dict of param_name -> default/REQUIRED.")
-
-        # 2) every key in bt_params must be accepted by __init__
-        sig = inspect.signature(cls.__init__)
-        params = sig.parameters
-
-        # Enforce that required args are in __init__
-        for req in must_have_in_init:
-            if req not in params:
-                raise TypeError(f"{cls.__name__}.__init__ must accept parameter '{req}'.")
-
-        # Enfore params are in bt_params
-        for p in params.values():
-            if p.name in must_have_in_init + ["self", "kwargs", "args"]:
-                continue
-            if p.name not in cls.bt_params:
-                raise TypeError(
-                    f"{cls.__name__}.__init__ has parameter '{p.name}' which is not listed in {cls.__name__}.bt_params."
-                )
-
-        # If __init__ has **kwargs, accept anything; still enforce bt_params existence/type.
-        # has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-        # if has_kwargs:
-        #     return
-
-        for k in cls.bt_params.keys():
-            if k not in params and k not in must_have_in_init:
-                raise TypeError(
-                    f"{cls.__name__}.bt_params includes '{k}', but {cls.__name__}.__init__ "
-                    f"does not accept '{k}' (and has no **kwargs)."
-                )
+    ## bt_params contract (ParamContractMixin): skip StrategyBase itself, and
+    ## require these args on every concrete strategy's __init__, as before.
+    _contract_root: ClassVar[bool] = True
+    _required_init_args: ClassVar[Tuple[str, ...]] = ("data", "start_trading_date", "ticker", "tplusn")
 
     def __init__(
         self,
@@ -491,34 +352,15 @@ class StrategyBase(ABC):
         Please always call super().__init__() in subclass __init__.
         """
         # --- Core state ---
-        self.data: PTDataset = data
         self.start_date = pd.Timestamp(start_trading_date) if start_trading_date else None
         self.ticker = ticker.upper()
         self.tplusn = tplusn
 
         self.position_info: Optional[PositionInfo] = PositionInfo()
         self.stop: Optional[float] = None
-        self.indicators: Dict[str, Indicator] = {}
-        ## Rules exist before setup so subclasses can register them during setup.
-        self.rules = RuleFilter(self)
 
-        # Cache index + numpy views for speed and consistent date handling
-        self._df = self.data.data.copy()  # expects a DataFrame-like
-        self._index = pd.DatetimeIndex(self._df.index)
-        self._n = len(self._index)
-
-        # Map: pd.Timestamp -> int (fast get_loc alternative if you want O(1) dict)
-        # Note: we store Timestamps from the same DatetimeIndex to avoid dtype mismatch.
-        self._dates_map: Dict[pd.Timestamp, int] = {ts: i for i, ts in enumerate(self._index)}
-
-        # Numpy arrays (views when possible)
-        self._sanitize_data()
-        self._close = self._df["close"].to_numpy(copy=False)
-        self._open = self._df["open"].to_numpy(copy=False)
-        self._high = self._df["high"].to_numpy(copy=False)
-        self._low = self._df["low"].to_numpy(copy=False)
-        self._volume = self._df["volume"].to_numpy(copy=False)
-        self._dates = self._index.to_numpy(copy=False)
+        ## data, indicators, rules, cleaned _df, date maps, numpy views (MarketDataMixin).
+        self._init_market_data(data)
 
         # Let subclass set up indicators, etc.
         self.setup()
@@ -566,111 +408,6 @@ class StrategyBase(ABC):
             Dict[str, Any]: A dictionary of additional information to include in logs or records when a position is closed.
         """
         return {}
-
-    def get_bt_params(self) -> Dict[str, Any]:
-        """
-        Return the current backtest parameter values for this strategy instance.
-
-        The returned mapping uses the keys declared on the subclass ``bt_params``
-        contract and resolves each value from ``self`` via ``getattr`` so the result
-        reflects the current instance state. If any declared parameter is missing,
-        this raises an error immediately.
-
-        Returns:
-            Dict[str, Any]: Current backtest parameter values keyed by ``bt_params``.
-
-        Raises:
-            TypeError: If ``bt_params`` is not a dictionary.
-            AttributeError: If any declared backtest parameter is missing on the instance.
-        """
-        bt_params = getattr(type(self), "bt_params", None)
-        if not isinstance(bt_params, dict):
-            raise TypeError(f"{type(self).__name__}.bt_params must be a dict.")
-
-        current_params: Dict[str, Any] = {}
-        missing_keys: List[str] = []
-        for key in bt_params.keys():
-            if not hasattr(self, key):
-                missing_keys.append(key)
-                continue
-            current_params[key] = getattr(self, key)
-
-        if missing_keys:
-            raise AttributeError(f"{type(self).__name__} is missing backtest parameter attribute(s): {missing_keys}.")
-
-        return current_params
-
-    def _resolve(self, *, date: pd.Timestamp = None, index: int = None) -> Tuple[int, pd.Timestamp]:
-        """
-        Resolve date or index into a validated (index, timestamp) tuple.
-
-        This internal method ensures consistent handling of date/index parameters throughout
-        the strategy. It validates the input and returns both the integer index and
-        corresponding timestamp from the strategy's data.
-
-        Args:
-            date (pd.Timestamp, optional): Date to resolve to an index. Must exist in data.
-            index (int, optional): Integer index to resolve to a timestamp. Must be in range.
-
-        Returns:
-            Tuple[int, pd.Timestamp]: (validated_index, corresponding_timestamp)
-
-        Raises:
-            TypeError: If neither date nor index is provided
-            IndexError: If index is out of range
-            KeyError: If date is not found in the dataset index
-
-        Note:
-            Exactly one of date or index must be provided.
-        """
-        if index is None and date is None:
-            raise TypeError("Provide either 'date' or 'index'.")
-
-        if index is not None:
-            if index < 0 or index >= self._n:
-                raise IndexError(f"index out of range: {index}")
-            ts = self._index[index]
-            return index, ts
-
-        # date provided
-        ts = pd.Timestamp(date)
-        idx = self._dates_map.get(ts)
-        if idx is None:
-            # If not exact, you can decide whether to allow nearest/ffill/etc.
-            raise KeyError(f"date {ts} not found in dataset index.")
-        return idx, ts
-
-    def _sanitize_data(self) -> None:
-        """
-        Validates and normalizes the input data.
-
-        This internal method performs data quality checks:
-        1. Ensures no missing values exist in the dataset
-        2. Normalizes column names to lowercase
-        3. Verifies required OHLCV columns are present
-
-        Raises:
-            ValueError: If data contains missing values
-            AssertionError: If required columns (open, high, low, close, volume) are missing
-
-        Note:
-            This method is automatically called during initialization.
-        """
-        if self._df.isnull().values.any():
-            raise ValueError("Input data contains missing values. Please clean the data before using the strategy.")
-
-        if self._df.index.duplicated().any():
-            raise ValueError("Input data contains duplicated index values. Please ensure the index is unique.")
-
-        if self._df.index.duplicated().any():   
-            raise ValueError(
-                "Input data contains duplicated index values. Please ensure the index is unique."
-            )
-
-        self._df.columns = self._df.columns.str.lower()
-        assert set(self._df.columns).issuperset({"open", "high", "low", "close", "volume"}), (
-            "Data must contain open, high, low, close, volume columns."
-        )
 
     @abstractmethod
     def setup(self) -> None:
@@ -831,67 +568,6 @@ class StrategyBase(ABC):
                 self.stop = None
         """
         self.remove_position_info()
-
-    # --- NumPy-first data access ---
-    @property
-    def close(self) -> np.ndarray:
-        """
-        Get close prices as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of closing prices indexed by bar position
-        """
-        return self._close
-
-    @property
-    def open(self) -> np.ndarray:
-        """
-        Get open prices as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of opening prices indexed by bar position
-        """
-        return self._open
-
-    @property
-    def high(self) -> np.ndarray:
-        """
-        Get high prices as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of high prices indexed by bar position
-        """
-        return self._high
-
-    @property
-    def low(self) -> np.ndarray:
-        """
-        Get low prices as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of low prices indexed by bar position
-        """
-        return self._low
-
-    @property
-    def volume(self) -> np.ndarray:
-        """
-        Get trading volumes as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of trading volumes indexed by bar position
-        """
-        return self._volume
-
-    @property
-    def dates(self) -> np.ndarray:
-        """
-        Get dates as a numpy array for efficient access.
-
-        Returns:
-            np.ndarray: Array of pandas Timestamps indexed by bar position
-        """
-        return self._dates
 
     def reset(self):
         """
@@ -1099,65 +775,6 @@ class StrategyBase(ABC):
         """
         raise NotImplementedError("Subclasses must implement should_close() method to return a TradeDecision object.")
 
-    def add_indicator(
-        self,
-        name: str,
-        series: pd.Series,
-        overlay: bool = False,
-        color: Optional[str] = "red",
-        plot_in_backtester: bool = True,
-    ) -> None:
-        """
-        Add a technical indicator to the strategy for tracking and visualization.
-
-        Indicators can be overlaid on the price chart or displayed in separate subplots.
-
-        Args:
-            name (str): Unique name for the indicator
-            series (pd.Series): Indicator values indexed by date
-            overlay (bool, optional): If True, plot on main price chart. If False,
-                create separate subplot. Defaults to False.
-            color (Optional[str], optional): Color for plotting. Defaults to "red".
-            plot_in_backtester (bool, optional): If True, register the series with
-                backtesting.py ``Strategy.I`` when ``plot_indicators=True``. Set
-                False for sparse / late-starting features so leading NaNs do not
-                delay the first ``Strategy.next`` call. Defaults to True.
-
-        Example:
-            sma_20 = self._df['close'].rolling(20).mean()
-            self.add_indicator('SMA_20', sma_20, overlay=True, color='blue')
-        """
-        self.indicators[name] = Indicator(
-            name=name,
-            series=series,
-            overlay=overlay,
-            color=color,
-            values=series.to_numpy(copy=False),
-            plot_in_backtester=plot_in_backtester,
-        )
-
-    def get_indicator(self, name: str) -> Any:
-        """
-        Retrieve an indicator by name.
-
-        Args:
-            name (str): Name of the indicator to retrieve
-
-        Returns:
-            Indicator: The indicator object with name, values, overlay, and color attributes
-
-        Raises:
-            ValueError: If indicator with given name is not found
-
-        Example:
-            sma = self.get_indicator('SMA_20')
-            current_sma = sma.values.iloc[idx]
-        """
-        i = self.indicators.get(name)
-        if i is None:
-            raise ValueError(f"Indicator '{name}' not found in strategy indicators.")
-        return i
-
     def have_position(self) -> bool:
         """
         Check if a position is currently open.
@@ -1216,6 +833,9 @@ class StrategyBase(ABC):
         trade_entry_index: Optional[int] = None,
     ) -> None:
         """Append a close trade from live ``position_info`` and clear position state.
+
+        Kept for external / legacy callers. The portfolio ``Simulator`` path does
+        not call this; ``ExecutionEngine`` writes ``TradeRecord`` instead.
 
         Args:
             trades: Trade log mutated in place.
@@ -1296,6 +916,9 @@ class StrategyBase(ABC):
     ) -> None:
         """Append an open trade record with any strategy-provided entry metadata.
 
+        Kept for external / legacy callers. The portfolio ``Simulator`` path does
+        not call this; ``ExecutionEngine`` writes ``TradeRecord`` instead.
+
         Args:
             trades: Trade log mutated in place.
             ts: Execution timestamp.
@@ -1316,425 +939,69 @@ class StrategyBase(ABC):
             }
         )
 
-    def _apply_daily_mtm_and_update_trade_path(
-        self,
-        *,
-        index: int,
-        current_price: float,
-        close: np.ndarray,
-        ts: pd.Timestamp,
-        eq: float,
-        trade_entry_equity: Optional[float],
-        active_trade_returns: List[Dict[str, Any]],
-    ) -> float:
-        """Apply one-bar MTM for an open trade and append cumulative return path.
-
-        Args:
-            index: Current bar index.
-            current_price: Close price at ``index``.
-            close: Full close-price array.
-            ts: Timestamp at ``index``.
-            eq: Equity before this bar MTM.
-            trade_entry_equity: Equity snapshot when the active trade was opened.
-            active_trade_returns: Mutable cumulative return path for the active trade.
-
-        Returns:
-            Updated equity after this bar MTM.
-        """
-        ## No MTM on the first bar or when we did not carry a position into this bar.
-        in_pos_prev = self.position_open
-        if index <= 0 or not in_pos_prev or trade_entry_equity is None:
-            return eq
-
-        ## Read prior position context required for fixed-size PnL math.
-        prev_price = float(close[index - 1])
-        position_info = self.position_info
-        entry_price = position_info.entry_price if position_info else None
-        side = position_info.side if position_info else None
-        if entry_price is None or side is None or float(entry_price) == 0.0:
-            return eq
-
-        ## Fixed notional sizing: units are frozen from equity at entry.
-        position_size = float(trade_entry_equity) / float(entry_price)
-        eq += position_size * float(side) * (current_price - prev_price)
-
-        ## Track cumulative return from entry to current bar for MAE/MFE.
-        trade_return_pct = ((current_price - float(entry_price)) / float(entry_price)) * float(side)
-        active_trade_returns.append(
-            {
-                "date": ts,
-                "index": index,
-                "cum_return_pct": float(trade_return_pct),
-            }
-        )
-        return eq
-
-    def _execute_open_trade(
-        self,
-        *,
-        trades: List[Dict[str, Any]],
-        ts: pd.Timestamp,
-        index: int,
-        current_price: float,
-        eq: float,
-        side: int,
-        signal_id: Optional[SignalID],
-    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
-        """Open a position at the current bar and initialize active-trade tracking.
-
-        Args:
-            trades: Trade log mutated in place.
-            ts: Execution timestamp.
-            index: Execution bar index.
-            current_price: Execution price.
-            eq: Current equity used for fixed-size position sizing.
-            side: Trade side (+1 long, -1 short).
-            signal_id: Signal identifier for the open.
-
-        Returns:
-            Tuple of ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
-        """
-        ## Guard against duplicate opens if caller already has a live position.
-        if self.position_open:
-            return None, None, []
-
-        ## Open state + initialize trade path with entry-point zero return.
-        trade_entry_equity = eq
-        self.open_action(index=index, side=side, signal_id=signal_id, entry_price=current_price)
-        active_trade_entry_index = index
-        active_trade_returns: List[Dict[str, Any]] = [{"date": ts, "index": index, "cum_return_pct": 0.0}]
-        self._record_open_trade(
-            trades=trades,
-            ts=ts,
-            price=current_price,
-            equity=eq,
-            index=index,
-            signal_id=signal_id,
-        )
-        return trade_entry_equity, active_trade_entry_index, active_trade_returns
-
-    def _execute_close_trade(
-        self,
-        *,
-        trades: List[Dict[str, Any]],
-        ts: pd.Timestamp,
-        index: int,
-        current_price: float,
-        eq: float,
-        active_trade_returns: List[Dict[str, Any]],
-        active_trade_entry_index: Optional[int],
-    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
-        """Close an active position and clear active-trade tracking state.
-
-        Args:
-            trades: Trade log mutated in place.
-            ts: Execution timestamp.
-            index: Execution bar index.
-            current_price: Execution price.
-            eq: Current equity.
-            active_trade_returns: Cumulative return path for the active trade.
-            active_trade_entry_index: Entry bar index for the active trade.
-
-        Returns:
-            Reset state tuple ``(None, None, [])`` when close executes; otherwise
-            the untouched input state if no position is open.
-        """
-        ## If nothing is open, preserve current tracking state as-is.
-        if not self.position_open:
-            return None, active_trade_entry_index, active_trade_returns
-
-        ## Close helper computes return + MAE/MFE fields and appends the close record.
-        self._record_close_trade(
-            trades=trades,
-            ts=ts,
-            exit_price=current_price,
-            equity=eq,
-            index=index,
-            trade_return_path=active_trade_returns,
-            trade_entry_index=active_trade_entry_index,
-        )
-        return None, None, []
-
-    def _process_pending_executions(
-        self,
-        *,
-        index: int,
-        pending: Dict[int, List[Dict[str, Any]]],
-        trades: List[Dict[str, Any]],
-        ts: pd.Timestamp,
-        current_price: float,
-        eq: float,
-        trade_entry_equity: Optional[float],
-        active_trade_entry_index: Optional[int],
-        active_trade_returns: List[Dict[str, Any]],
-        enforce_open_on_signal: bool,
-        enforce_close_on_signal: bool,
-    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
-        """Execute any pending open/close operations scheduled for this bar.
-
-        Args:
-            index: Current bar index.
-            pending: Pending execution map keyed by execution bar index.
-            trades: Trade log mutated in place.
-            ts: Current timestamp.
-            current_price: Current close price.
-            eq: Current equity.
-            trade_entry_equity: Active trade entry equity state.
-            active_trade_entry_index: Active trade entry index state.
-            active_trade_returns: Active trade cumulative return path state.
-            enforce_open_on_signal: Whether to re-check open signal at execution.
-            enforce_close_on_signal: Whether to re-check close signal at execution.
-
-        Returns:
-            Updated ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
-        """
-        ## Pending ops are scheduled from earlier bars when tplusn > 0.
-        for op in pending.pop(index, []):
-            action = op.get("action")
-            if action == "open":
-                ## Optional enforcement: re-check that open condition still holds at execution time.
-                enforce_open = self.should_open(index=index).ok if enforce_open_on_signal else True
-                if enforce_open and not self.position_open:
-                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_open_trade(
-                        trades=trades,
-                        ts=ts,
-                        index=index,
-                        current_price=current_price,
-                        eq=eq,
-                        side=op.get("side"),
-                        signal_id=op.get("signal_id"),
-                    )
-            elif action == "close":
-                ## Optional enforcement: re-check that close condition still holds at execution time.
-                enforce_close = self.should_close(index=index).ok if enforce_close_on_signal else True
-                if enforce_close and self.position_open:
-                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
-                        trades=trades,
-                        ts=ts,
-                        index=index,
-                        current_price=current_price,
-                        eq=eq,
-                        active_trade_returns=active_trade_returns,
-                        active_trade_entry_index=active_trade_entry_index,
-                    )
-
-        return trade_entry_equity, active_trade_entry_index, active_trade_returns
-
-    def _process_signal_decisions(
-        self,
-        *,
-        index: int,
-        tn_int: int,
-        n: int,
-        pending: Dict[int, List[Dict[str, Any]]],
-        trades: List[Dict[str, Any]],
-        ts: pd.Timestamp,
-        current_price: float,
-        eq: float,
-        trade_entry_equity: Optional[float],
-        active_trade_entry_index: Optional[int],
-        active_trade_returns: List[Dict[str, Any]],
-    ) -> Tuple[Optional[float], Optional[int], List[Dict[str, Any]]]:
-        """Process open/close decisions at signal time and execute or schedule.
-
-        Args:
-            index: Current signal bar index.
-            tn_int: Non-negative execution delay in bars (t+n).
-            n: Total bar count.
-            pending: Pending execution map keyed by execution bar index.
-            trades: Trade log mutated in place.
-            ts: Current timestamp.
-            current_price: Current close price.
-            eq: Current equity.
-            trade_entry_equity: Active trade entry equity state.
-            active_trade_entry_index: Active trade entry index state.
-            active_trade_returns: Active trade cumulative return path state.
-
-        Returns:
-            Updated ``(trade_entry_equity, active_trade_entry_index, active_trade_returns)``.
-        """
-        ## Decisions are evaluated on the signal bar; execution may be immediate or scheduled.
-        open_decision = self.should_open(index=index)
-        close_decision = self.should_close(index=index)
-
-        if open_decision.ok:
-            exec_idx = index if tn_int == 0 else min(index + tn_int, n - 1)
-            if tn_int == 0:
-                ## Immediate open path (t+0).
-                if not self.position_open:
-                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_open_trade(
-                        trades=trades,
-                        ts=ts,
-                        index=exec_idx,
-                        current_price=current_price,
-                        eq=eq,
-                        side=open_decision.side,
-                        signal_id=open_decision.signal_id,
-                    )
-            else:
-                ## Delayed open path (t+n).
-                pending.setdefault(exec_idx, []).append(
-                    {
-                        "action": "open",
-                        "signal_index": index,
-                        "side": open_decision.side,
-                        "signal_id": open_decision.signal_id,
-                    }
-                )
-        elif close_decision.ok:
-            exec_idx = index if tn_int == 0 else min(index + tn_int, n - 1)
-            if tn_int == 0:
-                ## Immediate close path (t+0).
-                if self.position_open:
-                    trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
-                        trades=trades,
-                        ts=ts,
-                        index=exec_idx,
-                        current_price=current_price,
-                        eq=eq,
-                        active_trade_returns=active_trade_returns,
-                        active_trade_entry_index=active_trade_entry_index,
-                    )
-            else:
-                ## Delayed close path (t+n).
-                pending.setdefault(exec_idx, []).append({"action": "close", "signal_index": index})
-
-        return trade_entry_equity, active_trade_entry_index, active_trade_returns
-
     def simulate(
         self, finalize: bool = True, enforce_open_on_signal: bool = False, enforce_close_on_signal: bool = False
     ) -> Tuple[List[Dict[str, Any]], pd.Series]:
-        """
-        Run a backtest simulation of the strategy across all available data.
+        """Run a backtest of this strategy alone through ``Simulator``.
 
-        The simulation iterates through each bar, applies returns for open positions,
-        checks for signals, and executes trades on close prices. Equity is tracked
-        throughout.
+        This is a one-strategy ``Simulator`` with 1.0 of capital, fully invested on
+        each open (``percent_of_capital=1.0``), no cash floor, and no wipeout stop.
+        Use ``Simulator`` directly for shared capital, leverage limits, or stats.
+
+        Internally the broker stores ``TradeRecord`` round-trips; this method
+        converts them back to the legacy open/close event-dict list so callers
+        that expect ``action`` / ``date`` / ``price`` keep working.
 
         Args:
-            finalize (bool, optional): If True, close any open position at the end
-                of the simulation. Defaults to True.
-
-            enforce_open_on_signal (bool, optional): If True, when executing a scheduled open trade (t+n), re-check that the open signal is still valid at execution time. Defaults to True.
-            enforce_close_on_signal (bool, optional): If True, when executing a scheduled close trade (t+n), re-check that the close signal is still valid at execution time. Defaults to False.
+            finalize: If True, close any open position at the end of the simulation.
+            enforce_open_on_signal: Re-check open signal at t+n execution time.
+            enforce_close_on_signal: Re-check close signal at t+n execution time.
 
         Returns:
-            Tuple[List[Dict[str, Any]], pd.Series]:
-                - trades: List of trade dictionaries with keys:
-                    - date: Trade execution date
-                    - action: 'open' or 'close'
-                    - price: Execution price
-                    - equity: Equity at that point
-                    - return_pct: Return % (close trades only)
-                    - entry_price: Entry price (close trades only)
-                - equity_series: Pandas Series of equity curve indexed by date
+            Tuple of:
+                - trades: Legacy event dicts (``action`` open/close pairs).
+                - equity_series: Equity curve indexed by date from
+                  ``start_trading_date`` (or the first bar).
 
         Note:
-            - Strategy state is automatically reset after simulation
-            - Trades execute on close prices
-            - Equity adds daily mark-to-market P&L on 1x notional sized to equity at
-              each open: ``eq += (eq_at_open / entry_price) * side * (close_t - close_{t-1})``
-              while in a position from the prior bar
-            - Initial equity is 1.0 (100%)
+            Strategy state is reset inside ``Simulator``. Trades execute on close.
+            Returns no trades and an empty series when no bar is on or after
+            ``start_trading_date``.
         """
-        n = self._n
-        close = self._close
-        dates = self._index  # pd.DatetimeIndex for consistent timestamps
-        tn_int = int(self.tplusn) if self.tplusn is not None else 0
+        ## A ticker with no bars after start (e.g. delisted) should drop out of a
+        ## multi-asset run rather than raise, so short-circuit before Simulator does.
+        if self.start_date is not None and not (self._index >= self.start_date).any():
+            return [], pd.Series(dtype=float, name="equity")
 
-        trades: List[Dict[str, Any]] = []
-        equity = np.empty(n, dtype=float)
-        equity[0] = 1.0
-
-        eq = 1.0
-        trade_entry_equity: Optional[float] = None
-
-        # Active trade path of cumulative returns from entry onward.
-        active_trade_returns: List[Dict[str, Any]] = []
-        active_trade_entry_index: Optional[int] = None
-
-        # pending executions: map execution_index -> list of ops ("open"/"close")
-        pending: Dict[int, List[Dict[str, Any]]] = {}
-
-        ## --- Main simulation loop ---
-        ## 1) Apply one-bar MTM for previously open positions.
-        ## 2) Execute due pending orders (from prior t+n scheduling).
-        ## 3) Evaluate new signals and execute/schedule.
-        for i in range(n):
-            ts = dates[i]
-            current_price = float(close[i])
-            eq = self._apply_daily_mtm_and_update_trade_path(
-                index=i,
-                current_price=current_price,
-                close=close,
-                ts=ts,
-                eq=eq,
-                trade_entry_equity=trade_entry_equity,
-                active_trade_returns=active_trade_returns,
-            )
-
-            trade_entry_equity, active_trade_entry_index, active_trade_returns = self._process_pending_executions(
-                index=i,
-                pending=pending,
-                trades=trades,
-                ts=ts,
-                current_price=current_price,
-                eq=eq,
-                trade_entry_equity=trade_entry_equity,
-                active_trade_entry_index=active_trade_entry_index,
-                active_trade_returns=active_trade_returns,
-                enforce_open_on_signal=enforce_open_on_signal,
-                enforce_close_on_signal=enforce_close_on_signal,
-            )
-
-            trade_entry_equity, active_trade_entry_index, active_trade_returns = self._process_signal_decisions(
-                index=i,
-                tn_int=tn_int,
-                n=n,
-                pending=pending,
-                trades=trades,
-                ts=ts,
-                current_price=current_price,
-                eq=eq,
-                trade_entry_equity=trade_entry_equity,
-                active_trade_entry_index=active_trade_entry_index,
-                active_trade_returns=active_trade_returns,
-            )
-
-            equity[i] = eq
-
-        ## --- Optional finalize step ---
-        if finalize:
-            if self.position_open:
-                current_price = float(close[-1])
-                trade_entry_equity, active_trade_entry_index, active_trade_returns = self._execute_close_trade(
-                    trades=trades,
-                    ts=dates[-1],
-                    current_price=current_price,
-                    index=n - 1,
-                    eq=eq,
-                    active_trade_returns=active_trade_returns,
-                    active_trade_entry_index=active_trade_entry_index,
-                )
-
-        self.reset_strategy_state()
-        equity_series = pd.Series(equity, index=dates, name="equity")
-
-        ## Build trades into a DataFrame for easier analysis (optional)
-
-        return trades, equity_series
+        key = StrategyKey(f"{type(self).__name__}:{self.ticker}")
+        result = Simulator(
+            [self],
+            capital=1.0,
+            percent_of_capital=1.0,
+            ## No cash floor or wipeout stop, so a lone strategy trades on every signal.
+            min_cash=None,
+            wipeout_floor=-np.inf,
+            strategy_keys=[key],
+            finalize=finalize,
+            enforce_open_on_signal=enforce_open_on_signal,
+            enforce_close_on_signal=enforce_close_on_signal,
+        ).run()
+        return trade_records_to_legacy_events(result.trades[key]), result.eq.rename("equity")
 
     def _convert_trades_to_df(self, trades: List[Dict[str, Any]]) -> pd.DataFrame:
-        """
-        Convert the list of trade dictionaries into a pandas DataFrame for easier analysis.
+        """Convert a legacy open/close event-dict list into a round-trip DataFrame.
+
+        Expects the paired event shape returned by ``simulate()``. Prefer
+        ``SimulationResult.trades_df`` when you already have a full simulator run.
 
         Args:
-            trades (List[Dict[str, Any]]): List of trade dictionaries as returned by simulate()
+            trades: Legacy event dicts as returned by ``simulate()``.
+
         Returns:
-            pd.DataFrame: DataFrame with columns corresponding to trade dictionary keys, indexed by trade date
+            DataFrame indexed by ``entry_date`` with paired open/close fields.
         """
         if not trades:
-            return pd.DataFrame()  # return empty DataFrame if no trades
+            return pd.DataFrame()
 
         ## convert list of dicts into list of two sequential dicts for open/close pairs, then build DataFrame
         trade_records = []

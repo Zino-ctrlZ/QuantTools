@@ -17,15 +17,25 @@ Usage:
     >>> multi.set_rules(lambda bar: bar.ind("zscore") > 1.5)
     >>> multi.set_rules({"FXI": lambda bar: bar.ind("vix_pct_200ma") < 1.0})
     >>> multi.set_rules([{"FXI": rule_a}, {"IWM": [rule_b, rule_c]}])
+    >>> by_ticker = multi.optimize({"ma_length": [10, 20]}, n_jobs=1)
 """
+
+from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Sequence, Type, List, Union, Mapping
+from typing import TYPE_CHECKING, Dict, Any, Optional, Sequence, Type, List, Union, Mapping
 import pandas as pd
 from trade.assets.Stock import DATE_HINT
 from trade.backtester_._strategy import Rule, RuleFilter, StrategyBase, TradeDecision
 from trade.backtester_.backtester_ import PTDataset
+from trade.helpers.Logging import setup_logger
+
+if TYPE_CHECKING:
+    ## Runtime import would cycle: optimizer.__init__ -> engine -> this module.
+    from trade.backtester_.optimizer.core import OptimizationResult
+
+logger = setup_logger(__name__)
 
 
 TickerRules = Union[Rule, Sequence[Any]]
@@ -255,6 +265,55 @@ class MultiAssetStrategy:
 
         return SimulationResults(trades=trades_dict, equity=equity_dict)
 
+    def optimize(
+        self,
+        space: Mapping[str, Sequence[Any]],
+        *,
+        simulator_kwargs: Optional[Mapping[str, Any]] = None,
+        **opt_kwargs: Any,
+    ) -> Dict[str, OptimizationResult]:
+        """Grid-search ``space`` once per ticker with solo sizing.
+
+        Always a per-asset loop: each ticker gets its own ``ParamOptimizer`` over
+        a one-ticker book, scored alone. Current ``params[ticker]`` are the base
+        under each trial mix. Default simulator sizing matches
+        ``StrategyBase.simulate`` (full equity, no cash floor, no wipeout).
+
+        Args:
+            space: Parameter name to values to try (same grid for every ticker).
+            simulator_kwargs: Optional ``Simulator`` settings for each solo run.
+                ``None`` uses the optimizer's solo defaults.
+            **opt_kwargs: Forwarded to each ``ParamOptimizer`` (``objective``,
+                ``constraints``, ``n_jobs``, ``keep_top``, ``show_progress``, …).
+
+        Returns:
+            Mapping of ticker to ``OptimizationResult``.
+
+        Raises:
+            ValueError: If there are no tickers to optimize.
+        """
+        ## Lazy import: ``optimize_per_ticker`` lives in engine, which imports us.
+        from trade.backtester_.optimizer import optimize_per_ticker
+
+        if not self.data:
+            raise ValueError("MultiAssetStrategy has no tickers to optimize")
+        logger.info(
+            "MultiAssetStrategy.optimize name=%s tickers=%s space_keys=%s",
+            self.name,
+            list(self.data),
+            list(space),
+        )
+        return optimize_per_ticker(
+            self.strategy_class,
+            self.data,
+            space,
+            start_trading_date=self.start_date,
+            simulator_kwargs=simulator_kwargs,
+            base_params=self.params,
+            tplusn=int(self.tplusn or 0),
+            **opt_kwargs,
+        )
+
     def get_strategy(self, ticker: str) -> StrategyBase:
         """
         Get the strategy instance for a specific ticker.
@@ -346,7 +405,7 @@ class MultiAssetStrategy:
             return
         raise TypeError("rules must be a callable, a sequence, or a ticker dict.")
 
-    def get_combined_equity(self) -> pd.Series:
+    def get_combined_equity(self, include_mean: bool = False) -> pd.Series:
         """
         Calculate the combined equity curve across all asset_strategies.
 
@@ -367,9 +426,11 @@ class MultiAssetStrategy:
         # Combine with equal weighting
         combined = pd.concat(results.equity.values(), axis=1)
         combined.columns = list(results.equity.keys())
+        if include_mean:
+            combined["mean"] = combined.mean(axis=1)
 
         # Average across all asset_strategies
-        return combined  # .mean(axis=1)
+        return combined
 
     def get_all_trades(self) -> Dict[str, List[Dict[str, Any]]]:
         """
