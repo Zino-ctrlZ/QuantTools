@@ -26,15 +26,51 @@ def normalize_dollar_amount(price: float | int) -> float | int:
     return price * 100
 
 
+def _parse_signal_date(date_str: str) -> pd.Timestamp:
+    """Parse the YYYYMMDD date slice of a signal id.
+
+    Args:
+        date_str: The 8-character date portion of a signal id.
+
+    Returns:
+        The date as a ``pd.Timestamp``.
+
+    Raises:
+        ValueError: If neither the fast path nor ``pd.to_datetime`` can parse it.
+    """
+    ## generate_signal_id always writes YYYYMMDD, so build the Timestamp from the digits.
+    ## pd.to_datetime guesses the format on every call (about 1 ms); this is about 2 us.
+    ## Deliberately not trade.helpers.helper.to_datetime: it tries %Y-%m-%d first and
+    ## then guesses, which is the slow path this avoids.
+    if len(date_str) == 8 and date_str.isdigit():
+        try:
+            return pd.Timestamp(year=int(date_str[:4]), month=int(date_str[4:6]), day=int(date_str[6:]))
+        except ValueError:
+            pass
+    ## Anything else keeps the original behavior, including its errors.
+    return pd.to_datetime(date_str)
+
+
 def parse_signal_id(id):
+    """Split a signal id into direction, date, ticker, and optional strategy slug.
+
+    Args:
+        id: Signal id like ``AAPL20200102LONG`` or ``slug::AAPL20200102SHORT``.
+
+    Returns:
+        Dict with ``direction``, ``date`` (``pd.Timestamp``), ``ticker``, and ``strategy_slug``.
+
+    Raises:
+        ValueError: If the id has neither LONG nor SHORT, or its date does not parse.
+    """
     if "::" in id:
         strategy_slug, id = id.split("::", 1)  # Remove strategy slug if present
     else:
         strategy_slug = None
     if "SHORT" in id:
-        return dict(direction=id[-5:], date=pd.to_datetime(id[-13:-5]), ticker=id[:-13], strategy_slug=strategy_slug)
+        return dict(direction=id[-5:], date=_parse_signal_date(id[-13:-5]), ticker=id[:-13], strategy_slug=strategy_slug)
     elif "LONG" in id:
-        return dict(direction=id[-4:], date=pd.to_datetime(id[-12:-4]), ticker=id[:-12], strategy_slug=strategy_slug)
+        return dict(direction=id[-4:], date=_parse_signal_date(id[-12:-4]), ticker=id[:-12], strategy_slug=strategy_slug)
     else:
         raise ValueError(f"Invalid signal id `{id}`, neither LONG nor SHORT was found in the id")
 
