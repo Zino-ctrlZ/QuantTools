@@ -10,7 +10,8 @@ Core Classes:
     ShortIdxEqCog: Sizing + optional profit-roll / waterfall analysis.
 
 Core Dataclasses:
-    _ShortIdxEqMetaData: Per-trade sizing snapshot including setup-feature values,
+    _ShortIdxEqMetaData: Per-trade sizing snapshot including
+        ``additional_on_entry_info`` values (stored under ``setup_features_at_date``),
         waterfall trim state, armed stop level, and threshold/stop trigger events.
 
 Core Functions:
@@ -26,7 +27,7 @@ Processing Flow:
     3. Resolve ticker strategy from ``MultiAssetStrategy.asset_strategies``.
     4. Inspect that instance for a child matching ``SignalID.strategy_slug``
        (composites like DualShortStrategy); use the match for multiplier and
-       setup-feature snapshot, else the ticker strategy itself.
+       ``additional_on_entry_info``, else the ticker strategy itself.
     5. Temporarily apply ``multiplier_version`` if set, call
        ``assign_dollar_multiplier`` on the signal-id date, then restore version.
     6. Effective trade size is ``min(tick_cash, config.trade_size)`` (tick cash
@@ -35,7 +36,9 @@ Processing Flow:
        dollars (option premium * 100) and returns quantity.
        Default: ``trade_size * multiplier / 3 / option_price``.
        Qty 0 becomes 1.
-    7. Snapshot ``REQUIRED_SETUP_FEATURES`` values at signal-id date.
+    7. Snapshot ``info_on_date`` merged with ``additional_on_entry_info`` at
+       signal-id date (entry hook wins key collisions); store under
+       ``setup_features_at_date`` for schema stability.
     8. Persist metadata (including ``initial_quantity`` / ``half_closed``) on the
        cog dict and ``PositionStore``.
     9. During analysis: ``enable_profit_roll`` emits full ROLL vs threshold;
@@ -58,7 +61,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -73,6 +76,7 @@ from EventDriven.riskmanager.position.cogs.analyze_utils import get_dte_and_mone
 from EventDriven.riskmanager.position.cogs.pnl_utils import correct_position_pnl
 from EventDriven.types import SignalID
 from trade.backtester_._multi_asset_strategy import MultiAssetStrategy
+from trade.backtester_._strategy import StrategyBase
 from trade.helpers.helper import to_datetime
 from trade.helpers.Logging import setup_logger
 
@@ -87,15 +91,56 @@ _CONTRACT_MULTIPLIER = 100
 _DEFAULT_DIVISOR = 3
 
 
+def _json_safe_entry_value(value: Any) -> Any:
+    """Coerce one ``additional_on_entry_info`` value into a JSON-safe primitive.
+
+    Args:
+        value: Raw strategy entry-info field (numpy scalar, timestamp, etc.).
+
+    Returns:
+        JSON-serializable value. Non-finite numbers become ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe_entry_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_entry_value(child) for child in value]
+    if isinstance(value, str):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            value = item()
+        except (TypeError, ValueError, OverflowError):
+            pass
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
 @dataclass
 class _ShortIdxEqMetaData:
     """Per-trade sizing metadata for ShortIdxEqCog.
 
     Stores the dollar-multiplier decision, resulting quantity, at-date
-    ``REQUIRED_SETUP_FEATURES`` values, waterfall trim/roll state, armed stop
-    level, and threshold/stop trigger event fields. ``trade_size`` is the
-    effective budget ``min(tick_cash, config_trade_size)``. ``option_price`` is
-    the raw per-share premium (not * 100); calculator calls receive dollars.
+    ``additional_on_entry_info`` payload (JSON field ``setup_features_at_date``),
+    waterfall trim/roll state, armed stop level, and threshold/stop trigger
+    event fields. ``trade_size`` is the effective budget
+    ``min(tick_cash, config_trade_size)``. ``option_price`` is the raw
+    per-share premium (not * 100); calculator calls receive dollars.
     """
 
     trade_id: str
@@ -111,7 +156,7 @@ class _ShortIdxEqMetaData:
     allowed_trade_size: float
     new_quantity: int
     signal_date: str
-    setup_features_at_date: Dict[str, float] = field(default_factory=dict)
+    setup_features_at_date: Dict[str, Any] = field(default_factory=dict)
     initial_quantity: int = 0
     half_closed: bool = False
     ## Armed stop level (set when threshold crosses and stop-loss is enabled).
@@ -196,6 +241,8 @@ def metadata_from_store_payload(payload: object) -> Optional[_ShortIdxEqMetaData
     setup_features = payload.get("setup_features_at_date") or {}
     if not isinstance(setup_features, dict):
         setup_features = {}
+    ## Preserve mixed types from additional_on_entry_info (zscore, sector, …).
+    entry_info = {str(k): _json_safe_entry_value(v) for k, v in setup_features.items()}
 
     ## Prefer the new stop_triggered flag; fall back to legacy waterfall_stop_triggered.
     if "stop_triggered" in payload:
@@ -217,7 +264,7 @@ def metadata_from_store_payload(payload: object) -> Optional[_ShortIdxEqMetaData
         allowed_trade_size=float(payload.get("allowed_trade_size") or 0.0),
         new_quantity=new_quantity,
         signal_date=str(payload.get("signal_date") or ""),
-        setup_features_at_date={str(k): float(v) if v is not None else float("nan") for k, v in setup_features.items()},
+        setup_features_at_date=entry_info,
         initial_quantity=initial_quantity,
         half_closed=bool(payload.get("half_closed", False)),
         waterfall_stop_reference_pnl_pct=_optional_float(payload, "waterfall_stop_reference_pnl_pct"),
@@ -236,7 +283,7 @@ class ShortIdxEqCog(BaseCog):
     """Size short-index-equity options and optionally manage profit via roll/waterfall.
 
     Expects a ``MultiAssetStrategy`` whose per-ticker strategies expose
-    ``assign_dollar_multiplier`` and ``REQUIRED_SETUP_FEATURES``. Composite
+    ``assign_dollar_multiplier`` and ``additional_on_entry_info``. Composite
     ticker strategies may nest child strategies; the cog inspects for a child
     whose ``strategy_slug`` matches the signal. Only signals whose slug
     exactly equals any ``config.strategy_slug_token`` are processed.
@@ -537,50 +584,83 @@ class ShortIdxEqCog(BaseCog):
                         if prev_version is not None:
                             asset_strat.MULTIPLIER_VERSION = prev_version
 
-    def _snapshot_setup_features(self, asset_strat, lookup_date: str) -> Dict[str, float]:
-        """Snapshot ``REQUIRED_SETUP_FEATURES`` values at the signal date.
-
-        Missing indicators or resolve failures become NaN so sizing can continue.
+    def _coerce_strategy_info_dict(
+        self,
+        raw: Any,
+        *,
+        hook_name: str,
+        lookup_date: str,
+    ) -> Dict[str, Any]:
+        """Normalize one strategy info hook return value for JSON storage.
 
         Args:
-            asset_strat: Per-ticker strategy with ``indicators`` and ``_resolve``.
+            raw: Return value from ``info_on_date`` or ``additional_on_entry_info``.
+            hook_name: Hook label for log messages.
             lookup_date: Signal-id date as ``YYYY-MM-DD``.
 
         Returns:
-            Feature name to at-date value mapping.
+            JSON-safe mapping, or empty when ``raw`` is not a dict.
         """
-        feature_names = tuple(getattr(asset_strat, "REQUIRED_SETUP_FEATURES", ()) or ())
-        if not feature_names:
+        if not isinstance(raw, dict):
+            logger.warning(
+                "%s returned %s for date %s; expected dict.",
+                hook_name,
+                type(raw).__name__,
+                lookup_date,
+            )
             return {}
+        return {str(key): _json_safe_entry_value(value) for key, value in raw.items()}
 
+    def _snapshot_entry_info(self, asset_strat: StrategyBase, lookup_date: str) -> Dict[str, Any]:
+        """Snapshot merged ``info_on_date`` and ``additional_on_entry_info``.
+
+        ``StrategyBase`` defines both hooks; ``info_on_date`` supplies bar
+        diagnostics and ``additional_on_entry_info`` supplies entry metadata
+        (including setup features from ``merge_entry_info``). Entry-hook keys
+        override ``info_on_date`` on collision.
+
+        Args:
+            asset_strat: Per-ticker (or child) ``StrategyBase`` used for sizing.
+            lookup_date: Signal-id date as ``YYYY-MM-DD``.
+
+        Returns:
+            JSON-safe mapping stored on ``setup_features_at_date``.
+        """
+        merged: Dict[str, Any] = {}
         try:
-            idx, _ = asset_strat._resolve(date=lookup_date)
+            on_date_raw = asset_strat.info_on_date(date=lookup_date)
         except Exception:
             logger.warning(
-                f"Unable to resolve setup-feature date {lookup_date} on asset strategy. "
-                "Storing NaN for REQUIRED_SETUP_FEATURES.",
+                "info_on_date failed for date %s; skipping bar snapshot.",
+                lookup_date,
                 exc_info=True,
             )
-            return {name: float("nan") for name in feature_names}
+            on_date_raw = {}
+        merged.update(
+            self._coerce_strategy_info_dict(
+                on_date_raw,
+                hook_name="info_on_date",
+                lookup_date=lookup_date,
+            )
+        )
 
-        indicators = getattr(asset_strat, "indicators", {}) or {}
-        snapshot: Dict[str, float] = {}
-        for name in feature_names:
-            ind = indicators.get(name)
-            if ind is None:
-                snapshot[name] = float("nan")
-                continue
-            values = getattr(ind, "values", None)
-            try:
-                if values is None:
-                    snapshot[name] = float("nan")
-                elif isinstance(values, pd.Series):
-                    snapshot[name] = float(values.iloc[idx])
-                else:
-                    snapshot[name] = float(values[idx])
-            except Exception:
-                snapshot[name] = float("nan")
-        return snapshot
+        try:
+            entry_raw = asset_strat.additional_on_entry_info(date=lookup_date)
+        except Exception:
+            logger.warning(
+                "additional_on_entry_info failed for date %s; skipping entry snapshot.",
+                lookup_date,
+                exc_info=True,
+            )
+            entry_raw = {}
+        merged.update(
+            self._coerce_strategy_info_dict(
+                entry_raw,
+                hook_name="additional_on_entry_info",
+                lookup_date=lookup_date,
+            )
+        )
+        return merged
 
     def _store_metadata(self, metadata: _ShortIdxEqMetaData) -> None:
         """Persist metadata in-process and through the configured store.
@@ -656,7 +736,7 @@ class ShortIdxEqCog(BaseCog):
             5. Effective trade size is ``min(tick_cash, config.trade_size)``.
             6. Scale option premium to dollars (* 100), then compute quantity via
                calculator; force 1 when it returns 0.
-            7. Snapshot setup-feature values and store metadata with waterfall fields.
+            7. Snapshot merged entry info hooks and store metadata with waterfall fields.
 
         Args:
             state: Newly created position container. Quantity is updated in place.
@@ -675,6 +755,16 @@ class ShortIdxEqCog(BaseCog):
             self._resolve_asset_strategy(ticker),
             signal_id,
         )
+        trade_id = order["data"]["trade_id"]
+        if not isinstance(asset_strat, StrategyBase):
+            logger.error(
+                "ShortIdxEqCog refusing sizing for trade %s: strategy for ticker %s "
+                "is %s, expected StrategyBase subclass.",
+                trade_id,
+                ticker,
+                type(asset_strat).__name__,
+            )
+            return
         lookup_date = self._signal_lookup_date(signal_id)
         option_chain = state.at_time_data
         if option_chain is None:
@@ -703,7 +793,7 @@ class ShortIdxEqCog(BaseCog):
             qty = 1
 
         order["data"]["quantity"] = qty
-        setup_features = self._snapshot_setup_features(asset_strat, lookup_date)
+        setup_features = self._snapshot_entry_info(asset_strat, lookup_date)
         metadata = _ShortIdxEqMetaData(
             trade_id=order["data"]["trade_id"],
             date=to_datetime(order["date"]),
