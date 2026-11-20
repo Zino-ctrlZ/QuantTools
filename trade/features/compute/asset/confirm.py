@@ -30,7 +30,7 @@ def true_range_vs_atr_20d(ctx) -> pd.Series:
     return ind._true_range_vs_atr_20d(ctx.asset_col("high"), ctx.asset_col("low"), ctx.asset_close())
 
 
-@feature(scope="asset", formula_id="asset_ohlcv_v1", inputs=("ohlcv",))
+@feature(scope="asset", formula_id="asset_ohlcv_v1", inputs=("ohlcv",), deprecated=True)
 def signed_volume_1d(ctx) -> pd.Series:
     return ind._signed_volume_1d(ctx.asset_close(), ctx.asset_col("volume"))
 

@@ -6,6 +6,7 @@ This module only adds lookup helpers used by the manager and callers.
 
 from __future__ import annotations
 
+import warnings
 from typing import Iterable, List, Optional
 
 from trade.features.compute.definitions import (
@@ -13,16 +14,17 @@ from trade.features.compute.definitions import (
     ASSET_SETUP_FEATURES,
     FEATURE_SPECS,
     Feature,
-    FeatureSpec,
     MARKET_SETUP_FEATURES,
 )
 from trade.features.compute.registry import get_feature, list_features, list_features_by_theme
+from trade.helpers.Logging import setup_logger
+
+logger = setup_logger(__name__)
 
 ## Re-exports.
 __all__ = [
     "FEATURE_SPECS",
     "Feature",
-    "FeatureSpec",
     "get_spec",
     "list_features",
     "list_features_by_theme",
@@ -35,6 +37,18 @@ def get_spec(name: str) -> Feature:
     return get_feature(name)
 
 
+def _warn_if_deprecated(name: str, spec: Feature) -> None:
+    """Emit a deprecation warning when a soft-retired feature is requested."""
+    if not spec.deprecated:
+        return
+    message = (
+        f"Feature {name!r} is deprecated (theme=deprecated) and will be removed; "
+        "prefer an active replacement or drop it from the request"
+    )
+    warnings.warn(message, DeprecationWarning, stacklevel=3)
+    logger.warning("deprecated feature requested name=%s", name)
+
+
 def resolve_features(
     features: Optional[Iterable[str]] = None,
     *,
@@ -42,6 +56,9 @@ def resolve_features(
     include_asset: bool = False,
 ) -> List[str]:
     """Validate names, or default to market (+ hybrid/asset when requested).
+
+    Soft-retired (``deprecated``) names are omitted from the default set. An
+    explicit list may still include them; each triggers a ``DeprecationWarning``.
 
     Args:
         features: Explicit names, or ``None`` for the default set.
@@ -61,7 +78,9 @@ def resolve_features(
             names.extend(ASSET_IV_RVOL_FEATURES)
         if include_asset:
             names.extend(ASSET_SETUP_FEATURES)
-        return names
+        ## Defense in depth: setup tuples already skip deprecated, but filter again.
+        return [name for name in names if not get_spec(name).deprecated]
+
     names = list(features)
     if not names:
         raise ValueError("features must be non-empty, or omit it for the default set")
@@ -70,7 +89,8 @@ def resolve_features(
     for name in names:
         if name in seen:
             continue
-        get_spec(name)
+        spec = get_spec(name)
+        _warn_if_deprecated(name, spec)
         out.append(name)
         seen.add(name)
     return out

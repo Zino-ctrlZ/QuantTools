@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Tuple
 
 from trade.features.compute.families import load_families
-from trade.features.compute.registry import FEATURE_SPECS, Feature, FeatureSpec, features_for_scope
+from trade.features.compute.registry import features_for_scope
+from trade.features.compute.specs import FEATURE_SPECS, Feature
 from trade.features.themes import FeatureTheme
 
 load_families()
@@ -28,7 +29,7 @@ IV_MARKET_FEATURES: Tuple[str, ...] = tuple(
         "eem_iv_percentile_252d",
         "fxi_iv_percentile_252d",
     )
-    if name in FEATURE_SPECS
+    if name in FEATURE_SPECS and not FEATURE_SPECS[name].deprecated
 )
 
 CHINA_MARKET_FEATURES: Tuple[str, ...] = tuple(
@@ -59,7 +60,6 @@ __all__ = [
     "DOLLAR_REGIME_FEATURES",
     "FEATURE_SPECS",
     "Feature",
-    "FeatureSpec",
     "IV_MARKET_FEATURES",
     "MARKET_SETUP_FEATURES",
     "SPY_MOMENTUM_QUALITY_FEATURES",

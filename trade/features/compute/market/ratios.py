@@ -8,9 +8,9 @@ from trade.features.compute.registry import feature
 from trade.features.compute.transforms import ratio_zscore, relative_momentum
 
 
-@feature(scope="market", formula_id="ratio_zscore_v1", inputs=("XLU", "SPY"), lookback=63)
+@feature(scope="market", formula_id="ratio_zscore_v2", inputs=("XLU", "SPY"), lookback=63)
 def xlu_spy_zscore(ctx) -> pd.Series:
-    return ratio_zscore(ctx.close("XLU"), ctx.close("SPY"), lookback=63)
+    return ratio_zscore(ctx.close("XLU"), ctx.close("SPY"), lookback=126)
 
 
 @feature(scope="market", formula_id="ratio_zscore_v1", inputs=("XLY", "XLP"), lookback=63)
@@ -43,9 +43,9 @@ def usmv_spy_ratio_zscore(ctx) -> pd.Series:
     return ratio_zscore(ctx.close("USMV"), ctx.close("SPY"), lookback=63)
 
 
-@feature(scope="market", formula_id="ratio_zscore_v1", inputs=("RSP", "SPY"), lookback=63)
+@feature(scope="market", formula_id="ratio_zscore_v2", inputs=("RSP", "SPY"), lookback=63)
 def rsp_spy_ratio_zscore(ctx) -> pd.Series:
-    return ratio_zscore(ctx.close("RSP"), ctx.close("SPY"), lookback=63)
+    return ratio_zscore(ctx.close("RSP"), ctx.close("SPY"), lookback=126)
 
 
 @feature(scope="market", formula_id="ratio_zscore_v1", inputs=("EEM", "SPY"), lookback=63)
@@ -98,9 +98,9 @@ def dba_spy_ratio_zscore(ctx) -> pd.Series:
     return ratio_zscore(ctx.close("DBA"), ctx.close("SPY"), lookback=63)
 
 
-@feature(scope="market", formula_id="ratio_zscore_v1", inputs=("XLE", "XLU"), lookback=63)
+@feature(scope="market", formula_id="ratio_zscore_v2", inputs=("XLE", "XLU"), lookback=63)
 def xle_xlu_ratio_zscore(ctx) -> pd.Series:
-    return ratio_zscore(ctx.close("XLE"), ctx.close("XLU"), lookback=63)
+    return ratio_zscore(ctx.close("XLE"), ctx.close("XLU"), lookback=126)
 
 
 @feature(scope="market", formula_id="relative_momentum_v1", inputs=("XLY", "XLP"), horizon=20)

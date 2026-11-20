@@ -9,19 +9,38 @@ from trade.features.compute.registry import feature
 from trade.features.compute.transforms import annualized_realized_vol, rolling_zscore, sanitize_ratio
 
 
-@feature(scope="hybrid", formula_id="asset_iv_rvol_v1", inputs=("close", "FXI_IV"), window=20)
+@feature(
+    scope="hybrid",
+    formula_id="asset_iv_rvol_v1",
+    inputs=("close", "FXI_IV"),
+    window=20,
+    deprecated=True,
+)
 def fxi_iv_to_asset_rvol_20d_ratio(ctx) -> pd.Series:
     rvol = annualized_realized_vol(ctx.asset_close(), 20).replace(0, np.nan)
     return sanitize_ratio(ctx.iv("FXI_IV") / rvol)
 
 
-@feature(scope="hybrid", formula_id="asset_iv_rvol_v1", inputs=("close", "FXI_IV"), window=20)
+@feature(
+    scope="hybrid",
+    formula_id="asset_iv_rvol_v1",
+    inputs=("close", "FXI_IV"),
+    window=20,
+    deprecated=True,
+)
 def fxi_iv_minus_asset_rvol_20d(ctx) -> pd.Series:
     rvol = annualized_realized_vol(ctx.asset_close(), 20).replace(0, np.nan)
     return sanitize_ratio(ctx.iv("FXI_IV") - rvol)
 
 
-@feature(scope="hybrid", formula_id="asset_iv_rvol_v1", inputs=("close", "FXI_IV"), window=20, lookback=252)
+@feature(
+    scope="hybrid",
+    formula_id="asset_iv_rvol_v1",
+    inputs=("close", "FXI_IV"),
+    window=20,
+    lookback=252,
+    deprecated=True,
+)
 def fxi_iv_to_asset_rvol_20d_ratio_zscore(ctx) -> pd.Series:
     rvol = annualized_realized_vol(ctx.asset_close(), 20).replace(0, np.nan)
     ratio = sanitize_ratio(ctx.iv("FXI_IV") / rvol)

@@ -3,7 +3,7 @@
 ## Core loop
 
 ```text
-get_features(names, index=..., start=1970, end=last_busday)
+get_market_features(names, index=..., start=1970, end=last_busday)
   → L1 / L2 hit? slice and return
   → else load inputs → FeatureContext
   → FEATURE_SPECS[name].compute(ctx)

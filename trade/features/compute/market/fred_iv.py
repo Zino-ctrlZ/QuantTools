@@ -23,16 +23,22 @@ def eem_iv_percentile_252d(ctx) -> pd.Series:
     return rolling_pctile(ctx.iv("EEM_IV"), 252)
 
 
-@feature(scope="market", formula_id="iv_level_v1", inputs=("FXI_IV",))
+@feature(scope="market", formula_id="iv_level_v1", inputs=("FXI_IV",), deprecated=True)
 def fxi_iv_level(ctx) -> pd.Series:
     return ctx.iv("FXI_IV")
 
 
-@feature(scope="market", formula_id="iv_zscore_v1", inputs=("FXI_IV",), lookback=252)
+@feature(scope="market", formula_id="iv_zscore_v1", inputs=("FXI_IV",), lookback=252, deprecated=True)
 def fxi_iv_zscore(ctx) -> pd.Series:
     return rolling_zscore(ctx.iv("FXI_IV"), 252)
 
 
-@feature(scope="market", formula_id="iv_percentile_v1", inputs=("FXI_IV",), lookback=252)
+@feature(
+    scope="market",
+    formula_id="iv_percentile_v1",
+    inputs=("FXI_IV",),
+    lookback=252,
+    deprecated=True,
+)
 def fxi_iv_percentile_252d(ctx) -> pd.Series:
     return rolling_pctile(ctx.iv("FXI_IV"), 252)

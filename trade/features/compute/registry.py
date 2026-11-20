@@ -2,52 +2,24 @@
 
 Import family modules (via ``trade.features.compute.families``) so every
 ``@feature`` function registers into ``FEATURE_SPECS`` before callers look up
-names.
+names. The durable dict and ``Feature`` type live in ``specs`` so autoreload
+of this module cannot wipe registrations.
 
 Comment density: orchestration.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
-import pandas as pd
-
-from trade.features.compute.context import FeatureContext
+from trade.features.compute.specs import (
+    BASE_ASSET_FEATURE_SET,
+    BASE_MARKET_FEATURE_SET,
+    FEATURE_SPECS,
+    ComputeFn,
+    Feature,
+)
 from trade.features.themes import FeatureTheme, coerce_theme, map_features_to_themes
-
-ComputeFn = Callable[[FeatureContext], pd.Series]
-
-
-@dataclass(frozen=True, slots=True)
-class Feature:
-    """One named feature: metadata plus the compute callable.
-
-    Attributes:
-        name: Public feature name (function name / cache key / caller API).
-        compute: ``(FeatureContext) -> Series`` implementing the formula.
-        inputs: Declared inputs (``SPY``, ``close``, ``FXI_IV``, ``ohlcv``, …).
-        formula_id: Cache-bust label; bump when the math changes.
-        scope: ``market`` | ``hybrid`` | ``asset``.
-        theme: Research theme from ``FEATURE_THEMES`` (explicit ``unmapped`` only).
-        params: Optional knobs recorded for introspection (horizon, lookback, …).
-    """
-
-    name: str
-    compute: ComputeFn
-    inputs: Tuple[str, ...]
-    formula_id: str
-    scope: str
-    theme: FeatureTheme
-    params: Mapping[str, int] = field(default_factory=dict)
-
-
-## Populated by ``@feature`` when family modules are imported.
-FEATURE_SPECS: Dict[str, Feature] = {}
-
-## Alias so older imports keep working during the cutover.
-FeatureSpec = Feature
 
 
 def feature(
@@ -56,9 +28,14 @@ def feature(
     formula_id: str,
     inputs: Tuple[str, ...],
     theme: Optional[Union[FeatureTheme, str]] = None,
+    deprecated: Optional[bool] = None,
     **params: int,
 ) -> Callable[[ComputeFn], ComputeFn]:
     """Register ``fn`` under ``fn.__name__`` in ``FEATURE_SPECS``.
+
+    Re-registration of the same name replaces the prior row so Jupyter
+    autoreload of a family module can refresh the callable without wiping
+    the durable ``FEATURE_SPECS`` dict.
 
     Args:
         scope: ``market`` | ``hybrid`` | ``asset``.
@@ -66,6 +43,8 @@ def feature(
         inputs: Declared input keys for dependency loading.
         theme: Optional ``FeatureTheme`` or string value; default from
             ``FEATURE_THEMES`` via ``map_features_to_themes`` (raises if missing).
+        deprecated: Optional soft-retire flag. When omitted, derived from
+            theme ``deprecated``. When set, must match that theme membership.
         **params: Optional int knobs stored on the ``Feature`` record.
 
     Returns:
@@ -73,12 +52,12 @@ def feature(
 
     Raises:
         KeyError: Feature name is not listed in ``FEATURE_THEMES``.
-        ValueError: Duplicate registration for the same name.
+        ValueError: ``deprecated`` disagrees with theme.
     """
 
     def deco(fn: ComputeFn) -> ComputeFn:
         name = fn.__name__
-        ## Theme must come from FEATURE_THEMES (including explicit unmapped).
+        ## Theme must come from FEATURE_THEMES (including unmapped / deprecated).
         table_theme = map_features_to_themes(name)
         resolved = coerce_theme(theme) if theme is not None else table_theme
         if resolved is not table_theme:
@@ -86,18 +65,28 @@ def feature(
                 f"Feature {name!r}: theme={resolved.value!r} disagrees with "
                 f"FEATURE_THEMES theme={table_theme.value!r}"
             )
-        spec = Feature(
+        theme_says_deprecated = resolved is FeatureTheme.DEPRECATED
+        if deprecated is None:
+            deprecated_flag = theme_says_deprecated
+        else:
+            deprecated_flag = bool(deprecated)
+            if deprecated_flag != theme_says_deprecated:
+                raise ValueError(
+                    f"Feature {name!r}: deprecated={deprecated_flag} disagrees with "
+                    f"FEATURE_THEMES theme={resolved.value!r} "
+                    "(move the name to FEATURE_THEMES['deprecated'] to retire it)"
+                )
+        ## Mutate the durable dict in specs — never rebind FEATURE_SPECS here.
+        FEATURE_SPECS[name] = Feature(
             name=name,
             compute=fn,
             inputs=tuple(inputs),
             formula_id=formula_id,
             scope=scope,
             theme=resolved,
+            deprecated=deprecated_flag,
             params=dict(params),
         )
-        if name in FEATURE_SPECS:
-            raise ValueError(f"Duplicate feature registration for {name!r}")
-        FEATURE_SPECS[name] = spec
         return fn
 
     return deco
@@ -117,8 +106,18 @@ def get_feature(name: str) -> Feature:
         ) from exc
 
 
-def list_features(scope: str = "all") -> List[str]:
-    """List registered feature names, optionally filtered by scope."""
+def list_features(scope: str = "base_market ") -> List[str]:
+    """List registered feature names, optionally filtered by scope or base pack.
+
+    Includes deprecated names for ``all`` / scope filters so callers can discover
+    what still exists. Base packs are curated shortlists.
+    """
+    if scope == "base_asset":
+        return sorted(BASE_ASSET_FEATURE_SET)
+    if scope == "base_market":
+        return sorted(BASE_MARKET_FEATURE_SET)
+    if scope == "base_all":
+        return sorted(BASE_ASSET_FEATURE_SET + BASE_MARKET_FEATURE_SET)
     if scope == "all":
         return sorted(FEATURE_SPECS)
     return sorted(name for name, spec in FEATURE_SPECS.items() if spec.scope == scope)
@@ -131,8 +130,16 @@ def list_features_by_theme(theme: Union[FeatureTheme, str]) -> List[str]:
 
 
 def features_for_scope(scope: str) -> Tuple[str, ...]:
-    """Stable-order names for one scope (registration order)."""
-    return tuple(name for name, spec in FEATURE_SPECS.items() if spec.scope == scope)
+    """Stable-order active names for one scope (registration order).
+
+    Soft-retired (deprecated) names are omitted so default catalog tuples stay
+    clean. Explicit requests still resolve via ``FEATURE_SPECS``.
+    """
+    return tuple(
+        name
+        for name, spec in FEATURE_SPECS.items()
+        if spec.scope == scope and not spec.deprecated
+    )
 
 
 def symbols_for_features(features: List[str]) -> List[str]:

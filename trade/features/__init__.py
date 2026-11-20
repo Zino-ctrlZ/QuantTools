@@ -6,20 +6,21 @@ NY business day) via datamanager → compute → cache (L1/L2) → slice to inde
 Core Classes:
     FeatureDataManager: L1 → L2 → compute orchestration.
     FeatureResult: ``series`` dict return container.
-    Feature / FeatureSpec: Registry row (name, compute, formula_id, scope, theme).
+    Feature: Registry row (name, compute, formula_id, scope, theme).
     FeatureTheme: Closed set of research theme ids (``str`` enum).
     validate_registry: Load-time wiring check (themes, inputs, scope).
 
 Usage:
     >>> from trade.features import FeatureDataManager
     >>> mgr = FeatureDataManager()
-    >>> result = mgr.get_features(index=df.index)  # market; +hybrid+asset if ticker+ohlcv
+    >>> market = mgr.get_market_features(index=df.index)
+    >>> vendor = mgr.get_features_for_ticker("AAPL", features=["ret_20d"])
+    >>> custom = mgr.get_features_from_ohlcv("AAPL", ohlcv, features=["ret_20d"])
 """
 
 from trade.features.catalog import (
     FEATURE_SPECS,
     Feature,
-    FeatureSpec,
     get_spec,
     list_features,
     list_features_by_theme,
@@ -51,7 +52,6 @@ __all__ = [
     "FeatureDataManager",
     "FeatureL1Cache",
     "FeatureResult",
-    "FeatureSpec",
     "FeatureTheme",
     "MARKET_SYMBOL",
     "REGIME_FEATURE_THEMES",

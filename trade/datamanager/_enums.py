@@ -73,6 +73,8 @@ class ArtifactType(str, Enum):
     FWD = "forward"
     OPTION_SPOT = "option_spot"
     DATES = "dates"
+    ## Derived research / strategy features (trade.features.FeatureDataManager).
+    FEATURE = "feature"
 
     # Volatility
     IV = "iv"

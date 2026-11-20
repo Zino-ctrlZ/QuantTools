@@ -1,16 +1,18 @@
-"""Pull and cache market OHLC / FRED IV for feature compute.
+"""Pull and cache market OHLC / FRED IV / asset spot for feature compute.
 
 One job: given a symbol or IV key and a date index, return aligned data.
 Pulls go through datamanager (spots) or FRED (IV). Results are kept in a
-process-local dict so one ``get_features`` batch does not re-fetch SPY
-twenty times.
+process-local dict so one feature batch does not re-fetch SPY twenty times.
+
+Asset spot pulls (arbitrary tickers) live in a separate map from the fixed
+``MARKET_SYMBOLS`` catalog.
 
 Comment density: orchestration.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -25,14 +27,17 @@ from trade.helpers.helper import ny_now_busday, to_datetime
 
 logger = setup_logger(__name__)
 
+DATE_HINT = Union[pd.Timestamp, str]
+
 
 class FeatureInputs:
-    """Market data helper used by ``FeatureDataManager``.
+    """Market and asset data helper used by ``FeatureDataManager``.
 
     Usage:
         inputs = FeatureInputs()
         close = inputs.close("SPY", index)   # pulls + caches as needed
         iv = inputs.iv("EEM_IV", index)
+        aapl = inputs.asset_ohlcv("AAPL")  # listing → last bus day
     """
 
     def __init__(
@@ -41,7 +46,7 @@ class FeatureInputs:
         history_start: pd.Timestamp = HISTORY_START,
         iv_max_staleness_days: int = IV_MAX_STALENESS_DAYS,
     ) -> None:
-        """Create empty process-local OHLC / IV caches.
+        """Create empty process-local OHLC / IV / asset caches.
 
         Args:
             history_start: Default lower bound for live vendor pulls.
@@ -49,16 +54,19 @@ class FeatureInputs:
         """
         self.history_start = pd.Timestamp(history_start).normalize()
         self.iv_max_staleness_days = int(iv_max_staleness_days)
-        ## symbol → full OHLC frame
+        ## market catalog key → full OHLC frame
         self._ohlc: Dict[str, pd.DataFrame] = {}
+        ## ticker → full asset OHLC frame (vendor-backed)
+        self._asset_ohlc: Dict[str, pd.DataFrame] = {}
         ## iv key → decimal IV series
         self._iv: Dict[str, pd.Series] = {}
         ## iv key → last non-NaN observation (staleness cutoff)
         self._iv_last_native: Dict[str, pd.Timestamp] = {}
 
     def clear(self) -> None:
-        """Drop all cached OHLC and IV."""
+        """Drop all cached OHLC, asset OHLC, and IV."""
         self._ohlc.clear()
+        self._asset_ohlc.clear()
         self._iv.clear()
         self._iv_last_native.clear()
 
@@ -81,9 +89,14 @@ class FeatureInputs:
         return lo, hi
 
     def seed_ohlc(self, frames: Mapping[str, pd.DataFrame]) -> None:
-        """Install test/notebook OHLC frames (skips vendor pull for those keys)."""
+        """Install test/notebook market OHLC frames (skips vendor pull)."""
         for key, frame in frames.items():
             self._ohlc[self._spot_key(key)] = self._normalize_ohlc(frame)
+
+    def seed_asset_ohlc(self, frames: Mapping[str, pd.DataFrame]) -> None:
+        """Install test/notebook asset OHLC frames (skips vendor pull)."""
+        for key, frame in frames.items():
+            self._asset_ohlc[str(key).strip().upper()] = self._normalize_ohlc(frame)
 
     def seed_iv(self, series_map: Mapping[str, pd.Series]) -> None:
         """Install test/notebook IV series (skips FRED pull for those keys)."""
@@ -106,13 +119,68 @@ class FeatureInputs:
         return self.ohlc(symbol, index)["close"].reindex(index)
 
     def ohlc(self, symbol: str, index: pd.DatetimeIndex) -> pd.DataFrame:
-        """Return OHLC reindexed to ``index``."""
+        """Return market-catalog OHLC reindexed to ``index``."""
         key = self._spot_key(symbol)
         if key not in self._ohlc:
             start, end = self.history_bounds()
             logger.info("pull spot %s %s→%s", key, start.date(), end.date())
             self._ohlc[key] = self._pull_spot(key, start, end)
         return self._ohlc[key].reindex(index)
+
+    def asset_ohlcv(
+        self,
+        ticker: str,
+        *,
+        start: Optional[DATE_HINT] = None,
+        end: Optional[DATE_HINT] = None,
+    ) -> pd.DataFrame:
+        """Return vendor spot OHLC for an arbitrary equity ticker.
+
+        When ``start`` is omitted, uses ``get_start_date(ticker)`` (listing /
+        first EOD proxy) and falls back to ``history_start`` if unknown.
+        End defaults to the last NY business day. Process-cached after first pull.
+
+        Args:
+            ticker: Equity ticker (case-insensitive).
+            start: Optional history start.
+            end: Optional history end.
+
+        Returns:
+            Normalized OHLC frame sorted by date (not reindexed).
+        """
+        key = str(ticker).strip().upper()
+        if not key:
+            raise ValueError("ticker must be a non-empty string")
+
+        if key not in self._asset_ohlc:
+            pull_start = (
+                pd.Timestamp(to_datetime(start)).normalize()
+                if start is not None
+                else self._asset_listing_start(key)
+            )
+            _, pull_end = self.history_bounds(
+                None,
+                pd.Timestamp(to_datetime(end)).normalize() if end is not None else None,
+            )
+            logger.info(
+                "pull asset spot %s %s→%s",
+                key,
+                pull_start.date(),
+                pull_end.date(),
+            )
+            self._asset_ohlc[key] = self._pull_asset_spot(key, pull_start, pull_end)
+
+        frame = self._asset_ohlc[key]
+        if start is None and end is None:
+            return frame
+        lo, hi = self.history_bounds(
+            pd.Timestamp(to_datetime(start)).normalize() if start is not None else None,
+            pd.Timestamp(to_datetime(end)).normalize() if end is not None else None,
+        )
+        ## When start omitted, keep native listing floor from the cached pull.
+        if start is None:
+            lo = pd.Timestamp(frame.index.min()).normalize()
+        return frame.loc[(frame.index >= lo) & (frame.index <= hi)]
 
     def iv(self, iv_key: str, index: pd.DatetimeIndex) -> pd.Series:
         """Return decimal IV reindexed to ``index`` with short forward-fill."""
@@ -133,13 +201,44 @@ class FeatureInputs:
 
     # --- vendor pulls -------------------------------------------------------
 
+    def _asset_listing_start(self, ticker: str) -> pd.Timestamp:
+        """Resolve listing/first-EOD floor for ``ticker``."""
+        from trade.datamanager.utils.equity_start_dates import get_start_date
+
+        listed = get_start_date(ticker)
+        if listed is None:
+            logger.warning(
+                "No equity start date for %s; falling back to history_start=%s",
+                ticker,
+                self.history_start.date(),
+            )
+            return self.history_start
+        return pd.Timestamp(to_datetime(listed)).normalize()
+
     def _pull_spot(self, key: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-        """Fetch one market symbol via ``MarketTimeseries``."""
+        """Fetch one market-catalog symbol via ``MarketTimeseries``."""
         from trade.datamanager.vars import get_times_series
 
         vendor = MARKET_SYMBOLS[key]
         frame = get_times_series().get_timeseries(
             vendor,
+            "spot",
+            start_date=start.strftime("%Y-%m-%d"),
+            end_date=end.strftime("%Y-%m-%d"),
+        ).spot
+        return self._normalize_ohlc(frame)
+
+    def _pull_asset_spot(
+        self,
+        ticker: str,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> pd.DataFrame:
+        """Fetch one equity ticker spot frame via ``MarketTimeseries``."""
+        from trade.datamanager.vars import get_times_series
+
+        frame = get_times_series().get_timeseries(
+            ticker,
             "spot",
             start_date=start.strftime("%Y-%m-%d"),
             end_date=end.strftime("%Y-%m-%d"),

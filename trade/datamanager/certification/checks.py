@@ -31,7 +31,7 @@ from typing import Callable, List, Optional, Union
 import pandas as pd
 
 from trade.datamanager.utils.date import business_day_grid, is_available_on_date
-from trade.helpers.helper import to_datetime
+from trade.helpers.helper import ny_now, to_datetime
 from trade.helpers.helper_types import DATE_HINT
 
 from .context import CertificationContext, effective_checked_missing_dates
@@ -74,6 +74,10 @@ def certification_required_bus_days(
     not yet available — notably **today before market open** when ``end_date``
     includes today. During market hours, today remains required.
 
+    ``business_day_grid`` already drops weekends and holidays, so historical days
+    need no per-day ``is_available_on_date`` pass. Only **today** is re-checked
+    (pre-open exclusion), which keeps multi-factor certification cheap.
+
     Args:
         start_date: Certification window start.
         end_date: Certification window end.
@@ -82,11 +86,14 @@ def certification_required_bus_days(
     Returns:
         Sorted list of dates the certifier treats as must-have observations.
     """
-    return [
-        day
-        for day in business_day_grid(start_date, end_date, checked_missing_dates)
-        if is_available_on_date(day)
-    ]
+    grid = business_day_grid(start_date, end_date, checked_missing_dates)
+    if not grid:
+        return []
+    ## Only today's availability is time-dependent; historical grid days are final.
+    today = ny_now().date()
+    if not is_available_on_date(today):
+        return [day for day in grid if day != today]
+    return grid
 
 
 def _calendar_gaps_excluding_checked_missing(
@@ -99,7 +106,8 @@ def _calendar_gaps_excluding_checked_missing(
     required = certification_required_bus_days(start_date, end_date, checked_missing_dates)
     if not required:
         return []
-    index_dates = {to_datetime(ts).date() for ts in data.index.normalize()}
+    ## DatetimeIndex.normalize().date avoids per-row to_datetime.
+    index_dates = set(pd.DatetimeIndex(data.index).normalize().date)
     return [day for day in required if day not in index_dates]
 
 

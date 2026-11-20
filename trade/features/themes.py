@@ -4,9 +4,11 @@
 theme value (string) to feature names so notebook lookups like
 ``FEATURE_THEMES["asset_momentum"]`` keep working. Every registered feature
 must appear in exactly one bucket; intentional no-theme names go under
-``FEATURE_THEMES["unmapped"]`` (no silent default). ``ASSET_FEATURE_THEMES`` /
-``REGIME_FEATURE_THEMES`` are legacy notebook split views (string keys; may
-include placeholders not in the compute catalog).
+``FEATURE_THEMES["unmapped"]`` (no silent default). Soft-retired names go under
+``FEATURE_THEMES["deprecated"]`` (still registered, excluded from default
+catalog pulls). ``ASSET_FEATURE_THEMES`` / ``REGIME_FEATURE_THEMES`` are legacy
+notebook split views (string keys; may include placeholders not in the compute
+catalog).
 """
 
 from __future__ import annotations
@@ -54,6 +56,8 @@ class FeatureTheme(str, Enum):
     DOLLAR_REGIME = "dollar_regime"
     ## Sentinel
     UNMAPPED = "unmapped"
+    ## Soft-retired: still registered, omitted from default feature pulls.
+    DEPRECATED = "deprecated"
 
 
 FEATURE_THEMES: Dict[str, List[str]] = {
@@ -61,7 +65,6 @@ FEATURE_THEMES: Dict[str, List[str]] = {
         "ret_20d",
         "ret_60d",
         "ret_120d",
-        "rolling_avg_20d_ret_126d",
     ],
     FeatureTheme.ASSET_TREND.value: [
         "close_vs_sma_50",
@@ -79,12 +82,10 @@ FEATURE_THEMES: Dict[str, List[str]] = {
         "realized_vol_20d",
         "atr_20d_pct",
         "vol_ratio_20d_vs_126d",
-        "rolling_avg_20d_vol_126d",
     ],
     FeatureTheme.ASSET_DOWNSIDE_BEHAVIOR.value: [
         "avg_decline_20d_126d",
         "decline_freq_20d_126d",
-        "count_large_20d_declines_126d",
         "p_down_given_down_10d_126d",
     ],
     FeatureTheme.ASSET_TREND_QUALITY.value: [
@@ -131,7 +132,6 @@ FEATURE_THEMES: Dict[str, List[str]] = {
     ],
     FeatureTheme.ASSET_GAP_BEHAVIOR.value: [
         "overnight_gap_1d",
-        "absolute_overnight_gap_1d",
         "avg_abs_overnight_gap_20d",
         "overnight_gap_volatility_20d",
         "negative_gap_frequency_60d",
@@ -144,7 +144,6 @@ FEATURE_THEMES: Dict[str, List[str]] = {
         "close_location_value_1d",
         "directional_close_location_1d",
         "true_range_vs_atr_20d",
-        "signed_volume_1d",
         "directional_volume_confirmation_1d",
         "followthrough_return_1d",
         "followthrough_return_3d",
@@ -234,11 +233,8 @@ FEATURE_THEMES: Dict[str, List[str]] = {
         "vix_above_200ma",
         "vix_pct_200ma",
         "vix_pctile_252",
-        "fxi_iv_level",
         "eem_iv_level",
-        "fxi_iv_zscore",
         "eem_iv_zscore",
-        "fxi_iv_percentile_252d",
         "eem_iv_percentile_252d",
     ],
     FeatureTheme.IMPLIED_VOLATILITY_MOMENTUM.value: [
@@ -246,11 +242,8 @@ FEATURE_THEMES: Dict[str, List[str]] = {
     ],
     FeatureTheme.VOLATILITY_RISK_PREMIUM.value: [
         "vix_spy_rvol_20_ratio",
-        "fxi_iv_to_asset_rvol_20d_ratio",
         "eem_iv_to_asset_rvol_20d_ratio",
-        "fxi_iv_minus_asset_rvol_20d",
         "eem_iv_minus_asset_rvol_20d",
-        "fxi_iv_to_asset_rvol_20d_ratio_zscore",
         "eem_iv_to_asset_rvol_20d_ratio_zscore",
     ],
     FeatureTheme.VOLATILITY_TERM_STRUCTURE.value: [
@@ -271,6 +264,22 @@ FEATURE_THEMES: Dict[str, List[str]] = {
     ],
     ## Intentional no-theme features only. Never rely on a silent default.
     FeatureTheme.UNMAPPED.value: [],
+    ## Soft-retired features (grace period before hard delete).
+    FeatureTheme.DEPRECATED.value: [
+        ## FXI implied-vol family
+        "fxi_iv_level",
+        "fxi_iv_zscore",
+        "fxi_iv_percentile_252d",
+        "fxi_iv_to_asset_rvol_20d_ratio",
+        "fxi_iv_minus_asset_rvol_20d",
+        "fxi_iv_to_asset_rvol_20d_ratio_zscore",
+        ## Asset one-offs
+        "absolute_overnight_gap_1d",
+        "signed_volume_1d",
+        "count_large_20d_declines_126d",
+        "rolling_avg_20d_vol_126d",
+        "rolling_avg_20d_ret_126d",
+    ],
 }
 
 ## feature name → theme (built once; O(1) lookup).
@@ -306,13 +315,11 @@ ASSET_FEATURE_THEMES: Dict[str, List[str]] = {
         "realized_vol_20d",
         "atr_20d_pct",
         "atr_loss",
-        "rolling_avg_20d_vol_126d",
         "vol_ratio_20d_vs_126d",
     ],
     "downside_persistence": [
         "avg_decline_20d_126d",
         "decline_freq_20d_126d",
-        "count_large_20d_declines_126d",
         "p_down_given_down_10d_126d",
     ],
     "trend_quality": [
@@ -415,20 +422,14 @@ REGIME_FEATURE_THEMES: Dict[str, List[str]] = {
         "vix_20_day_return",
         "vix_pctile_252",
         "vix_vs_vix3m",
-        "fxi_iv_level",
         "eem_iv_level",
-        "fxi_iv_zscore",
         "eem_iv_zscore",
-        "fxi_iv_percentile_252d",
         "eem_iv_percentile_252d",
     ],
     "volatility_risk_premium": [
         "vix_spy_rvol_20_ratio",
-        "fxi_iv_to_asset_rvol_20d_ratio",
         "eem_iv_to_asset_rvol_20d_ratio",
-        "fxi_iv_minus_asset_rvol_20d",
         "eem_iv_minus_asset_rvol_20d",
-        "fxi_iv_to_asset_rvol_20d_ratio_zscore",
         "eem_iv_to_asset_rvol_20d_ratio_zscore",
     ],
     "market_breadth": [
@@ -469,7 +470,8 @@ def map_features_to_themes(feature: str) -> FeatureTheme:
         feature: Feature name (without ``entry_`` / ``exit_`` prefix).
 
     Returns:
-        Matching theme from ``FEATURE_THEMES`` (including explicit ``unmapped``).
+        Matching theme from ``FEATURE_THEMES`` (including ``unmapped`` /
+        ``deprecated``).
 
     Raises:
         KeyError: If ``feature`` is not listed in any ``FEATURE_THEMES`` bucket.
@@ -479,7 +481,8 @@ def map_features_to_themes(feature: str) -> FeatureTheme:
     except KeyError as exc:
         raise KeyError(
             f"Feature {feature!r} is not in FEATURE_THEMES. "
-            "Add it to a theme bucket (or FEATURE_THEMES['unmapped'])."
+            "Add it to a theme bucket (or FEATURE_THEMES['unmapped'] / "
+            "FEATURE_THEMES['deprecated'])."
         ) from exc
 
 

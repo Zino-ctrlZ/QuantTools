@@ -17,7 +17,7 @@ def overnight_gap_1d(ctx) -> pd.Series:
     return _gap(ctx)
 
 
-@feature(scope="asset", formula_id="asset_ohlcv_v1", inputs=("ohlcv",))
+@feature(scope="asset", formula_id="asset_ohlcv_v1", inputs=("ohlcv",), deprecated=True)
 def absolute_overnight_gap_1d(ctx) -> pd.Series:
     return ind._absolute_overnight_gap_1d(_gap(ctx))
 

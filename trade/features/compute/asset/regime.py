@@ -11,13 +11,27 @@ from trade.features.compute.transforms import efficiency_ratio
 _WINDOW = 126
 
 
-@feature(scope="asset", formula_id="asset_rolling_context_v1", inputs=("close",), vol_window=20, smooth_window=126)
+@feature(
+    scope="asset",
+    formula_id="asset_rolling_context_v1",
+    inputs=("close",),
+    vol_window=20,
+    smooth_window=126,
+    deprecated=True,
+)
 def rolling_avg_20d_vol_126d(ctx) -> pd.Series:
     vol = ctx.asset_close().pct_change().rolling(20).std() * np.sqrt(252)
     return vol.rolling(_WINDOW).mean()
 
 
-@feature(scope="asset", formula_id="asset_rolling_context_v1", inputs=("close",), ret_horizon=20, smooth_window=126)
+@feature(
+    scope="asset",
+    formula_id="asset_rolling_context_v1",
+    inputs=("close",),
+    ret_horizon=20,
+    smooth_window=126,
+    deprecated=True,
+)
 def rolling_avg_20d_ret_126d(ctx) -> pd.Series:
     return ctx.asset_close().pct_change(20).rolling(_WINDOW).mean()
 
@@ -34,7 +48,14 @@ def decline_freq_20d_126d(ctx) -> pd.Series:
     return (ret < 0).rolling(_WINDOW, min_periods=20).mean()
 
 
-@feature(scope="asset", formula_id="asset_rolling_context_v1", inputs=("close",), ret_horizon=20, smooth_window=126)
+@feature(
+    scope="asset",
+    formula_id="asset_rolling_context_v1",
+    inputs=("close",),
+    ret_horizon=20,
+    smooth_window=126,
+    deprecated=True,
+)
 def count_large_20d_declines_126d(ctx) -> pd.Series:
     ret = ctx.asset_close().pct_change(20)
     return (ret < -0.10).rolling(_WINDOW).sum()

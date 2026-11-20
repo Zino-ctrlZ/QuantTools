@@ -90,13 +90,22 @@ def _make_fake_dataset(
 class FakeAssetStrategy(StrategyBase):
     """Stand-in for ShortDonchianEquityFlat used by ShortIdxEqCog tests."""
 
-    bt_params: Dict[str, Any] = {}
+    ## Rebuild-branch ParamContractMixin requires these keys to match __init__.
+    bt_params: Dict[str, Any] = {
+        "dates": None,
+        "feature_rows": None,
+        "multiplier": 3,
+        "close": 412.5,
+    }
     REQUIRED_SETUP_FEATURES = REQUIRED_SETUP_FEATURES
     MULTIPLIER_VERSION = 1
 
     def __init__(
         self,
-        *,
+        data: Any = None,
+        start_trading_date: Optional[str] = None,
+        ticker: Optional[str] = None,
+        tplusn: Optional[int] = 0,
         dates: Optional[List[str]] = None,
         feature_rows: Optional[List[Dict[str, float]]] = None,
         multiplier: float = 3,
@@ -104,7 +113,15 @@ class FakeAssetStrategy(StrategyBase):
     ) -> None:
         """Initialize a fake per-ticker strategy.
 
+        ``data`` / ``start_trading_date`` / ``ticker`` / ``tplusn`` satisfy this
+        branch's ``ParamContractMixin``; tests usually omit them and let the
+        fake dataset builder supply bars.
+
         Args:
+            data: Optional ``PTDataset``; when omitted a tiny fake frame is built.
+            start_trading_date: Optional trading start forwarded to ``StrategyBase``.
+            ticker: Optional ticker; defaults to the module ``TICKER`` constant.
+            tplusn: Optional bar offset forwarded to ``StrategyBase``.
             dates: Calendar dates present on the fake bar index.
             feature_rows: Per-date feature maps aligned with ``dates``.
             multiplier: Value returned by ``assign_dollar_multiplier``.
@@ -124,9 +141,10 @@ class FakeAssetStrategy(StrategyBase):
         ]
         dates = dates or [SIGNAL_DATE, "2018-06-18", "2018-06-20"]
         super().__init__(
-            data=_make_fake_dataset(dates, close=close),
-            ticker=TICKER,
-            tplusn=0,
+            data=data if data is not None else _make_fake_dataset(dates, close=close),
+            start_trading_date=start_trading_date,
+            ticker=ticker or TICKER,
+            tplusn=0 if tplusn is None else tplusn,
         )
 
     def setup(self) -> None:

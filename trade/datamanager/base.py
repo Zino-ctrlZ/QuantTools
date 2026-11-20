@@ -147,13 +147,14 @@ class BaseDataManager(ABC):
         """
         from .market_data import MarketTimeseries
         from .market_data_helpers.dividends import DIVIDEND_CACHE
-        from .utils.date import LIST_DATE_CACHE
+        from .utils.date import LIST_DATE_CACHE, clear_business_day_grid_cache
         from .dividend import DIV_TEMP_CACHE
 
         MarketTimeseries.clear_caches()
         DIVIDEND_CACHE.clear()
         LIST_DATE_CACHE.clear()
         DIV_TEMP_CACHE.clear()
+        clear_business_day_grid_cache()
         for cache_name, manager_cls in cls._CACHE_NAME_REGISTRY.items():
             logger.info(f"Clearing cache for {manager_cls.__name__} (CACHE_NAME='{cache_name}')")
             manager_cls.get_cache().clear()

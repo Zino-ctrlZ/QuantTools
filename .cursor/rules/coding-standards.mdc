@@ -96,16 +96,36 @@ logger = setup_logger(__name__)
 | Level | When |
 |---|---|
 | `DEBUG` | Fine-grained internals useful when diagnosing (per-batch sizes, path taken). Not per-bar in hot loops. |
-| `INFO` | Normal milestones: run start/end, counts, chosen path (flat vs book), winners. |
-| `WARNING` | Recoverable degradation: fell back to serial, no trial passed, truncated calendar. |
+| `INFO` | **Required** milestones on the happy path: run start/end, branch chosen, aggregate counts, completion (including empty-valid). Not optional decoration. |
+| `WARNING` | Recoverable degradation or surprise emptiness — something an operator may need to act on (fell back to serial, no trial passed, truncated calendar). |
 | `ERROR` | Failed operation that the function handled or re-raised after logging context. |
 | `CRITICAL` | Process cannot continue meaningfully; prefer `log_critical_issue` when blast radius is system-wide (see below). |
+
+### INFO milestones (required for orchestration / I/O modules)
+
+Do not ship a module that only logs WARNING/ERROR. If the module loads data, runs a pipeline, or chooses a path, it must emit a few INFO lines so a successful run is auditable without raising the log level.
+
+Log at INFO when any of these happen (one line each is enough):
+
+- **Enter / exit of a public operation** — function or job name, plus the key inputs that identify the run (ticker, date range, strategy, account, request id).
+- **Branch chosen** — which path ran and why in short form (cache hit vs miss, flat vs book, vendor A vs fallback B).
+- **Aggregate outcomes** — row/count/shape results after a load, filter, or join (`n_in`, `n_out`, date span), not per-row detail.
+- **Completion summary** — success with counts or duration; empty-but-valid results still get INFO (“0 rows for …”), not silence.
+- **Config that changes behavior** — non-default flags, cutoffs, or sizing that an operator would need to replay the run.
+
+Prefer structured fragments in the message (`ticker=%s start=%s n=%s`) so grepping works. Still use lazy `%s` formatting.
 
 ### Density
 
 - Prefer a few informative lines at boundaries (enter/exit, branch, aggregate counts) over logging inside tight loops.
 - Never log secrets, full credentials, or huge DataFrames; log shapes, keys, and counts instead.
 - Use `%s`-style lazy formatting (`logger.info("n=%s", n)`), not f-strings at the call site when values are expensive.
+
+### Anti-patterns
+
+- **Warning-only modules** — recoverable skips and failures logged, but no INFO for a clean path. Fix by adding enter/exit + outcome INFO.
+- **Promoting routine success to WARNING** — empty filters, expected holidays, or “nothing to do” are INFO (or DEBUG), not WARNING, unless the empty result is surprising for that call site.
+- **INFO spam** — per-bar, per-trial, or per-row INFO in hot loops. Keep INFO at boundaries; put volume in DEBUG or tqdm.
 
 ### Multiprocessing / fork workers
 

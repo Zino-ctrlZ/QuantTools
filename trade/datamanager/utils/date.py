@@ -26,7 +26,7 @@ from dbase.DataAPI.ThetaData.list_dates_cache import LIST_DATE_CACHE, get_listed
 ## LIST_DATE_CACHE is owned by dbase; re-exported so ``clear_all_caches`` still
 ## drops expired option calendars together with DataManager caches.
 from dbase.DataAPI.ThetaExceptions import ThetaDataNotFound
-from typing import Any, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 from trade.datamanager.utils.logging import get_logging_level, UTILS_LOGGER_NAME
 from trade.datamanager.utils.equity_start_dates import get_start_date
 from trade import HOLIDAY_SET, MARKET_CLOSE, MARKET_OPEN
@@ -514,6 +514,16 @@ def is_available_on_date(date: date) -> bool:
     return is_trading_day
 
 
+## Process-local calendar grids. Keys are static once holidays / window are fixed.
+## ponytail: unbounded process cache; clear via clear_business_day_grid_cache if holiday set reloads.
+_BUSINESS_DAY_GRID_CACHE: Dict[Tuple[date, date, Tuple[date, ...]], List[date]] = {}
+
+
+def clear_business_day_grid_cache() -> None:
+    """Drop cached ``business_day_grid`` results (tests / holiday-set reloads)."""
+    _BUSINESS_DAY_GRID_CACHE.clear()
+
+
 def business_day_grid(
     start_date: DATE_HINT,
     end_date: DATE_HINT,
@@ -524,6 +534,9 @@ def business_day_grid(
     Core calendar grid for certification, rates resample, and other timeseries paths.
     Does not apply runtime availability (``is_available_on_date``); callers add that
     when pre-market today should be excluded from a required-observation set.
+
+    Results are cached per ``(start, end, checked_missing)`` for the process lifetime
+    so multi-factor certification does not rebuild the same multi-year calendar.
 
     Args:
         start_date: Window start (inclusive).
@@ -537,16 +550,23 @@ def business_day_grid(
         >>> grid = business_day_grid("2025-01-01", "2025-01-10")
         >>> checked = business_day_grid("2025-01-01", "2025-01-10", checked_missing_dates=[date(2025, 1, 3)])
     """
-    start_d = pd.Timestamp(to_datetime(start_date)).normalize()
-    end_d = pd.Timestamp(to_datetime(end_date)).normalize()
-    checked_set = set(checked_missing_dates or [])
+    start_d = pd.Timestamp(to_datetime(start_date)).normalize().date()
+    end_d = pd.Timestamp(to_datetime(end_date)).normalize().date()
+    checked_key = tuple(sorted(checked_missing_dates or []))
+    cache_key = (start_d, end_d, checked_key)
+    cached = _BUSINESS_DAY_GRID_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
-    grid: List[date] = []
-    for ts in pd.date_range(start=start_d, end=end_d, freq="B"):
-        day = ts.date()
-        if ts.strftime("%Y-%m-%d") in HOLIDAY_SET:
-            continue
-        if day in checked_set:
-            continue
-        grid.append(day)
+    checked_set = set(checked_key)
+    rng = pd.bdate_range(start=start_d, end=end_d)
+    if len(rng) == 0:
+        _BUSINESS_DAY_GRID_CACHE[cache_key] = []
+        return _BUSINESS_DAY_GRID_CACHE[cache_key]
+
+    ## Vectorized holiday filter; then drop vendor-checked absences.
+    labels = rng.strftime("%Y-%m-%d")
+    keep = ~pd.Index(labels).isin(HOLIDAY_SET)
+    grid = [ts.date() for ts in rng[keep] if ts.date() not in checked_set]
+    _BUSINESS_DAY_GRID_CACHE[cache_key] = grid
     return grid

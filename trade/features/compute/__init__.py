@@ -5,7 +5,6 @@ from trade.features.compute.definitions import (
     ASSET_SETUP_FEATURES,
     FEATURE_SPECS,
     Feature,
-    FeatureSpec,
     MARKET_SETUP_FEATURES,
 )
 from trade.features.compute.families import load_families
@@ -26,7 +25,6 @@ __all__ = [
     "ASSET_SETUP_FEATURES",
     "FEATURE_SPECS",
     "Feature",
-    "FeatureSpec",
     "MARKET_SETUP_FEATURES",
     "annualized_realized_vol",
     "efficiency_ratio",
