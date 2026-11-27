@@ -91,12 +91,13 @@ cleanup_expired_caches()
 
 ## Universal Holidays set
 ## Get Business days FOR NYSE (Some days are still trading days)
-## Floor 1980 so listing-era lookbacks (e.g. chain_spot from 1990) do not treat
-## pre-2000 NYSE holidays as unfilled cache gaps (see audit l3-chain-spot-duplicate-concat-2026-07-13).
+## Floor at earliest equity listing in equity_start_dates (1962-01-02) so
+## long-history spot pulls (KO/PG/BA/…) do not treat pre-1980 NYSE closes as
+## missing calendar days under certification.
 ## TODO: Make this more dynamic, so it can be used for other exchanges as well. And end date should be dynamic as well.
 NY = ZoneInfo("America/New_York")
 nyse = mcal.get_calendar("NYSE")
-_HOLIDAY_CAL_START = "1980-01-01"
+_HOLIDAY_CAL_START = "1962-01-01"
 _HOLIDAY_CAL_END = "2040-01-01"
 schedule = nyse.schedule(start_date=_HOLIDAY_CAL_START, end_date=_HOLIDAY_CAL_END, tz=NY)
 # pylint: disable=E1101
