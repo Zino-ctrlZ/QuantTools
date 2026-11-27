@@ -59,7 +59,7 @@ FAMILIES_LOADED: bool = False
 
 BASE_ASSET_FEATURE_SET = [
     ## Asset-level starter pack
-    "ret_20d",
+    "ret_vol_adj_20d",
     "close_vs_sma_200",
     "above_sma_200",
     "adx_20d",
@@ -71,32 +71,30 @@ BASE_ASSET_FEATURE_SET = [
     "range_position_20d",
     "relative_volume_20d",
     "drawdown_from_252d_high",
-    "asset_vs_spy_ret_60d",
+    "asset_spy_relative_momentum_vol_adj_20d",
     "p_down_given_down_10d_126d",
 ]
 
 BASE_MARKET_FEATURE_SET = [
     "spy_above_sma_200",
-    "spy_ret_20d",
+    "spy_ret_vol_adj_20d",
     "vix_level",
     "vix_pctile_252",
     "vix_vs_vix3m",
     "vix_spy_rvol_20_ratio",
 
-    # Equity and defensive rotation
-    "xly_xlp_relative_momentum_20d",
-    "iwm_spy_relative_momentum_20d",
-    "qqq_spy_relative_momentum_20d",
+    ## Equity and defensive rotation
+    "xly_xlp_relative_momentum_vol_adj_20d",
+    "iwm_spy_relative_momentum_vol_adj_20d",
+    "qqq_spy_relative_momentum_vol_adj_20d",
     "rsp_spy_ratio_zscore",
     "xle_xlu_ratio_zscore",
     "xlu_spy_zscore",
-    "eem_spy_relative_momentum_20d",
-    
-    # Commodity rotation
-    "gld_spy_relative_momentum_20d",
-    "dbc_spy_relative_momentum_20d",
-    
-    # Dollar regime
-    "uup_ret_20d",
+    "eem_spy_relative_momentum_vol_adj_20d",
+    ## Commodity rotation
+    "gld_spy_relative_momentum_vol_adj_20d",
+    "dbc_spy_relative_momentum_vol_adj_20d",
+    ## Dollar regime
+    "uup_ret_vol_adj_20d",
     "uup_close_vs_sma_200",
 ]

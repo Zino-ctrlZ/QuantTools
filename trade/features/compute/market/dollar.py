@@ -5,12 +5,28 @@ from __future__ import annotations
 import pandas as pd
 
 from trade.features.compute.registry import feature
-from trade.features.compute.transforms import annualized_realized_vol, sanitize_ratio
+from trade.features.compute.transforms import (
+    annualized_realized_vol,
+    sanitize_ratio,
+    vol_adjusted_return,
+)
 
 
 @feature(scope="market", formula_id="close_return_v1", inputs=("UUP",), horizon=20)
 def uup_ret_20d(ctx) -> pd.Series:
     return ctx.close("UUP").pct_change(20)
+
+
+@feature(
+    scope="market",
+    formula_id="return_vol_adj_v1",
+    inputs=("UUP",),
+    horizon=20,
+    vol_window=60,
+)
+def uup_ret_vol_adj_20d(ctx) -> pd.Series:
+    """UUP 20d return scaled by 60d daily-return vol."""
+    return vol_adjusted_return(ctx.close("UUP"), 20, 60)
 
 
 @feature(scope="market", formula_id="close_return_v1", inputs=("UUP",), horizon=60)

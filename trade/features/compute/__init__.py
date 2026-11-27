@@ -16,6 +16,8 @@ from trade.features.compute.transforms import (
     relative_momentum,
     rolling_pctile,
     rolling_zscore,
+    vol_adjusted_relative_momentum,
+    vol_adjusted_return,
 )
 
 load_families()
@@ -36,4 +38,6 @@ __all__ = [
     "rolling_pctile",
     "rolling_zscore",
     "symbols_for_features",
+    "vol_adjusted_relative_momentum",
+    "vol_adjusted_return",
 ]

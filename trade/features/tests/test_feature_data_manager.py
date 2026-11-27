@@ -249,7 +249,7 @@ def test_get_features_for_ticker_self_queries_seeded_asset():
 
     result = mgr.get_features_for_ticker(
         "AAPL",
-        ["ret_20d", "realized_vol_20d", "asset_vs_spy_ret_60d"],
+        ["ret_20d", "realized_vol_20d", "asset_spy_relative_momentum_vol_adj_20d"],
         index=idx,
         start=start,
         end=end,
@@ -258,7 +258,7 @@ def test_get_features_for_ticker_self_queries_seeded_asset():
     assert set(result.series) == {
         "ret_20d",
         "realized_vol_20d",
-        "asset_vs_spy_ret_60d",
+        "asset_spy_relative_momentum_vol_adj_20d",
     }
     assert result.series["ret_20d"].notna().sum() > 0
 

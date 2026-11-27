@@ -6,12 +6,31 @@ import numpy as np
 import pandas as pd
 
 from trade.features.compute.registry import feature
-from trade.features.compute.transforms import annualized_realized_vol, efficiency_ratio, sanitize_ratio
+from trade.features.compute.transforms import (
+    annualized_realized_vol,
+    down_day_fraction,
+    efficiency_ratio,
+    return_to_vol,
+    sanitize_ratio,
+    vol_adjusted_return,
+)
 
 
 @feature(scope="market", formula_id="close_return_v1", inputs=("SPY",), horizon=20)
 def spy_ret_20d(ctx) -> pd.Series:
     return ctx.close("SPY").pct_change(20)
+
+
+@feature(
+    scope="market",
+    formula_id="return_vol_adj_v1",
+    inputs=("SPY",),
+    horizon=20,
+    vol_window=60,
+)
+def spy_ret_vol_adj_20d(ctx) -> pd.Series:
+    """SPY 20d return scaled by 60d daily-return vol."""
+    return vol_adjusted_return(ctx.close("SPY"), 20, 60)
 
 
 @feature(scope="market", formula_id="close_return_v1", inputs=("SPY",), horizon=60)
@@ -55,6 +74,18 @@ def spy_momentum_quality_60d(ctx) -> pd.Series:
 def spy_momentum_quality_120d(ctx) -> pd.Series:
     close = ctx.close("SPY")
     return close.pct_change(120) * efficiency_ratio(close, 120)
+
+
+@feature(scope="market", formula_id="return_to_vol_v1", inputs=("SPY",), horizon=5)
+def spy_return_to_vol_5d(ctx) -> pd.Series:
+    """SPY 5-day close return divided by 5-day realized volatility."""
+    return return_to_vol(ctx.close("SPY"), 5)
+
+
+@feature(scope="market", formula_id="down_day_frac_v1", inputs=("SPY",), window=10)
+def spy_down_day_frac_10d(ctx) -> pd.Series:
+    """Fraction of negative SPY daily closes over the prior 10 sessions."""
+    return down_day_fraction(ctx.close("SPY"), 10)
 
 
 @feature(scope="market", formula_id="realized_vol_v1", inputs=("SPY",), window=20)

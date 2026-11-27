@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from trade.features.compute.registry import feature
-from trade.features.compute.transforms import efficiency_ratio
+from trade.features.compute.transforms import down_day_fraction, efficiency_ratio
 
 _WINDOW = 126
 
@@ -59,6 +59,12 @@ def decline_freq_20d_126d(ctx) -> pd.Series:
 def count_large_20d_declines_126d(ctx) -> pd.Series:
     ret = ctx.asset_close().pct_change(20)
     return (ret < -0.10).rolling(_WINDOW).sum()
+
+
+@feature(scope="asset", formula_id="asset_down_day_frac_v1", inputs=("close",), window=10)
+def down_day_frac_10d(ctx) -> pd.Series:
+    """Fraction of negative daily closes over the prior 10 sessions."""
+    return down_day_fraction(ctx.asset_close(), 10)
 
 
 @feature(scope="asset", formula_id="asset_rolling_context_v1", inputs=("close",), prior_horizon=10, smooth_window=126)

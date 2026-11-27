@@ -1,4 +1,4 @@
-"""Asset volatility / ATR / high-distance features."""
+"""Asset volatility / ATR / high-distance / relative-strength features."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ import pandas as pd
 
 from trade.backtester_.indicators import create_atr_dataframe
 from trade.features.compute.registry import feature
-from trade.features.compute.transforms import annualized_realized_vol
+from trade.features.compute.transforms import (
+    annualized_realized_vol,
+    vol_adjusted_relative_momentum,
+)
 
 
 @feature(scope="asset", formula_id="asset_realized_vol_v1", inputs=("close",), window=20)
@@ -41,8 +44,29 @@ def drawdown_from_252d_high(ctx) -> pd.Series:
     return close / close.rolling(252).max() - 1.0
 
 
-@feature(scope="asset", formula_id="asset_vs_spy_ret_v1", inputs=("close", "SPY"), horizon=60)
+@feature(
+    scope="asset",
+    formula_id="relative_momentum_vol_adj_v1",
+    inputs=("close", "SPY"),
+    horizon=20,
+    vol_window=60,
+)
+def asset_spy_relative_momentum_vol_adj_20d(ctx) -> pd.Series:
+    """Asset vs SPY 20d relative momentum scaled by 60d relative-return vol."""
+    close = ctx.asset_close()
+    spy = ctx.close("SPY").reindex(close.index)
+    return vol_adjusted_relative_momentum(close, spy, 20, 60)
+
+
+@feature(
+    scope="asset",
+    formula_id="asset_vs_spy_ret_v1",
+    inputs=("close", "SPY"),
+    horizon=60,
+    deprecated=True,
+)
 def asset_vs_spy_ret_60d(ctx) -> pd.Series:
+    """Soft-retired raw asset/SPY 60d relative return (use vol-adj 20d)."""
     close = ctx.asset_close()
     spy = ctx.close("SPY").reindex(close.index)
     return (close / close.shift(60)) / (spy / spy.shift(60)) - 1.0
